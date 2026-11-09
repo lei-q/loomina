@@ -49,7 +49,7 @@ export class FakeVideoAdapter implements VideoAdapter {
       provenance: {
         modelId: "fake-video",
         prompt: input.prompt,
-        referenceAssetIds: [input.imageAssetId],
+        referenceAssetIds: input.imageAssetId ? [input.imageAssetId] : [],
         createdAt: this.now(),
       },
     });

@@ -1,0 +1,159 @@
+/* ─────────────────────────────────────────────────────────────
+   织光机 Loomina · 设计令牌
+   唯一来源：docs/DESIGN-SYSTEM.md（已接受，ADR-0026）
+
+   规则
+   - 组件里不写死颜色。只用 var(--bg) / var(--text) 这类语义令牌。
+   - 默认主题是「印片」（暗）。不跟随系统亮暗：这个产品 80% 的时间在看竖屏片子，
+     亮底会把暗场画面压成一块黑。有文字的页面（剧本 / 设置 / 帮助 / 手机审批）
+     显式在容器上写 data-theme="hall"。
+   - 三套主题只换颜色；尺寸、字阶、圆角、动效三套共用。
+
+   主题
+   :root                印片   release   中性炭黑 + 白，无彩色强调（主案）
+   [data-theme="hall"]  影厅白  hall      亮色，只用于有文字的页面
+   [data-theme="tungsten"] 钨丝 tungsten  暖色，后续可选主题
+   ───────────────────────────────────────────────────────────── */
+
+:root {
+  /* ── 间距 4 / 8 / 12 / 16 / 24 / 32 / 48 ─────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  /* ── 字阶 ─────────────────────────────────────────────────
+     角色           字号    字重    行高    字距
+     页面标题        34      500     1.2     -0.02em
+     区块标题        20      500     1.35    -0.01em
+     正文            15      400     1.78     0
+     对白            17      400     1.70     0
+     元数据          10.5 mono       1.4     +0.08em
+     ───────────────────────────────────────────────────────── */
+  --text-xs: 10.5px;
+  --text-sm: 12.5px;
+  --text-base: 15px;
+  --text-md: 17px;
+  --text-lg: 20px;
+  --text-xl: 26px;
+  --text-2xl: 34px;
+
+  --leading-tight: 1.2;
+  --leading-snug: 1.35;
+  --leading-body: 1.78;
+  --leading-dialogue: 1.7;
+
+  --tracking-display: -0.02em;
+  --tracking-title: -0.01em;
+  --tracking-mono: 0.08em;
+
+  /* ── 字体 ─────────────────────────────────────────────────
+     Archivo 与 IBM Plex Mono 尚未自托管，先走系统栈兜底；
+     接入字体文件后只改这里，组件不动。中文不配衬线标题字体。
+     ───────────────────────────────────────────────────────── */
+  --font-sans: "Archivo", "PingFang SC", "HarmonyOS Sans SC", "MiSans",
+    "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo,
+    Consolas, monospace;
+
+  /* ── 形状与动效 ──────────────────────────────────────────
+     全站唯一圆角，没有胶囊；动效只做透明度与位移。
+     ───────────────────────────────────────────────────────── */
+  --radius: 2px;
+  --dur: 160ms;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* ── 印片（默认 · 暗） ──────────────────────────────────────
+   默认写在 :root；[data-theme="release"] 是同一份值，好让页面里
+   某一段可以从亮色主题里再切回暗色（例如亮色设置页里的样片预览）。
+   ───────────────────────────────────────────────────────── */
+:root,
+[data-theme="release"] {
+  color-scheme: dark;
+
+  --bg: #0c0c0d;
+  --surface: #131316;
+  --line: #1e1e21;
+  --line-2: #2b2b2f;
+  --text: #f2f2ef;
+  --muted: #7b7c7f;
+  --muted-2: #4a4b4e;
+  --pick: #e0442e; /* 留用：胶片格底边 2px 线 */
+  --reject: #3d6ddb; /* 淘汰：2px 线 + 50% 压暗 */
+}
+
+/* ── 影厅白（亮）· 只给有文字的页面，不用于看片 ───────────── */
+[data-theme="hall"] {
+  color-scheme: light;
+
+  --bg: #f4f4f1;
+  --surface: #ffffff;
+  --line: #e3e3de;
+  --line-2: #f0f0ec;
+  --text: #0f1010;
+  --muted: #6b6c6e;
+  --muted-2: #a2a2a0;
+  --pick: #c43a24;
+  --reject: #2f5bd0;
+}
+
+/* ── 钨丝（暖，备选）· 夜间模式 / 用户自选主题 ──────────────
+   温度来自底色与字色，不来自强调色。
+   ───────────────────────────────────────────────────────── */
+[data-theme="tungsten"] {
+  color-scheme: dark;
+
+  --bg: #131110;
+  --surface: #1a1715;
+  --line: #2a2521;
+  --line-2: #38312c;
+  --text: #efe7da;
+  --muted: #8a8177;
+  --muted-2: #55504a;
+  --pick: #d9542f;
+  --reject: #6e86c4;
+}
+
+/* ── 基础契约 ─────────────────────────────────────────────── */
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* 换主题的容器自己铺底：令牌只换变量，不替容器上色。
+   放在 body 上等于换整页，放在某一段上等于在一段纸里写东西。 */
+[data-theme] {
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* 数字、时间码、价格、镜号：等宽 + 等宽数字 */
+.mono,
+time,
+code,
+kbd {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--tracking-mono);
+}
+
+/* 焦点可见，但不发光、不加圆角 */
+:focus-visible {
+  outline: 1px solid var(--text);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur: 0ms;
+  }
+}

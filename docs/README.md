@@ -29,7 +29,9 @@
 | [`SOUND.md`](SOUND.md) | 声音四层、配音表演参数、音乐情绪曲线、混音与响度、声音 QA | 直接更新 |
 | [`PUBLISHING.md`](PUBLISHING.md) | 三层发布能力、平台规格、AI 标识、内容安全、授权链 | 直接更新 |
 | [`COST.md`](COST.md) | 成本结构、有效通过率、双档渲染、重试经济学、点数计费 | 直接更新 |
+| [`MODEL-GATEWAY.md`](MODEL-GATEWAY.md) | 真实供应商契约、价目快照、超时与重试、未知项清单 | 实测后更新 |
 | [`UX.md`](UX.md) | 双形态、六阶段向导、闸门组件、参数四层披露、移动端伴侣 | 直接更新 |
+| [`DESIGN-SYSTEM.md`](DESIGN-SYSTEM.md) | 一屏三带（审片台）、印片/影厅白/钨丝三套令牌、标记与标志 | 已接受（ADR-0026），换方向需先开新 ADR |
 | [`KICKOFF.md`](KICKOFF.md) | 第一行代码：仓库结构、首批 schema、假适配器、S0 验收 | 直接更新 |
 | [`DIRECTOR-GRAMMAR.md`](DIRECTOR-GRAMMAR.md) | 首批 37 条导演规则、覆盖率模板、评测方法 | 规则库独立版本化 |
 | [`RULE-EVOLUTION.md`](RULE-EVOLUTION.md) | 规则的自动发现、触发阈值、晋升门槛、防膨胀 | 直接更新 |

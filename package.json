@@ -5,13 +5,18 @@
   "packageManager": "pnpm@10.12.4",
   "scripts": {
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "probe:s1": "tsx packages/pipeline/src/cli/s1-probe.ts"
   },
   "devDependencies": {
+    "@types/node": "^22.7.0",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "vitest": "^2.1.0",
+    "tsx": "^4.19.0"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }

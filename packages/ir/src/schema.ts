@@ -51,6 +51,8 @@ export const ShotSchema = z.object({
   sceneId: Id,
   index: z.number().int().nonnegative(),
   durationMs: z.number().int().positive(),
+  /** 人话描述：观众在这一格里看到什么。提示词由它拼出来。 */
+  description: z.string().default(""),
   shotSize: z.enum(["wide", "medium", "close", "extreme-close"]),
   camera: CameraSchema,
   characterIds: z.array(Id).default([]),

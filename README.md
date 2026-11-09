@@ -22,6 +22,7 @@ AI 短剧创作平台：从故事大纲到可直接发布的竖屏短剧，把�
 - [声音设计](docs/SOUND.md)
 - [发布与合规](docs/PUBLISHING.md)
 - [成本与单位经济](docs/COST.md)
+- [模型网关（实测契约与价目）](docs/MODEL-GATEWAY.md)
 - [前端与交互形态](docs/UX.md)
 - [第一行代码（S0 起步）](docs/KICKOFF.md)
 - [导演语法库](docs/DIRECTOR-GRAMMAR.md)
