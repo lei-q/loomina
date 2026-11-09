@@ -132,22 +132,24 @@ export type Project = z.infer<typeof ProjectSchema>;
 
 ## 五、不变量先做 10 条
 
-从 DATA-MODEL 的 40 条里挑"错了会静默产生废片"的 10 条：
+从 DATA-MODEL 的 40 条里挑"错了会静默产生废片"的 10 条。**provenance 由 schema 强制**（Take 缺 provenance 无法解析），其余 10 条写在 `invariants.ts` 里：
 
-| # | 不变量 |
-| --- | --- |
-| 1 | 所有生成物都有 provenance |
-| 2 | Shot 引用的 characterIds 必须存在于 characters |
-| 3 | Shot 时长与对白音频一致（超阈值警告） |
-| 4 | 用户改过的字幕不被自动流程覆盖 |
-| 5 | Timeline 引用的 take 必须属于该 shot |
-| 6 | 发布包必须携带 AILabel |
-| 7 | 被引用的资产只能软删除 |
-| 8 | 单镜时长不得超过模型上限 |
-| 9 | SceneState 与同场镜头走位一致 |
-| 10 | 锁定资产不得被自动流程覆盖 |
+| # | Code | 规则 |
+| --- | --- | --- |
+| 1 | `REF_DIALOGUE_CHARACTER` | 台词的角色必须存在 |
+| 2 | `REF_SHOT_CHARACTER` | 镜头的角色必须存在 |
+| 3 | `REF_SCENE` | 镜头所属场景必须存在 |
+| 4 | `REF_LOCATION` | 场景地点必须存在 |
+| 5 | `SCENE_SHOT_BIDIRECTIONAL` | 场景与镜头的归属必须双向一致 |
+| 6 | `SHOT_INDEX_CONTIGUOUS` | 同场景镜头序号唯一且从 0 连续 |
+| 7 | `SHOT_DURATION_VS_DIALOGUE` | 镜头时长 ≈ 对白总时长 + 表演余量 |
+| 8 | `TIMELINE_TAKE_OWNERSHIP` | 时间线引用的 take 必须存在且属于该镜头 |
+| 9 | `TIMELINE_OVERLAP` | 时间线片段不得重叠 |
+| 10 | `PUBLISH_AI_LABEL` | 发布包必须有显式 + 隐式 AI 标识 |
 
-不变量不是"校验函数"，是**产品规则的可执行形式**。每一条都要有对应的失败测试。
+不变量不是"校验函数"，是**产品规则的可执行形式**。每条都要有对应的失败测试。
+
+> 其余不变量（字幕不被覆盖、软删除、模型时长上限、SceneState、锁定资产）依赖尚未建模的实体，随实体一起加，不提前写空壳。
 
 ---
 
@@ -208,12 +210,14 @@ snapshot.json   ← 每 N 个事件写一次
 
 缺一不可：
 
-- [ ] `pnpm test` 全绿
-- [ ] `examples/minimal.json` 通过全部不变量
-- [ ] 篡改任意一条不变量，测试必须失败（反向测试）
-- [ ] Fake 链路能产出 2 张图 + 2 段视频，并写回 IR
-- [ ] `rebuild(events)` 的结果与快照一致
-- [ ] 没有 UI、没有数据库、没有真模型、没有 API key
+- [x] `pnpm test` 全绿（24 个测试）
+- [x] `examples/minimal.json` 通过全部不变量
+- [x] 篡改任意一条不变量，测试必须失败（反向测试）
+- [x] Fake 链路能产出 2 张图 + 2 段视频，并写回 IR
+- [x] `rebuild(events)` 的结果与快照一致
+- [x] 没有 UI、没有数据库、没有真模型、没有 API key
+
+> 状态：2026-11-09 完成首版。`pnpm test` = 24 passed，`pnpm typecheck` 全绿。
 
 ---
 

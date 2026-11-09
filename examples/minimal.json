@@ -1,0 +1,133 @@
+{
+  "id": "proj-minimal",
+  "title": "电梯里的三秒钟",
+  "version": 1,
+  "locations": [
+    {
+      "id": "loc-living",
+      "name": "公寓客厅",
+      "templateId": "apartment-living"
+    }
+  ],
+  "characters": [
+    {
+      "id": "c-lin",
+      "name": "林晚",
+      "appearance": "三十岁，短发，米色风衣",
+      "voiceProfileId": "voice-lin"
+    },
+    {
+      "id": "c-zhou",
+      "name": "周野",
+      "appearance": "三十五岁，深色大衣，右手有旧疤"
+    }
+  ],
+  "scenes": [
+    {
+      "id": "sc-1",
+      "index": 0,
+      "locationId": "loc-living",
+      "shotIds": ["sh-1", "sh-2"]
+    }
+  ],
+  "shots": [
+    {
+      "id": "sh-1",
+      "sceneId": "sc-1",
+      "index": 0,
+      "durationMs": 2500,
+      "shotSize": "close",
+      "camera": { "angle": "eye", "movement": "static", "focalMm": 85 },
+      "characterIds": ["c-lin"],
+      "dialogueIds": ["dl-1"],
+      "takeIds": ["take-1"],
+      "locked": false
+    },
+    {
+      "id": "sh-2",
+      "sceneId": "sc-1",
+      "index": 1,
+      "durationMs": 3500,
+      "shotSize": "medium",
+      "camera": { "angle": "low", "movement": "push", "focalMm": 50 },
+      "characterIds": ["c-zhou"],
+      "dialogueIds": ["dl-2"],
+      "takeIds": ["take-2"],
+      "locked": false
+    }
+  ],
+  "dialogue": [
+    {
+      "id": "dl-1",
+      "characterId": "c-lin",
+      "text": "你早就知道了，对吧。",
+      "durationMs": 2000
+    },
+    {
+      "id": "dl-2",
+      "characterId": "c-zhou",
+      "text": "我只是不想让你一个人扛。",
+      "durationMs": 3000
+    }
+  ],
+  "takes": [
+    {
+      "id": "take-1",
+      "shotId": "sh-1",
+      "assetId": "asset-1",
+      "provenance": {
+        "modelId": "fake-video",
+        "prompt": "close shot, eye level, 85mm",
+        "seed": 1,
+        "referenceAssetIds": [],
+        "createdAt": "2026-11-09T10:00:00Z"
+      },
+      "status": "approved",
+      "costCny": 3.9
+    },
+    {
+      "id": "take-2",
+      "shotId": "sh-2",
+      "assetId": "asset-2",
+      "provenance": {
+        "modelId": "fake-video",
+        "prompt": "medium shot, low angle, 50mm, push in",
+        "seed": 2,
+        "referenceAssetIds": [],
+        "createdAt": "2026-11-09T10:01:00Z"
+      },
+      "status": "approved",
+      "costCny": 5.4
+    }
+  ],
+  "timeline": {
+    "items": [
+      {
+        "id": "ti-1",
+        "shotId": "sh-1",
+        "takeId": "take-1",
+        "startMs": 0,
+        "durationMs": 2500
+      },
+      {
+        "id": "ti-2",
+        "shotId": "sh-2",
+        "takeId": "take-2",
+        "startMs": 2500,
+        "durationMs": 3500
+      }
+    ]
+  },
+  "publishPackages": [
+    {
+      "id": "pp-1",
+      "platform": "douyin",
+      "videoAssetId": "asset-1",
+      "aiLabel": {
+        "explicit": true,
+        "implicit": true,
+        "standard": "AIGC-label-2025"
+      }
+    }
+  ]
+}
