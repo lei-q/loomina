@@ -22,7 +22,10 @@ loomina/
 ├── pnpm-workspace.yaml
 ├── package.json
 ├── tsconfig.base.json
+├── apps/
+│   └── web/                 # Next.js App Router 前端（审片台三带）
 ├── packages/
+│   ├── design-tokens/       # tokens.css：三套主题变量，纯 CSS
 │   ├── ir/                  # 纯数据：schema + types + invariants
 │   │   ├── src/
 │   │   │   ├── schema.ts    # zod schema

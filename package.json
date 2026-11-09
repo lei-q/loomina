@@ -4,6 +4,8 @@
   "type": "module",
   "packageManager": "pnpm@10.12.4",
   "scripts": {
+    "dev": "pnpm --filter @loomina/web dev",
+    "build": "pnpm --filter @loomina/web build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "probe:s1": "tsx packages/pipeline/src/cli/s1-probe.ts"

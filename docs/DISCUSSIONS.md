@@ -554,3 +554,36 @@
 - 本机校验截图确认：三套主题面板颜色分离、字阶七级、间距与 2px 圆角显示正常。
 
 **下一步**：起 `apps/web` 骨架（Next.js App Router + Tailwind + shadcn/ui），先做 `TopBar` / `Stage` / `ReelBar` 三件静态页面。
+
+### 第十四次讨论：apps/web 骨架与三带落地（2026-11-10）
+
+按 [DESIGN-SYSTEM.md](DESIGN-SYSTEM.md) 第六节的顺序起前端，先只做静态骨架，不接模型、不接 IR。
+
+**选型（沿用 TECH-SELECTION，未改方向）**
+- Next.js 16.4.5（App Router、Turbopack）+ React 19.3.1 + TypeScript。
+- Tailwind 4.3.5：只用来排版；颜色与字阶全部来自 `tokens.css`，组件里没有色值。
+  - 颜色经 `@theme inline` 映射成 `bg-bg` / `border-line` / `text-muted` 这类工具类，值仍是 `var(--*)`，换主题自动跟随。
+  - 字阶不映射：`tokens.css` 在 Tailwind 之后导入，同名 `--text-*` 覆盖掉 Tailwind 默认阶梯，`text-base` 就是 15px。
+- shadcn/ui：只写了 `components.json` 与 `cn()`，还没复制任何组件。等第一个真正需要的组件（对话框、下拉）再装。
+- 新增 `packages/design-tokens`（纯 CSS 包）与根脚本 `pnpm dev` / `pnpm build`。
+
+**三带**
+- 顶带 46px：经线标志 + 项目名 + 版本 + 阶段小字 + 已花/预算 + 导出。
+- 中台：前一格 / 当前 / 后一格；当前满亮，两侧 48%；`lg` 以下隐藏两侧，只剩当前。
+- 下带：12 格胶片轨（留用红 / 淘汰蓝 / 当前白描边），一句话指令输入框，重做按钮写价。
+- 画面用平面分镜剪影（门廊、两个人、桌边、走廊），不用渐变假装视频；字幕烧在画面里。
+- 示例项目「夜班」在顶带打了「示例」标记，不会和真实项目混淆。
+
+**实现时定下的**
+1. 胶片轨用 `overflow-x` 自己滚、隐藏滚动条，镜头多了不撑破页面。
+2. 窄屏（< md）隐藏阶段小字，只留项目名与价钱；手机端仍按 UX.md 只做审批形态，不铺时间线。
+3. 所有按钮、输入框挂 `var(--radius)` 的 2px 圆角，没有胶囊。
+
+**验证**
+- `pnpm build` 通过，静态页 3 条路由；`pnpm typecheck` 五个包全过。
+- 1440 / 1024 / 760 三档截图检查：无横向滚动，窄屏正确降级为单格。
+
+**下一步**
+1. 把示例数据换成 Project IR 读模型（`packages/ir` → 前端），先只读。
+2. 胶片轨三态接交互：点格切当前、留用/淘汰写入 IR。
+3. 一句话指令：先解析"太暗了""换个角度"两条，接到重做报价。

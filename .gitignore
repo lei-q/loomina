@@ -5,6 +5,10 @@ node_modules/
 # build output
 dist/
 build/
+next-env.d.ts
+.next/
+out/
+.turbo/
 *.tsbuildinfo
 
 # test / coverage

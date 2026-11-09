@@ -1,0 +1,71 @@
+@import "tailwindcss";
+@import "@loomina/design-tokens/tokens.css";
+
+/* 令牌 → Tailwind 工具类。颜色全部走 var()，组件里不出现色值。
+   字阶不在这里映射：tokens.css 的 --text-* 在 Tailwind 之后导入，
+   同名变量覆盖掉 Tailwind 的默认阶梯，text-base 就是 15px。 */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-line: var(--line);
+  --color-line-2: var(--line-2);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-muted-2: var(--muted-2);
+  --color-pick: var(--pick);
+  --color-reject: var(--reject);
+  --radius-token: var(--radius);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  /* 深色工作台：竖屏两侧不留白，画面之外的区域压到比 --bg 更暗一档 */
+  background: var(--bg);
+}
+
+/* 数字、时间码、价格、镜号 */
+.tnum {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--tracking-mono);
+}
+
+/* 焦点统一 1px 实线，不加圆角、不发光 */
+:focus-visible {
+  outline: 1px solid var(--text);
+  outline-offset: 2px;
+}
+
+/* 胶片轨自己滚动，不出现滚动条 */
+.reel-scroll {
+  scrollbar-width: none;
+}
+
+.reel-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* 生成中：只有一道 1px 的扫光，不做转圈 */
+@keyframes scan {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(100%);
+  }
+}
+
+.scanline {
+  animation: scan 2.4s var(--ease) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scanline {
+    animation: none;
+  }
+}
