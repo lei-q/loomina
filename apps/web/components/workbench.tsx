@@ -14,6 +14,7 @@ export function Workbench() {
   const decide = useWorkbench((state) => state.decide);
   const hydrate = useWorkbench((state) => state.hydrate);
   const storageError = useWorkbench((state) => state.storageError);
+  const readOnly = useWorkbench((state) => state.readOnly);
 
   useEffect(() => {
     void hydrate();
@@ -63,6 +64,7 @@ export function Workbench() {
         budgetCny={view.budget}
         unpriced={view.unpriced}
         storageError={storageError}
+        readOnly={readOnly}
         allRequote={view.requoteAll}
       />
       <Stage view={view} />

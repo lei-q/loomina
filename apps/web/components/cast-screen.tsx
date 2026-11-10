@@ -371,6 +371,7 @@ export function CastScreen() {
   const castError = useWorkbench((state) => state.castError);
   const hydrate = useWorkbench((state) => state.hydrate);
   const storageError = useWorkbench((state) => state.storageError);
+  const readOnly = useWorkbench((state) => state.readOnly);
 
   useEffect(() => {
     void hydrate();
@@ -389,6 +390,7 @@ export function CastScreen() {
         spentCny={cast.spend.spent}
         unpriced={cast.spend.unpriced}
         storageError={storageError}
+        readOnly={readOnly}
       />
 
       <main className="flex-1 overflow-y-auto">

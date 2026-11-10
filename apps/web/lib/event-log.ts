@@ -17,8 +17,20 @@ import {
  * 四个角色就顶破 localStorage 的 5MB 额度；IndexedDB 存得下，而且按条追加。
  */
 
+/**
+ * 本地日志的格式版本。**改动事件或项目结构时把它 +1**，并在 `migrateLog` 里补一段。
+ * 没有版本号，一次 schema 改动就会让用户存下的项目整份判废。
+ */
+export const LOG_VERSION = 1;
+
+export type StoredLog = {
+  version: number;
+  events: unknown[];
+};
+
 export type EventLog = {
-  load(): Promise<ProjectEvent[]>;
+  /** 版本与事件分开返回：版本决定要不要迁移，事件才决定能不能用 */
+  load(): Promise<StoredLog>;
   append(event: ProjectEvent): Promise<void>;
   replace(events: ProjectEvent[]): Promise<void>;
 };
@@ -69,6 +81,25 @@ export function parseEvents(raw: unknown): ProjectEvent[] | null {
   return events;
 }
 
+/**
+ * 按版本迁移旧日志，再交给 `parseEvents` 把关。
+ *
+ * - 比当前版本新：别的标签页/旧版本应用写的，别乱降级，直接放弃；
+ * - 比当前版本旧：按顺序跑迁移函数。第 1 版之前没有版本号，按 1 处理；
+ * - 迁移只改形状，不做猜测：猜错的东西比丢掉更难查。
+ */
+export function migrateLog(stored: StoredLog): ProjectEvent[] | null {
+  if (!Number.isInteger(stored.version) || stored.version < 1) return null;
+  if (stored.version > LOG_VERSION) return null;
+
+  let events = stored.events;
+
+  // 迁移链：if (stored.version < 2) { events = v1ToV2(events); }
+  // 目前只有第 1 版，链是空的。
+
+  return parseEvents(events);
+}
+
 /** 两次事件数组之间的差别：只追加就逐条写，重来一遍就整份覆盖。 */
 export type EventSync =
   | { kind: "none" }
@@ -86,10 +117,12 @@ export function diffEvents(prev: ProjectEvent[], next: ProjectEvent[]): EventSyn
 // ── IndexedDB 实现 ───────────────────────────────────────────────
 
 const DB_NAME = "loomina";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE = "events";
+const META = "meta";
 
 type Row = { seq: number; event: ProjectEvent };
+type MetaRow = { key: "log"; version: number };
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -98,6 +131,10 @@ function openDb(): Promise<IDBDatabase> {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE)) {
         db.createObjectStore(STORE, { keyPath: "seq", autoIncrement: true });
+      }
+      // 第 1 版没有 meta：老的本地库升级上来后，`load` 会把版本当 1 处理
+      if (!db.objectStoreNames.contains(META)) {
+        db.createObjectStore(META, { keyPath: "key" });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -124,9 +161,15 @@ export const indexedDbLog: EventLog = {
   async load() {
     const db = await openDb();
     try {
-      const store = db.transaction(STORE, "readonly").objectStore(STORE);
-      const rows = await settle(store.getAll() as IDBRequest<Row[]>);
-      return rows.sort((a, b) => a.seq - b.seq).map((row) => row.event);
+      const tx = db.transaction([STORE, META], "readonly");
+      const rows = await settle(tx.objectStore(STORE).getAll() as IDBRequest<Row[]>);
+      const meta = await settle(
+        tx.objectStore(META).get("log") as IDBRequest<MetaRow | undefined>,
+      );
+      return {
+        version: meta?.version ?? 1,
+        events: rows.sort((a, b) => a.seq - b.seq).map((row) => row.event),
+      };
     } finally {
       db.close();
     }
@@ -146,10 +189,11 @@ export const indexedDbLog: EventLog = {
   async replace(events) {
     const db = await openDb();
     try {
-      const tx = db.transaction(STORE, "readwrite");
+      const tx = db.transaction([STORE, META], "readwrite");
       const store = tx.objectStore(STORE);
       store.clear();
       for (const event of events) store.add({ event });
+      tx.objectStore(META).put({ key: "log", version: LOG_VERSION } satisfies MetaRow);
       await committed(tx);
     } finally {
       db.close();

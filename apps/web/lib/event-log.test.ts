@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectEvent } from "@loomina/ir";
-import { diffEvents, parseEvents } from "./event-log";
+import { diffEvents, LOG_VERSION, migrateLog, parseEvents } from "./event-log";
 import { sampleProject } from "./sample-project";
 
 const AT = "2026-11-10T00:00:00+08:00";
@@ -64,5 +64,25 @@ describe("diffEvents", () => {
 
   it("换了内容就整份覆盖", () => {
     expect(diffEvents([created(), locked()], [created()]).kind).toBe("replace");
+  });
+});
+
+describe("migrateLog", () => {
+  it("当前版本：迁移后照常解析", () => {
+    const events = [created()];
+    expect(migrateLog({ version: LOG_VERSION, events })).toHaveLength(1);
+  });
+
+  it("没有版本号的老库按第 1 版处理", () => {
+    expect(migrateLog({ version: 0, events: [created()] })).toBeNull();
+  });
+
+  it("比当前版本新的日志不乱降级", () => {
+    expect(migrateLog({ version: LOG_VERSION + 1, events: [created()] })).toBeNull();
+  });
+
+  it("迁移之后仍要过 parseEvents 这一关", () => {
+    expect(migrateLog({ version: 1, events: [] })).toBeNull();
+    expect(migrateLog({ version: 1, events: [locked()] })).toBeNull();
   });
 });

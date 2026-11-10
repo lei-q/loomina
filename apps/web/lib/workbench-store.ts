@@ -11,7 +11,8 @@ import {
   type SheetView,
 } from "@loomina/ir";
 import { create } from "zustand";
-import { diffEvents, getEventLog, parseEvents } from "@/lib/event-log";
+import { diffEvents, getEventLog, migrateLog } from "@/lib/event-log";
+import { claimWriter } from "@/lib/writer-lock";
 import { latestTake, toStageView } from "@/lib/read-model";
 import { sampleProject } from "@/lib/sample-project";
 
@@ -39,6 +40,8 @@ type WorkbenchState = {
   castError?: string;
   /** 本地写入失败（配额、隐私模式）：不能让用户以为已经存住了 */
   storageError?: string;
+  /** 另一个标签页在编辑：这里只读，改了也存不下 */
+  readOnly?: boolean;
   /** 从本地日志恢复；已经恢复过就什么都不做 */
   hydrate: () => Promise<void>;
   select: (shotId: string) => void;
@@ -205,7 +208,18 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     const log = getEventLog();
 
     try {
-      const stored = parseEvents(await log.load());
+      const stored = migrateLog(await log.load());
+
+      // 另一个标签页正在写：读得到它的进度，但这一页不改、不存
+      if (!(await claimWriter())) {
+        if (stored) {
+          const project = rebuild(stored);
+          set({ project, events: stored, currentShotId: firstOpenShotId(project) });
+        }
+        set({ readOnly: true });
+        return;
+      }
+
       if (stored) {
         const project = rebuild(stored);
         set({ project, events: stored, currentShotId: firstOpenShotId(project) });
@@ -227,6 +241,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   },
 
   decide: (status) => {
+    if (get().readOnly) return;
     const { project, events, currentShotId } = get();
     const shot = project.shots.find((item) => item.id === currentShotId);
     if (!shot || shot.locked) return; // 锁定的镜头不在这里改
@@ -250,6 +265,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   },
 
   lockCast: (targetType, targetId) => {
+    if (get().readOnly) return;
     const { project, events } = get();
     const readiness = castReadiness(project);
     const item = [
@@ -279,6 +295,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   },
 
   unlockCast: (targetType, targetId) => {
+    if (get().readOnly) return;
     const { project, events } = get();
     const existing = project.approvals.find(
       (item) => item.targetType === targetType && item.targetId === targetId,
@@ -301,6 +318,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   },
 
   generateSheet: async (characterId) => {
+    if (get().readOnly) return;
     const { project } = get();
     const character = project.characters.find((item) => item.id === characterId);
     if (!character) return;
@@ -338,6 +356,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   },
 
   generateMaster: async (locationId) => {
+    if (get().readOnly) return;
     const { project } = get();
     const location = project.locations.find((item) => item.id === locationId);
     if (!location) return;
@@ -361,6 +380,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   },
 
   generateProp: async (propId) => {
+    if (get().readOnly) return;
     const { project } = get();
     const prop = project.props.find((item) => item.id === propId);
     if (!prop) return;

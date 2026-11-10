@@ -26,6 +26,8 @@ export type TopBarProps = {
   unpriced?: number;
   /** 本地写入失败：如实说没存住（ADR-0034） */
   storageError?: string;
+  /** 另一个标签页在编辑：这一页只读 */
+  readOnly?: boolean;
   /** 整片重做一遍的报价；给了才多一行 */
   allRequote?: ProjectRequote;
 };
@@ -42,6 +44,7 @@ export function TopBar({
   budgetCny,
   unpriced = 0,
   storageError,
+  readOnly,
   allRequote,
 }: TopBarProps) {
   return (
@@ -79,6 +82,14 @@ export function TopBar({
       </nav>
 
       <div className="ml-auto flex items-center gap-4">
+        {readOnly && (
+          <span
+            title="另一个标签页在编辑这份项目。这里只读，刷新后以那边为准"
+            className="tnum text-[9px] tracking-[.08em] text-muted-2"
+          >
+            只读
+          </span>
+        )}
         {storageError && (
           <span
             title={storageError}

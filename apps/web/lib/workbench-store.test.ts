@@ -1,6 +1,7 @@
 import { rebuild, type ProjectEvent } from "@loomina/ir";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setEventLog, type EventLog } from "./event-log";
+import { claimWriter, releaseWriter } from "./writer-lock";
 import { toStageView } from "./read-model";
 import { resetPersistenceForTests, useWorkbench } from "./workbench-store";
 
@@ -241,7 +242,7 @@ describe("本地事件日志（ADR-0034）", () => {
       appends: [],
       replaces: 0,
       async load() {
-        return [...log.records];
+        return { version: 1, events: [...log.records] };
       },
       async append(event) {
         log.records.push(event);
@@ -259,6 +260,8 @@ describe("本地事件日志（ADR-0034）", () => {
   const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
   beforeEach(() => {
+    // hydrate 会把单写者锁握到标签页关闭；测试里每个用例换一个新的"标签页"
+    releaseWriter();
     resetPersistenceForTests();
     state().reset();
   });
@@ -324,5 +327,53 @@ describe("本地事件日志（ADR-0034）", () => {
 
     expect(state().storageError).toContain("QuotaExceededError");
     expect(state().project.approvals).toHaveLength(1);
+  });
+});
+
+describe("单写者（ADR-0034）", () => {
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("另一个标签页在编辑时只读：读得到进度，不写日志", async () => {
+    releaseWriter();
+    resetPersistenceForTests();
+    state().reset();
+
+    const records: ProjectEvent[] = [
+      { type: "project.created", at: "2026-11-10T00:00:00+08:00", project: state().project },
+    ];
+    const appends: ProjectEvent[] = [];
+    setEventLog({
+      async load() {
+        return { version: 1, events: [...records] };
+      },
+      async append(event) {
+        appends.push(event);
+      },
+      async replace() {
+        throw new Error("只读标签页不该覆盖本地日志");
+      },
+    });
+
+    // 假装另一个标签页拿着写权。放锁是异步生效的：上一轮 hydrate 的锁
+    // 可能还没真正交出去，所以这里重试到拿到为止，否则测的就不是只读分支。
+    let claimed = false;
+    for (let i = 0; i < 20 && !claimed; i++) {
+      claimed = await claimWriter();
+      if (!claimed) await tick();
+    }
+    expect(claimed).toBe(true);
+
+    await state().hydrate();
+
+    expect(state().readOnly).toBe(true);
+    expect(state().events).toHaveLength(1);
+
+    state().lockCast("prop", "p-cup");
+    await tick();
+    expect(appends).toHaveLength(0);
+    expect(state().project.approvals).toHaveLength(0);
+
+    releaseWriter();
+    resetPersistenceForTests();
   });
 });
