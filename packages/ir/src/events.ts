@@ -12,6 +12,12 @@ import type { Approval, Asset, Id, Project, Shot, Take } from "./schema";
  */
 export type ProjectEvent =
   | { type: "project.created"; at: string; project: Project }
+  | {
+      /** 项目级设置：目前只有预算。预算改了要留痕，否则"超没超"说不清 */
+      type: "project.updated";
+      at: string;
+      budgetCny: number;
+    }
   | { type: "shot.updated"; at: string; shotId: Id; patch: Partial<Shot> }
   | { type: "take.added"; at: string; take: Take }
   | {
@@ -41,6 +47,14 @@ export function applyEvent(
   switch (event.type) {
     case "project.created":
       return clone(event.project);
+
+    case "project.updated": {
+      if (!current) throw new Error("project.updated 之前必须有 project.created");
+      if (!(event.budgetCny > 0)) {
+        throw new Error(`预算必须大于 0：${event.budgetCny}`);
+      }
+      return { ...current, budgetCny: event.budgetCny };
+    }
 
     case "shot.updated": {
       if (!current) throw new Error("shot.updated 之前必须有 project.created");

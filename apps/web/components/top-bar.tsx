@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import type { ProjectRequote } from "@/lib/pricing";
 import { ExportIcon, Logomark } from "@/components/icons";
@@ -30,6 +33,8 @@ export type TopBarProps = {
   readOnly?: boolean;
   /** 整片重做一遍的报价；给了才多一行 */
   allRequote?: ProjectRequote;
+  /** 改预算上限（元）；给了才显示可改的输入框 */
+  onBudgetChange?: (cny: number) => void;
 };
 
 function Money({ value }: { value?: number }) {
@@ -46,7 +51,19 @@ export function TopBar({
   storageError,
   readOnly,
   allRequote,
+  onBudgetChange,
 }: TopBarProps) {
+  const [draftBudget, setDraftBudget] = useState<string>("");
+  const budget = budgetCny ?? 60;
+  // 超预算是硬事：数字变 pick，展开里单独一行写超了多少
+  const over = spentCny !== undefined ? Math.round((spentCny - budget) * 100) / 100 : 0;
+  const commitBudget = () => {
+    const value = Number.parseFloat(draftBudget);
+    if (!Number.isFinite(value) || value <= 0) return;
+    onBudgetChange?.(value);
+    setDraftBudget("");
+  };
+
   return (
     <header className="flex h-[46px] shrink-0 items-center gap-6 border-b border-line px-4">
       <div className="flex items-center gap-2">
@@ -100,9 +117,14 @@ export function TopBar({
         )}
         {spentCny !== undefined && (
           <details className="relative">
-            <summary className="tnum cursor-pointer list-none text-[10px] text-muted transition-colors duration-[var(--dur)] hover:text-text [&::-webkit-details-marker]:hidden">
+            <summary
+              className={cn(
+                "tnum cursor-pointer list-none text-[10px] transition-colors duration-[var(--dur)] hover:text-text [&::-webkit-details-marker]:hidden",
+                over > 0 ? "text-pick" : "text-muted",
+              )}
+            >
               ¥{spentCny.toFixed(2)}
-              <span className="text-muted-2"> / {budgetCny ?? 60}</span>
+              <span className="text-muted-2"> / {budget.toFixed(2)}</span>
             </summary>
 
             <div className="absolute right-0 top-full z-20 mt-2.5 w-[252px] rounded-token border border-line bg-surface p-3">
@@ -121,13 +143,44 @@ export function TopBar({
                     </dd>
                   </div>
                 )}
+                {over > 0 && (
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="text-muted-2">超出</dt>
+                    <dd className="text-pick">
+                      <Money value={over} />
+                    </dd>
+                  </div>
+                )}
                 <div className="flex items-baseline justify-between gap-3">
                   <dt className="text-muted-2">预算</dt>
-                  <dd className="text-muted">
-                    <Money value={budgetCny ?? 60} />
+                  <dd className="flex items-baseline gap-2 text-muted">
+                    <Money value={budget} />
                   </dd>
                 </div>
               </dl>
+              {onBudgetChange && !readOnly && (
+                <div className="mt-2.5 flex items-center gap-1.5 border-t border-line pt-2.5">
+                  <input
+                    id="budget-input"
+                    value={draftBudget}
+                    onChange={(event) => setDraftBudget(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") commitBudget();
+                    }}
+                    inputMode="decimal"
+                    placeholder={budget.toFixed(2)}
+                    aria-label="新预算（元）"
+                    className="tnum w-full min-w-0 rounded-token border border-line bg-transparent px-1.5 py-1 text-right text-[10.5px] text-text placeholder:text-muted-2 focus:border-line-2 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={commitBudget}
+                    className="shrink-0 rounded-token border border-line px-2 py-1 text-[9.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                  >
+                    改预算
+                  </button>
+                </div>
+              )}
               {unpriced > 0 && (
                 <p className="mt-2.5 border-t border-line pt-2 text-[9px] leading-[1.5] text-muted-2">
                   另有 {unpriced} 张定妆图没有价目，没算进已花

@@ -169,3 +169,37 @@ describe("asset.updated", () => {
     expect(next.assets.some((item) => item.id === "a-new-panel")).toBe(true);
   });
 });
+
+describe("project.updated", () => {
+  it("改预算只动 budgetCny，其余字段原样保留", () => {
+    const project = load();
+    const next = applyEvent(project, { type: "project.updated", at: AT, budgetCny: 120 });
+
+    expect(next.budgetCny).toBe(120);
+    expect(next.shots).toEqual(project.shots);
+    expect(next.title).toBe(project.title);
+  });
+
+  it("预算不是正数就拒绝，不写进日志", () => {
+    expect(() =>
+      applyEvent(load(), { type: "project.updated", at: AT, budgetCny: 0 }),
+    ).toThrow();
+  });
+
+  it("没有 created 事件时拒绝", () => {
+    expect(() =>
+      applyEvent(null, { type: "project.updated", at: AT, budgetCny: 100 }),
+    ).toThrow();
+  });
+});
+
+describe("Project.budgetCny", () => {
+  it("老快照没有这个字段时，解析成默认预算而不是失败", () => {
+    const parsed = ProjectSchema.parse({ ...clone(minimalJson), budgetCny: undefined });
+    expect(parsed.budgetCny).toBe(60);
+  });
+
+  it("预算必须是正数", () => {
+    expect(() => ProjectSchema.parse({ ...clone(minimalJson), budgetCny: -1 })).toThrow();
+  });
+});

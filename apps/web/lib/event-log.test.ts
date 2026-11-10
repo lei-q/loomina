@@ -40,6 +40,17 @@ describe("parseEvents", () => {
     expect(parseEvents([locked()])).toBeNull();
   });
 
+  it("改预算的事件认得出来，回放后预算就是日志里最后那个数", () => {
+    const events = parseEvents([
+      created(),
+      { type: "project.updated", at: AT, budgetCny: 120 },
+    ]);
+    expect(events?.map((event) => event.type)).toEqual([
+      "project.created",
+      "project.updated",
+    ]);
+  });
+
   it("认不出的事件类型整份丢掉", () => {
     expect(parseEvents([created(), { type: "shot.deleted", at: AT }])).toBeNull();
   });

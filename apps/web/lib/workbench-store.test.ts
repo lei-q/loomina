@@ -229,6 +229,75 @@ describe("生成定妆资产（ADR-0031 / ADR-0032）", () => {
   });
 });
 
+describe("预算（ADR-0035）", () => {
+  beforeEach(() => {
+    state().reset();
+    state().setImagePrice({ model: "gpt-image-2-c", cny: 0.12 });
+  });
+
+  it("改预算写一条 project.updated，重放日志得到同一个数", () => {
+    state().setBudget(120);
+
+    expect(state().project.budgetCny).toBe(120);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "project.updated",
+      budgetCny: 120,
+    });
+    expect(rebuild(state().events).budgetCny).toBe(120);
+  });
+
+  it("预算没变就不写日志", () => {
+    state().setBudget(60);
+    expect(state().events).toHaveLength(1);
+  });
+
+  it("预算不是正数就忽略，不写进日志", () => {
+    state().setBudget(0);
+    state().setBudget(Number.NaN);
+    expect(state().project.budgetCny).toBe(60);
+    expect(state().events).toHaveLength(1);
+  });
+
+  it("超出预算就不提交：一次请求都不发，并说清差多少", async () => {
+    state().setBudget(19); // 示例项目已花 ¥18.96
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls.push("fetch");
+        return new Response("{}", { status: 200 });
+      }),
+    );
+
+    await state().generateProp("p-cup");
+
+    expect(calls).toHaveLength(0);
+    expect(state().castError).toContain("超出预算");
+    vi.unstubAllGlobals();
+  });
+
+  it("预算还够就照常生成", async () => {
+    state().setBudget(60);
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        calls.push(JSON.parse(String(init?.body)).kind);
+        return new Response(
+          JSON.stringify({ uri: "data:image/png;base64,QUJD", model: "gpt-image-2-c", cny: 0.12 }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+
+    await state().generateProp("p-cup");
+
+    expect(calls).toEqual(["prop"]);
+    expect(state().castError).toBeUndefined();
+    vi.unstubAllGlobals();
+  });
+});
+
 describe("本地事件日志（ADR-0034）", () => {
   type MemoryLog = EventLog & {
     records: ProjectEvent[];

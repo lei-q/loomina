@@ -37,6 +37,7 @@ export type EventLog = {
 
 const EVENT_TYPES = new Set([
   "project.created",
+  "project.updated",
   "shot.updated",
   "take.added",
   "approval.updated",

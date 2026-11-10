@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo } from "react";
 import { SHEET_LABELS, type SheetView } from "@loomina/ir";
+import { fetchImagePrice } from "@/lib/image-price";
 import { Bust } from "@/components/bust";
 import { PropObject } from "@/components/prop-object";
 import { Scene } from "@/components/scene";
@@ -55,6 +56,7 @@ function StatusChip({
 function CharacterRow({
   character,
   generating,
+  quoteCny,
   onGenerate,
   onLock,
   onUnlock,
@@ -62,6 +64,8 @@ function CharacterRow({
   character: CastCharacterView;
   /** 正在生成的那一格 */
   generating?: SheetView;
+  /** 这一次生成要花多少（元）；价目不知道就不给 */
+  quoteCny?: number;
   onGenerate: () => void;
   onLock: () => void;
   onUnlock: () => void;
@@ -143,6 +147,9 @@ function CharacterRow({
                   className="rounded-token border border-line px-3 py-1.5 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
                 >
                   生成三视图
+                  {quoteCny !== undefined && (
+                    <span className="tnum mt-0.5 block text-[9.5px] text-muted-2">¥{quoteCny.toFixed(2)}</span>
+                  )}
                 </button>
               )}
               <button
@@ -169,6 +176,7 @@ function CharacterRow({
 function LocationRow({
   location,
   generating,
+  quoteCny,
   onGenerate,
   onLock,
   onUnlock,
@@ -176,6 +184,8 @@ function LocationRow({
   location: CastLocationView;
   /** 主镜正在生成 */
   generating: boolean;
+  /** 这一次生成要花多少（元）；价目不知道就不给 */
+  quoteCny?: number;
   onGenerate: () => void;
   onLock: () => void;
   onUnlock: () => void;
@@ -244,6 +254,9 @@ function LocationRow({
                   className="rounded-token border border-line px-3 py-1.5 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
                 >
                   生成主镜
+                  {quoteCny !== undefined && (
+                    <span className="tnum mt-0.5 block text-[9.5px] text-muted-2">¥{quoteCny.toFixed(2)}</span>
+                  )}
                 </button>
               )}
               <button
@@ -266,6 +279,7 @@ function LocationRow({
 function PropRow({
   prop,
   generating,
+  quoteCny,
   onGenerate,
   onLock,
   onUnlock,
@@ -273,6 +287,8 @@ function PropRow({
   prop: CastPropView;
   /** 参考图正在生成 */
   generating: boolean;
+  /** 这一次生成要花多少（元）；价目不知道就不给 */
+  quoteCny?: number;
   onGenerate: () => void;
   onLock: () => void;
   onUnlock: () => void;
@@ -341,6 +357,9 @@ function PropRow({
                   className="rounded-token border border-line px-3 py-1.5 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
                 >
                   生成参考图
+                  {quoteCny !== undefined && (
+                    <span className="tnum mt-0.5 block text-[9.5px] text-muted-2">¥{quoteCny.toFixed(2)}</span>
+                  )}
                 </button>
               )}
               <button
@@ -372,10 +391,17 @@ export function CastScreen() {
   const hydrate = useWorkbench((state) => state.hydrate);
   const storageError = useWorkbench((state) => state.storageError);
   const readOnly = useWorkbench((state) => state.readOnly);
+  const imageCny = useWorkbench((state) => state.imageCny);
+  const setImagePrice = useWorkbench((state) => state.setImagePrice);
+  const setBudget = useWorkbench((state) => state.setBudget);
 
   useEffect(() => {
     void hydrate();
-  }, [hydrate]);
+    // 单价在服务端：进页面问一次，用来显示"这一格多少钱"并在提交前拦超预算
+    void fetchImagePrice().then((price) => {
+      if (price) setImagePrice(price);
+    });
+  }, [hydrate, setImagePrice]);
 
   const cast = useMemo(() => toCastView(project), [project]);
   const done = cast.lockedCount === cast.totalRequired;
@@ -388,9 +414,11 @@ export function CastScreen() {
         version={project.version}
         stage="定妆"
         spentCny={cast.spend.spent}
+        budgetCny={project.budgetCny}
         unpriced={cast.spend.unpriced}
         storageError={storageError}
         readOnly={readOnly}
+        onBudgetChange={setBudget}
       />
 
       <main className="flex-1 overflow-y-auto">
@@ -429,6 +457,11 @@ export function CastScreen() {
                   key={character.id}
                   character={character}
                   generating={job?.kind === "sheet" ? job.angle : undefined}
+                  quoteCny={
+                    imageCny === undefined
+                      ? undefined
+                      : imageCny * character.panels.filter((panel) => panel.assetId).length
+                  }
                   onGenerate={() => void generateSheet(character.id)}
                   onLock={() => lockCast("character", character.id)}
                   onUnlock={() => unlockCast("character", character.id)}
@@ -444,6 +477,7 @@ export function CastScreen() {
                 key={location.id}
                 location={location}
                 generating={jobs[location.id]?.kind === "master"}
+                quoteCny={imageCny}
                 onGenerate={() => void generateMaster(location.id)}
                 onLock={() => lockCast("location", location.id)}
                 onUnlock={() => unlockCast("location", location.id)}
@@ -459,6 +493,7 @@ export function CastScreen() {
                   key={prop.id}
                   prop={prop}
                   generating={jobs[prop.id]?.kind === "prop"}
+                  quoteCny={imageCny}
                   onGenerate={() => void generateProp(prop.id)}
                   onLock={() => lockCast("prop", prop.id)}
                   onUnlock={() => unlockCast("prop", prop.id)}

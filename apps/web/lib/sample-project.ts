@@ -13,6 +13,7 @@ const raw: ProjectInput = {
   id: "demo-night-shift",
   title: "夜班",
   version: 3,
+  budgetCny: 60,
 
   locations: [
     { id: "loc-corridor", name: "走廊", templateId: "corridor", masterShotId: "a-corridor" },

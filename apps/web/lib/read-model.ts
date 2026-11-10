@@ -192,7 +192,7 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
     version: project.version,
     spent,
     unpriced,
-    budget: options.budgetCny ?? 60,
+    budget: options.budgetCny ?? project.budgetCny,
     current,
     requote: currentShot ? requoteShot(currentShot.durationMs) : { basis: "没有当前镜" },
     requoteAll: requoteProject(ordered.map((shot) => shot.durationMs)),

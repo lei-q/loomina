@@ -165,3 +165,10 @@ describe("toStageView", () => {
     expect(artById.get("s-09")).toBe("table");
   });
 });
+
+describe("预算来自项目（ADR-0035）", () => {
+  it("budget 取项目自己的上限，不再是写死的 60", () => {
+    const view = toStageView({ ...sampleProject, budgetCny: 120 });
+    expect(view.budget).toBe(120);
+  });
+});

@@ -77,6 +77,21 @@ function plan(request: CastImageRequest): { prompt: string; label: string } {
   };
 }
 
+export type ImagePrice = {
+  model: string;
+  /** 价目表里的单价（元 / 张）；没有这个模型就不给 */
+  cny?: number;
+};
+
+/**
+ * 当前出图模型的价目（元 / 张），给"提交前报价"用：只读配置与价目表，
+ * 不调接口、不花钱。价目表里没有这个模型时 `cny` 缺省——报不出的价不编造。
+ */
+export function imagePrice(): ImagePrice {
+  const { imageModel } = treecloudEnvFrom(loadEnvFile(envPath()));
+  return { model: imageModel, cny: imageCostCny(imageModel) };
+}
+
 export async function generateCastImage(
   request: CastImageRequest,
 ): Promise<GeneratedImage> {

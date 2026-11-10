@@ -189,6 +189,11 @@ export const ProjectSchema = z.object({
   id: Id,
   title: z.string().min(1),
   version: z.number().int().nonnegative(),
+  /**
+   * 这条片子的预算上限（元）。写进项目而不是写进界面：预算是项目自己的约束，
+   * 换设备、刷新、重放事件日志之后还得是同一个数（准则 P14 / H10）。
+   */
+  budgetCny: z.number().positive().default(60),
   locations: z.array(LocationSchema).default([]),
   characters: z.array(CharacterSchema).default([]),
   props: z.array(PropSchema).default([]),

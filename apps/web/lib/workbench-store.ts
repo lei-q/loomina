@@ -13,7 +13,7 @@ import {
 import { create } from "zustand";
 import { diffEvents, getEventLog, migrateLog } from "@/lib/event-log";
 import { claimWriter } from "@/lib/writer-lock";
-import { latestTake, toStageView } from "@/lib/read-model";
+import { latestTake, spendOf, toStageView } from "@/lib/read-model";
 import { sampleProject } from "@/lib/sample-project";
 
 export type Decision = "approved" | "rejected";
@@ -42,6 +42,12 @@ type WorkbenchState = {
   storageError?: string;
   /** 另一个标签页在编辑：这里只读，改了也存不下 */
   readOnly?: boolean;
+  /** 当前出图模型的单价（元 / 张）。由服务端价目接口给，不知道就不拦（ADR-0035） */
+  imageCny?: number;
+  /** 登记价目：定妆台进页面时问一次服务端 */
+  setImagePrice: (price: { model: string; cny?: number }) => void;
+  /** 改预算上限：写一条 `project.updated`，预算改了要留痕 */
+  setBudget: (cny: number) => void;
   /** 从本地日志恢复；已经恢复过就什么都不做 */
   hydrate: () => Promise<void>;
   select: (shotId: string) => void;
@@ -120,6 +126,20 @@ async function generateOne(
 ): Promise<boolean> {
   const setJob = (value: GenerateJob | undefined) =>
     set({ jobs: { ...get().jobs, [input.key]: value } });
+
+  // 提交前拦：知道单价、且这一张会超预算，就不发请求（准则 P14 / H10）。
+  // 不知道单价时不拦——报不出价的时候宁可如实说，也不假拦。
+  const unit = get().imageCny;
+  if (unit !== undefined) {
+    const { spent } = spendOf(get().project);
+    const budget = get().project.budgetCny;
+    if (spent + unit > budget) {
+      set({
+        castError: `「${input.label}」超出预算：这一张 ¥${unit.toFixed(2)}，已花 ¥${spent.toFixed(2)} / 预算 ¥${budget.toFixed(2)}。先提高预算再生成。`,
+      });
+      return false;
+    }
+  }
 
   setJob(input.job);
   try {
@@ -233,6 +253,25 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       set({ storageError: storageMessage(error) });
     }
     ready = true;
+  },
+
+  setImagePrice: ({ cny }) => {
+    set({ imageCny: cny });
+  },
+
+  setBudget: (cny) => {
+    if (get().readOnly) return;
+    if (!(cny > 0) || !Number.isFinite(cny)) return;
+    const { project, events } = get();
+    const budgetCny = Math.round(cny * 100) / 100;
+    if (budgetCny === project.budgetCny) return;
+
+    const event: ProjectEvent = {
+      type: "project.updated",
+      at: new Date().toISOString(),
+      budgetCny,
+    };
+    set({ project: applyEvent(project, event), events: [...events, event] });
   },
 
   select: (shotId) => {

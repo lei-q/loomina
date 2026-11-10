@@ -14,6 +14,7 @@ interface Project {
   title: string;
   logline: string;
   version: number;          // 单调递增，配合版本快照
+  budgetCny: number;        // 预算上限（元），默认 60；ADR-0035
   createdAt: ISODate;
   updatedAt: ISODate;
 
@@ -331,6 +332,8 @@ interface Budget {
 }
 ```
 
+> **落地情况（ADR-0035，2026-11-10）**：只实现了项目级上限——`Project.budgetCny`（默认 60）+ 一条 `project.updated` 事件；"已花"由 `spendOf(project)` 现算，不落字段。出图在提交前拦（知道单价、且会超就一次请求都不发）。**镜头级上限、重试次数上限、`onExceed` 的降级路径都还没做。**
+
 ### 4.4 审片决定的写回（ADR-0027）
 
 审片台上只有两个动作会写数据：留用、淘汰。两者都是同一条事件：
@@ -359,6 +362,16 @@ type AssetUpdatedEvent = {
   type: "asset.updated";
   at: ISODate;
   asset: Asset;   // 按 id upsert；已锁定的资产不得被覆盖（准则 P14）
+};
+```
+
+项目级设置同样走事件（ADR-0035）。预算改了要留痕，否则"什么时候从 60 改成 19 的"说不清：
+
+```ts
+type ProjectUpdatedEvent = {
+  type: "project.updated";
+  at: ISODate;
+  budgetCny: number;   // 只接受正数；非正数在 applyEvent 里直接抛错
 };
 ```
 
