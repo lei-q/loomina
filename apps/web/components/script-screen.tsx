@@ -2,8 +2,15 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { TopBar } from "@/components/top-bar";
-import { shotLabel, toScriptView } from "@/lib/read-model";
+import { dialogueHistory, previousDialogueText, shotLabel, toScriptView } from "@/lib/read-model";
 import { useWorkbench } from "@/lib/workbench-store";
+
+/** 事件时间只到分钟：版本列表看的是先后，不是秒。 */
+function clock(at: string): string {
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return at;
+  return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+}
 
 export function ScriptScreen() {
   const project = useWorkbench((state) => state.project);
@@ -12,6 +19,7 @@ export function ScriptScreen() {
   const storageError = useWorkbench((state) => state.storageError);
   const setBudget = useWorkbench((state) => state.setBudget);
   const editDialogue = useWorkbench((state) => state.editDialogue);
+  const events = useWorkbench((state) => state.events);
 
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -170,6 +178,38 @@ export function ScriptScreen() {
                                   <p className="mt-0.5 text-[12.5px] leading-[1.8] text-text">
                                     {line.text}
                                   </p>
+                                  {(() => {
+                                    const history = dialogueHistory(events, line.id);
+                                    if (history.edits.length === 0) return null;
+                                    const prev = previousDialogueText(history);
+                                    return (
+                                      <details className="mt-1">
+                                        <summary className="tnum cursor-pointer list-none text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-muted [&::-webkit-details-marker]:hidden">
+                                          改过 {history.edits.length} 次
+                                          {prev ? ` · 上一版「${prev}」` : ""}
+                                        </summary>
+                                        <ul className="mt-1 space-y-0.5 text-[9.5px] leading-[1.7]">
+                                          {[...history.edits].reverse().map((edit, i) => (
+                                            <li key={`${edit.at}-${i}`} className="flex gap-2">
+                                              <span className="tnum shrink-0 text-muted-2">
+                                                {clock(edit.at)}
+                                              </span>
+                                              <span className="text-muted">{edit.text}</span>
+                                              <span className="tnum shrink-0 text-muted-2">
+                                                {edit.dur.toFixed(1)}s
+                                              </span>
+                                            </li>
+                                          ))}
+                                          {history.original && (
+                                            <li className="flex gap-2">
+                                              <span className="shrink-0 text-muted-2">最初</span>
+                                              <span className="text-muted-2">{history.original}</span>
+                                            </li>
+                                          )}
+                                        </ul>
+                                      </details>
+                                    );
+                                  })()}
                                 </div>
                               ),
                             )}

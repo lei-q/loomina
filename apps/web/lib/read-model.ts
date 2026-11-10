@@ -5,6 +5,7 @@ import {
   SHEET_LABELS,
   type CastStatus,
   type Project,
+  type ProjectEvent,
   type SheetView,
   type Shot,
   type Take,
@@ -646,4 +647,56 @@ function propArt(id: string): PropKind {
   if (id.includes("cup")) return "cup";
   if (id.includes("lamp")) return "lamp";
   return "generic";
+}
+
+export type DialogueRevision = {
+  at: string;
+  text: string;
+  /** 这一版估出来的配音时长，秒 */
+  dur: number;
+};
+
+export type DialogueHistory = {
+  /** 引导事件里最初的那句；日志里没有就省掉 */
+  original?: string;
+  /** 从旧到新，一次改写一条 */
+  edits: DialogueRevision[];
+};
+
+/**
+ * 一句台词被改过几次（ADR-0044 附记）。
+ *
+ * 只看日志里的 `dialogue.updated`：每一次改写就是一条，时间和新文本都在事件里；
+ * 最初那版从 `project.created` 的快照里取。不用另外存版本表。
+ */
+export function dialogueHistory(
+  events: ProjectEvent[],
+  lineId: string,
+): DialogueHistory {
+  let original: string | undefined;
+  const first = events[0];
+  if (first?.type === "project.created") {
+    original = first.project.dialogue.find((line) => line.id === lineId)?.text;
+  }
+
+  const edits: DialogueRevision[] = [];
+  for (const event of events) {
+    if (event.type !== "dialogue.updated") continue;
+    if (event.lineId !== lineId) continue;
+    const text = event.patch.text;
+    if (text === undefined) continue;
+    edits.push({
+      at: event.at,
+      text,
+      dur: (event.patch.durationMs ?? 0) / 1000,
+    });
+  }
+
+  return { original, edits };
+}
+
+/** 上一版的文本：改过一次就是最初那版，改过多次就是倒数第二版的文本。 */
+export function previousDialogueText(history: DialogueHistory): string | undefined {
+  if (history.edits.length === 0) return undefined;
+  return history.edits[history.edits.length - 2]?.text ?? history.original;
 }

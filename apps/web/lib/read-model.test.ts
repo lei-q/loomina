@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { ProjectSchema, type ProjectInput } from "@loomina/ir";
-import { filterKeyframeCells, keyframeTally, toCastView, toKeyframeView, toScriptView, toStageView } from "./read-model";
+import {
+  dialogueHistory,
+  filterKeyframeCells,
+  keyframeTally,
+  previousDialogueText,
+  toCastView,
+  toKeyframeView,
+  toScriptView,
+  toStageView,
+} from "./read-model";
 import { sampleProject } from "./sample-project";
 
 describe("toStageView", () => {
@@ -408,5 +417,40 @@ describe("剧本页读模型（只读）", () => {
     expect(s05.lines).toEqual([]);
     // s-05 是第二场的第一镜，整片是第五镜
     expect(s05.no).toBe(5);
+  });
+});
+
+describe("台词版本（ADR-0044 附记）", () => {
+  const at = (h: number) => `2026-11-10T${String(h).padStart(2, "0")}:00:00+08:00`;
+  const events = [
+    { type: "project.created" as const, at: at(0), project: sampleProject },
+    { type: "dialogue.updated" as const, at: at(9), lineId: "d-01", patch: { text: "你早就知道了。", durationMs: 2100 } },
+    { type: "dialogue.updated" as const, at: at(10), lineId: "d-01", patch: { text: "你早就知道了吧。", durationMs: 2400 } },
+    { type: "dialogue.updated" as const, at: at(11), lineId: "d-02", patch: { text: "知道了又怎样呢。", durationMs: 2400 } },
+  ];
+
+  it("最初一版从引导事件取，改写按先后排好", () => {
+    const history = dialogueHistory(events, "d-01");
+    expect(history.original).toBe("你早就知道，对吧。");
+    expect(history.edits.map((edit) => edit.text)).toEqual([
+      "你早就知道了。",
+      "你早就知道了吧。",
+    ]);
+    expect(history.edits[0]?.dur).toBe(2.1);
+  });
+
+  it("上一版：改过一次是最初那版，改过多次是倒数第二版", () => {
+    expect(previousDialogueText(dialogueHistory(events.slice(0, 2), "d-01"))).toBe(
+      "你早就知道，对吧。",
+    );
+    expect(previousDialogueText(dialogueHistory(events, "d-01"))).toBe("你早就知道了。");
+  });
+
+  it("没改过的台词没有版本，别人的改写不算进来", () => {
+    const untouched = dialogueHistory(events, "d-03");
+    expect(untouched.original).toBe("灯是我关的。");
+    expect(untouched.edits).toEqual([]);
+    expect(previousDialogueText(untouched)).toBeUndefined();
+    expect(dialogueHistory(events, "d-01").edits).toHaveLength(2);
   });
 });
