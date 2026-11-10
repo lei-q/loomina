@@ -1,14 +1,26 @@
+"use client";
+
 import { Scene } from "@/components/scene";
-import { CheckIcon, RedoIcon } from "@/components/icons";
+import { CheckIcon, CrossIcon, RedoIcon } from "@/components/icons";
 import type { StageShot, StageView } from "@/lib/read-model";
+import type { Decision } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
 
-function Cell({ shot, current }: { shot: StageShot; current: boolean }) {
+function Cell({
+  shot,
+  current,
+  onSelect,
+}: {
+  shot: StageShot;
+  current: boolean;
+  onSelect: (shotId: string) => void;
+}) {
   return (
     <button
       type="button"
       title={`${shot.no} · ${shot.action}`}
       aria-current={current ? "true" : undefined}
+      onClick={() => onSelect(shot.id)}
       className={cn(
         "relative aspect-[9/16] h-[80px] shrink-0 overflow-hidden rounded-[1px] border border-white/[.06] bg-surface",
         "transition-opacity duration-[var(--dur)] hover:opacity-100",
@@ -30,8 +42,15 @@ function Cell({ shot, current }: { shot: StageShot; current: boolean }) {
   );
 }
 
-export function ReelBar({ view }: { view: StageView }) {
+export type ReelBarProps = {
+  view: StageView;
+  onSelect: (shotId: string) => void;
+  onDecide: (status: Decision) => void;
+};
+
+export function ReelBar({ view, onSelect, onDecide }: ReelBarProps) {
   const current = view.shots[view.current]!;
+  const decidable = !current.locked && current.take !== undefined;
 
   return (
     <footer className="shrink-0 border-t border-line">
@@ -39,7 +58,12 @@ export function ReelBar({ view }: { view: StageView }) {
       <div className="reel-scroll h-[104px] overflow-x-auto px-5">
         <div className="mx-auto flex h-full w-max items-center gap-[5px]">
           {view.shots.map((shot) => (
-            <Cell key={shot.no} shot={shot} current={shot.no === current.no} />
+            <Cell
+              key={shot.id}
+              shot={shot}
+              current={shot.id === current.id}
+              onSelect={onSelect}
+            />
           ))}
         </div>
       </div>
@@ -56,22 +80,49 @@ export function ReelBar({ view }: { view: StageView }) {
           <kbd className="tnum shrink-0 text-[9px] text-muted-2">⌘⏎</kbd>
         </label>
 
-        <button
-          type="button"
-          className="flex items-center gap-1.5 rounded-token border border-line px-3 py-2 text-[12px] text-text transition-colors duration-[var(--dur)] hover:border-line-2"
-        >
-          <RedoIcon className="h-3.5 w-3.5" />
-          重做
-          <span className="tnum text-[9px] text-muted">¥{view.requote.toFixed(2)}</span>
-        </button>
+        {current.locked ? (
+          <span className="tnum shrink-0 px-1 text-[10.5px] text-muted-2">已锁定 · 只读</span>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={() => onDecide("rejected")}
+              disabled={!decidable}
+              className={cn(
+                "flex items-center gap-1.5 rounded-token border border-line px-3 py-2 text-[12px] transition-colors duration-[var(--dur)]",
+                "text-muted hover:border-line-2 hover:text-text",
+                "disabled:pointer-events-none disabled:opacity-40",
+              )}
+            >
+              <CrossIcon className="h-3.5 w-3.5" />
+              淘汰
+            </button>
 
-        <button
-          type="button"
-          className="flex items-center gap-1.5 rounded-token bg-text px-3 py-2 text-[12px] text-bg transition-opacity duration-[var(--dur)] hover:opacity-85"
-        >
-          <CheckIcon className="h-3.5 w-3.5" />
-          留用
-        </button>
+            <button
+              type="button"
+              disabled
+              title="重做要接生成，还没通"
+              className="flex items-center gap-1.5 rounded-token border border-line px-3 py-2 text-[12px] text-text opacity-40 disabled:pointer-events-none"
+            >
+              <RedoIcon className="h-3.5 w-3.5" />
+              重做
+              <span className="tnum text-[9px] text-muted">¥{view.requote.toFixed(2)}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onDecide("approved")}
+              disabled={!decidable}
+              className={cn(
+                "flex items-center gap-1.5 rounded-token bg-text px-3 py-2 text-[12px] text-bg transition-opacity duration-[var(--dur)] hover:opacity-85",
+                "disabled:pointer-events-none disabled:opacity-40",
+              )}
+            >
+              <CheckIcon className="h-3.5 w-3.5" />
+              留用
+            </button>
+          </>
+        )}
       </div>
     </footer>
   );

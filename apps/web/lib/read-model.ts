@@ -14,6 +14,8 @@ export type StageShot = {
   state: ShotState;
   /** 当前用的是第几版 take，没有 take 时为空 */
   take?: number;
+  /** 锁定的镜头在审片台里只读 */
+  locked: boolean;
 };
 
 export type StageView = {
@@ -53,7 +55,7 @@ function shotState(shot: Shot, take: Take | undefined): ShotState {
 }
 
 /** 同一个镜头有多条 take 时，按生成时间取最新的一条。 */
-function latestTake(shot: Shot, takesById: Map<string, Take>): Take | undefined {
+export function latestTake(shot: Shot, takesById: Map<string, Take>): Take | undefined {
   let latest: Take | undefined;
   for (const id of shot.takeIds) {
     const take = takesById.get(id);
@@ -121,6 +123,7 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
       dur: shot.durationMs / 1000,
       state: shotState(shot, take),
       take: take ? shot.takeIds.indexOf(take.id) + 1 : undefined,
+      locked: shot.locked ?? false,
     };
   });
 

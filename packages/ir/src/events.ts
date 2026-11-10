@@ -13,7 +13,14 @@ import type { Id, Project, Shot, Take } from "./schema";
 export type ProjectEvent =
   | { type: "project.created"; at: string; project: Project }
   | { type: "shot.updated"; at: string; shotId: Id; patch: Partial<Shot> }
-  | { type: "take.added"; at: string; take: Take };
+  | { type: "take.added"; at: string; take: Take }
+  | {
+      type: "take.updated";
+      at: string;
+      takeId: Id;
+      /** 只允许改生成结果的状态与元数据，id 与 shotId 不可改 */
+      patch: Partial<Omit<Take, "id" | "shotId">>;
+    };
 
 export function applyEvent(
   current: Project | null,
@@ -29,6 +36,17 @@ export function applyEvent(
         shot.id === event.shotId ? { ...shot, ...event.patch } : shot,
       );
       return { ...current, shots };
+    }
+
+    case "take.updated": {
+      if (!current) throw new Error("take.updated 之前必须有 project.created");
+      if (!current.takes.some((take) => take.id === event.takeId)) {
+        throw new Error(`take.updated 指向不存在的 take: ${event.takeId}`);
+      }
+      const takes = current.takes.map((take) =>
+        take.id === event.takeId ? { ...take, ...event.patch } : take,
+      );
+      return { ...current, takes };
     }
 
     case "take.added": {

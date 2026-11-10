@@ -64,3 +64,34 @@ describe("事件日志", () => {
     ).toThrow();
   });
 });
+
+describe("take.updated", () => {
+  const approve: ProjectEvent = {
+    type: "take.updated",
+    at: AT,
+    takeId: "take-1",
+    patch: { status: "approved" },
+  };
+
+  it("只改目标 take 的状态", () => {
+    const project = load();
+    const result = rebuild([created(project), approve]);
+    const touched = result.takes.find((take) => take.id === "take-1");
+
+    expect(touched?.status).toBe("approved");
+    expect(result.takes.filter((take) => take.id !== "take-1")).toEqual(
+      project.takes.filter((take) => take.id !== "take-1"),
+    );
+    expect(result.shots).toEqual(project.shots);
+  });
+
+  it("指向不存在的 take 时拒绝，不静默吞掉", () => {
+    const project = load();
+    expect(() =>
+      rebuild([
+        created(project),
+        { ...approve, takeId: "take-missing" },
+      ]),
+    ).toThrow(/take-missing/);
+  });
+});

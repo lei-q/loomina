@@ -4,8 +4,8 @@ type IconProps = { className?: string };
 export function Logomark({ className }: IconProps) {
   return (
     <svg viewBox="0 0 40 40" fill="none" className={className} aria-hidden="true">
-      <rect x="7" y="3" width="26" height="34" rx="1" stroke="currentColor" strokeWidth="1.2" opacity=".38" />
-      <path d="M14 3v34M26 3v34" stroke="currentColor" strokeWidth="1.2" opacity=".55" />
+      <rect x="7" y="3" width="26" height="34" rx="1" stroke="currentColor" strokeWidth="1.4" opacity=".5" />
+      <path d="M14 3v34M26 3v34" stroke="currentColor" strokeWidth="1.4" opacity=".7" />
       <path d="M20 3v34" stroke="currentColor" strokeWidth="3" />
     </svg>
   );
@@ -26,6 +26,14 @@ export function CheckIcon({ className = iconClass }: IconProps) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
       <path d="M4.5 12.5l4.8 4.8L19.5 7" />
+    </svg>
+  );
+}
+
+export function CrossIcon({ className = iconClass }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" className={className} aria-hidden="true">
+      <path d="M7 7l10 10M17 7L7 17" />
     </svg>
   );
 }

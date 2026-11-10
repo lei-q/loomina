@@ -314,6 +314,27 @@ interface Budget {
 }
 ```
 
+### 4.4 审片决定的写回（ADR-0027）
+
+审片台上只有两个动作会写数据：留用、淘汰。两者都是同一条事件：
+
+```ts
+type TakeUpdatedEvent = {
+  type: "take.updated";
+  at: ISODate;
+  takeId: ID;
+  // 只允许改生成结果的状态与元数据；id 与 shotId 不可改
+  patch: Partial<Omit<Take, "id" | "shotId">> & { status?: TakeStatus };
+};
+
+type TakeStatus = "draft" | "approved" | "rejected";
+```
+
+- **选中看哪一格不是事件**，只是界面状态。
+- 一个镜头有多条 take 时，审片台展示最新一条（按 `provenance.createdAt`）并只改这一条；旧版本原样留在日志与列表里。
+- 锁定（`shot.locked`）的镜头在审片台只读；要改必须先解锁，解锁本身要留痕。
+- `takeId` 不存在时事件应用失败并报错，不静默跳过。
+
 ## 4.5 分镜规划与一致性
 
 ### Beat 与覆盖率
@@ -531,6 +552,7 @@ interface AILabel {
 14. **`CameraPlacement` 必须遵守动作轴线**，除非该镜被显式标记为过渡镜（V3）。
 15. **Take 进入 approved 前必须有 `ConsistencyReport`**，且 verdict 不为 fail。
 16. `Blocking.axis` 变更必须触发同场所有机位的重新校验。
+17. **审片台上的 take 决议只能通过 `take.updated` 写入**；切换当前镜、展开画面等浏览动作不得产生事件（ADR-0027）。
 
 ## 8. 与 OTIO 的映射
 
