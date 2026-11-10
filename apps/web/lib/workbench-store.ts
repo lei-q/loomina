@@ -4,9 +4,11 @@ import {
   applyEvent,
   castReadiness,
   rebuild,
+  REFERENCE_IMAGES_MAX,
   SHEET_ANGLES,
   shotAnchors,
   type ApprovalTargetType,
+  type Asset,
   type Character,
   type Location,
   type Project,
@@ -151,6 +153,11 @@ type WorkbenchState = {
   addMustNotChange: (characterId: string, text: string) => boolean;
   /** 划掉一条「不许变」：同上（ADR-0074） */
   removeMustNotChange: (characterId: string, text: string) => boolean;
+  /** 挂一张参考图：贴地址，建资产，写进 referenceImages（ADR-0079） */
+  addCharacterReference: (characterId: string, uri: string) => boolean;
+  removeCharacterReference: (characterId: string, assetId: string) => boolean;
+  addPropReference: (propId: string, uri: string) => boolean;
+  removePropReference: (propId: string, assetId: string) => boolean;
   /** 加一件道具：一条 `prop.added`（ADR-0072） */
   addProp: (name: string, description?: string) => string | undefined;
   /** 改道具名字 / 描述：一条 `prop.updated`（ADR-0072） */
@@ -210,6 +217,39 @@ const MUST_NOT_CHANGE_MAX = 60;
 
 /** 「不许变」条数上限：同上（ADR-0074） */
 const MUST_NOT_CHANGE_COUNT_MAX = 20;
+
+/** 手挂参考图的地址上限：data URI 可能很长，留到 400 KB（ADR-0079） */
+const REFERENCE_URI_MAX = 400_000;
+
+/**
+ * 手挂的参考图：现在没有上传通道，先收一个图床 / data URI 地址（ADR-0079）。
+ * 返回 Asset 或一句人话；id 在本项目里生成。
+ */
+function makeReferenceAsset(
+  rawUri: string,
+  assets: Asset[],
+  at: string,
+): { asset?: Asset; error?: string } {
+  const uri = rawUri.trim();
+  if (!uri) return { error: "先贴一张图的地址。" };
+  if (!/^(https?:\/\/|data:image\/)/i.test(uri)) {
+    return { error: "参考图要先有地址：http(s):// 或 data:image/ 开头。" };
+  }
+  if (uri.length > REFERENCE_URI_MAX) return { error: "地址太长了：400 KB 以内。" };
+  let id = `a-ref-${Date.now().toString(36)}`;
+  while (assets.some((asset) => asset.id === id)) id += "x";
+  const mime = /^data:(image\/[a-z0-9.+-]+)[;,]/i.exec(uri)?.[1];
+  return {
+    asset: {
+      id,
+      kind: "image",
+      source: "upload",
+      uri,
+      ...(mime ? { mime } : {}),
+      createdAt: at,
+    },
+  };
+}
 
 const initialEvents = bootstrap(sampleProject);
 const initialView = toStageView(sampleProject);
@@ -1408,6 +1448,124 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     return true;
   },
 
+  addCharacterReference: (characterId, rawUri) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const character = project.characters.find((item) => item.id === characterId);
+    if (!character) {
+      set({ castError: "找不到这个人物。" });
+      return false;
+    }
+    if (character.referenceImages.length >= REFERENCE_IMAGES_MAX) {
+      set({ castError: `参考图最多 ${REFERENCE_IMAGES_MAX} 张：再多会把提示词挤爆。` });
+      return false;
+    }
+    const at = new Date().toISOString();
+    const { asset, error } = makeReferenceAsset(rawUri, project.assets, at);
+    if (!asset) {
+      set({ castError: error ?? "这张图挂不上。" });
+      return false;
+    }
+    const existing = project.assets.filter((item) => character.referenceImages.includes(item.id));
+    if (existing.some((item) => item.uri === asset.uri)) {
+      set({ castError: "这张图已经挂过了。" });
+      return false;
+    }
+    const written: ProjectEvent[] = [
+      { type: "asset.updated", at, asset },
+      {
+        type: "character.updated",
+        at,
+        characterId,
+        patch: { referenceImages: [...character.referenceImages, asset.id] },
+      },
+    ];
+    set({
+      project: written.reduce(applyEvent, project),
+      events: [...events, ...written],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  removeCharacterReference: (characterId, assetId) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const character = project.characters.find((item) => item.id === characterId);
+    if (!character || !character.referenceImages.includes(assetId)) return false;
+    const event: ProjectEvent = {
+      type: "character.updated",
+      at: new Date().toISOString(),
+      characterId,
+      patch: { referenceImages: character.referenceImages.filter((id) => id !== assetId) },
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  addPropReference: (propId, rawUri) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const prop = project.props.find((item) => item.id === propId);
+    if (!prop) {
+      set({ castError: "找不到这件道具。" });
+      return false;
+    }
+    if (prop.referenceImages.length >= REFERENCE_IMAGES_MAX) {
+      set({ castError: `参考图最多 ${REFERENCE_IMAGES_MAX} 张：再多会把提示词挤爆。` });
+      return false;
+    }
+    const at = new Date().toISOString();
+    const { asset, error } = makeReferenceAsset(rawUri, project.assets, at);
+    if (!asset) {
+      set({ castError: error ?? "这张图挂不上。" });
+      return false;
+    }
+    const existing = project.assets.filter((item) => prop.referenceImages.includes(item.id));
+    if (existing.some((item) => item.uri === asset.uri)) {
+      set({ castError: "这张图已经挂过了。" });
+      return false;
+    }
+    const written: ProjectEvent[] = [
+      { type: "asset.updated", at, asset },
+      {
+        type: "prop.updated",
+        at,
+        propId,
+        patch: { referenceImages: [...prop.referenceImages, asset.id] },
+      },
+    ];
+    set({
+      project: written.reduce(applyEvent, project),
+      events: [...events, ...written],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  removePropReference: (propId, assetId) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const prop = project.props.find((item) => item.id === propId);
+    if (!prop || !prop.referenceImages.includes(assetId)) return false;
+    const event: ProjectEvent = {
+      type: "prop.updated",
+      at: new Date().toISOString(),
+      propId,
+      patch: { referenceImages: prop.referenceImages.filter((id) => id !== assetId) },
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
   addProp: (name, description) => {
     if (get().readOnly) return undefined;
     const { project, events } = get();
@@ -2137,11 +2295,14 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     const prop = project.props.find((item) => item.id === propId);
     if (!prop) return;
     if (isLocked(project, "prop", propId)) return;
-    const assetId = prop.referenceImages[0];
-    if (!assetId) {
-      set({ castError: `「${prop.name}」还没有参考图的资产位` });
+    if (prop.referenceImages.length >= REFERENCE_IMAGES_MAX) {
+      set({ castError: `参考图最多 ${REFERENCE_IMAGES_MAX} 张：再多会把提示词挤爆。` });
       return;
     }
+
+    // 每生成一张就往后挂一张，不覆盖已有的参考图（ADR-0079）
+    let assetId = `a-ref-${Date.now().toString(36)}`;
+    while (project.assets.some((item) => item.id === assetId)) assetId += "x";
 
     set({ castError: undefined });
     await generateOne(
@@ -2155,6 +2316,12 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
           kind: "prop",
           prop: { name: prop.name, description: prop.description },
         },
+        after: (id, at) => ({
+          type: "prop.updated",
+          at,
+          propId,
+          patch: { referenceImages: [...prop.referenceImages, id] },
+        }),
       },
     );
   },

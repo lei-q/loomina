@@ -14,6 +14,7 @@ import {
   type CastCharacterView,
   type CastLocationView,
   type CastPropView,
+  type CastReference,
 } from "@/lib/read-model";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
@@ -62,6 +63,125 @@ function StatusChip({
   return <span className="tnum text-[9px] text-muted">可锁定</span>;
 }
 
+/** 参考图一排：三视图之外的表情 / 服装 / 手挂图（ADR-0079） */
+function ReferenceStrip({
+  references,
+  startAt,
+  readOnly,
+  emptyText,
+  onAdd,
+  onRemove,
+}: {
+  references: CastReference[];
+  /** 第一张叫 ref 几：人物从 1 数，道具的第一张已经在大图上 */
+  startAt: number;
+  readOnly: boolean;
+  emptyText?: string;
+  onAdd: (uri: string) => boolean;
+  onRemove: (assetId: string) => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  const submit = () => {
+    if (!onAdd(draft)) return;
+    setAdding(false);
+    setDraft("");
+  };
+
+  return (
+    <div className="max-w-[430px]">
+      <p className="tnum text-[9px] tracking-[.14em] text-muted-2">参考</p>
+      <div className="mt-1.5 flex flex-wrap gap-2">
+        {references.map((reference, index) => (
+          <figure key={reference.assetId} className="w-[72px]">
+            <div className="relative aspect-[9/16] overflow-hidden rounded-[1px] border border-line bg-[#0f1013]">
+              {reference.uri ? (
+                <img
+                  src={reference.uri}
+                  alt={`参考图 ${startAt + index}`}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <span className="absolute inset-0 grid place-items-center text-[9px] text-muted-2">
+                  无图
+                </span>
+              )}
+              {!readOnly && (
+                <button
+                  type="button"
+                  aria-label={`摘掉第 ${startAt + index} 张参考图`}
+                  title="摘掉：图还留在资产里，可以再挂回来"
+                  onClick={() => onRemove(reference.assetId)}
+                  className="absolute right-0.5 top-0.5 grid h-3.5 w-3.5 place-items-center rounded-[1px] bg-bg/80 text-[9px] leading-none text-muted-2 transition-colors duration-[var(--dur)] hover:text-pick"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+            <figcaption className="tnum mt-1 text-[9px] text-muted-2">ref {startAt + index}</figcaption>
+          </figure>
+        ))}
+        {!readOnly && !adding && (
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            title="贴一张图的地址挂进来：http(s):// 或 data:image/ 开头"
+            className="grid aspect-[9/16] w-[72px] place-items-center rounded-[1px] border border-dashed border-line-2 text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:border-line hover:text-text"
+          >
+            ＋ 挂一张
+          </button>
+        )}
+      </div>
+      {adding && (
+        <form
+          className="mt-2 flex flex-wrap items-center gap-1.5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submit();
+          }}
+        >
+          <input
+            type="text"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setAdding(false);
+                setDraft("");
+              }
+            }}
+            autoFocus
+            aria-label="参考图地址"
+            placeholder="https://… 或 data:image/…"
+            className="w-[280px] rounded-token border border-line-2 bg-surface px-2 py-1 text-[10.5px] text-text placeholder:text-muted-2 focus:border-pick focus:outline-none"
+          />
+          <button
+            type="submit"
+            className="rounded-token border border-line-2 px-2 py-0.5 text-[10px] text-text transition-colors duration-[var(--dur)] hover:border-pick hover:text-pick"
+          >
+            挂上
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setAdding(false);
+              setDraft("");
+            }}
+            className="rounded-token border border-line px-2 py-0.5 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            取消
+          </button>
+          <span className="text-[9px] text-muted-2">最多 8 张；这里还没有上传，先贴地址</span>
+        </form>
+      )}
+      {emptyText && references.length === 0 && !adding && (
+        <p className="mt-1 text-[9px] leading-[1.5] text-muted-2">{emptyText}</p>
+      )}
+    </div>
+  );
+}
+
 function CharacterRow({
   character,
   readOnly,
@@ -74,6 +194,8 @@ function CharacterRow({
   onRemove,
   onAddMustNotChange,
   onRemoveMustNotChange,
+  onAddReference,
+  onRemoveReference,
 }: {
   character: CastCharacterView;
   readOnly: boolean;
@@ -92,6 +214,9 @@ function CharacterRow({
   onAddMustNotChange: (text: string) => boolean;
   /** 划掉一条「不许变」（ADR-0074） */
   onRemoveMustNotChange: (text: string) => boolean;
+  /** 挂一张参考图：成功返回 true，输入框据此收起（ADR-0079） */
+  onAddReference: (uri: string) => boolean;
+  onRemoveReference: (assetId: string) => void;
 }) {
   const missing = character.panels.filter((panel) => !panel.assetId).length;
   const [editing, setEditing] = useState(false);
@@ -302,8 +427,9 @@ function CharacterRow({
           )}
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          {character.panels.map((panel) => (
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap gap-2">
+            {character.panels.map((panel) => (
             <figure key={panel.angle} className="w-[96px]">
               <div
                 className={cn(
@@ -332,7 +458,16 @@ function CharacterRow({
               </div>
               <figcaption className="tnum mt-1.5 text-[9px] text-muted-2">{panel.label}</figcaption>
             </figure>
-          ))}
+            ))}
+          </div>
+          <ReferenceStrip
+            references={character.references}
+            startAt={1}
+            readOnly={readOnly}
+            emptyText="还没有参考图：表情表、服装变体、手拿道具都挂在这里。"
+            onAdd={onAddReference}
+            onRemove={onRemoveReference}
+          />
         </div>
 
         <div className="ml-auto flex w-[120px] shrink-0 flex-col items-end gap-2">
@@ -728,6 +863,8 @@ function PropRow({
   onUnlock,
   onEdit,
   onRemove,
+  onAddReference,
+  onRemoveReference,
 }: {
   prop: CastPropView;
   readOnly: boolean;
@@ -742,6 +879,9 @@ function PropRow({
   onEdit: (name: string, description: string) => boolean;
   /** 删掉这件道具：成功返回 true（ADR-0073） */
   onRemove: () => boolean;
+  /** 挂一张参考图：成功返回 true（ADR-0079） */
+  onAddReference: (uri: string) => boolean;
+  onRemoveReference: (assetId: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -884,9 +1024,28 @@ function PropRow({
                 生成中…
               </span>
             )}
+            {!readOnly && prop.referenceAssetId && (
+              <button
+                type="button"
+                aria-label="摘掉第 1 张参考图"
+                title="摘掉：图还留在资产里，可以再挂回来"
+                onClick={() => onRemoveReference(prop.referenceAssetId!)}
+                className="absolute right-0.5 top-0.5 grid h-3.5 w-3.5 place-items-center rounded-[1px] bg-bg/80 text-[9px] leading-none text-muted-2 transition-colors duration-[var(--dur)] hover:text-pick"
+              >
+                ×
+              </button>
+            )}
           </div>
           <figcaption className="tnum mt-1.5 text-[9px] text-muted-2">ref 1</figcaption>
         </figure>
+
+        <ReferenceStrip
+          references={prop.references.slice(1)}
+          startAt={2}
+          readOnly={readOnly}
+          onAdd={onAddReference}
+          onRemove={onRemoveReference}
+        />
 
         <div className="max-w-[38ch] self-center">
           <p className="text-[11px] leading-[1.6] text-muted-2">
@@ -958,6 +1117,10 @@ export function CastScreen() {
   const editLocation = useWorkbench((state) => state.editLocation);
   const removeLocation = useWorkbench((state) => state.removeLocation);
   const addCharacter = useWorkbench((state) => state.addCharacter);
+  const addCharacterReference = useWorkbench((state) => state.addCharacterReference);
+  const removeCharacterReference = useWorkbench((state) => state.removeCharacterReference);
+  const addPropReference = useWorkbench((state) => state.addPropReference);
+  const removePropReference = useWorkbench((state) => state.removePropReference);
   const editCharacter = useWorkbench((state) => state.editCharacter);
   const addProp = useWorkbench((state) => state.addProp);
   const editProp = useWorkbench((state) => state.editProp);
@@ -1164,6 +1327,10 @@ export function CastScreen() {
                   onRemoveMustNotChange={(text) =>
                     removeMustNotChange(character.id, text)
                   }
+                  onAddReference={(uri) => addCharacterReference(character.id, uri)}
+                  onRemoveReference={(assetId) =>
+                    removeCharacterReference(character.id, assetId)
+                  }
                 />
               );
             })}
@@ -1348,6 +1515,8 @@ export function CastScreen() {
                   onUnlock={() => unlockCast("prop", prop.id)}
                   onEdit={(name, description) => editProp(prop.id, { name, description })}
                   onRemove={() => removeProp(prop.id)}
+                  onAddReference={(uri) => addPropReference(prop.id, uri)}
+                  onRemoveReference={(assetId) => removePropReference(prop.id, assetId)}
                 />
               ))}
             </section>

@@ -185,7 +185,7 @@ describe("生成定妆资产（ADR-0031 / ADR-0032）", () => {
     vi.unstubAllGlobals();
   });
 
-  it("场景主镜与道具参考图各写一条 asset.updated", async () => {
+  it("场景主镜写一条 asset.updated；道具参考图往后挂一张", async () => {
     const calls = stub(
       (body) =>
         new Response(
@@ -206,11 +206,16 @@ describe("生成定妆资产（ADR-0031 / ADR-0032）", () => {
     expect(
       state().project.assets.find((item) => item.id === "a-corridor")?.uri,
     ).toContain("master");
-    expect(state().project.assets.find((item) => item.id === "a-cup")?.uri).toContain(
-      "prop",
-    );
+    // 道具不再覆盖第一张，而是往后挂（ADR-0079）
+    const cup = state().project.props.find((item) => item.id === "p-cup")!;
+    expect(cup.referenceImages[0]).toBe("a-cup");
+    expect(cup.referenceImages).toHaveLength(2);
+    const generated = state().project.assets.find(
+      (item) => item.id === cup.referenceImages[1],
+    )!;
+    expect(generated.uri).toContain("prop");
+    expect(generated.costCny).toBe(0.12);
     expect(state().jobs["loc-corridor"]).toBeUndefined();
-    expect(state().project.assets.find((item) => item.id === "a-cup")?.costCny).toBe(0.12);
     expect(state().jobs["p-cup"]).toBeUndefined();
 
     vi.unstubAllGlobals();
@@ -2296,6 +2301,75 @@ describe("出场顺序（ADR-0077）", () => {
       type: "shot.updated",
       patch: { propIds: ["p-cup", "p-lamp"] },
     });
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+});
+
+describe("参考图多张与手动挂（ADR-0079）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  const svg = (mark: string) =>
+    `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg'>${mark}</svg>`;
+
+  it("人物：挂一张写资产与 character.updated 两条事件", () => {
+    const before = state().project.characters.find((item) => item.id === "c-lin")!;
+    expect(before.referenceImages).toHaveLength(1);
+    const count = state().events.length;
+
+    expect(state().addCharacterReference("c-lin", svg("a"))).toBe(true);
+    const after = state().project.characters.find((item) => item.id === "c-lin")!;
+    expect(after.referenceImages).toHaveLength(2);
+    expect(state().events).toHaveLength(count + 2);
+    expect(state().events.at(-2)).toMatchObject({ type: "asset.updated", asset: { source: "upload" } });
+    expect(state().events.at(-1)).toMatchObject({ type: "character.updated" });
+    expect(rebuild(state().events)).toEqual(state().project);
+
+    const added = after.referenceImages[1]!;
+    expect(state().project.assets.find((item) => item.id === added)?.mime).toBe("image/svg+xml");
+    expect(state().removeCharacterReference("c-lin", added)).toBe(true);
+    expect(
+      state().project.characters.find((item) => item.id === "c-lin")!.referenceImages,
+    ).toHaveLength(1);
+  });
+
+  it("地址不合法、重复、超过 8 张都拒绝且不写事件", () => {
+    const count = state().events.length;
+    expect(state().addCharacterReference("c-lin", "   ")).toBe(false);
+    expect(state().addCharacterReference("c-lin", "ftp://x/y.png")).toBe(false);
+    expect(state().castError).toContain("http(s)://");
+
+    expect(state().addCharacterReference("c-lin", svg("x"))).toBe(true);
+    const afterOne = state().events.length;
+    expect(state().addCharacterReference("c-lin", svg("x"))).toBe(false);
+    expect(state().castError).toContain("已经挂过了");
+    expect(state().events).toHaveLength(afterOne);
+
+    // 原有 1 张 + x 1 张 = 2，再挂 6 张到上限 8；第 7 张被拒
+    for (let i = 0; i < 6; i += 1) {
+      expect(state().addCharacterReference("c-lin", svg(`n${i}`))).toBe(true);
+    }
+    expect(state().addCharacterReference("c-lin", svg("too-many"))).toBe(false);
+    expect(state().castError).toContain("最多 8 张");
+    const lin = state().project.characters.find((item) => item.id === "c-lin")!;
+    expect(lin.referenceImages).toHaveLength(8);
+  });
+
+  it("道具：挂上再摘掉；只读时不动", () => {
+    const refs = () =>
+      state().project.props.find((item) => item.id === "p-lamp")!.referenceImages;
+    expect(refs()).toEqual(["a-lamp"]);
+    expect(state().addPropReference("p-lamp", svg("prop"))).toBe(true);
+    expect(refs()).toHaveLength(2);
+
+    const added = refs()[1]!;
+    useWorkbench.setState({ readOnly: true });
+    expect(state().removePropReference("p-lamp", added)).toBe(false);
+    useWorkbench.setState({ readOnly: false });
+    expect(state().removePropReference("p-lamp", added)).toBe(true);
+    expect(refs()).toEqual(["a-lamp"]);
     expect(rebuild(state().events)).toEqual(state().project);
   });
 });

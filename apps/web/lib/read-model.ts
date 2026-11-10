@@ -769,12 +769,17 @@ export type CastPanel = {
   uri?: string;
 };
 
+/** 一张参考图：资产 id 与真图；示例素材没有 uri，界面画剪影（ADR-0079） */
+export type CastReference = { assetId: string; uri?: string };
+
 export type CastCharacterView = {
   id: string;
   name: string;
   appearance: string;
   mustNotChange: string[];
   panels: CastPanel[];
+  /** 三视图之外的参考图：表情表、服装变体、手动挂进来的图（ADR-0079） */
+  references: CastReference[];
   status: CastStatus;
   /** 有近景的角色必须四格齐全才能锁 */
   required: boolean;
@@ -812,6 +817,8 @@ export type CastPropView = {
   referenceAssetId?: string;
   /** 参考图的真图（data URI）；示例素材为空，界面画剪影 */
   referenceUri?: string;
+  /** 全部参考图，第一张同时是 referenceAssetId（ADR-0079） */
+  references: CastReference[];
   lockedAt?: string;
 };
 
@@ -853,6 +860,10 @@ export function toCastView(project: Project, events?: ProjectEvent[]): CastView 
           label: SHEET_LABELS[angle],
           assetId: character.sheet[angle],
           uri: assetById.get(character.sheet[angle] ?? "")?.uri,
+        })),
+        references: character.referenceImages.map((id) => ({
+          assetId: id,
+          uri: assetById.get(id)?.uri,
         })),
         status: item.status,
         required: item.required,
@@ -897,6 +908,10 @@ export function toCastView(project: Project, events?: ProjectEvent[]): CastView 
         required: item.required,
         referenceAssetId: prop.referenceImages[0],
         referenceUri: assetById.get(prop.referenceImages[0] ?? "")?.uri,
+        references: prop.referenceImages.map((id) => ({
+          assetId: id,
+          uri: assetById.get(id)?.uri,
+        })),
         lockedAt:
           item.approval?.status === "approved" ? item.approval.approvedAt : undefined,
       },

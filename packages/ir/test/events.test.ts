@@ -1130,3 +1130,63 @@ describe("character.updated · mustNotChange（ADR-0074）", () => {
     ).toThrow(/超过 20 条/);
   });
 });
+
+describe("referenceImages（ADR-0079）", () => {
+  it("人物：整份替换参考图，重放一致", () => {
+    const project = load();
+    const events = [
+      created(project),
+      {
+        type: "character.updated" as const,
+        at: AT,
+        characterId: "c-lin",
+        patch: { referenceImages: ["a-zhou-front", "a-lin-34"] },
+      },
+    ];
+    const next = rebuild(events);
+    const lin = next.characters.find((item) => item.id === "c-lin")!;
+    expect(lin.referenceImages).toEqual(["a-zhou-front", "a-lin-34"]);
+    expect(rebuild(events)).toEqual(next);
+  });
+
+  it("道具：同样整份写回，清空也允许", () => {
+    // minimal 里没有道具，先补一个空的 props 表
+    const base = ProjectSchema.parse({ ...clone(minimalJson), props: [] });
+    const events = [
+      created(base),
+      {
+        type: "prop.added" as const,
+        at: AT,
+        prop: {
+          id: "p-1",
+          name: "台灯",
+          description: "",
+          referenceImages: ["a-lin-34"],
+        },
+      },
+      { type: "prop.updated" as const, at: AT, propId: "p-1", patch: { referenceImages: [] } },
+    ];
+    const lamp = rebuild(events).props.find((item) => item.id === "p-1")!;
+    expect(lamp.referenceImages).toEqual([]);
+  });
+
+  it("不存在的资产、重复的资产都拒绝", () => {
+    const project = load();
+    expect(() =>
+      applyEvent(project, {
+        type: "character.updated",
+        at: AT,
+        characterId: "c-lin",
+        patch: { referenceImages: ["a-nope"] },
+      }),
+    ).toThrow(/不存在的资产/);
+    expect(() =>
+      applyEvent(project, {
+        type: "character.updated",
+        at: AT,
+        characterId: "c-lin",
+        patch: { referenceImages: ["a-cup", "a-cup"] },
+      }),
+    ).toThrow(/重复/);
+  });
+});

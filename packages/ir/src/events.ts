@@ -18,6 +18,8 @@ export const MUST_NOT_CHANGE_MAX = 60;
 
 /** "不许变"清单：条数上限，防止把镜头指令挤掉（ADR-0074） */
 export const MUST_NOT_CHANGE_COUNT_MAX = 20;
+/** 参考图上限：人物 / 道具各 8 张，再多进提示词与锚点就没有意义了（ADR-0079） */
+export const REFERENCE_IMAGES_MAX = 8;
 
 /**
  * 事件日志（ADR-0011）。
@@ -129,7 +131,9 @@ export type ProjectEvent =
       type: "character.updated";
       at: string;
       characterId: Id;
-      patch: Partial<Pick<Character, "name" | "appearance" | "mustNotChange">>;
+      patch: Partial<
+        Pick<Character, "name" | "appearance" | "mustNotChange" | "referenceImages">
+      >;
     }
   | {
       /** 加一件道具（ADR-0072）：先有道具，分镜页的道具签才点得出来 */
@@ -138,11 +142,11 @@ export type ProjectEvent =
       prop: Prop;
     }
   | {
-      /** 改道具（ADR-0072）：名字与描述；参考图走资产那条路 */
+      /** 改道具（ADR-0072 / ADR-0079）：名字、描述与参考图（参考图先走 asset.updated） */
       type: "prop.updated";
       at: string;
       propId: Id;
-      patch: Partial<Pick<Prop, "name" | "description">>;
+      patch: Partial<Pick<Prop, "name" | "description" | "referenceImages">>;
     }
   | {
       /**
@@ -209,6 +213,20 @@ export type ProjectEvent =
       at: string;
       asset: Asset;
     };
+
+function checkReferenceImages(ids: Id[], assets: Asset[], label: string) {
+  if (new Set(ids).size !== ids.length) {
+    throw new Error(`${label} 的 referenceImages 有重复`);
+  }
+  if (ids.length > REFERENCE_IMAGES_MAX) {
+    throw new Error(`${label} 的 referenceImages 超过 ${REFERENCE_IMAGES_MAX} 张`);
+  }
+  for (const id of ids) {
+    if (!assets.some((asset) => asset.id === id)) {
+      throw new Error(`${label} 的 referenceImages 指向不存在的资产: ${id}`);
+    }
+  }
+}
 
 export function applyEvent(
   current: Project | null,
@@ -476,6 +494,9 @@ export function applyEvent(
           );
         }
       }
+      if (event.patch.referenceImages !== undefined) {
+        checkReferenceImages(event.patch.referenceImages, current.assets, "character.updated");
+      }
       const characters = current.characters.map((character) =>
         character.id === event.characterId ? { ...character, ...event.patch } : character,
       );
@@ -501,6 +522,9 @@ export function applyEvent(
       }
       if (event.patch.name !== undefined && event.patch.name.trim().length === 0) {
         throw new Error("道具总得有个名字");
+      }
+      if (event.patch.referenceImages !== undefined) {
+        checkReferenceImages(event.patch.referenceImages, current.assets, "prop.updated");
       }
       const props = current.props.map((prop) =>
         prop.id === event.propId ? { ...prop, ...event.patch } : prop,

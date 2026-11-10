@@ -1003,3 +1003,15 @@ describe("道具签按场筛选（ADR-0078）", () => {
     expect(props).toEqual(["p-lamp"]);
   });
 });
+
+describe("参考图进读模型（ADR-0079）", () => {
+  it("人物带着全部参考图，道具的第一张同时是 referenceAssetId", () => {
+    const view = toCastView(sampleProject);
+    const lin = view.characters.find((item) => item.id === "c-lin")!;
+    expect(lin.references).toEqual([{ assetId: "a-lin-expr", uri: undefined }]);
+
+    const lamp = view.props.find((item) => item.id === "p-lamp")!;
+    expect(lamp.referenceAssetId).toBe("a-lamp");
+    expect(lamp.references).toEqual([{ assetId: "a-lamp", uri: undefined }]);
+  });
+});
