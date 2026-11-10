@@ -229,6 +229,13 @@ export function buildShotPrompt(project: Project, shot: Shot): string {
     : undefined;
   if (location) parts.push(`场景：${location.name}`);
 
+  const props = shot.propIds.flatMap((id) => {
+    const prop = project.props.find((item) => item.id === id);
+    if (!prop) return [];
+    return [prop.description ? `${prop.name}，${prop.description}` : prop.name];
+  });
+  if (props.length) parts.push(`道具：${props.join("；")}`);
+
   const { shotSize, camera } = shot;
   parts.push(
     `${SIZE_CN[shotSize]}，${ANGLE_CN[camera.angle]}，${MOVE_CN[camera.movement]}，${camera.focalMm}mm`,

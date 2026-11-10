@@ -119,3 +119,19 @@ describe("S0 最小链路", () => {
     expect(called).toBe(false);
   });
 });
+
+describe("提示词里的道具", () => {
+  it("关键道具用名称与描述进提示词", () => {
+    const project = load();
+    project.props.push({
+      id: "p-cup",
+      name: "搪瓷杯",
+      description: "白底蓝边，杯沿磕了一块",
+      referenceImages: [],
+    });
+    project.shots[0]!.propIds = ["p-cup"];
+
+    const prompt = buildShotPrompt(project, project.shots[0]!);
+    expect(prompt).toContain("道具：搪瓷杯，白底蓝边，杯沿磕了一块");
+  });
+});

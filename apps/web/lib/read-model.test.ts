@@ -95,11 +95,12 @@ describe("toStageView", () => {
     expect(view.shots[0]?.take).toBe(2);
   });
 
-  it("定妆台：两个角色四格齐全，三个场景各一张主镜", () => {
+  it("定妆台：两个角色四格齐全，三个场景各一主镜，两个道具各一张参考", () => {
     const cast = toCastView(sampleProject);
     expect(cast.characters).toHaveLength(2);
     expect(cast.locations).toHaveLength(3);
-    expect(cast.totalRequired).toBe(5);
+    expect(cast.props).toHaveLength(2);
+    expect(cast.totalRequired).toBe(7);
     expect(cast.lockedCount).toBe(0);
     expect(cast.complete).toBe(false);
 
@@ -111,6 +112,11 @@ describe("toStageView", () => {
     expect(lin.status).toBe("ready");
     expect(lin.required).toBe(true);
     expect(cast.locations.every((item) => item.masterAssetId)).toBe(true);
+
+    const cup = cast.props.find((item) => item.id === "p-cup")!;
+    expect(cup.art).toBe("cup");
+    expect(cup.required).toBe(true);
+    expect(cup.referenceAssetId).toBe("a-cup");
   });
 
   it("每个镜头带出参考锚点：人物按景别取格，再加场景主镜", () => {
@@ -121,6 +127,9 @@ describe("toStageView", () => {
 
     const two = view.shots.find((shot) => shot.id === "s-04")!;
     expect(two.anchors.labels).toEqual(["林 · 正面", "周 · 正面", "桌边 · 主镜"]);
+
+    const propShot = view.shots.find((shot) => shot.id === "s-09")!;
+    expect(propShot.anchors.labels).toEqual(["桌边 · 主镜", "搪瓷杯 · 参考图"]);
   });
 
   it("两个及以上角色用双人剪影，否则按场景模板", () => {

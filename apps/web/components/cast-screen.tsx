@@ -3,12 +3,14 @@
 import Link from "next/link";
 import { useMemo } from "react";
 import { Bust } from "@/components/bust";
+import { PropObject } from "@/components/prop-object";
 import { Scene } from "@/components/scene";
 import { TopBar } from "@/components/top-bar";
 import {
   toCastView,
   type CastCharacterView,
   type CastLocationView,
+  type CastPropView,
 } from "@/lib/read-model";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
@@ -22,7 +24,15 @@ function clock(iso?: string): string {
   });
 }
 
-function StatusChip({ status, missing }: { status: string; missing?: number }) {
+function StatusChip({
+  status,
+  missing,
+  missingText,
+}: {
+  status: string;
+  missing?: number;
+  missingText?: string;
+}) {
   if (status === "locked") {
     return (
       <span className="tnum flex items-center gap-1.5 text-[9px] text-text">
@@ -34,7 +44,7 @@ function StatusChip({ status, missing }: { status: string; missing?: number }) {
   if (status === "incomplete") {
     return (
       <span className="tnum text-[9px] text-muted-2">
-        缺 {missing !== undefined && missing > 0 ? `${missing} 格` : "主镜"}
+        {missingText ?? (missing !== undefined && missing > 0 ? `缺 ${missing} 格` : "缺 主镜")}
       </span>
     );
   }
@@ -194,6 +204,74 @@ function LocationRow({
   );
 }
 
+function PropRow({
+  prop,
+  onLock,
+  onUnlock,
+}: {
+  prop: CastPropView;
+  onLock: () => void;
+  onUnlock: () => void;
+}) {
+  return (
+    <section className="border-t border-line py-5">
+      <div className="flex flex-wrap items-start gap-6">
+        <div className="w-[168px] shrink-0">
+          <div className="flex items-baseline gap-2.5">
+            <h2 className="text-[17px] leading-none text-text">{prop.name}</h2>
+            <StatusChip status={prop.status} missingText="缺参考图" />
+          </div>
+          <p className="mt-2 text-[11px] leading-[1.5] text-muted">{prop.description}</p>
+        </div>
+
+        <figure className="w-[120px]">
+          <div className="relative aspect-[9/16] overflow-hidden rounded-[1px] border border-line bg-[#0f1013]">
+            {prop.referenceAssetId ? (
+              <PropObject kind={prop.art} className="h-full w-full" />
+            ) : (
+              <span className="absolute inset-0 grid place-items-center text-[9px] text-muted-2">
+                待生成
+              </span>
+            )}
+          </div>
+          <figcaption className="tnum mt-1.5 text-[9px] text-muted-2">ref 1</figcaption>
+        </figure>
+
+        <div className="max-w-[38ch] self-center">
+          <p className="text-[11px] leading-[1.6] text-muted-2">
+            在镜头里出现，就要有一张参考图。锁住后，带它的镜头都引这一张。
+          </p>
+        </div>
+
+        <div className="ml-auto flex w-[120px] shrink-0 flex-col items-end gap-2">
+          {prop.status === "locked" ? (
+            <>
+              <span className="tnum text-[9px] text-muted-2">{clock(prop.lockedAt)} 锁</span>
+              <button
+                type="button"
+                onClick={onUnlock}
+                className="rounded-token border border-line px-3 py-1.5 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+              >
+                解锁
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={onLock}
+              disabled={prop.status === "incomplete"}
+              title={prop.status === "incomplete" ? "还没有参考图" : "锁定后下游只能引用，不能替换"}
+              className="rounded-token bg-text px-3 py-1.5 text-[11.5px] text-bg transition-opacity duration-[var(--dur)] hover:opacity-85 disabled:pointer-events-none disabled:opacity-30"
+            >
+              锁定道具
+            </button>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function CastScreen() {
   const project = useWorkbench((state) => state.project);
   const lockCast = useWorkbench((state) => state.lockCast);
@@ -251,6 +329,20 @@ export function CastScreen() {
               />
             ))}
           </section>
+
+          {cast.props.length > 0 && (
+            <section className="mt-8">
+              <h2 className="tnum text-[9px] tracking-[.14em] text-muted-2">道具 · 参考</h2>
+              {cast.props.map((prop) => (
+                <PropRow
+                  key={prop.id}
+                  prop={prop}
+                  onLock={() => lockCast("prop", prop.id)}
+                  onUnlock={() => unlockCast("prop", prop.id)}
+                />
+              ))}
+            </section>
+          )}
         </div>
       </main>
 

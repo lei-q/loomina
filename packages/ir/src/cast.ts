@@ -151,10 +151,11 @@ export function castReadiness(project: Project): CastReadiness {
       targetType: "prop",
       targetId: prop.id,
       name: prop.name,
-      required: false,
+      // 进了镜头的道具必须有参考图：它在画面里要被认得出来
+      required: project.shots.some((shot) => shot.propIds.includes(prop.id)),
       assetIds,
       missingAngles: [],
-      status: statusOf(approval, false, [], assetIds),
+      status: statusOf(approval, true, [], assetIds),
       approval,
     };
   });

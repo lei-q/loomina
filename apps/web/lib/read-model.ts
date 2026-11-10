@@ -206,9 +206,24 @@ export type CastLocationView = {
   lockedAt?: string;
 };
 
+export type PropKind = "cup" | "lamp" | "generic";
+
+export type CastPropView = {
+  id: string;
+  name: string;
+  description: string;
+  art: PropKind;
+  status: CastStatus;
+  /** 进了镜头的道具必须能锁 */
+  required: boolean;
+  referenceAssetId?: string;
+  lockedAt?: string;
+};
+
 export type CastView = {
   characters: CastCharacterView[];
   locations: CastLocationView[];
+  props: CastPropView[];
   complete: boolean;
   lockedCount: number;
   totalRequired: number;
@@ -219,6 +234,8 @@ export function toCastView(project: Project): CastView {
   const readiness = castReadiness(project);
   const characterById = new Map(project.characters.map((item) => [item.id, item]));
   const locationById = new Map(project.locations.map((item) => [item.id, item]));
+
+  const propById = new Map(project.props.map((item) => [item.id, item]));
 
   const characters: CastCharacterView[] = readiness.characters.flatMap((item) => {
     const character = characterById.get(item.targetId);
@@ -260,11 +277,36 @@ export function toCastView(project: Project): CastView {
     ];
   });
 
+  const props: CastPropView[] = readiness.props.flatMap((item) => {
+    const prop = propById.get(item.targetId);
+    if (!prop) return [];
+    return [
+      {
+        id: prop.id,
+        name: prop.name,
+        description: prop.description,
+        art: propArt(prop.id),
+        status: item.status,
+        required: item.required,
+        referenceAssetId: prop.referenceImages[0],
+        lockedAt:
+          item.approval?.status === "approved" ? item.approval.approvedAt : undefined,
+      },
+    ];
+  });
+
   return {
     characters,
     locations,
+    props,
     complete: readiness.complete,
     lockedCount: readiness.lockedCount,
     totalRequired: readiness.totalRequired,
   };
+}
+
+function propArt(id: string): PropKind {
+  if (id.includes("cup")) return "cup";
+  if (id.includes("lamp")) return "lamp";
+  return "generic";
 }

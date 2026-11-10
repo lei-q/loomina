@@ -205,3 +205,98 @@ describe("镜头锚点装配", () => {
     expect(anchors.refs[0]).toEqual({ assetId: "a-lin-front", label: "路人 · 参考图" });
   });
 });
+
+describe("道具进锚点（ADR-0030）", () => {
+  const withProp = () => {
+    const project = build();
+    project.props.push({
+      id: "p-cup",
+      name: "搪瓷杯",
+      description: "白底蓝边",
+      referenceImages: ["a-cup"],
+    });
+    project.assets.push({
+      id: "a-cup",
+      kind: "image",
+      source: "generated",
+      createdAt: "2026-11-10T00:00:00Z",
+    });
+    project.shots[0]!.propIds = ["p-cup"];
+    return project;
+  };
+
+  it("场景之后补道具，总数仍不超过上限", () => {
+    const project = withProp();
+    const anchors = shotAnchors(project, project.shots[0]!);
+
+    expect(anchors.assetIds).toEqual([
+      "a-lin-front",
+      "a-lin-34",
+      "a-master",
+      "a-cup",
+    ]);
+    expect(anchors.refs.at(-1)).toEqual({ assetId: "a-cup", label: "搪瓷杯 · 参考图" });
+    expect(anchors.missing).toEqual([]);
+  });
+
+  it("道具挤不进名额时先丢道具，不丢脸和房间", () => {
+    const project = build({
+      characters: [
+        { id: "c-1", name: "林", sheet: SHEET("lin") },
+        { id: "c-2", name: "周", sheet: SHEET("zhou") },
+        { id: "c-3", name: "陈", sheet: { front: "a-misc-front" } },
+        { id: "c-4", name: "吴", sheet: { front: "a-other-front" } },
+      ],
+      shot: {
+        id: "s-1",
+        sceneId: "sc-1",
+        index: 0,
+        durationMs: 2000,
+        shotSize: "medium",
+        camera: { angle: "eye", movement: "static", focalMm: 35 },
+        characterIds: ["c-1", "c-2", "c-3", "c-4"],
+        propIds: ["p-cup"],
+      },
+    });
+    project.props.push({ id: "p-cup", name: "搪瓷杯", description: "", referenceImages: ["a-cup"] });
+    project.assets.push({
+      id: "a-cup",
+      kind: "image",
+      source: "generated",
+      createdAt: "2026-11-10T00:00:00Z",
+    });
+
+    const anchors = shotAnchors(project, project.shots[0]!);
+    expect(anchors.assetIds).toEqual([
+      "a-lin-front",
+      "a-zhou-front",
+      "a-misc-front",
+      "a-master",
+    ]);
+  });
+
+  it("道具没有参考图，装配时记为缺失", () => {
+    const project = build();
+    project.props.push({ id: "p-cup", name: "搪瓷杯", description: "", referenceImages: [] });
+    project.shots[0]!.propIds = ["p-cup"];
+
+    expect(shotAnchors(project, project.shots[0]!).missing).toEqual([
+      "道具「搪瓷杯」缺参考图",
+    ]);
+  });
+
+  it("锁定的道具只认锁住的那张", () => {
+    const project = withProp();
+    project.approvals.push({
+      id: "ap-prop-p-cup",
+      targetType: "prop",
+      targetId: "p-cup",
+      status: "approved",
+      approvedAt: "2026-11-10T00:00:00Z",
+      lockedAssetIds: [],
+    });
+
+    const anchors = shotAnchors(project, project.shots[0]!);
+    expect(anchors.missing).toContain("道具「搪瓷杯」缺参考图");
+  });
+});

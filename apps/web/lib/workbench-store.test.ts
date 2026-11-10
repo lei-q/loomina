@@ -81,8 +81,15 @@ describe("审片台 store", () => {
     expect(state().events.at(-1)?.type).toBe("approval.updated");
   });
 
-  it("解锁把闸门改回待定，不留两条记录", () => {
-    state().lockCast("location", "loc-corridor");
+  it("道具锁定的是它的参考图", () => {
+    state().lockCast("prop", "p-cup");
+
+    const approval = state().project.approvals[0];
+    expect(approval?.targetType).toBe("prop");
+    expect(approval?.lockedAssetIds).toEqual(["a-cup"]);
+  });
+
+  it("解锁把闸门改回待定，不留两条记录", () => {    state().lockCast("location", "loc-corridor");
     state().unlockCast("location", "loc-corridor");
 
     expect(state().project.approvals).toHaveLength(1);

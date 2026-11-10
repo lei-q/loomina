@@ -41,6 +41,7 @@
 
 **道具**
 - 关键道具单独生成特写参考图，尤其是"有叙事作用"的道具（戒指、伞、伤口、信件）。
+- 镜头用 `Shot.propIds` 声明出场；引用到的道具自动成为定妆台的必锁项，缺失就挡住「进分镜」（ADR-0030）。
 
 **锁定**
 - 资产一旦通过闸门 1，写入 `Approval.lockedAssetIds`；下游只能引用，不能悄悄替换。
@@ -156,9 +157,9 @@ QA 失败时，先判断是哪个维度，再走对应修复，而不是盲目�
 | 不可变特征 | `Character.mustNotChange` |
 | 场景主镜 | `Location.masterShotId` |
 | 其他机位 / 细节图 | `Location.referenceImages` |
-| 道具参考 | `Prop.referenceImages` |
+| 道具参考 | `Prop.referenceImages`；镜头用 `Shot.propIds` 声明出场（ADR-0030） |
 | 场景空间 | `SceneState` / `Blocking` |
-| 每镜参考图 | `shotAnchors(project, shot)` 生成前现算（ADR-0029），不落库 |
+| 每镜参考图 | `shotAnchors(project, shot)` 生成前现算（ADR-0029 / ADR-0030），不落库 |
 | 生成溯源 | `Take.model / seed / prompt / referenceAssetIds` |
 | 验收结果 | `Take.qa` / `ConsistencyReport` |
 | 锁定资产 | `Approval.lockedAssetIds` |

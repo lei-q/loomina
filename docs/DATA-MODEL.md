@@ -549,14 +549,16 @@ interface Approval {
 | --- | --- | --- |
 | 角色 | 该角色出现在任何 `close` / `extreme-close` 镜头 | `sheet` 四格（正面 / 3-4 / 侧面 / 背面）都有资产 |
 | 场景 | 总是 | `masterShotId` 指向存在的资产 |
-| 道具 | 总是 | `referenceImages` 非空 |
+| 道具 | 有任何镜头的 `propIds` 引用它 | `referenceImages` 非空 |
+
+- 没有镜头引用的道具仍然显示在定妆台，但 `required: false`，不拖住「进分镜」：可以先备图，也可以一直不备。
 
 - 缺格 / 缺主镜的目标状态是 `incomplete`，不能锁定：界面禁用按钮，`lockCast` 也直接返回（双保险）。
 - 锁定写一条 `approval.updated`，按 `(targetType, targetId)` upsert，不产生并列的两条；解锁把同一条改回 `pending` 并清空 `lockedAssetIds`。
 - "进分镜"只在 `lockedCount === totalRequired` 时出现；这是数据推出的事实，不是界面的开关。
 - 三视图内部是否像同一个人（intra-sheet 一致性）还没有验收，当前只保证"四格都填了"。
 
-**每镜参考图不落库。** 生成前由 `shotAnchors(project, shot)` 现算（ADR-0029）：人物按景别取格（单人选正面 + 3/4，多人每人正面），场景带主镜，总数不超过 4 张；有已通过的 `Approval` 时只用 `lockedAssetIds`。缺锚点时链路拒绝生成，`ShotRunResult.anchorAssetIds` 只用于核对，不写回 IR。
+**每镜参考图不落库。** 生成前由 `shotAnchors(project, shot)` 现算（ADR-0029 / ADR-0030）：人物按景别取格（单人选正面 + 3/4，多人每人正面），场景带主镜，道具各取第一张参考图，顺序为**人物 → 场景 → 道具**，总数不超过 4 张，超了先丢道具；有已通过的 `Approval` 时只用 `lockedAssetIds`。缺锚点时链路拒绝生成，`ShotRunResult.anchorAssetIds` 只用于核对，不写回 IR。
 
 ## 6. 风格 / 发布
 
@@ -598,7 +600,7 @@ interface AILabel {
 ## 7. 不变量（实现时必须保证）
 
 1. **所有生成物都有 provenance**：model / seed / prompt / 参考图 / 时间。
-2. **Shot 的 `characterIds` / `propIds` 必须存在于 `bible`**。
+2. **Shot 的 `characterIds` / `propIds` 必须存在**（`REF_SHOT_CHARACTER` / `REF_SHOT_PROP`）。
 3. **`durationMs` 与对白音频一致**（差值超过阈值时标警告，不静默改）。
 4. **SubtitleCue 的 `editedByUser` 一旦为 true，自动流程不得覆盖**。
 5. **Timeline 引用的 `takeId` 必须属于该 `shotId`**。
@@ -619,6 +621,7 @@ interface AILabel {
 20. **`Approval.lockedAssetIds` 里的每个 id 必须是存在的资产**（`APPROVAL_LOCKED_ASSET`）。
 21. **定妆闸门**：有近景 / 特写镜头的角色，三视图四格未齐不得锁定；场景无主镜不得锁定（`cast.ts` 判定，`lockCast` 与界面各守一道，ADR-0028）。
 22. **锚点不齐不得生成**：`shotAnchors().missing` 非空时，必须在调用任何模型之前失败（ADR-0029）。
+23. **道具进入镜头即成为必锁项**：`Shot.propIds` 引用的道具必须有一张参考图，缺图不得锁定，也不得生成（`cast.ts` 与锚点两道，ADR-0030）。
 
 ## 8. 与 OTIO 的映射
 

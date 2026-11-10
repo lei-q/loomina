@@ -29,6 +29,12 @@ describe("validateProject", () => {
     expect(codes(project)).toContain("REF_SHOT_CHARACTER");
   });
 
+  it("镜头引用不存在的道具", () => {
+    const project = load();
+    project.shots[0]!.propIds = ["p-ghost"];
+    expect(codes(project)).toContain("REF_SHOT_PROP");
+  });
+
   it("场景引用不存在的地点", () => {
     const project = load();
     project.scenes[0]!.locationId = "loc-ghost";

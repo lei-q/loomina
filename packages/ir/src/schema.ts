@@ -125,6 +125,8 @@ export const ShotSchema = z.object({
   shotSize: z.enum(["wide", "medium", "close", "extreme-close"]),
   camera: CameraSchema,
   characterIds: z.array(Id).default([]),
+  /** 关键道具：有叙事作用、需要跨镜头保持一致的东西（ADR-0030） */
+  propIds: z.array(Id).default([]),
   dialogueIds: z.array(Id).default([]),
   takeIds: z.array(Id).default([]),
   locked: z.boolean().default(false),

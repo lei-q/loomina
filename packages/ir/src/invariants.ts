@@ -7,6 +7,7 @@ import type { Project } from "./schema";
 export type InvariantCode =
   | "REF_DIALOGUE_CHARACTER"
   | "REF_SHOT_CHARACTER"
+  | "REF_SHOT_PROP"
   | "REF_SCENE"
   | "REF_LOCATION"
   | "SCENE_SHOT_BIDIRECTIONAL"
@@ -46,6 +47,7 @@ export function validateProject(
 
   const characterIds = new Set(project.characters.map((c) => c.id));
   const locationIds = new Set(project.locations.map((l) => l.id));
+  const propIds = new Set(project.props.map((p) => p.id));
   const sceneById = new Map(project.scenes.map((s) => [s.id, s]));
   const shotById = new Map(project.shots.map((s) => [s.id, s]));
   const dialogueById = new Map(project.dialogue.map((d) => [d.id, d]));
@@ -101,6 +103,15 @@ export function validateProject(
           code: "REF_SHOT_CHARACTER",
           path: `shots.${shot.id}.characterIds`,
           message: `镜头 ${shot.id} 引用了不存在的角色 ${characterId}`,
+        });
+      }
+    }
+    for (const propId of shot.propIds) {
+      if (!propIds.has(propId)) {
+        violations.push({
+          code: "REF_SHOT_PROP",
+          path: `shots.${shot.id}.propIds`,
+          message: `镜头 ${shot.id} 引用了不存在的道具 ${propId}`,
         });
       }
     }

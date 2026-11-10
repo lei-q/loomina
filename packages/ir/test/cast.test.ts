@@ -135,3 +135,50 @@ describe("定妆闸门", () => {
     expect(loc.status).toBe("incomplete");
   });
 });
+
+describe("道具闸门（ADR-0030）", () => {
+  const withProp = ProjectSchema.parse({
+    ...raw,
+    props: [
+      { id: "p-cup", name: "搪瓷杯", description: "白底蓝边", referenceImages: ["a-cup"] },
+    ],
+    shots: (raw.shots ?? []).map((shot) =>
+      shot.id === "s-2" ? { ...shot, propIds: ["p-cup"] } : shot,
+    ),
+    assets: [...(raw.assets ?? []), asset("a-cup")],
+  });
+
+  it("进了镜头的道具算必锁项，锁的是它的参考图", () => {
+    const readiness = castReadiness(withProp);
+    const cup = readiness.props.find((item) => item.targetId === "p-cup")!;
+
+    expect(cup.required).toBe(true);
+    expect(cup.status).toBe("ready");
+    expect(cup.assetIds).toEqual(["a-cup"]);
+    expect(readiness.totalRequired).toBe(3); // 近景角色 + 有镜头的场景 + 道具
+  });
+
+  it("道具没有参考图就不完整，不能锁", () => {
+    const noRefs = ProjectSchema.parse({
+      ...raw,
+      props: [{ id: "p-cup", name: "搪瓷杯" }],
+      shots: (raw.shots ?? []).map((shot) =>
+        shot.id === "s-2" ? { ...shot, propIds: ["p-cup"] } : shot,
+      ),
+    });
+    const cup = castReadiness(noRefs).props[0]!;
+
+    expect(cup.required).toBe(true);
+    expect(cup.status).toBe("incomplete");
+  });
+
+  it("没进镜头的道具不拖住分镜入口", () => {
+    const unused = ProjectSchema.parse({
+      ...raw,
+      props: [{ id: "p-cup", name: "搪瓷杯", referenceImages: ["a-cup"] }],
+      assets: [...(raw.assets ?? []), asset("a-cup")],
+    });
+    expect(castReadiness(unused).props[0]!.required).toBe(false);
+    expect(castReadiness(unused).totalRequired).toBe(2);
+  });
+});

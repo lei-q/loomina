@@ -41,7 +41,18 @@ const raw: ProjectInput = {
     },
   ],
 
-  props: [],
+  props: [
+    {
+      id: "p-cup", name: "搪瓷杯",
+      description: "白底蓝边搪瓷缸，杯沿有一道旧磕痕",
+      referenceImages: ["a-cup"],
+    },
+    {
+      id: "p-lamp", name: "台灯",
+      description: "绿色玻璃罩台灯，黄铜底座，灯绳磨得发白",
+      referenceImages: ["a-lamp"],
+    },
+  ],
 
   // 定妆资产：示例里没有真图，界面用占位剪影渲染；uri 留空。
   assets: [
@@ -57,6 +68,8 @@ const raw: ProjectInput = {
     { id: "a-corridor", kind: "image", source: "generated", createdAt: "2026-11-09T20:30:00+08:00" },
     { id: "a-door", kind: "image", source: "generated", createdAt: "2026-11-09T20:31:00+08:00" },
     { id: "a-table", kind: "image", source: "generated", createdAt: "2026-11-09T20:32:00+08:00" },
+    { id: "a-cup", kind: "image", source: "generated", createdAt: "2026-11-09T20:33:00+08:00" },
+    { id: "a-lamp", kind: "image", source: "generated", createdAt: "2026-11-09T20:34:00+08:00" },
   ],
 
   approvals: [],
@@ -105,7 +118,7 @@ const raw: ProjectInput = {
       id: "s-05", sceneId: "sc-2", index: 1, durationMs: 1900,
       description: "他伸手关掉了台灯",
       shotSize: "close", camera: { angle: "low", movement: "static", focalMm: 50 },
-      characterIds: ["c-zhou"], dialogueIds: [], takeIds: ["t-05"], locked: false,
+      characterIds: ["c-zhou"], propIds: ["p-lamp"], dialogueIds: [], takeIds: ["t-05"], locked: false,
     },
     {
       id: "s-06", sceneId: "sc-3", index: 2, durationMs: 4200,
@@ -129,7 +142,7 @@ const raw: ProjectInput = {
       id: "s-09", sceneId: "sc-5", index: 0, durationMs: 3000,
       description: "杯子还在原来的位置",
       shotSize: "medium", camera: { angle: "high", movement: "static", focalMm: 35 },
-      characterIds: [], dialogueIds: [], takeIds: ["t-09"], locked: false,
+      characterIds: [], propIds: ["p-cup"], dialogueIds: [], takeIds: ["t-09"], locked: false,
     },
     {
       id: "s-10", sceneId: "sc-5", index: 1, durationMs: 1600,

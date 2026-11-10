@@ -103,10 +103,10 @@ function characterAnchors(
 }
 
 /**
- * 一镜的锚点：人物（按景别取格）+ 场景主镜。
+ * 一镜的锚点：人物（按景别取格）+ 场景主镜 + 道具参考。
  *
- * 道具暂时没有镜头级引用（`Shot` 上没有 propIds），所以不进装配；
- * 等分镜接入道具时再加，顺序放在场景之后。
+ * 顺序就是优先级：人物与空间先把名额占住，道具最后补；
+ * 一镜里参考图挤不下时，先舍弃道具而不是脸或房间。
  */
 export function shotAnchors(project: Project, shot: Shot): ShotAnchors {
   const locked = lockedByTarget(project);
@@ -146,9 +146,32 @@ export function shotAnchors(project: Project, shot: Shot): ShotAnchors {
     }
   }
 
-  // 场景先占一个名额，人物再排；超出上限时丢人物而不是丢空间。
+  // 道具排在场景之后：有人在的近景里，脸比杯子重要。
+  const propRefs: AnchorRef[] = [];
+  for (const propId of shot.propIds) {
+    const prop = project.props.find((item) => item.id === propId);
+    if (!prop) {
+      missing.push(`道具 ${propId} 不存在`);
+      continue;
+    }
+    const lockedProp = locked.get(key("prop", prop.id));
+    const usableRefs = prop.referenceImages.filter(
+      (id) => !lockedProp || lockedProp.has(id),
+    );
+    if (!usableRefs.length) {
+      missing.push(`道具「${prop.name}」缺参考图`);
+      continue;
+    }
+    propRefs.push({ assetId: usableRefs[0]!, label: `${prop.name} · 参考图` });
+  }
+
+  // 场景先占一个名额，人物再排；道具用剩下的名额。
   const identity = sceneRef ? refs.slice(0, MAX_ANCHORS - 1) : refs.slice(0, MAX_ANCHORS);
-  const ordered = sceneRef ? [...identity, sceneRef] : identity;
+  const ordered = [
+    ...identity,
+    ...(sceneRef ? [sceneRef] : []),
+    ...propRefs,
+  ].slice(0, MAX_ANCHORS);
 
   const seen = new Set<Id>();
   const unique = ordered.filter((ref) => {
