@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { SHEET_LABELS, type SheetView } from "@loomina/ir";
 import { Bust } from "@/components/bust";
 import { PropObject } from "@/components/prop-object";
@@ -369,6 +369,12 @@ export function CastScreen() {
   const generateProp = useWorkbench((state) => state.generateProp);
   const jobs = useWorkbench((state) => state.jobs);
   const castError = useWorkbench((state) => state.castError);
+  const hydrate = useWorkbench((state) => state.hydrate);
+  const storageError = useWorkbench((state) => state.storageError);
+
+  useEffect(() => {
+    void hydrate();
+  }, [hydrate]);
 
   const cast = useMemo(() => toCastView(project), [project]);
   const done = cast.lockedCount === cast.totalRequired;
@@ -382,6 +388,7 @@ export function CastScreen() {
         stage="定妆"
         spentCny={cast.spend.spent}
         unpriced={cast.spend.unpriced}
+        storageError={storageError}
       />
 
       <main className="flex-1 overflow-y-auto">

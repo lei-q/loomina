@@ -3,6 +3,7 @@
 import {
   applyEvent,
   castReadiness,
+  rebuild,
   SHEET_ANGLES,
   type ApprovalTargetType,
   type Project,
@@ -10,6 +11,7 @@ import {
   type SheetView,
 } from "@loomina/ir";
 import { create } from "zustand";
+import { diffEvents, getEventLog, parseEvents } from "@/lib/event-log";
 import { latestTake, toStageView } from "@/lib/read-model";
 import { sampleProject } from "@/lib/sample-project";
 
@@ -26,7 +28,7 @@ export type GenerateJob =
  *
  * - `events` 是事实，`project` 是它跑出来的结果，两者一起持有只是为了少算；
  * - 选格子不发事件，只有留用 / 淘汰才写一条 `take.updated`；
- * - 还没有服务端，刷新即回到示例项目。
+ * - 日志落在浏览器本地（IndexedDB，ADR-0034），刷新不会把花过钱的图丢掉。
  */
 type WorkbenchState = {
   project: Project;
@@ -35,6 +37,10 @@ type WorkbenchState = {
   /** 正在生成哪一张：人物 / 场景 / 道具的 id → 任务。出图是分钟级，界面要如实显示进度 */
   jobs: Record<string, GenerateJob | undefined>;
   castError?: string;
+  /** 本地写入失败（配额、隐私模式）：不能让用户以为已经存住了 */
+  storageError?: string;
+  /** 从本地日志恢复；已经恢复过就什么都不做 */
+  hydrate: () => Promise<void>;
   select: (shotId: string) => void;
   decide: (status: Decision) => void;
   /** 定妆闸门：锁定 / 解锁一个角色、场景或道具 */
@@ -167,11 +173,53 @@ async function generateOne(
   }
 }
 
+/** hydrate 只跑一次；ready 之前不写存储，免得把已存的项目盖成示例项目。 */
+let hydrated = false;
+let ready = false;
+
+function storageMessage(error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error);
+  return `本地保存失败：${detail.slice(0, 100)}`;
+}
+
+/** 仅供测试：把 hydrate / ready 的门闩复位，让每个用例都能重新恢复一次。 */
+export function resetPersistenceForTests(): void {
+  hydrated = false;
+  ready = false;
+}
+
+function firstOpenShotId(project: Project): string {
+  const { shots } = toStageView(project);
+  return (shots.find((shot) => shot.state === "open") ?? shots[0])?.id ?? "";
+}
+
 export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   project: sampleProject,
   events: initialEvents,
   currentShotId: initialShotId,
   jobs: {},
+
+  hydrate: async () => {
+    if (hydrated) return;
+    hydrated = true;
+    const log = getEventLog();
+
+    try {
+      const stored = parseEvents(await log.load());
+      if (stored) {
+        const project = rebuild(stored);
+        set({ project, events: stored, currentShotId: firstOpenShotId(project) });
+        ready = true;
+        return;
+      }
+      // 第一次打开：把示例项目的引导事件写进去，之后就都有据可查
+      await log.replace(get().events);
+      set({ storageError: undefined });
+    } catch (error) {
+      set({ storageError: storageMessage(error) });
+    }
+    ready = true;
+  },
 
   select: (shotId) => {
     if (shotId === get().currentShotId) return;
@@ -350,3 +398,30 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     });
   },
 }));
+
+/**
+ * 事件日志同步到本地（ADR-0034）。
+ *
+ * 只追加时一条一条写，重来一遍时整份覆盖：一次决策不该重写上百 MB 的图片。
+ */
+useWorkbench.subscribe((state, prev) => {
+  if (!ready || state.events === prev.events) return;
+  const sync = diffEvents(prev.events, state.events);
+  if (sync.kind === "none") return;
+
+  const log = getEventLog();
+  void (async () => {
+    try {
+      if (sync.kind === "append") {
+        for (const event of sync.events) await log.append(event);
+      } else {
+        await log.replace(state.events);
+      }
+      if (useWorkbench.getState().storageError) {
+        useWorkbench.setState({ storageError: undefined });
+      }
+    } catch (error) {
+      useWorkbench.setState({ storageError: storageMessage(error) });
+    }
+  })();
+});

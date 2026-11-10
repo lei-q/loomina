@@ -529,6 +529,8 @@ interface AudioTrack {
 
 `packages/ir` 先落了资产层的一个窄实现：`Asset` 目前只有 `image / video / audio` 三类，`uri` 可为空（示例素材没有真图，界面用占位剪影），溯源字段是 `Provenance` 而不是整个 `Take`。
 
+**落地位置**：事件日志存在浏览器 IndexedDB（库 `loomina`，仓 `events`，`seq` 自增），按条追加、回放重建；`parseEvents` 是硬闸门，任何一条不像话就整份丢弃、回到示例项目（ADR-0034）。
+
 ```ts
 interface Asset {
   id: ID;

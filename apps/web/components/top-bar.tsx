@@ -24,6 +24,8 @@ export type TopBarProps = {
   budgetCny?: number;
   /** 生成过但价目表里没有模型的图，算不进已花（ADR-0033） */
   unpriced?: number;
+  /** 本地写入失败：如实说没存住（ADR-0034） */
+  storageError?: string;
   /** 整片重做一遍的报价；给了才多一行 */
   allRequote?: ProjectRequote;
 };
@@ -39,6 +41,7 @@ export function TopBar({
   spentCny,
   budgetCny,
   unpriced = 0,
+  storageError,
   allRequote,
 }: TopBarProps) {
   return (
@@ -76,6 +79,14 @@ export function TopBar({
       </nav>
 
       <div className="ml-auto flex items-center gap-4">
+        {storageError && (
+          <span
+            title={storageError}
+            className="tnum text-[9px] tracking-[.08em] text-pick"
+          >
+            未保存
+          </span>
+        )}
         {spentCny !== undefined && (
           <details className="relative">
             <summary className="tnum cursor-pointer list-none text-[10px] text-muted transition-colors duration-[var(--dur)] hover:text-text [&::-webkit-details-marker]:hidden">

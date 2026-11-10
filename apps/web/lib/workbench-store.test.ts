@@ -1,7 +1,8 @@
-import { rebuild } from "@loomina/ir";
+import { rebuild, type ProjectEvent } from "@loomina/ir";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { setEventLog, type EventLog } from "./event-log";
 import { toStageView } from "./read-model";
-import { useWorkbench } from "./workbench-store";
+import { resetPersistenceForTests, useWorkbench } from "./workbench-store";
 
 const state = () => useWorkbench.getState();
 const statusOf = (takeId: string) =>
@@ -224,5 +225,104 @@ describe("生成定妆资产（ADR-0031 / ADR-0032）", () => {
 
     expect(calls).toHaveLength(0);
     vi.unstubAllGlobals();
+  });
+});
+
+describe("本地事件日志（ADR-0034）", () => {
+  type MemoryLog = EventLog & {
+    records: ProjectEvent[];
+    appends: ProjectEvent[];
+    replaces: number;
+  };
+
+  function memoryLog(initial: ProjectEvent[] = []): MemoryLog {
+    const log: MemoryLog = {
+      records: [...initial],
+      appends: [],
+      replaces: 0,
+      async load() {
+        return [...log.records];
+      },
+      async append(event) {
+        log.records.push(event);
+        log.appends.push(event);
+      },
+      async replace(events) {
+        log.records.length = 0;
+        log.records.push(...events);
+        log.replaces += 1;
+      },
+    };
+    return log;
+  }
+
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  beforeEach(() => {
+    resetPersistenceForTests();
+    state().reset();
+  });
+
+  it("本地有日志就从日志恢复，不回到示例项目", async () => {
+    const log = memoryLog([
+      { type: "project.created", at: "2026-11-10T00:00:00+08:00", project: state().project },
+      {
+        type: "approval.updated",
+        at: "2026-11-10T00:01:00+08:00",
+        approval: {
+          id: "ap-prop-p-cup",
+          targetType: "prop",
+          targetId: "p-cup",
+          status: "approved",
+          approvedAt: "2026-11-10T00:01:00+08:00",
+          lockedAssetIds: ["a-cup"],
+        },
+      },
+    ]);
+    setEventLog(log);
+
+    await state().hydrate();
+
+    expect(state().events).toHaveLength(2);
+    expect(state().project.approvals).toHaveLength(1);
+    expect(log.replaces).toBe(0);
+  });
+
+  it("第一次打开把示例的引导事件写进去", async () => {
+    const log = memoryLog();
+    setEventLog(log);
+
+    await state().hydrate();
+
+    expect(log.records).toHaveLength(1);
+    expect(log.records[0]?.type).toBe("project.created");
+  });
+
+  it("新事件逐条追加，失败也不挡操作", async () => {
+    const log = memoryLog();
+    setEventLog(log);
+    await state().hydrate();
+
+    state().lockCast("prop", "p-cup");
+    await tick();
+
+    expect(log.appends).toHaveLength(1);
+    expect(log.appends[0]?.type).toBe("approval.updated");
+    expect(state().storageError).toBeUndefined();
+  });
+
+  it("写不进去就挂一句未保存，界面状态照常", async () => {
+    const log = memoryLog();
+    log.append = async () => {
+      throw new Error("QuotaExceededError");
+    };
+    setEventLog(log);
+    await state().hydrate();
+
+    state().lockCast("prop", "p-cup");
+    await tick();
+
+    expect(state().storageError).toContain("QuotaExceededError");
+    expect(state().project.approvals).toHaveLength(1);
   });
 });

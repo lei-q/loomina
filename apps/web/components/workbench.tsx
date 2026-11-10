@@ -12,6 +12,12 @@ export function Workbench() {
   const currentShotId = useWorkbench((state) => state.currentShotId);
   const select = useWorkbench((state) => state.select);
   const decide = useWorkbench((state) => state.decide);
+  const hydrate = useWorkbench((state) => state.hydrate);
+  const storageError = useWorkbench((state) => state.storageError);
+
+  useEffect(() => {
+    void hydrate();
+  }, [hydrate]);
 
   const view = useMemo(
     () => toStageView(project, { currentShotId }),
@@ -56,6 +62,7 @@ export function Workbench() {
         spentCny={view.spent}
         budgetCny={view.budget}
         unpriced={view.unpriced}
+        storageError={storageError}
         allRequote={view.requoteAll}
       />
       <Stage view={view} />
