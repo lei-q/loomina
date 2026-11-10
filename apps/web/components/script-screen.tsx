@@ -8,6 +8,7 @@ import {
   dialogueOrderHistory,
   previousActionText,
   previousDialogueText,
+  removedLines,
   sceneHead,
   scriptToText,
   SPACE_LABEL,
@@ -40,6 +41,7 @@ export function ScriptScreen() {
   const editScene = useWorkbench((state) => state.editScene);
   const setDialogueOrder = useWorkbench((state) => state.setDialogueOrder);
   const moveDialogueTo = useWorkbench((state) => state.moveDialogueTo);
+  const restoreLine = useWorkbench((state) => state.restoreLine);
   const events = useWorkbench((state) => state.events);
 
   const [editing, setEditing] = useState<string | null>(null);
@@ -130,6 +132,11 @@ export function ScriptScreen() {
 
   const restoreOrder = (shotId: string, lineIds: string[]) => {
     if (setDialogueOrder(shotId, lineIds)) setNote(undefined);
+    else setNote(useWorkbench.getState().castError);
+  };
+
+  const restoreRemoved = (lineId: string) => {
+    if (restoreLine(lineId)) setNote(undefined);
     else setNote(useWorkbench.getState().castError);
   };
 
@@ -794,6 +801,52 @@ export function ScriptScreen() {
                                         className="shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
                                       >
                                         用这版
+                                      </button>
+                                    )}
+                                  </li>
+                                ))}
+                              </ul>
+                              {note && <p className="mt-1 text-[9.5px] text-pick">{note}</p>}
+                            </details>
+                          );
+                        })()}
+
+                        {(() => {
+                          const gone = removedLines(events, shot.id);
+                          if (gone.length === 0) return null;
+                          const live = new Set(project.dialogue.map((line) => line.id));
+                          return (
+                            <details className="mt-1">
+                              <summary className="tnum cursor-pointer list-none text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-muted [&::-webkit-details-marker]:hidden">
+                                删过 {gone.length} 句
+                              </summary>
+                              <ul className="mt-1 space-y-0.5 text-[9.5px] leading-[1.7]">
+                                {[...gone].reverse().map((rec, i) => (
+                                  <li
+                                    key={`gone-${rec.lineId}-${rec.at}-${i}`}
+                                    className="flex items-baseline gap-2"
+                                  >
+                                    <span className="tnum shrink-0 text-muted-2">
+                                      {clock(rec.at)}
+                                    </span>
+                                    <span className="text-muted line-through decoration-muted-2/60">
+                                      {rec.text.length > 18 ? `${rec.text.slice(0, 18)}…` : rec.text}
+                                    </span>
+                                    {!readOnly && (
+                                      <button
+                                        type="button"
+                                        disabled={shot.locked || live.has(rec.lineId)}
+                                        onClick={() => restoreRemoved(rec.lineId)}
+                                        title={
+                                          live.has(rec.lineId)
+                                            ? "这一句已经恢复了"
+                                            : shot.locked
+                                              ? "这一镜已锁定，先解锁才能恢复"
+                                              : "把这一句放回这一镜的队尾"
+                                        }
+                                        className="shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                                      >
+                                        恢复
                                       </button>
                                     )}
                                   </li>

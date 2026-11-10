@@ -8,6 +8,7 @@ import {
   keyframeTally,
   previousActionText,
   previousDialogueText,
+  removedLines,
   sceneHead,
   scriptToText,
   toCastView,
@@ -603,5 +604,44 @@ describe("台词顺序的变更记录（ADR-0053）", () => {
     ]);
     // SH-03：原本一条排序；挪走清空台词不算。
     expect(dialogueOrderHistory(moved, "s-03")).toHaveLength(1);
+  });
+});
+
+describe("被删的台词（ADR-0055）", () => {
+  const at = (h: number) => `2026-11-10T${String(h).padStart(2, "0")}:00:00+08:00`;
+  const line = {
+    id: "d-01",
+    characterId: "c-zhou",
+    text: "你早就知道，对吧。",
+    durationMs: 2600,
+  };
+  const events = [
+    { type: "project.created" as const, at: at(0), project: sampleProject },
+    { type: "dialogue.removed" as const, at: at(9), lineId: "d-01" },
+    { type: "dialogue.added" as const, at: at(10), shotId: "s-05", line: { ...line, id: "d-new", text: "新加的" } },
+    { type: "shot.updated" as const, at: at(11), shotId: "s-06", patch: { dialogueIds: ["d-new"] } },
+    { type: "dialogue.removed" as const, at: at(12), lineId: "d-new" },
+  ];
+
+  it("删掉的台词带当时的正文、说话人、时长与所属镜头", () => {
+    expect(removedLines(events)).toEqual([
+      { at: at(9), lineId: "d-01", shotId: "s-01", text: "你早就知道，对吧。", characterId: "c-zhou", durationMs: 2600 },
+      { at: at(12), lineId: "d-new", shotId: "s-06", text: "新加的", characterId: "c-zhou", durationMs: 2600 },
+    ]);
+  });
+
+  it("按镜头筛：删掉之前挪到哪一镜，就记到哪一镜", () => {
+    expect(removedLines(events, "s-01").map((rec) => rec.lineId)).toEqual(["d-01"]);
+    expect(removedLines(events, "s-05")).toEqual([]);
+    expect(removedLines(events, "s-06").map((rec) => rec.lineId)).toEqual(["d-new"]);
+  });
+
+  it("恢复过的句子删第二次，会有两条记录", () => {
+    const twice = [
+      ...events,
+      { type: "dialogue.added" as const, at: at(13), shotId: "s-01", line },
+      { type: "dialogue.removed" as const, at: at(14), lineId: "d-01" },
+    ];
+    expect(removedLines(twice, "s-01").map((rec) => rec.at)).toEqual([at(9), at(14)]);
   });
 });

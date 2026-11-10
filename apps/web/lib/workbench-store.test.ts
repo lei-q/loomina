@@ -1212,3 +1212,61 @@ describe("跨镜头挪台词（ADR-0054）", () => {
     expect(state().events).toHaveLength(snapshot);
   });
 });
+
+describe("恢复被删的台词（ADR-0055）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("删掉再恢复：回到原镜队尾，时长加回，两条事件", () => {
+    const shot = state().project.shots.find((item) => item.id === "s-03")!;
+    expect(state().removeDialogue("d-02")).toBe(true);
+    const afterRemove = state().project.shots.find((item) => item.id === "s-03")!;
+    expect(afterRemove.durationMs).toBe(Math.max(500, shot.durationMs - 2100));
+
+    const snapshot = state().events.length;
+    expect(state().restoreLine("d-02")).toBe(true);
+
+    const restored = state().project.shots.find((item) => item.id === "s-03")!;
+    expect(restored.dialogueIds).toEqual(["d-02"]);
+    // 删的时候 2400 − 2100 触到 500ms 地板；加回来是 500 + 2100，比原来的 2400 长
+    expect(restored.durationMs).toBe(2600);
+    expect(state().project.dialogue.find((item) => item.id === "d-02")).toMatchObject({
+      characterId: "c-lin",
+      text: "知道了又怎样。",
+      durationMs: 2100,
+    });
+
+    const tail = state().events.slice(-2);
+    expect(tail[0]).toMatchObject({ type: "dialogue.added", shotId: "s-03" });
+    expect(tail[1]).toMatchObject({ type: "shot.updated", shotId: "s-03" });
+    expect(state().events).toHaveLength(snapshot + 2);
+
+    const replay = rebuild(state().events);
+    expect(replay.shots.find((item) => item.id === "s-03")?.dialogueIds).toEqual(["d-02"]);
+  });
+
+  it("没删过、已经在了、锁定镜头、只读标签页都不写事件", () => {
+    const snapshot = state().events.length;
+
+    // 没删过：日志里找不到删除记录
+    expect(state().restoreLine("d-404")).toBe(false);
+    // 已经在了
+    expect(state().restoreLine("d-01")).toBe(false);
+    expect(state().castError).toContain("已经在");
+
+    // 在 s-02 加一句、删掉，再锁上这一镜（t-02 已留用，可以锁）
+    expect(state().addDialogue("s-02", "c-lin", "等等。")).toBe(true);
+    const added = state().project.shots.find((item) => item.id === "s-02")!.dialogueIds.at(-1)!;
+    expect(state().removeDialogue(added)).toBe(true);
+    state().setShotLock("s-02", true);
+    expect(state().project.shots.find((item) => item.id === "s-02")?.locked).toBe(true);
+    expect(state().restoreLine(added)).toBe(false);
+    expect(state().castError).toContain("锁定");
+    state().setShotLock("s-02", false);
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().restoreLine(added)).toBe(false);
+  });
+});

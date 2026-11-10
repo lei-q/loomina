@@ -805,6 +805,63 @@ function sameLineSet(a: Set<string>, b: Set<string>): boolean {
   return true;
 }
 
+export type RemovedLine = {
+  at: string;
+  lineId: string;
+  /** 删的时候它属于哪一镜 */
+  shotId: string;
+  text: string;
+  characterId: string;
+  durationMs: number;
+};
+
+/**
+ * 被删掉的台词，带它当时的正文与所属镜头（ADR-0055）。
+ *
+ * `dialogue.removed` 只带 `lineId`：正文从快照与 `dialogue.added` 里按 id 找回，
+ * 归属镜头从快照的 `dialogueIds`、加句事件与之后的数组改写里跟出来。
+ * 返回从旧到新；同一句删了又恢复又删，会有两条记录。
+ */
+export function removedLines(events: ProjectEvent[], shotId?: string): RemovedLine[] {
+  const first = events[0];
+  if (!first || first.type !== "project.created") return [];
+
+  const lines = new Map(first.project.dialogue.map((line) => [line.id, line]));
+  const home = new Map<string, string>();
+  for (const shot of first.project.shots) {
+    for (const lineId of shot.dialogueIds) home.set(lineId, shot.id);
+  }
+
+  const removed: RemovedLine[] = [];
+  for (const event of events.slice(1)) {
+    if (event.type === "dialogue.added") {
+      lines.set(event.line.id, event.line);
+      home.set(event.line.id, event.shotId);
+      continue;
+    }
+    if (event.type === "shot.updated" && event.patch.dialogueIds !== undefined) {
+      for (const lineId of event.patch.dialogueIds) home.set(lineId, event.shotId);
+      continue;
+    }
+    if (event.type !== "dialogue.removed") continue;
+    const line = lines.get(event.lineId);
+    const from = home.get(event.lineId);
+    if (line && from !== undefined && (shotId === undefined || from === shotId)) {
+      removed.push({
+        at: event.at,
+        lineId: event.lineId,
+        shotId: from,
+        text: line.text,
+        characterId: line.characterId,
+        durationMs: line.durationMs,
+      });
+    }
+    lines.delete(event.lineId);
+    home.delete(event.lineId);
+  }
+  return removed;
+}
+
 export type ActionRevision = { at: string; text: string };
 
 export type ActionHistory = {

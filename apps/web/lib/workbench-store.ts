@@ -18,7 +18,7 @@ import { create } from "zustand";
 import { diffEvents, getEventLog, migrateLog } from "@/lib/event-log";
 import { estimateDialogueMs } from "@/lib/dialogue";
 import { claimWriter } from "@/lib/writer-lock";
-import { latestTake, shotLabel, spendOf, toStageView } from "@/lib/read-model";
+import { latestTake, removedLines, shotLabel, spendOf, toStageView } from "@/lib/read-model";
 import { sampleProject } from "@/lib/sample-project";
 
 export type Decision = "approved" | "rejected";
@@ -103,6 +103,8 @@ type WorkbenchState = {
   setDialogueOrder: (shotId: string, lineIds: string[]) => boolean;
   /** 把一句台词挪到另一镜：两条 `shot.updated`，两镜时长各加减这一句（ADR-0054） */
   moveDialogueTo: (lineId: string, targetShotId: string) => boolean;
+  /** 把一句删掉的台词放回它原来的镜头：`dialogue.added` + 镜头时长加回（ADR-0055） */
+  restoreLine: (lineId: string) => boolean;
   /** 划掉一条补充要求：同样写一条 shot.updated（ADR-0039 附记） */
   removeNote: (shotId: string, note: string) => void;
   reset: () => void;
@@ -748,6 +750,56 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
           dialogueIds: [...target.dialogueIds, lineId],
           durationMs: target.durationMs + line.durationMs,
         },
+      },
+    ];
+    set({
+      project: written.reduce(applyEvent, project),
+      events: [...events, ...written],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  restoreLine: (lineId) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    if (project.dialogue.some((item) => item.id === lineId)) {
+      set({ castError: "这句已经在台词里了。" });
+      return false;
+    }
+    // 同一句删过多次：取最后一次，恢复的是删那一刻的正文与镜头。
+    const record = removedLines(events)
+      .filter((item) => item.lineId === lineId)
+      .at(-1);
+    if (!record) return false;
+    const shot = project.shots.find((item) => item.id === record.shotId);
+    if (!shot) {
+      set({ castError: "这一句原来的镜头不在了。" });
+      return false;
+    }
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定：要恢复台词先解锁。" });
+      return false;
+    }
+
+    const at = new Date().toISOString();
+    const written: ProjectEvent[] = [
+      {
+        type: "dialogue.added",
+        at,
+        shotId: shot.id,
+        line: {
+          id: record.lineId,
+          characterId: record.characterId,
+          text: record.text,
+          durationMs: record.durationMs,
+        },
+      },
+      {
+        type: "shot.updated",
+        at,
+        shotId: shot.id,
+        patch: { durationMs: shot.durationMs + record.durationMs },
       },
     ];
     set({
