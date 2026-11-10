@@ -46,6 +46,7 @@ const EVENT_TYPES: Record<ProjectEvent["type"], true> = {
   "project.updated": true,
   "shot.updated": true,
   "dialogue.updated": true,
+  "dialogue.speaker.updated": true,
   "dialogue.added": true,
   "dialogue.removed": true,
   "take.added": true,

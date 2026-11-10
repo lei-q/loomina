@@ -388,6 +388,8 @@ const round2 = (value: number) => Math.round(value * 100) / 100;
 
 export type ScriptLine = {
   id: string;
+  /** 说话人的角色 id，换人时用 */
+  characterId: string;
   /** 说话人；角色表里找不到就写"未知" */
   character: string;
   text: string;
@@ -461,6 +463,7 @@ export function toScriptView(project: Project, options: { budgetCny?: number } =
             if (!line) continue;
             lines.push({
               id: line.id,
+              characterId: line.characterId,
               character: characterById.get(line.characterId)?.name ?? "未知",
               text: line.text,
               dur: line.durationMs / 1000,

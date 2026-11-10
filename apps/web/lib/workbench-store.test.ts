@@ -929,3 +929,39 @@ describe("台词增删（ADR-0045）", () => {
     expect(state().events).toHaveLength(snapshot);
   });
 });
+
+describe("换说话人（ADR-0046）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("写一条事件，名字变了，文本与时长不动，可回放", () => {
+    const before = state().project.dialogue.find((line) => line.id === "d-01")!;
+    const ok = state().changeSpeaker("d-01", "c-lin");
+
+    expect(ok).toBe(true);
+    const after = state().project.dialogue.find((line) => line.id === "d-01")!;
+    expect(after.characterId).toBe("c-lin");
+    expect(after.text).toBe(before.text);
+    expect(after.durationMs).toBe(before.durationMs);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "dialogue.speaker.updated",
+      lineId: "d-01",
+      characterId: "c-lin",
+    });
+    expect(rebuild(state().events).dialogue.find((line) => line.id === "d-01")?.characterId).toBe(
+      "c-lin",
+    );
+  });
+
+  it("锁定镜头、同一个人、陌生人都不写事件", () => {
+    const snapshot = state().events.length;
+    expect(state().changeSpeaker("d-04", "c-zhou")).toBe(false); // d-04 在锁定的 s-08
+    expect(state().castError).toContain("锁定");
+    expect(state().changeSpeaker("d-01", "c-zhou")).toBe(false); // 本来就是周
+    expect(state().changeSpeaker("d-01", "c-404")).toBe(false);
+    expect(state().castError).toContain("说话人");
+    expect(state().events).toHaveLength(snapshot);
+  });
+});

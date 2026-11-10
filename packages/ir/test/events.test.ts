@@ -305,3 +305,51 @@ describe("台词增删（ADR-0045）", () => {
     ).toThrow(/不存在/);
   });
 });
+
+describe("换说话人（ADR-0046）", () => {
+  it("改 characterId，文本与时长不动，可回放", () => {
+    const project = load();
+    const lineBefore = project.dialogue.find((line) => line.id === "dl-1")!;
+    const event: ProjectEvent = {
+      type: "dialogue.speaker.updated",
+      at: AT,
+      lineId: "dl-1",
+      characterId: "c-zhou",
+    };
+    const after = applyEvent(project, event);
+    const lineAfter = after.dialogue.find((line) => line.id === "dl-1")!;
+
+    expect(lineAfter.characterId).toBe("c-zhou");
+    expect(lineAfter.text).toBe(lineBefore.text);
+    expect(lineAfter.durationMs).toBe(lineBefore.durationMs);
+    expect(rebuild([created(project), event])).toEqual(after);
+  });
+
+  it("同一句话换个不存在的人、不存在的台词、还是同一个人都拒绝", () => {
+    const project = load();
+    expect(() =>
+      applyEvent(project, {
+        type: "dialogue.speaker.updated",
+        at: AT,
+        lineId: "dl-1",
+        characterId: "c-404",
+      }),
+    ).toThrow(/不存在的角色/);
+    expect(() =>
+      applyEvent(project, {
+        type: "dialogue.speaker.updated",
+        at: AT,
+        lineId: "dl-404",
+        characterId: "c-zhou",
+      }),
+    ).toThrow(/不存在的台词/);
+    expect(() =>
+      applyEvent(project, {
+        type: "dialogue.speaker.updated",
+        at: AT,
+        lineId: "dl-1",
+        characterId: project.dialogue.find((line) => line.id === "dl-1")!.characterId,
+      }),
+    ).toThrow(/已经是/);
+  });
+});

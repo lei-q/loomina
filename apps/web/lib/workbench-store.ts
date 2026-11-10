@@ -90,6 +90,8 @@ type WorkbenchState = {
   addDialogue: (shotId: string, characterId: string, text: string) => boolean;
   /** 删一句台词：写一条 `dialogue.removed`，镜头时长减这一句（ADR-0045） */
   removeDialogue: (lineId: string) => boolean;
+  /** 换说话人：写一条 `dialogue.speaker.updated`，文本与时长不动（ADR-0046） */
+  changeSpeaker: (lineId: string, characterId: string) => boolean;
   /** 划掉一条补充要求：同样写一条 shot.updated（ADR-0039 附记） */
   removeNote: (shotId: string, note: string) => void;
   reset: () => void;
@@ -736,6 +738,36 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     set({
       project: next.reduce(applyEvent, project),
       events: [...events, ...next],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  changeSpeaker: (lineId, characterId) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const line = project.dialogue.find((item) => item.id === lineId);
+    if (!line) return false;
+    const shot = project.shots.find((item) => item.dialogueIds.includes(lineId));
+    if (shot?.locked) {
+      set({ castError: "这一镜已锁定：要换说话人先解锁。" });
+      return false;
+    }
+    if (!project.characters.some((item) => item.id === characterId)) {
+      set({ castError: "找不到这个说话人。" });
+      return false;
+    }
+    if (line.characterId === characterId) return false;
+
+    const event: ProjectEvent = {
+      type: "dialogue.speaker.updated",
+      at: new Date().toISOString(),
+      lineId,
+      characterId,
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
       castError: undefined,
     });
     return true;

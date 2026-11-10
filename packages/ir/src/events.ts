@@ -38,6 +38,13 @@ export type ProjectEvent =
       patch: Partial<Omit<DialogueLine, "id" | "characterId">>;
     }
   | {
+      /** 换说话人（ADR-0046）：同一句台词换个角色说，文本与时长不动 */
+      type: "dialogue.speaker.updated";
+      at: string;
+      lineId: Id;
+      characterId: Id;
+    }
+  | {
       /** 加一句台词（ADR-0045）：同时挂到镜头的 dialogueIds 上 */
       type: "dialogue.added";
       at: string;
@@ -111,6 +118,26 @@ export function applyEvent(
         item.id === event.lineId ? { ...item, ...event.patch } : item,
       );
       return { ...current, dialogue };
+    }
+
+    case "dialogue.speaker.updated": {
+      if (!current) throw new Error("dialogue.speaker.updated 之前必须有 project.created");
+      const line = current.dialogue.find((item) => item.id === event.lineId);
+      if (!line) {
+        throw new Error(`dialogue.speaker.updated 指向不存在的台词: ${event.lineId}`);
+      }
+      if (!current.characters.some((item) => item.id === event.characterId)) {
+        throw new Error(`dialogue.speaker.updated 指向不存在的角色: ${event.characterId}`);
+      }
+      if (line.characterId === event.characterId) {
+        throw new Error(`台词 ${event.lineId} 已经是 ${event.characterId} 说的`);
+      }
+      return {
+        ...current,
+        dialogue: current.dialogue.map((item) =>
+          item.id === event.lineId ? { ...item, characterId: event.characterId } : item,
+        ),
+      };
     }
 
     case "dialogue.added": {

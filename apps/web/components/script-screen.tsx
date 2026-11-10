@@ -22,11 +22,13 @@ export function ScriptScreen() {
   const restoreDialogue = useWorkbench((state) => state.restoreDialogue);
   const addDialogue = useWorkbench((state) => state.addDialogue);
   const removeDialogue = useWorkbench((state) => state.removeDialogue);
+  const changeSpeaker = useWorkbench((state) => state.changeSpeaker);
   const events = useWorkbench((state) => state.events);
 
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [swapping, setSwapping] = useState<string | null>(null);
   const [adding, setAdding] = useState<string | null>(null);
   const [addSpeaker, setAddSpeaker] = useState("");
   const [addText, setAddText] = useState("");
@@ -203,9 +205,48 @@ export function ScriptScreen() {
                               ) : (
                                 <div key={line.id} className="border-l border-line-2 pl-3">
                                   <div className="flex items-baseline gap-2">
-                                    <p className="tnum text-[9px] tracking-[.12em] text-muted-2">
-                                      {line.character} · {line.dur.toFixed(1)}s
-                                    </p>
+                                    {swapping === line.id ? (
+                                      <select
+                                        autoFocus
+                                        value={line.characterId}
+                                        onChange={(event) => {
+                                          if (changeSpeaker(line.id, event.target.value)) {
+                                            setSwapping(null);
+                                          } else {
+                                            setNote(useWorkbench.getState().castError);
+                                          }
+                                        }}
+                                        onBlur={() => setSwapping(null)}
+                                        aria-label="说话人"
+                                        className="rounded-token border border-pick/70 bg-surface px-1 py-0 text-[9.5px] text-text focus:outline-none"
+                                      >
+                                        {view.characters.map((character) => (
+                                          <option key={character.id} value={character.id}>
+                                            {character.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        disabled={readOnly || shot.locked}
+                                        onClick={() => {
+                                          setSwapping(line.id);
+                                          setNote(undefined);
+                                        }}
+                                        title={
+                                          shot.locked
+                                            ? "这一镜已锁定，先解锁才能换人"
+                                            : "换个说话人"
+                                        }
+                                        className="tnum shrink-0 text-[9px] tracking-[.12em] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:text-text disabled:cursor-default"
+                                      >
+                                        {line.character}
+                                      </button>
+                                    )}
+                                    <span className="tnum text-[9px] tracking-[.12em] text-muted-2">
+                                      · {line.dur.toFixed(1)}s
+                                    </span>
                                     {!readOnly &&
                                       (deleting === line.id ? (
                                         <span className="flex items-baseline gap-1">

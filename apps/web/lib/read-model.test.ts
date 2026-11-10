@@ -404,6 +404,7 @@ describe("剧本页读模型（只读）", () => {
 
     const line = view.scenes[0]!.shots[0]!.lines[0]!;
     expect(line.character).toBe("周");
+    expect(line.characterId).toBe("c-zhou");
     expect(line.text).toContain("你早就知道");
     expect(line.dur).toBeGreaterThan(0);
     expect(view.dialogueCount).toBe(4);
