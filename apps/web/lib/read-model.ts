@@ -208,6 +208,8 @@ export type CastLocationView = {
   status: CastStatus;
   required: boolean;
   masterAssetId?: string;
+  /** 主镜的真图（data URI）；示例素材为空，界面画剪影 */
+  masterUri?: string;
   lockedAt?: string;
 };
 
@@ -222,6 +224,8 @@ export type CastPropView = {
   /** 进了镜头的道具必须能锁 */
   required: boolean;
   referenceAssetId?: string;
+  /** 参考图的真图（data URI）；示例素材为空，界面画剪影 */
+  referenceUri?: string;
   lockedAt?: string;
 };
 
@@ -278,6 +282,7 @@ export function toCastView(project: Project): CastView {
         status: item.status,
         required: item.required,
         masterAssetId: location.masterShotId,
+        masterUri: assetById.get(location.masterShotId ?? "")?.uri,
         lockedAt:
           item.approval?.status === "approved" ? item.approval.approvedAt : undefined,
       },
@@ -296,6 +301,7 @@ export function toCastView(project: Project): CastView {
         status: item.status,
         required: item.required,
         referenceAssetId: prop.referenceImages[0],
+        referenceUri: assetById.get(prop.referenceImages[0] ?? "")?.uri,
         lockedAt:
           item.approval?.status === "approved" ? item.approval.approvedAt : undefined,
       },

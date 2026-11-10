@@ -9,6 +9,8 @@ import {
 import minimalJson from "../../../examples/minimal.json";
 import {
   AnchorError,
+  buildMasterPrompt,
+  buildPropPrompt,
   buildSheetPrompt,
   buildShotPrompt,
   runMinimalChain,
@@ -153,5 +155,33 @@ describe("三视图提示词", () => {
     expect(front).toContain("林晚");
     expect(front).toContain("左眼下的痣");
     expect(front).toContain("纯浅灰背景");
+  });
+});
+
+describe("主镜与道具提示词", () => {
+  it("主镜是空镜，只交代空间与光线", () => {
+    const prompt = buildMasterPrompt({ name: "走廊" });
+
+    expect(prompt).toContain("空镜");
+    expect(prompt).toContain("走廊");
+    expect(prompt).toContain("无人入画");
+  });
+
+  it("道具带上名称与描述，单人静物", () => {
+    const prompt = buildPropPrompt({
+      name: "搪瓷杯",
+      description: "白底蓝边，杯沿磕了一块",
+    });
+
+    expect(prompt).toContain("搪瓷杯");
+    expect(prompt).toContain("杯沿磕了一块");
+    expect(prompt).toContain("单件静物");
+  });
+
+  it("道具没有描述时不留空句", () => {
+    const prompt = buildPropPrompt({ name: "台灯", description: "" });
+
+    expect(prompt).not.toContain("。。");
+    expect(prompt.startsWith("道具参考图：台灯。单件静物")).toBe(true);
   });
 });

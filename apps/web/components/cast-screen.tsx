@@ -168,10 +168,15 @@ function CharacterRow({
 
 function LocationRow({
   location,
+  generating,
+  onGenerate,
   onLock,
   onUnlock,
 }: {
   location: CastLocationView;
+  /** 主镜正在生成 */
+  generating: boolean;
+  onGenerate: () => void;
   onLock: () => void;
   onUnlock: () => void;
 }) {
@@ -188,11 +193,22 @@ function LocationRow({
 
         <figure className="w-[120px]">
           <div className="relative aspect-[9/16] overflow-hidden rounded-[1px] border border-line bg-[#0f1013]">
-            {location.masterAssetId ? (
+            {location.masterUri ? (
+              <img
+                src={location.masterUri}
+                alt={`${location.name} · 主镜`}
+                className="h-full w-full object-cover"
+              />
+            ) : location.masterAssetId ? (
               <Scene kind={location.art} className="h-full w-full" />
             ) : (
               <span className="absolute inset-0 grid place-items-center text-[9px] text-muted-2">
                 待生成
+              </span>
+            )}
+            {generating && (
+              <span className="absolute inset-0 grid place-items-center bg-bg/75 text-[9px] text-text">
+                生成中…
               </span>
             )}
           </div>
@@ -218,15 +234,28 @@ function LocationRow({
               </button>
             </>
           ) : (
-            <button
-              type="button"
-              onClick={onLock}
-              disabled={location.status === "incomplete"}
-              title={location.status === "incomplete" ? "还没有主镜" : "锁定后下游只能引用，不能替换"}
-              className="rounded-token bg-text px-3 py-1.5 text-[11.5px] text-bg transition-opacity duration-[var(--dur)] hover:opacity-85 disabled:pointer-events-none disabled:opacity-30"
-            >
-              锁定主镜
-            </button>
+            <>
+              {generating ? (
+                <span className="tnum text-[9px] text-muted">生成中…</span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onGenerate}
+                  className="rounded-token border border-line px-3 py-1.5 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                >
+                  生成主镜
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onLock}
+                disabled={location.status === "incomplete"}
+                title={location.status === "incomplete" ? "还没有主镜" : "锁定后下游只能引用，不能替换"}
+                className="rounded-token bg-text px-3 py-1.5 text-[11.5px] text-bg transition-opacity duration-[var(--dur)] hover:opacity-85 disabled:pointer-events-none disabled:opacity-30"
+              >
+                锁定主镜
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -236,10 +265,15 @@ function LocationRow({
 
 function PropRow({
   prop,
+  generating,
+  onGenerate,
   onLock,
   onUnlock,
 }: {
   prop: CastPropView;
+  /** 参考图正在生成 */
+  generating: boolean;
+  onGenerate: () => void;
   onLock: () => void;
   onUnlock: () => void;
 }) {
@@ -256,11 +290,22 @@ function PropRow({
 
         <figure className="w-[120px]">
           <div className="relative aspect-[9/16] overflow-hidden rounded-[1px] border border-line bg-[#0f1013]">
-            {prop.referenceAssetId ? (
+            {prop.referenceUri ? (
+              <img
+                src={prop.referenceUri}
+                alt={`${prop.name} · 参考图`}
+                className="h-full w-full object-cover"
+              />
+            ) : prop.referenceAssetId ? (
               <PropObject kind={prop.art} className="h-full w-full" />
             ) : (
               <span className="absolute inset-0 grid place-items-center text-[9px] text-muted-2">
                 待生成
+              </span>
+            )}
+            {generating && (
+              <span className="absolute inset-0 grid place-items-center bg-bg/75 text-[9px] text-text">
+                生成中…
               </span>
             )}
           </div>
@@ -286,15 +331,28 @@ function PropRow({
               </button>
             </>
           ) : (
-            <button
-              type="button"
-              onClick={onLock}
-              disabled={prop.status === "incomplete"}
-              title={prop.status === "incomplete" ? "还没有参考图" : "锁定后下游只能引用，不能替换"}
-              className="rounded-token bg-text px-3 py-1.5 text-[11.5px] text-bg transition-opacity duration-[var(--dur)] hover:opacity-85 disabled:pointer-events-none disabled:opacity-30"
-            >
-              锁定道具
-            </button>
+            <>
+              {generating ? (
+                <span className="tnum text-[9px] text-muted">生成中…</span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onGenerate}
+                  className="rounded-token border border-line px-3 py-1.5 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                >
+                  生成参考图
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onLock}
+                disabled={prop.status === "incomplete"}
+                title={prop.status === "incomplete" ? "还没有参考图" : "锁定后下游只能引用，不能替换"}
+                className="rounded-token bg-text px-3 py-1.5 text-[11.5px] text-bg transition-opacity duration-[var(--dur)] hover:opacity-85 disabled:pointer-events-none disabled:opacity-30"
+              >
+                锁定道具
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -307,8 +365,10 @@ export function CastScreen() {
   const lockCast = useWorkbench((state) => state.lockCast);
   const unlockCast = useWorkbench((state) => state.unlockCast);
   const generateSheet = useWorkbench((state) => state.generateSheet);
-  const sheetJobs = useWorkbench((state) => state.sheetJobs);
-  const sheetError = useWorkbench((state) => state.sheetError);
+  const generateMaster = useWorkbench((state) => state.generateMaster);
+  const generateProp = useWorkbench((state) => state.generateProp);
+  const jobs = useWorkbench((state) => state.jobs);
+  const castError = useWorkbench((state) => state.castError);
 
   const cast = useMemo(() => toCastView(project), [project]);
   const done = cast.lockedCount === cast.totalRequired;
@@ -338,25 +398,28 @@ export function CastScreen() {
               </span>
             </div>
 
-            {sheetError && (
+            {castError && (
               <p className="mt-3 max-w-[60ch] text-[10.5px] leading-[1.6] text-pick">
-                {sheetError}
+                {castError}
               </p>
             )}
           </header>
 
           <section className="mt-7">
             <h2 className="tnum text-[9px] tracking-[.14em] text-muted-2">人物 · 三视图</h2>
-            {cast.characters.map((character) => (
-              <CharacterRow
-                key={character.id}
-                character={character}
-                generating={sheetJobs[character.id]}
-                onGenerate={() => void generateSheet(character.id)}
-                onLock={() => lockCast("character", character.id)}
-                onUnlock={() => unlockCast("character", character.id)}
-              />
-            ))}
+            {cast.characters.map((character) => {
+              const job = jobs[character.id];
+              return (
+                <CharacterRow
+                  key={character.id}
+                  character={character}
+                  generating={job?.kind === "sheet" ? job.angle : undefined}
+                  onGenerate={() => void generateSheet(character.id)}
+                  onLock={() => lockCast("character", character.id)}
+                  onUnlock={() => unlockCast("character", character.id)}
+                />
+              );
+            })}
           </section>
 
           <section className="mt-8">
@@ -365,6 +428,8 @@ export function CastScreen() {
               <LocationRow
                 key={location.id}
                 location={location}
+                generating={jobs[location.id]?.kind === "master"}
+                onGenerate={() => void generateMaster(location.id)}
                 onLock={() => lockCast("location", location.id)}
                 onUnlock={() => unlockCast("location", location.id)}
               />
@@ -378,6 +443,8 @@ export function CastScreen() {
                 <PropRow
                   key={prop.id}
                   prop={prop}
+                  generating={jobs[prop.id]?.kind === "prop"}
+                  onGenerate={() => void generateProp(prop.id)}
                   onLock={() => lockCast("prop", prop.id)}
                   onUnlock={() => unlockCast("prop", prop.id)}
                 />

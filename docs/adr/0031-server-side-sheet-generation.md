@@ -51,6 +51,10 @@
 - 有能收参考图的接口后，四格改为"第一格 + 参考图派生其余三格"，再把 intra-sheet 一致性检查接进闸门。
 - 场景主镜、道具参考图复用同一条路由（提示词换成 `buildMasterPrompt` / `buildPropPrompt`）。
 
+## 附记（2026-11-10）
+
+最后一条已由 [ADR-0032](0032-cast-image-route-for-scenes-and-props.md) 落实：路由从 `/api/sheet` 改为 `POST /api/asset`，用 `kind` 区分三视图 / 主镜 / 道具；本文其余决策不变（密钥只在服务端、一次一格、`asset.updated`、锁定即拒绝）。
+
 ## 替代方案
 
 | 方案 | 未采用的原因 |

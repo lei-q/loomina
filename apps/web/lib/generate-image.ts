@@ -7,11 +7,15 @@ import {
   loadEnvFile,
   treecloudEnvFrom,
 } from "@loomina/gateway";
-import { buildSheetPrompt } from "@loomina/pipeline";
-import type { Character, Id, SheetView } from "@loomina/ir";
+import {
+  buildMasterPrompt,
+  buildPropPrompt,
+  buildSheetPrompt,
+} from "@loomina/pipeline";
+import type { Character, Id, Location, Prop, SheetView } from "@loomina/ir";
 
 /**
- * 服务端出图（ADR-0031）。
+ * 服务端出图（ADR-0031 / ADR-0032）。
  *
  * 密钥只在服务端：浏览器永远拿不到 `API_KEY`，只拿到一张图的 data URI。
  * 这个文件只能在 Node 运行时里 import，不要被客户端组件直接引用。
@@ -26,7 +30,8 @@ const ENV_CANDIDATES = [
 
 function envPath(): string {
   for (const candidate of ENV_CANDIDATES) {
-    const full = resolve(process.cwd(), candidate);
+    // 候选路径是运行时拼出来的，别让打包器把整个仓库当成静态资源依赖
+    const full = resolve(/* turbopackIgnore: true */ process.cwd(), candidate);
     if (existsSync(full)) return full;
   }
   throw new ConfigError(
@@ -34,10 +39,14 @@ function envPath(): string {
   );
 }
 
-export type SheetPanelRequest = {
-  character: Pick<Character, "name" | "appearance" | "mustNotChange">;
-  angle: SheetView;
-};
+export type CastImageRequest =
+  | {
+      kind: "sheet";
+      character: Pick<Character, "name" | "appearance" | "mustNotChange">;
+      angle: SheetView;
+    }
+  | { kind: "master"; location: Pick<Location, "name"> }
+  | { kind: "prop"; prop: Pick<Prop, "name" | "description"> };
 
 export type GeneratedImage = {
   uri: string;
@@ -45,17 +54,37 @@ export type GeneratedImage = {
   prompt: string;
 };
 
-export async function generateSheetPanel(
-  request: SheetPanelRequest,
+/** 提示词与占位 shotId 都按资产语义走，不按"这一格是哪个角色的"走。 */
+function plan(request: CastImageRequest): { prompt: string; label: string } {
+  if (request.kind === "sheet") {
+    return {
+      prompt: buildSheetPrompt(request.character, request.angle),
+      label: `sheet-${request.character.name}-${request.angle}`,
+    };
+  }
+  if (request.kind === "master") {
+    return {
+      prompt: buildMasterPrompt(request.location),
+      label: `master-${request.location.name}`,
+    };
+  }
+  return {
+    prompt: buildPropPrompt(request.prop),
+    label: `prop-${request.prop.name}`,
+  };
+}
+
+export async function generateCastImage(
+  request: CastImageRequest,
 ): Promise<GeneratedImage> {
   const config = treecloudEnvFrom(loadEnvFile(envPath()));
   const client = new TreecloudClient({ ...config, timeoutMs: 120_000 });
   const adapter = new TreecloudImageAdapter(client);
 
-  const prompt = buildSheetPrompt(request.character, request.angle);
+  const { prompt, label } = plan(request);
   const output = await adapter.generate({
-    // 定妆照还不是某一镜的图，用格子 id 占位，保证溯源能对上是谁的哪一格
-    shotId: `sheet-${request.character.name}-${request.angle}` as Id,
+    // 定妆资产还不属于某一镜，用语义 id 占位，保证溯源能对上是什么东西
+    shotId: label as Id,
     prompt,
     size: "1024x1536",
   });

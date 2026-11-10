@@ -856,3 +856,32 @@
 2. 对象存储 + URL 换掉 data URI，顺带加取消与单格重试。
 3. 有能收参考图的接口后，改成"第一格 + 参考图派生其余三格"，再把 intra-sheet 一致性检查接进闸门。
 4. 场景主镜与道具参考图复用同一条路由。
+
+### 第二十三次讨论：主镜与道具参考图接上出图（2026-11-10）
+
+ADR-0031 只通了人物三视图。定妆闸门里另外两类必锁资产——场景主镜、道具参考图——仍然锁的是一张不存在图。这一轮把路由泛化，三类资产走同一条出图路径。决策见 [ADR-0032](adr/0032-cast-image-route-for-scenes-and-props.md)。
+
+**改了什么**
+- `POST /api/sheet` 改为 `POST /api/asset`，用 `kind` 区分：`sheet`（人物一格）/ `master`（场景主镜）/ `prop`（道具参考图）；旧的 `/api/sheet` 删除，没有兼容层。
+- 提示词补两条：`buildMasterPrompt`（空镜，交代空间与光线）与 `buildPropPrompt`（单件静物，带名称与描述），与 `buildSheetPrompt` 并列放在 `packages/pipeline`。
+- store 拆出 `generateMaster` / `generateProp`，与 `generateSheet` 共用 `generateOne`（请求、校验、写 `asset.updated`、清进度、失败即停）；进度字段从 `sheetJobs` 泛化为 `jobs`，错误文案从 `sheetError` 改为 `castError`。
+- 定妆台：场景行加"生成主镜"，道具行加"生成参考图"，生成中在图框上盖"生成中…"、按钮位置换成同尺寸文字；有真图就显示真图，没有仍画剪影。
+- 场景缺 `masterShotId`、道具缺 `referenceImages[0]` 时不发请求，直接说明"还没有主镜的资产位"。
+
+**验证**
+- 测试：ir 48 / gateway 17 / pipeline 10 / web 38，共 **113 条通过**；`pnpm typecheck`、`pnpm build`（`/api/asset` 为 Dynamic 路由）通过。
+- 新增 5 条：pipeline 三条（主镜空镜、道具带描述、空描述不留空句）、store 两条（主镜与道具各写一条 `asset.updated`；锁定的不重生成）。
+- 真实链路（`next start` + 无头 Chrome）：走廊主镜 32 秒出图，是空走廊；搪瓷杯参考图 24 秒出图，白底蓝边、浅灰背景，与描述一致。之后普通导航点击其余行仍显示剪影，符合预期。
+
+**诚实地说**
+- **主镜只有场景名。** `Location` 没有描述字段，"走廊"就只是一个走廊；同一部片里两个走廊会生成得很像。提示词补内容要改 IR，需单独一条 ADR。
+- 一次一张、同步二十到四十秒：三个场景要串行点完，没有取消、没有重试。
+- data URI 依旧每张约 2.4MB 进内存，刷新即丢。
+- 出图费用还是在账本外，顶栏"已花"不含这些钱。
+- 构建时 Turbopack 把"运行时拼出来的 env 路径"当成整仓静态依赖，报了 tracing 错误；已在 `path.resolve` 上加 `turbopackIgnore` 注释，并删掉 `.next` 重新生成路由类型（删路由后旧类型会让 typecheck 指着一个不存在的文件）。
+
+**下一步**
+1. 出图记账：把每次生成的模型、单价、张数写进成本账本，顶栏"已花"才算全（H12）。
+2. 对象存储 + URL 换掉 data URI，顺带加取消与单次重试。
+3. 定妆闸门加 intra-sheet / 跨类一致性检查；参考图接口可用后改"第一格 + 派生"。
+4. `Location` 补空间描述，让主镜提示词有内容。

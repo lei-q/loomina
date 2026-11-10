@@ -15,6 +15,12 @@ import { sampleProject } from "@/lib/sample-project";
 
 export type Decision = "approved" | "rejected";
 
+/** 正在生成哪一张：定妆台的三类资产共用一条进度记录。 */
+export type GenerateJob =
+  | { kind: "sheet"; angle: SheetView }
+  | { kind: "master" }
+  | { kind: "prop" };
+
 /**
  * 审片台的本地状态（ADR-0027）。
  *
@@ -26,9 +32,9 @@ type WorkbenchState = {
   project: Project;
   events: ProjectEvent[];
   currentShotId: string;
-  /** 正在生成哪一格：characterId → angle。出图是分钟级，界面要如实显示进度 */
-  sheetJobs: Record<string, SheetView | undefined>;
-  sheetError?: string;
+  /** 正在生成哪一张：人物 / 场景 / 道具的 id → 任务。出图是分钟级，界面要如实显示进度 */
+  jobs: Record<string, GenerateJob | undefined>;
+  castError?: string;
   select: (shotId: string) => void;
   decide: (status: Decision) => void;
   /** 定妆闸门：锁定 / 解锁一个角色、场景或道具 */
@@ -36,6 +42,10 @@ type WorkbenchState = {
   unlockCast: (targetType: ApprovalTargetType, targetId: string) => void;
   /** 逐格生成三视图；每落一张写一条 `asset.updated` */
   generateSheet: (characterId: string) => Promise<void>;
+  /** 生成场景主镜 */
+  generateMaster: (locationId: string) => Promise<void>;
+  /** 生成道具参考图 */
+  generateProp: (propId: string) => Promise<void>;
   reset: () => void;
 };
 
@@ -64,11 +74,101 @@ function nextOpenShotId(project: Project, fromId: string): string {
   return ordered.find((shot) => shot.state === "open")?.id ?? fromId;
 }
 
+function isLocked(
+  project: Project,
+  targetType: ApprovalTargetType,
+  targetId: string,
+): boolean {
+  return project.approvals.some(
+    (item) =>
+      item.targetType === targetType &&
+      item.targetId === targetId &&
+      item.status === "approved",
+  );
+}
+
+type Store = {
+  get: () => WorkbenchState;
+  set: (partial: Partial<WorkbenchState>) => void;
+};
+
+/**
+ * 出一张图，落一条 `asset.updated`。
+ *
+ * 失败写一句人话并返回 false：批量生成据此停下，不把后面的也浪费掉。
+ */
+async function generateOne(
+  { get, set }: Store,
+  input: {
+    /** 进度记在谁头上：角色 / 场景 / 道具的 id */
+    key: string;
+    /** 出错时点名的对象 */
+    label: string;
+    assetId: string;
+    job: GenerateJob;
+    body: Record<string, unknown>;
+  },
+): Promise<boolean> {
+  const setJob = (value: GenerateJob | undefined) =>
+    set({ jobs: { ...get().jobs, [input.key]: value } });
+
+  setJob(input.job);
+  try {
+    const response = await fetch("/api/asset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input.body),
+    });
+    const payload = (await response.json()) as {
+      uri?: string;
+      model?: string;
+      prompt?: string;
+      error?: string;
+    };
+    if (!response.ok || !payload.uri) {
+      throw new Error(payload.error ?? `生成失败（${response.status}）`);
+    }
+
+    const at = new Date().toISOString();
+    const event: ProjectEvent = {
+      type: "asset.updated",
+      at,
+      asset: {
+        id: input.assetId,
+        kind: "image",
+        source: "generated",
+        uri: payload.uri,
+        mime: "image/png",
+        provenance: {
+          modelId: payload.model ?? "unknown",
+          prompt: payload.prompt,
+          referenceAssetIds: [],
+          createdAt: at,
+        },
+        createdAt: at,
+      },
+    };
+    set({
+      project: applyEvent(get().project, event),
+      events: [...get().events, event],
+    });
+    setJob(undefined);
+    return true;
+  } catch (error) {
+    setJob(undefined);
+    set({
+      castError:
+        error instanceof Error ? `「${input.label}」${error.message}` : "生成失败",
+    });
+    return false;
+  }
+}
+
 export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   project: sampleProject,
   events: initialEvents,
   currentShotId: initialShotId,
-  sheetJobs: {},
+  jobs: {},
 
   select: (shotId) => {
     if (shotId === get().currentShotId) return;
@@ -150,86 +250,90 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   },
 
   generateSheet: async (characterId) => {
-    const character = get().project.characters.find((item) => item.id === characterId);
+    const { project } = get();
+    const character = project.characters.find((item) => item.id === characterId);
     if (!character) return;
     // 锁定的定妆不能被覆盖：要重做先解锁（准则 P14）
-    const locked = get().project.approvals.some(
-      (item) =>
-        item.targetType === "character" &&
-        item.targetId === characterId &&
-        item.status === "approved",
-    );
-    if (locked) return;
+    if (isLocked(project, "character", characterId)) return;
 
     const angles = SHEET_ANGLES.filter((angle) => character.sheet[angle]);
     if (angles.length === 0) {
-      set({ sheetError: "这个角色还没有三视图的资产位，先建四个格子" });
+      set({ castError: "这个角色还没有三视图的资产位，先建四个格子" });
       return;
     }
 
-    set({ sheetError: undefined });
+    set({ castError: undefined });
     for (const angle of angles) {
-      set({ sheetJobs: { ...get().sheetJobs, [characterId]: angle } });
-      const setAngle = (value: SheetView | undefined) =>
-        set({ sheetJobs: { ...get().sheetJobs, [characterId]: value } });
-
-      try {
-        const response = await fetch("/api/sheet", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+      const ok = await generateOne(
+        { get, set },
+        {
+          key: characterId,
+          label: character.name,
+          assetId: character.sheet[angle]!,
+          job: { kind: "sheet", angle },
+          body: {
+            kind: "sheet",
             character: {
               name: character.name,
               appearance: character.appearance,
               mustNotChange: character.mustNotChange,
             },
             angle,
-          }),
-        });
-        const payload = (await response.json()) as {
-          uri?: string;
-          model?: string;
-          prompt?: string;
-          error?: string;
-        };
-        if (!response.ok || !payload.uri) {
-          throw new Error(payload.error ?? `生成失败（${response.status}）`);
-        }
-
-        const assetId = character.sheet[angle]!;
-        const at = new Date().toISOString();
-        const event: ProjectEvent = {
-          type: "asset.updated",
-          at,
-          asset: {
-            id: assetId,
-            kind: "image",
-            source: "generated",
-            uri: payload.uri,
-            mime: "image/png",
-            provenance: {
-              modelId: payload.model ?? "unknown",
-              prompt: payload.prompt,
-              referenceAssetIds: [],
-              createdAt: at,
-            },
-            createdAt: at,
           },
-        };
-        set({
-          project: applyEvent(get().project, event),
-          events: [...get().events, event],
-        });
-        setAngle(undefined);
-      } catch (error) {
-        setAngle(undefined);
-        set({
-          sheetError:
-            error instanceof Error ? `「${character.name}」${error.message}` : "生成失败",
-        });
-        return;
-      }
+        },
+      );
+      if (!ok) return; // 一格没成，后面的也多半不成；别继续烧钱
     }
+  },
+
+  generateMaster: async (locationId) => {
+    const { project } = get();
+    const location = project.locations.find((item) => item.id === locationId);
+    if (!location) return;
+    if (isLocked(project, "location", locationId)) return;
+    if (!location.masterShotId) {
+      set({ castError: `「${location.name}」还没有主镜的资产位` });
+      return;
+    }
+
+    set({ castError: undefined });
+    await generateOne(
+      { get, set },
+      {
+        key: locationId,
+        label: location.name,
+        assetId: location.masterShotId,
+        job: { kind: "master" },
+        body: { kind: "master", location: { name: location.name } },
+      },
+    );
+  },
+
+  generateProp: async (propId) => {
+    const { project } = get();
+    const prop = project.props.find((item) => item.id === propId);
+    if (!prop) return;
+    if (isLocked(project, "prop", propId)) return;
+    const assetId = prop.referenceImages[0];
+    if (!assetId) {
+      set({ castError: `「${prop.name}」还没有参考图的资产位` });
+      return;
+    }
+
+    set({ castError: undefined });
+    await generateOne(
+      { get, set },
+      {
+        key: propId,
+        label: prop.name,
+        assetId,
+        job: { kind: "prop" },
+        body: {
+          kind: "prop",
+          prop: { name: prop.name, description: prop.description },
+        },
+      },
+    );
   },
 
   reset: () => {
@@ -238,8 +342,8 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       project,
       events: bootstrap(project),
       currentShotId: initialShotId,
-      sheetJobs: {},
-      sheetError: undefined,
+      jobs: {},
+      castError: undefined,
     });
   },
 }));

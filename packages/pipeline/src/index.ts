@@ -4,7 +4,9 @@ import {
   shotAnchors,
   type Character,
   type Id,
+  type Location,
   type Project,
+  type Prop,
   type SheetView,
   type Shot,
   type Take,
@@ -262,6 +264,25 @@ export function buildSheetPrompt(
     parts.push(`不许变：${character.mustNotChange.join("、")}`);
   }
   parts.push("全身站姿，自然表情，纯浅灰背景，无文字，无水印");
+  parts.push("竖屏 9:16，实拍电影质感，柔光棚拍");
+  return parts.join("。");
+}
+
+/** 场景主镜：空镜，只交代空间与光线。同一场所有镜头都引这一张。 */
+export function buildMasterPrompt(location: Pick<Location, "name">): string {
+  const parts = [`场景主镜，空镜：${location.name}`];
+  parts.push("无人入画，广角，交代空间结构、陈设与光源方向");
+  parts.push("竖屏 9:16，实拍电影质感，自然光，轻微胶片颗粒");
+  return parts.join("。");
+}
+
+/** 道具参考图：一张能认出这件东西的静物。 */
+export function buildPropPrompt(
+  prop: Pick<Prop, "name" | "description">,
+): string {
+  const parts = [`道具参考图：${prop.name}`];
+  if (prop.description) parts.push(prop.description);
+  parts.push("单件静物，正面，纯浅灰背景，无人物，无文字，无水印");
   parts.push("竖屏 9:16，实拍电影质感，柔光棚拍");
   return parts.join("。");
 }

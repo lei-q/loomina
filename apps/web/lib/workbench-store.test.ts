@@ -113,16 +113,18 @@ describe("审片台 store", () => {
   });
 });
 
-describe("生成三视图（ADR-0031）", () => {
+describe("生成定妆资产（ADR-0031 / ADR-0032）", () => {
   beforeEach(() => {
     state().reset();
   });
 
-  const stub = (impl: (body: { angle: string }) => Response) => {
-    const calls: string[] = [];
+  type Call = { kind: string; angle?: string };
+
+  const stub = (impl: (body: Call) => Response) => {
+    const calls: Call[] = [];
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-      const body = JSON.parse(String(init?.body)) as { angle: string };
-      calls.push(body.angle);
+      const body = JSON.parse(String(init?.body)) as Call;
+      calls.push(body);
       return impl(body);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -144,12 +146,17 @@ describe("生成三视图（ADR-0031）", () => {
 
     await state().generateSheet("c-lin");
 
-    expect(calls).toEqual(["front", "threeQuarter", "side", "back"]);
+    expect(calls.map((call) => call.angle)).toEqual([
+      "front",
+      "threeQuarter",
+      "side",
+      "back",
+    ]);
     expect(state().events.filter((event) => event.type === "asset.updated")).toHaveLength(4);
     const asset = state().project.assets.find((item) => item.id === "a-lin-front")!;
     expect(asset.uri).toContain("front");
     expect(asset.provenance?.modelId).toBe("gemini-2.5-flash-image");
-    expect(state().sheetJobs["c-lin"]).toBeUndefined();
+    expect(state().jobs["c-lin"]).toBeUndefined();
 
     vi.unstubAllGlobals();
   });
@@ -169,10 +176,51 @@ describe("生成三视图（ADR-0031）", () => {
 
     await state().generateSheet("c-lin");
 
-    expect(state().sheetError).toContain("配额不足");
+    expect(state().castError).toContain("配额不足");
     expect(state().events.filter((event) => event.type === "asset.updated")).toHaveLength(0);
-    expect(state().sheetJobs["c-lin"]).toBeUndefined();
+    expect(state().jobs["c-lin"]).toBeUndefined();
 
+    vi.unstubAllGlobals();
+  });
+
+  it("场景主镜与道具参考图各写一条 asset.updated", async () => {
+    const calls = stub(
+      (body) =>
+        new Response(
+          JSON.stringify({
+            uri: `data:image/png;base64,${body.kind}`,
+            model: "gpt-image-2-c",
+            prompt: body.kind,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+
+    await state().generateMaster("loc-corridor");
+    await state().generateProp("p-cup");
+
+    expect(calls.map((call) => call.kind)).toEqual(["master", "prop"]);
+    expect(
+      state().project.assets.find((item) => item.id === "a-corridor")?.uri,
+    ).toContain("master");
+    expect(state().project.assets.find((item) => item.id === "a-cup")?.uri).toContain(
+      "prop",
+    );
+    expect(state().jobs["loc-corridor"]).toBeUndefined();
+    expect(state().jobs["p-cup"]).toBeUndefined();
+
+    vi.unstubAllGlobals();
+  });
+
+  it("锁定的场景与道具不重生成", async () => {
+    state().lockCast("location", "loc-corridor");
+    state().lockCast("prop", "p-cup");
+    const calls = stub(() => new Response("{}", { status: 200 }));
+
+    await state().generateMaster("loc-corridor");
+    await state().generateProp("p-cup");
+
+    expect(calls).toHaveLength(0);
     vi.unstubAllGlobals();
   });
 });
