@@ -64,6 +64,11 @@ type WorkbenchState = {
   toggleShotCharacter: (shotId: string, characterId: string) => boolean;
   /** 道具出场：点一下把这件道具加进或移出这一镜（ADR-0066） */
   toggleShotProp: (shotId: string, propId: string) => boolean;
+  /**
+   * 这一镜里换人：同一条动作里把他从出场里换成另一个人，
+   * 这一镜里他说的台词一起换过去（ADR-0070）
+   */
+  swapShotCharacter: (shotId: string, fromId: string, toId: string) => boolean;
   /** 一步留用并锁定：写一条 take.updated + 一条 shot.updated（ADR-0041 附记） */
   approveAndLock: (shotId: string) => void;
   decide: (status: Decision) => void;
@@ -507,7 +512,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         .some((line) => line?.characterId === characterId);
       if (speaking) {
         const name = project.characters.find((item) => item.id === characterId)?.name ?? "这个人物";
-        set({ castError: `${name}在这一镜还有台词：先删掉或换人，再把他从出场里拿掉。` });
+        set({ castError: `${name}在这一镜还有台词：先删掉，或去剧本页点他的名字换人，再把他从出场里拿掉。` });
         return false;
       }
     }
@@ -525,6 +530,54 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     set({
       project: applyEvent(project, event),
       events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  swapShotCharacter: (shotId, fromId, toId) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) {
+      set({ castError: "找不到这一镜。" });
+      return false;
+    }
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定，先解锁再换人。" });
+      return false;
+    }
+    if (!shot.characterIds.includes(fromId)) {
+      set({ castError: "这个人物不在这一镜的出场里。" });
+      return false;
+    }
+    if (!project.characters.some((item) => item.id === toId)) {
+      set({ castError: "找不到要换上的人。" });
+      return false;
+    }
+    if (fromId === toId) return false;
+
+    // 换上的人站在被换那一位，出场顺序不乱；他本来就在这一镜里就并到第一次出现的位置
+    const characterIds: string[] = [];
+    for (const id of shot.characterIds) {
+      const next = id === fromId ? toId : id;
+      if (!characterIds.includes(next)) characterIds.push(next);
+    }
+
+    const at = new Date().toISOString();
+    const written: ProjectEvent[] = [
+      { type: "shot.updated", at, shotId, patch: { characterIds } },
+    ];
+    for (const lineId of shot.dialogueIds) {
+      const line = project.dialogue.find((item) => item.id === lineId);
+      if (line?.characterId === fromId) {
+        written.push({ type: "dialogue.speaker.updated", at, lineId, characterId: toId });
+      }
+    }
+
+    set({
+      project: written.reduce(applyEvent, project),
+      events: [...events, ...written],
       castError: undefined,
     });
     return true;

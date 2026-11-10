@@ -39,6 +39,7 @@ export function ScriptScreen() {
   const addDialogue = useWorkbench((state) => state.addDialogue);
   const removeDialogue = useWorkbench((state) => state.removeDialogue);
   const changeSpeaker = useWorkbench((state) => state.changeSpeaker);
+  const swapShotCharacter = useWorkbench((state) => state.swapShotCharacter);
   const moveDialogue = useWorkbench((state) => state.moveDialogue);
   const editAction = useWorkbench((state) => state.editAction);
   const editScene = useWorkbench((state) => state.editScene);
@@ -63,6 +64,10 @@ export function ScriptScreen() {
   const [deletingShot, setDeletingShot] = useState<string | null>(null);
   /** 删除被拒的原因：贴在被删的那一场 / 那一镜下面，不塞进别的编辑器（ADR-0067） */
   const [deleteNote, setDeleteNote] = useState<{ id: string; text: string } | null>(null);
+  /** 这一镜里换人：正在换哪一位（镜头 + 被换的人，ADR-0070） */
+  const [swappingCast, setSwappingCast] = useState<{ shotId: string; characterId: string } | null>(null);
+  /** 换人被拒的原因，贴在那一镜的出场行下面 */
+  const [castNote, setCastNote] = useState<{ id: string; text: string } | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [swapping, setSwapping] = useState<string | null>(null);
   const [moving, setMoving] = useState<string | null>(null);
@@ -1143,6 +1148,76 @@ export function ScriptScreen() {
                           {shot.locked && <span className="ml-2 text-muted-2">· 已锁定</span>}
                         </p>
 
+                        {/* 这一镜里换人（ADR-0070）：点名字选换上的人，他这一镜的台词一起换 */}
+                        {shot.characterIds.length > 0 && (
+                          <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                            <span className="tnum shrink-0 text-[9px] tracking-[.14em] text-muted-2">
+                              出场
+                            </span>
+                            {shot.characterIds.map((id) => {
+                              const name = nameOf(id);
+                              const replacing =
+                                swappingCast?.shotId === shot.id && swappingCast.characterId === id;
+                              return replacing ? (
+                                <select
+                                  key={id}
+                                  autoFocus
+                                  value=""
+                                  aria-label={`把${name}换成`}
+                                  onChange={(event) => {
+                                    const toId = event.target.value;
+                                    if (!toId) return;
+                                    if (swapShotCharacter(shot.id, id, toId)) {
+                                      setSwappingCast(null);
+                                      setCastNote(null);
+                                    } else {
+                                      setCastNote({
+                                        id: shot.id,
+                                        text: useWorkbench.getState().castError ?? "换不了这一镜的人。",
+                                      });
+                                    }
+                                  }}
+                                  onBlur={() => setSwappingCast(null)}
+                                  className="rounded-token border border-pick/70 bg-surface px-1 py-0 text-[9px] text-text focus:outline-none"
+                                >
+                                  <option value="">换下 {name} →</option>
+                                  {view.characters
+                                    .filter((character) => character.id !== id)
+                                    .map((character) => (
+                                      <option key={character.id} value={character.id}>
+                                        {character.name}
+                                        {shot.characterIds.includes(character.id)
+                                          ? "（已在这一镜）"
+                                          : ""}
+                                      </option>
+                                    ))}
+                                </select>
+                              ) : (
+                                <button
+                                  key={id}
+                                  type="button"
+                                  disabled={readOnly || shot.locked}
+                                  onClick={() => {
+                                    setSwappingCast({ shotId: shot.id, characterId: id });
+                                    setCastNote(null);
+                                  }}
+                                  title={
+                                    shot.locked
+                                      ? "这一镜已锁定，先解锁才能换人"
+                                      : `把${name}换成别人：这一镜里他说的台词一起换`
+                                  }
+                                  className="rounded-token border border-line px-1.5 py-px text-[9px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-default disabled:opacity-50"
+                                >
+                                  {name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {castNote?.id === shot.id && (
+                          <p className="mt-1 text-[9.5px] leading-[1.7] text-pick">{castNote.text}</p>
+                        )}
+
                         {/* 删一镜（ADR-0067）：台词、take、时间线项一起走；两步确认 */}
                         {!readOnly &&
                           (deletingShot === shot.id ? (
@@ -1227,7 +1302,7 @@ export function ScriptScreen() {
                         const id = addScene(undefined, scene.id);
                         setNote(!id ? useWorkbench.getState().castError : undefined);
                       }}
-                      title="在这一场后面插一场空场：地点头先给第一个，场头随时能改"
+                      title="在这一场后面插一场空场：地点、内外景与日夜沿用这一场，场头随时能改"
                       className="rounded-token border border-dashed border-line px-2 py-1 text-[9.5px] text-muted-2 transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
                     >
                       ＋ 插一场
@@ -1250,7 +1325,7 @@ export function ScriptScreen() {
                   const id = addScene();
                   setNote(!id ? useWorkbench.getState().castError : undefined);
                 }}
-                title="在最后新加一场：地点先给第一个，场头随时能改"
+                title="在最后新加一场：地点、内外景与日夜沿用最后一场，场头随时能改"
                 className="block w-full rounded-token border border-dashed border-line px-3 py-3 text-[10.5px] text-muted-2 transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
               >
                 ＋ 加一场

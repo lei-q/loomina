@@ -1392,6 +1392,61 @@ describe("新场沿用前一场的地点与日夜（ADR-0069）", () => {
   });
 });
 
+describe("这一镜里换人（ADR-0070）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("换人同时改出场与这一镜里他的话", () => {
+    // s-03：林出场，台词 d-02 是林说的
+    const snapshot = state().events.length;
+
+    expect(state().swapShotCharacter("s-03", "c-lin", "c-zhou")).toBe(true);
+
+    expect(state().events).toHaveLength(snapshot + 2);
+    expect(state().events.at(-2)).toMatchObject({
+      type: "shot.updated",
+      shotId: "s-03",
+      patch: { characterIds: ["c-zhou"] },
+    });
+    expect(state().events.at(-1)).toMatchObject({
+      type: "dialogue.speaker.updated",
+      lineId: "d-02",
+      characterId: "c-zhou",
+    });
+    expect(state().project.shots.find((shot) => shot.id === "s-03")?.characterIds).toEqual(["c-zhou"]);
+    expect(state().project.dialogue.find((line) => line.id === "d-02")?.characterId).toBe("c-zhou");
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("换上的人本来就在这一镜里：并到原来那一位，不写重复", () => {
+    // s-04：林、周都在场，d-03 是周说的
+    expect(state().swapShotCharacter("s-04", "c-zhou", "c-lin")).toBe(true);
+
+    expect(state().project.shots.find((shot) => shot.id === "s-04")?.characterIds).toEqual(["c-lin"]);
+    expect(state().project.dialogue.find((line) => line.id === "d-03")?.characterId).toBe("c-lin");
+  });
+
+  it("锁定的镜头、不在场的人、陌生目标都不写事件", () => {
+    const snapshot = state().events.length;
+
+    expect(state().swapShotCharacter("s-08", "c-lin", "c-zhou")).toBe(false);
+    expect(state().castError).toContain("已锁定");
+
+    expect(state().swapShotCharacter("s-01", "c-lin", "c-zhou")).toBe(false);
+    expect(state().castError).toContain("不在这一镜的出场里");
+
+    expect(state().swapShotCharacter("s-03", "c-lin", "c-nobody")).toBe(false);
+    expect(state().castError).toContain("找不到要换上的人");
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().swapShotCharacter("s-03", "c-lin", "c-zhou")).toBe(false);
+
+    expect(state().events).toHaveLength(snapshot);
+  });
+});
+
 describe("删一场、删一镜（ADR-0067）", () => {
   beforeEach(() => {
     state().reset();
