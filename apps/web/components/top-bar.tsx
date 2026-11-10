@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import type { ProjectRequote } from "@/lib/pricing";
-import { ExportIcon, Logomark } from "@/components/icons";
+import { ExportIcon, Logomark, PlayIcon } from "@/components/icons";
 
 /** 阶段是一列，但只有已经做出来的两步可以点。 */
 const stages = [
@@ -41,6 +41,8 @@ export type TopBarProps = {
   onExport?: () => void;
   /** 导出按钮的说明；不给就沿用「导出」 */
   exportLabel?: string;
+  /** 打开预演（ADR-0084）；给了才出现「预演」 */
+  onPreview?: () => void;
 };
 
 function Money({ value }: { value?: number }) {
@@ -61,6 +63,7 @@ export function TopBar({
   onBudgetChange,
   onExport,
   exportLabel,
+  onPreview,
 }: TopBarProps) {
   const [draftBudget, setDraftBudget] = useState<string>("");
   const budget = budgetCny ?? 60;
@@ -226,6 +229,17 @@ export function TopBar({
               )}
             </div>
           </details>
+        )}
+        {onPreview && (
+          <button
+            type="button"
+            onClick={onPreview}
+            title="把这一条片按镜头时长放一遍：关键帧 + 字幕，不花钱"
+            className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            <PlayIcon className="h-3.5 w-3.5" />
+            预演
+          </button>
         )}
         <button
           type="button"

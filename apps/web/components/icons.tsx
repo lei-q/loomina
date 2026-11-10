@@ -71,3 +71,20 @@ export function PlayIcon({ className = iconClass }: IconProps) {
     </svg>
   );
 }
+
+export function PauseIcon({ className = iconClass }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
+      <rect x="7" y="5.5" width="3.2" height="13" rx=".6" />
+      <rect x="13.8" y="5.5" width="3.2" height="13" rx=".6" />
+    </svg>
+  );
+}
+
+export function CloseIcon({ className = iconClass }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" className={className} aria-hidden="true">
+      <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />
+    </svg>
+  );
+}

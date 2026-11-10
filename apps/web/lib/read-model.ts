@@ -78,6 +78,8 @@ export type StageShot = {
   /** 出图之后这一镜的画面改过（ADR-0057）：时间是最后一次改动，另带改过哪几项 */
   staleFirst?: StaleMark;
   staleLast?: StaleMark;
+  /** 这一镜台词拼成的字幕（预演与审片共用，ADR-0084） */
+  subtitle: string;
 };
 
 export type Spend = {
@@ -286,6 +288,10 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
       hasLastFrame: Boolean(lastFrame),
       staleFirst: stale.get(shot.id)?.first,
       staleLast: stale.get(shot.id)?.last,
+      subtitle: shot.dialogueIds
+        .map((id) => dialogueById.get(id)?.text)
+        .filter((text): text is string => Boolean(text))
+        .join(" "),
     };
   });
 
@@ -326,6 +332,65 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
 
 export function shotLabel(no: number): string {
   return `SH-${String(no).padStart(2, "0")}`;
+}
+
+// ── 预演（ADR-0084）─────────────────────────────────────────────
+
+export type AnimaticSegment = {
+  id: string;
+  no: number;
+  /** 这一镜显示多少秒 */
+  dur: number;
+  art: SceneKind;
+  /** 先看有片子的，再看首帧，再看尾帧；都没有就用占位画 */
+  imageUri?: string;
+  videoUri?: string;
+  /** 字幕：这一镜所有台词拼起来 */
+  subtitle: string;
+  /** 有没有画可看：没有的话预演里只出占位色块 */
+  hasPicture: boolean;
+};
+
+export type AnimaticView = {
+  title: string;
+  segments: AnimaticSegment[];
+  /** 全长，秒 */
+  totalSec: number;
+  /** 一帧画面都没有的镜头数 */
+  missing: number;
+  /** 有片子的镜头数 */
+  withVideo: number;
+};
+
+/**
+ * 预演用的读模型：按顺序铺满整条片子（ADR-0084）。
+ *
+ * 只读现成的帧与片子，不触发生成、不写事件——预演是看节奏的地方，
+ * 不是又一个烧钱的入口。
+ */
+export function toAnimaticView(project: Project): AnimaticView {
+  const view = toStageView(project);
+  const segments: AnimaticSegment[] = view.shots.map((shot) => {
+    const imageUri = shot.keyframeUri ?? shot.lastKeyframeUri;
+    return {
+      id: shot.id,
+      no: shot.no,
+      dur: shot.dur,
+      art: shot.art,
+      imageUri,
+      videoUri: shot.videoUri,
+      subtitle: shot.subtitle,
+      hasPicture: Boolean(shot.videoUri ?? imageUri),
+    };
+  });
+  const totalSec = segments.reduce((sum, item) => sum + item.dur, 0);
+  return {
+    title: view.title,
+    segments,
+    totalSec: Math.round(totalSec * 10) / 10,
+    missing: segments.filter((item) => !item.hasPicture).length,
+    withVideo: segments.filter((item) => Boolean(item.videoUri)).length,
+  };
 }
 
 // ── 撤销删除（ADR-0076）─────────────────────────────────────────

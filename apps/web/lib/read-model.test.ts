@@ -17,6 +17,7 @@ import {
   staleFrames,
   staleMasters,
   toCastView,
+  toAnimaticView,
   toKeyframeView,
   toScriptView,
   toStageView,
@@ -190,6 +191,65 @@ describe("toStageView", () => {
     expect(frames.videoCount).toBe(1);
     expect(frames.cells.find((cell) => cell.id === "s-02")?.hasVideo).toBe(true);
     expect(frames.cells.find((cell) => cell.id === "s-02")?.dur).toBe(shot.dur);
+  });
+
+  it("预演按镜头顺序铺满：时长相加、字幕跟着台词、没画面记缺（ADR-0084）", () => {
+    const project = ProjectSchema.parse({
+      ...sampleProject,
+      assets: [
+        ...sampleProject.assets,
+        {
+          id: "a-kf-s-01",
+          kind: "image",
+          source: "generated",
+          uri: "data:image/svg+xml;utf8,<svg/>",
+          createdAt: "2026-11-10T10:00:00+08:00",
+        },
+        {
+          id: "a-kf-s-02-last",
+          kind: "image",
+          source: "generated",
+          uri: "data:image/svg+xml;utf8,<svg/>",
+          createdAt: "2026-11-10T10:00:00+08:00",
+        },
+      ],
+      shots: sampleProject.shots.map((shot) => {
+        if (shot.id === "s-01") return { ...shot, keyframes: { firstAssetId: "a-kf-s-01" } };
+        // 只有尾帧也算有画可看
+        if (shot.id === "s-02") return { ...shot, keyframes: { lastAssetId: "a-kf-s-02-last" } };
+        return shot;
+      }),
+    });
+
+    const animatic = toAnimaticView(project);
+    expect(animatic.segments).toHaveLength(12);
+    expect(animatic.segments[0]).toMatchObject({
+      id: "s-01",
+      no: 1,
+      dur: 3.1,
+      hasPicture: true,
+      imageUri: "data:image/svg+xml;utf8,<svg/>",
+      subtitle: "你早就知道，对吧。",
+    });
+    expect(animatic.segments[1]?.no).toBe(2);
+    expect(animatic.segments[1]?.imageUri).toBe("data:image/svg+xml;utf8,<svg/>");
+    expect(animatic.segments[1]?.subtitle).toBe("");
+    expect(animatic.missing).toBe(10);
+    expect(animatic.withVideo).toBe(0);
+    // 12 镜的秒数相加，保留一位小数
+    const total = sampleProject.shots.reduce((sum, shot) => sum + shot.durationMs / 1000, 0);
+    expect(animatic.totalSec).toBe(Math.round(total * 10) / 10);
+  });
+
+  it("台词拼成这一镜的字幕；两句话用空格分开（ADR-0084）", () => {
+    const project = ProjectSchema.parse({
+      ...sampleProject,
+      shots: sampleProject.shots.map((shot) =>
+        shot.id === "s-01" ? { ...shot, dialogueIds: ["d-01", "d-03"] } : shot,
+      ),
+    });
+    const animatic = toAnimaticView(project);
+    expect(animatic.segments[0]?.subtitle).toBe("你早就知道，对吧。 灯是我关的。");
   });
 
   it("定妆台：两个角色四格齐全，三个场景各一主镜，两个道具各一张参考", () => {

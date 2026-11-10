@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { AnimaticOverlay } from "@/components/animatic";
 import { ReelBar } from "@/components/reel-bar";
 import { Stage } from "@/components/stage";
 import { TopBar } from "@/components/top-bar";
-import { toStageView } from "@/lib/read-model";
+import { toAnimaticView, toStageView } from "@/lib/read-model";
 import { fetchPrice } from "@/lib/image-price";
 import { useWorkbench } from "@/lib/workbench-store";
 
@@ -50,9 +51,13 @@ export function Workbench() {
     () => toStageView(project, { currentShotId, events }),
     [project, currentShotId, events],
   );
+  // 预演（ADR-0084）：把整条片子按镜头时长放一遍
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const animatic = useMemo(() => toAnimaticView(project), [project]);
 
-  // 键盘：← → 换格，⌘⏎ 留用；输入框里只让 ⌘⏎ 生效
+  // 键盘：← → 换格，⌘⏎ 留用；输入框里只让 ⌘⏎ 生效；预演打开时让给预演
   useEffect(() => {
+    if (previewOpen) return;
     function onKeyDown(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
       const typing =
@@ -78,7 +83,7 @@ export function Workbench() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [view, select, decide]);
+  }, [view, select, decide, previewOpen]);
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg text-text">
@@ -94,6 +99,7 @@ export function Workbench() {
         readOnly={readOnly}
         onBudgetChange={setBudget}
         allRequote={view.requoteAll}
+        onPreview={view.shots.length > 0 ? () => setPreviewOpen(true) : undefined}
       />
       {castError && (
         <p className="shrink-0 px-6 pb-1 text-[10.5px] leading-[1.6] text-pick">{castError}</p>
@@ -142,6 +148,9 @@ export function Workbench() {
             videoCnyPerSecond={videoCnyPerSecond}
           />
         </>
+      )}
+      {previewOpen && view.shots.length > 0 && (
+        <AnimaticOverlay view={animatic} onClose={() => setPreviewOpen(false)} />
       )}
     </div>
   );
