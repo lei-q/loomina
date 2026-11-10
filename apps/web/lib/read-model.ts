@@ -279,7 +279,70 @@ export type KeyframeCell = {
   lastUri?: string;
   hasFirst: boolean;
   hasLast: boolean;
+  /** 出图之后这一镜的画面输入改过（ADR-0057）：值是最后一次改动的时间 */
+  staleFirst?: string;
+  staleLast?: string;
 };
+
+/** 影响画面的镜头字段：改了这些，已经出的帧就不算数了（ADR-0057） */
+const VISUAL_SHOT_KEYS = [
+  "description",
+  "promptNotes",
+  "shotSize",
+  "camera",
+  "characterIds",
+  "propIds",
+] as const;
+
+export type StaleFrame = { first?: string; last?: string };
+
+/**
+ * 哪些帧在出图之后又改过画面输入（ADR-0057）。
+ *
+ * 只比时间，不比内容：快照里的帧按快照算，之后的改写按事件的 `at` 算。
+ * 镜头级的画面字段（动作、景别、机位、人物、道具、补充要求）与所在场头的
+ * 内 / 外景、日夜、地点算进来；台词改动不算——它不改变一张静止画面。
+ */
+export function staleFrames(events: ProjectEvent[], project: Project): Map<string, StaleFrame> {
+  const edits = new Map<string, string>();
+  const bump = (shotId: string, at: string) => {
+    const previous = edits.get(shotId);
+    if (!previous || Date.parse(at) > Date.parse(previous)) edits.set(shotId, at);
+  };
+
+  const first = events[0];
+  const sceneShots = new Map<string, string[]>();
+  if (first?.type === "project.created") {
+    for (const scene of first.project.scenes) sceneShots.set(scene.id, scene.shotIds);
+  }
+
+  for (const event of events.slice(first?.type === "project.created" ? 1 : 0)) {
+    if (event.type === "shot.updated") {
+      if (VISUAL_SHOT_KEYS.some((key) => event.patch[key] !== undefined)) {
+        bump(event.shotId, event.at);
+      }
+    } else if (event.type === "scene.updated") {
+      for (const shotId of sceneShots.get(event.sceneId) ?? []) bump(shotId, event.at);
+    }
+  }
+
+  const stale = new Map<string, StaleFrame>();
+  for (const shot of project.shots) {
+    const editedAt = edits.get(shot.id);
+    if (!editedAt) continue;
+    const out: StaleFrame = {};
+    for (const [key, assetId] of [
+      ["first", shot.keyframes.firstAssetId],
+      ["last", shot.keyframes.lastAssetId],
+    ] as const) {
+      if (!assetId) continue;
+      const asset = project.assets.find((item) => item.id === assetId);
+      if (asset && Date.parse(asset.createdAt) < Date.parse(editedAt)) out[key] = editedAt;
+    }
+    if (out.first || out.last) stale.set(shot.id, out);
+  }
+  return stale;
+}
 
 export type KeyframeView = {
   title: string;
@@ -338,8 +401,12 @@ export function keyframeTally(cells: KeyframeCell[]): Record<KeyframeFilter, num
   };
 }
 
-export function toKeyframeView(project: Project, options: { budgetCny?: number } = {}): KeyframeView {
+export function toKeyframeView(
+  project: Project,
+  options: { budgetCny?: number; events?: ProjectEvent[] } = {},
+): KeyframeView {
   const view = toStageView(project, {});
+  const stale = options.events ? staleFrames(options.events, project) : new Map<string, StaleFrame>();
   const cells: KeyframeCell[] = view.shots.map((shot) => ({
     id: shot.id,
     no: shot.no,
@@ -352,6 +419,8 @@ export function toKeyframeView(project: Project, options: { budgetCny?: number }
     lastUri: shot.lastKeyframeUri,
     hasFirst: shot.hasKeyframe,
     hasLast: shot.hasLastFrame,
+    staleFirst: stale.get(shot.id)?.first,
+    staleLast: stale.get(shot.id)?.last,
   }));
 
   let keyframeSpend = 0;

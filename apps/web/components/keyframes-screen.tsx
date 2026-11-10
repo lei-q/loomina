@@ -11,6 +11,13 @@ import { cn } from "@/lib/utils";
 
 const PREVIEW = "aspect-[9/16] w-full";
 
+/** 帧上的「过期」提示只写时分：看的是先后，不是日期。 */
+function clock(at: string): string {
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return at;
+  return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
 const FILTERS: { key: KeyframeFilter; label: string }[] = [
   { key: "all", label: "全部" },
   { key: "missing-first", label: "缺首帧" },
@@ -22,6 +29,7 @@ function Cell({
   cell,
   busy,
   batchRunning,
+  readOnly,
   quoteCny,
   onGenerate,
 }: {
@@ -30,6 +38,8 @@ function Cell({
   busy: "first" | "last" | null;
   /** 批量补帧进行中：别的格子也不要插队 */
   batchRunning: boolean;
+  /** 另一个标签页在编辑：这一页只读 */
+  readOnly: boolean;
   quoteCny?: number;
   onGenerate: (frame: "first" | "last") => void;
 }) {
@@ -39,6 +49,8 @@ function Cell({
   // 只有尾帧时先看尾帧；数据是异步恢复的，不能只靠初始值
   const frame = !cell.hasFirst && cell.hasLast ? "last" : shown;
   const uri = frame === "first" ? cell.firstUri : cell.lastUri;
+  // 出图之后画面输入又改过：这一帧已经对不上这一镜了
+  const staleAt = frame === "first" ? cell.staleFirst : cell.staleLast;
 
   return (
     <figure className="flex flex-col gap-1.5">
@@ -60,6 +72,14 @@ function Cell({
         )}
 
         <span className="tnum absolute left-1.5 top-1 text-[9px] text-white/70">{shotLabel(cell.no)}</span>
+        {uri && staleAt && (
+          <span
+            title={`${frame === "first" ? "首帧" : "尾帧"}出图之后，这一镜的画面在 ${clock(staleAt)} 改过，建议重生成`}
+            className="absolute bottom-1.5 left-1.5 rounded-[1px] bg-pick/85 px-1 text-[8.5px] leading-[1.5] text-white"
+          >
+            过期
+          </span>
+        )}
         <span className="absolute right-1.5 top-1 flex items-center gap-1">
           {cell.locked && <LockIcon className="h-3 w-3 text-white/70" />}
           {uri && (
@@ -84,13 +104,17 @@ function Cell({
               key={frame}
               type="button"
               onClick={() => onGenerate(frame)}
-              disabled={cell.locked || busy !== null || batchRunning}
+              disabled={cell.locked || readOnly || busy !== null || batchRunning}
               title={
-                cell.locked
-                  ? "这一镜已锁定"
-                  : has
-                    ? "重生成，按同一资产位覆盖"
-                    : "生成"
+                readOnly
+                  ? "另一个标签页在编辑：这一页只读"
+                  : cell.locked
+                    ? "这一镜已锁定"
+                    : has
+                      ? staleAt
+                        ? "画面改过，这一帧已对不上：重生成"
+                        : "重生成，按同一资产位覆盖"
+                      : "生成"
               }
               className={cn(
                 "flex flex-1 flex-col items-center rounded-token border border-line px-1 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)]",
@@ -116,6 +140,7 @@ function Cell({
 
 export function KeyframesScreen() {
   const project = useWorkbench((state) => state.project);
+  const events = useWorkbench((state) => state.events);
   const hydrate = useWorkbench((state) => state.hydrate);
   const jobs = useWorkbench((state) => state.jobs);
   const readOnly = useWorkbench((state) => state.readOnly);
@@ -136,7 +161,11 @@ export function KeyframesScreen() {
     });
   }, [hydrate, setImagePrice]);
 
-  const view = useMemo(() => toKeyframeView(project), [project]);
+  const view = useMemo(() => toKeyframeView(project, { events }), [project, events]);
+  const staleCount = view.cells.reduce(
+    (count, cell) => count + (cell.staleFirst ? 1 : 0) + (cell.staleLast ? 1 : 0),
+    0,
+  );
   // 只想补缺的时候，十二格一起看反而找不到要补的那几格
   const [filter, setFilter] = useState<KeyframeFilter>("all");
   const tally = useMemo(() => keyframeTally(view.cells), [view.cells]);
@@ -188,6 +217,12 @@ export function KeyframesScreen() {
                   {view.lastCount} / {view.cells.length}
                 </dd>
               </div>
+              {staleCount > 0 && (
+                <div className="flex items-baseline gap-1.5">
+                  <dt className="text-muted-2">过期</dt>
+                  <dd className="text-pick">{staleCount} 帧</dd>
+                </div>
+              )}
               <div className="flex items-baseline gap-1.5">
                 <dt className="text-muted-2">关键帧已花</dt>
                 <dd className="text-muted">¥{view.keyframeSpend.toFixed(2)}</dd>
@@ -277,6 +312,7 @@ export function KeyframesScreen() {
                   cell={cell}
                   busy={busy}
                   batchRunning={Boolean(batch)}
+                  readOnly={Boolean(readOnly)}
                   quoteCny={imageCny}
                   onGenerate={(frame) => void generateKeyframe(cell.id, frame)}
                 />

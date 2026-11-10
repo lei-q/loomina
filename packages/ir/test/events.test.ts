@@ -379,7 +379,7 @@ describe("scene.updated（ADR-0050）", () => {
     // 最小示例只有一个地点，补一个再改过去
     const project: Project = { ...load(), locations: [
       ...load().locations,
-      { id: "loc-hall", name: "门厅", templateId: "doorway" },
+      { id: "loc-hall", name: "门厅", referenceImages: [], templateId: "doorway" },
     ] };
     const target = project.locations.find((item) => item.id === "loc-hall")!;
     const event: ProjectEvent = {

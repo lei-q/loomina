@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ProjectSchema, type ProjectInput } from "@loomina/ir";
+import { ProjectSchema, rebuild, type ProjectEvent, type ProjectInput } from "@loomina/ir";
 import {
   actionHistory,
   dialogueHistory,
@@ -11,6 +11,7 @@ import {
   removedLines,
   sceneHead,
   scriptToText,
+  staleFrames,
   toCastView,
   toKeyframeView,
   toScriptView,
@@ -643,5 +644,76 @@ describe("被删的台词（ADR-0055）", () => {
       { type: "dialogue.removed" as const, at: at(14), lineId: "d-01" },
     ];
     expect(removedLines(twice, "s-01").map((rec) => rec.at)).toEqual([at(9), at(14)]);
+  });
+});
+
+describe("出图后改了画面：帧过期（ADR-0057）", () => {
+  const at = (h: number) => `2026-11-10T${String(h).padStart(2, "0")}:00:00+08:00`;
+  const frameAt = "2026-11-09T21:00:00+08:00";
+  const withFrames = ProjectSchema.parse({
+    ...sampleProject,
+    assets: [
+      ...sampleProject.assets,
+      { id: "a-keyframe-s-01", kind: "image", source: "generated", createdAt: frameAt },
+      { id: "a-keyframe-s-02", kind: "image", source: "generated", createdAt: frameAt },
+    ],
+    shots: sampleProject.shots.map((shot) =>
+      shot.id === "s-01"
+        ? { ...shot, keyframes: { firstAssetId: "a-keyframe-s-01" } }
+        : shot.id === "s-02"
+          ? { ...shot, keyframes: { firstAssetId: "a-keyframe-s-02" } }
+          : shot,
+    ),
+  });
+  const base = [{ type: "project.created" as const, at: at(0), project: withFrames }];
+
+  it("改过动作：首帧过期；没改过的镜头不算", () => {
+    const events = [
+      ...base,
+      { type: "shot.updated" as const, at: at(9), shotId: "s-01", patch: { description: "灯灭了" } },
+    ];
+    const stale = staleFrames(events, withFrames);
+    expect(stale.get("s-01")).toEqual({ first: at(9) });
+    expect(stale.has("s-02")).toBe(false);
+  });
+
+  it("场头改了：这一场有帧的镜头都过期", () => {
+    const events = [
+      ...base,
+      { type: "scene.updated" as const, at: at(10), sceneId: "sc-1", patch: { timeOfDay: "day" as const } },
+    ];
+    const stale = staleFrames(events, withFrames);
+    expect(stale.get("s-01")?.first).toBe(at(10));
+    expect(stale.get("s-02")?.first).toBe(at(10));
+  });
+
+  it("只改台词、或者帧是在改动之后出的，都不算过期", () => {
+    const dialogueOnly = [
+      ...base,
+      { type: "dialogue.updated" as const, at: at(9), lineId: "d-01", patch: { text: "换个说法" } },
+    ];
+    expect(staleFrames(dialogueOnly, withFrames).size).toBe(0);
+
+    const edited: ProjectEvent[] = [
+      ...base,
+      { type: "shot.updated", at: at(9), shotId: "s-01", patch: { description: "灯灭了" } },
+      {
+        type: "asset.updated",
+        at: at(11),
+        asset: { id: "a-keyframe-s-01", kind: "image", source: "generated", createdAt: at(11) },
+      },
+    ];
+    // 重生成之后，资产的时间晚于改动：不再过期
+    expect(staleFrames(edited, rebuild(edited)).has("s-01")).toBe(false);
+  });
+
+  it("剧本页与关键帧页连起来：toKeyframeView 把过期写进格子", () => {
+    const events = [
+      ...base,
+      { type: "shot.updated" as const, at: at(9), shotId: "s-01", patch: { description: "灯灭了" } },
+    ];
+    const view = toKeyframeView(withFrames, { events });
+    expect(view.cells.find((cell) => cell.id === "s-01")?.staleFirst).toBe(at(9));
+    expect(view.cells.find((cell) => cell.id === "s-02")?.staleFirst).toBeUndefined();
   });
 });
