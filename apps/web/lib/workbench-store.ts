@@ -69,6 +69,8 @@ type WorkbenchState = {
   generateKeyframe: (shotId: string, frame?: Frame) => Promise<void>;
   /** 一句话指令：查表翻成镜头补丁，写一条 shot.updated；没听懂返回 false（ADR-0039） */
   instruct: (text: string) => boolean;
+  /** 划掉一条补充要求：同样写一条 shot.updated（ADR-0039 附记） */
+  removeNote: (shotId: string, note: string) => void;
   reset: () => void;
 };
 
@@ -508,6 +510,22 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       castError: undefined,
     });
     return true;
+  },
+
+  removeNote: (shotId, note) => {
+    if (get().readOnly) return;
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot || shot.locked) return;
+    if (!shot.promptNotes.includes(note)) return;
+
+    const event: ProjectEvent = {
+      type: "shot.updated",
+      at: new Date().toISOString(),
+      shotId: shot.id,
+      patch: { promptNotes: shot.promptNotes.filter((item) => item !== note) },
+    };
+    set({ project: applyEvent(project, event), events: [...events, event] });
   },
 
   generateProp: async (propId) => {

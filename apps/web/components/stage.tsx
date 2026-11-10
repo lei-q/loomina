@@ -29,6 +29,7 @@ function Current({
   generating,
   quoteCny,
   onGenerate,
+  onRemoveNote,
 }: {
   shot: StageShot;
   subtitle: string;
@@ -37,6 +38,7 @@ function Current({
   /** 生成一张要多少钱；价目不知道就不给（ADR-0035） */
   quoteCny?: number;
   onGenerate: (frame: Frame) => void;
+  onRemoveNote: (note: string) => void;
 }) {
   // 正在看哪一帧：首帧是视频的起点，尾帧是落点（ADR-0038）
   const [shown, setShown] = useState<Frame>("first");
@@ -157,8 +159,21 @@ function Current({
         <div className="flex max-w-[340px] flex-wrap items-center justify-center gap-x-2 gap-y-1">
           <span className="tnum text-[9px] tracking-[.14em] text-muted-2">补充</span>
           {shot.notes.map((note) => (
-            <span key={note} className="text-[10px] text-muted">
+            <span
+              key={note}
+              className="flex items-center gap-1 rounded-[1px] border border-dashed border-line px-1.5 py-[1px] text-[10px] text-muted"
+            >
               {note}
+              {!shot.locked && (
+                <button
+                  type="button"
+                  aria-label={`划掉补充：${note}`}
+                  onClick={() => onRemoveNote(note)}
+                  className="text-[10px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-pick"
+                >
+                  ×
+                </button>
+              )}
             </span>
           ))}
         </div>
@@ -194,9 +209,16 @@ export type StageProps = {
   /** 生成一张要多少钱；价目不知道就不给 */
   quoteCny?: number;
   onGenerateKeyframe: (frame: Frame) => void;
+  onRemoveNote: (note: string) => void;
 };
 
-export function Stage({ view, generating, quoteCny, onGenerateKeyframe }: StageProps) {
+export function Stage({
+  view,
+  generating,
+  quoteCny,
+  onGenerateKeyframe,
+  onRemoveNote,
+}: StageProps) {
   const current = view.shots[view.current]!;
   const prev = view.shots[view.current - 1];
   const next = view.shots[view.current + 1];
@@ -212,6 +234,7 @@ export function Stage({ view, generating, quoteCny, onGenerateKeyframe }: StageP
           generating={generating}
           quoteCny={quoteCny}
           onGenerate={onGenerateKeyframe}
+          onRemoveNote={onRemoveNote}
         />
         {next && <Neighbour shot={next} />}
       </div>

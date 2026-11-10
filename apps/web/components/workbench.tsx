@@ -19,6 +19,7 @@ export function Workbench() {
   const setBudget = useWorkbench((state) => state.setBudget);
   const generateKeyframe = useWorkbench((state) => state.generateKeyframe);
   const instruct = useWorkbench((state) => state.instruct);
+  const removeNote = useWorkbench((state) => state.removeNote);
   const jobs = useWorkbench((state) => state.jobs);
   const castError = useWorkbench((state) => state.castError);
   const imageCny = useWorkbench((state) => state.imageCny);
@@ -95,6 +96,7 @@ export function Workbench() {
         }
         quoteCny={imageCny}
         onGenerateKeyframe={(frame) => void generateKeyframe(view.shots[view.current]!.id, frame)}
+        onRemoveNote={(note) => removeNote(view.shots[view.current]!.id, note)}
       />
       <ReelBar view={view} onSelect={select} onDecide={decide} onInstruct={instruct} />
     </div>

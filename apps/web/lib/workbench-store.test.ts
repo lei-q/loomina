@@ -393,6 +393,20 @@ describe("一句话指令（ADR-0039）", () => {
     expect(state().castError).toContain("没改动");
   });
 
+  it("划掉一条补充：写一条 shot.updated，重放后确实没了", () => {
+    state().instruct("太暗了");
+    const id = state().currentShotId;
+    const note = state().project.shots.find((item) => item.id === id)!.promptNotes[0]!;
+    state().removeNote(id, note);
+
+    expect(state().project.shots.find((item) => item.id === id)?.promptNotes).toEqual([]);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.updated",
+      patch: { promptNotes: [] },
+    });
+    expect(rebuild(state().events).shots.find((item) => item.id === id)?.promptNotes).toEqual([]);
+  });
+
   it("没听懂就什么都不写，并说清现在认得哪些", () => {
     const ok = state().instruct("她笑得太早了");
 
