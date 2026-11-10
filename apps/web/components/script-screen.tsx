@@ -43,6 +43,7 @@ export function ScriptScreen() {
   const editAction = useWorkbench((state) => state.editAction);
   const editScene = useWorkbench((state) => state.editScene);
   const moveScene = useWorkbench((state) => state.moveScene);
+  const moveSceneTo = useWorkbench((state) => state.moveSceneTo);
   const setDialogueOrder = useWorkbench((state) => state.setDialogueOrder);
   const moveDialogueTo = useWorkbench((state) => state.moveDialogueTo);
   const restoreLine = useWorkbench((state) => state.restoreLine);
@@ -53,6 +54,7 @@ export function ScriptScreen() {
   const [editingAction, setEditingAction] = useState<string | null>(null);
   const [actionDraft, setActionDraft] = useState("");
   const [editingScene, setEditingScene] = useState<string | null>(null);
+  const [movingScene, setMovingScene] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [swapping, setSwapping] = useState<string | null>(null);
   const [moving, setMoving] = useState<string | null>(null);
@@ -376,6 +378,40 @@ export function ScriptScreen() {
                       >
                         ↓
                       </button>
+                      {/* 长距离换位：直接挑一个位置（ADR-0060 附记） */}
+                      {movingScene === scene.id ? (
+                        <select
+                          autoFocus
+                          value=""
+                          onChange={(event) => {
+                            moveSceneTo(scene.id, Number(event.target.value));
+                            setMovingScene(null);
+                          }}
+                          onBlur={() => setMovingScene(null)}
+                          aria-label="挪到第几场"
+                          className="tnum rounded-token border border-pick/70 bg-surface px-1 py-px text-[9px] text-text focus:outline-none"
+                        >
+                          <option value="" disabled>
+                            挪到…
+                          </option>
+                          {view.scenes.map((item, i) =>
+                            i === at ? null : (
+                              <option key={item.id} value={i}>
+                                第 {i + 1} 场
+                              </option>
+                            ),
+                          )}
+                        </select>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setMovingScene(scene.id)}
+                          title="长距离换位：直接挪到第 N 场"
+                          className="tnum rounded-token border border-line px-1 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text"
+                        >
+                          挪
+                        </button>
+                      )}
                     </span>
                   )}
                 </div>

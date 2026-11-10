@@ -1155,8 +1155,32 @@ describe("调整场序（ADR-0060）", () => {
     expect(rebuild(state().events).scenes.find((scene) => scene.id === "sc-2")?.index).toBe(0);
   });
 
-  it("第一场不能再上移、最后一场不能再下移、陌生场次与只读都不写事件", () => {
+  it("直接挪到第 N 位：一条 scene.moved，长距离一步到位（ADR-0060 附记）", () => {
     const snapshot = state().events.length;
+
+    expect(state().moveSceneTo("sc-1", 3)).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "scene.moved",
+      sceneId: "sc-1",
+      toIndex: 3,
+    });
+    expect(toScriptView(state().project).scenes.map((scene) => scene.id)).toEqual([
+      "sc-2", "sc-3", "sc-4", "sc-1", "sc-5",
+    ]);
+  });
+
+  it("挪到原地或越界都不写事件", () => {
+    const snapshot = state().events.length;
+
+    expect(state().moveSceneTo("sc-1", 0)).toBe(false);
+    expect(state().castError).toContain("已经在这个位置");
+    expect(state().moveSceneTo("sc-1", 9)).toBe(false);
+    expect(state().castError).toContain("没有这个位置");
+    expect(state().events).toHaveLength(snapshot);
+  });
+
+  it("第一场不能再上移、最后一场不能再下移、陌生场次与只读都不写事件", () => {    const snapshot = state().events.length;
 
     expect(state().moveScene("sc-1", "up")).toBe(false);
     expect(state().castError).toContain("第一场");

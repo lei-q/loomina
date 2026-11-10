@@ -117,6 +117,8 @@ type WorkbenchState = {
   ) => boolean;
   /** 调整场序：写一条 `scene.moved`，场号与镜号跟着重排（ADR-0060） */
   moveScene: (sceneId: string, direction: "up" | "down") => boolean;
+  /** 把一场直接挪到第 N 位（从 0 数）：长距离换位不用连点（ADR-0060 附记） */
+  moveSceneTo: (sceneId: string, toIndex: number) => boolean;
   /** 删一个地点；还有场次占着就先把它们搬到 `moveToId` 再删（ADR-0061 / ADR-0062） */
   removeLocation: (locationId: string, moveToId?: string) => boolean;
   /** 划掉一条补充要求：同样写一条 shot.updated（ADR-0039 附记） */
@@ -977,6 +979,26 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     const toIndex = from + (direction === "up" ? -1 : 1);
     if (toIndex < 0 || toIndex >= ordered.length) {
       set({ castError: direction === "up" ? "已经是第一场。" : "已经是最后一场。" });
+      return false;
+    }
+    return get().moveSceneTo(sceneId, toIndex);
+  },
+
+  moveSceneTo: (sceneId, toIndex) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const ordered = [...project.scenes].sort((a, b) => a.index - b.index);
+    const from = ordered.findIndex((scene) => scene.id === sceneId);
+    if (from < 0) {
+      set({ castError: "找不到这一场。" });
+      return false;
+    }
+    if (!Number.isInteger(toIndex) || toIndex < 0 || toIndex >= ordered.length) {
+      set({ castError: "没有这个位置。" });
+      return false;
+    }
+    if (toIndex === from) {
+      set({ castError: "场次已经在这个位置。" });
       return false;
     }
     const event: ProjectEvent = {
