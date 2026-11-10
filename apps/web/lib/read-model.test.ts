@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ProjectSchema, type ProjectInput } from "@loomina/ir";
-import { toCastView, toStageView } from "./read-model";
+import { toCastView, toKeyframeView, toStageView } from "./read-model";
 import { sampleProject } from "./sample-project";
 
 describe("toStageView", () => {
@@ -303,5 +303,69 @@ describe("一句话指令进读模型（ADR-0039）", () => {
     expect(shot.prompts.first).toContain("动作起势");
     expect(shot.prompts.last).toContain("动作收势");
     expect(shot.prompts.first).not.toBe(shot.prompts.last);
+  });
+});
+
+describe("关键帧页读模型（ADR-0042）", () => {
+  it("一格一镜，数出首尾帧覆盖，关键帧的钱单独算", () => {
+    const project = {
+      ...sampleProject,
+      shots: sampleProject.shots.map((shot) =>
+        shot.id === "s-03"
+          ? { ...shot, keyframes: { firstAssetId: "a-keyframe-s-03", lastAssetId: "a-lastframe-s-03" } }
+          : shot,
+      ),
+      assets: [
+        ...sampleProject.assets,
+        {
+          id: "a-keyframe-s-03",
+          kind: "image" as const,
+          source: "generated" as const,
+          uri: "data:image/png;base64,RkFLRQ==",
+          costCny: 0.12,
+          createdAt: "2026-11-10T00:00:00+08:00",
+        },
+        {
+          id: "a-lastframe-s-03",
+          kind: "image" as const,
+          source: "generated" as const,
+          uri: "data:image/png;base64,TEFTVEY=",
+          costCny: 0.12,
+          createdAt: "2026-11-10T00:00:00+08:00",
+        },
+      ],
+    };
+    const view = toKeyframeView(project);
+
+    expect(view.cells).toHaveLength(12);
+    expect(view.firstCount).toBe(1);
+    expect(view.lastCount).toBe(1);
+    expect(view.keyframeSpend).toBe(0.24);
+    expect(view.keyframeUnpriced).toBe(0);
+    const cell = view.cells.find((item) => item.id === "s-03")!;
+    expect(cell.firstUri).toContain("RkFLRQ");
+    expect(cell.lastUri).toContain("TEFTVEY");
+    expect(cell.size.length).toBeGreaterThan(0);
+    expect(cell.art).toBeTruthy();
+  });
+
+  it("没价目的关键帧单独计数，不算成 0", () => {
+    const project = {
+      ...sampleProject,
+      assets: [
+        ...sampleProject.assets,
+        {
+          id: "a-keyframe-s-04",
+          kind: "image" as const,
+          source: "generated" as const,
+          uri: "data:image/png;base64,RkFLRQ==",
+          createdAt: "2026-11-10T00:00:00+08:00",
+        },
+      ],
+    };
+    const view = toKeyframeView(project);
+
+    expect(view.keyframeSpend).toBe(0);
+    expect(view.keyframeUnpriced).toBe(1);
   });
 });

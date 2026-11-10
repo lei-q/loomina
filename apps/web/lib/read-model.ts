@@ -264,6 +264,88 @@ export function shotLabel(no: number): string {
   return `SH-${String(no).padStart(2, "0")}`;
 }
 
+// ── 关键帧页（ADR-0042）───────────────────────────────────────────
+
+export type KeyframeCell = {
+  id: string;
+  no: number;
+  art: SceneKind;
+  action: string;
+  size: string;
+  angle: string;
+  locked: boolean;
+  firstUri?: string;
+  lastUri?: string;
+  hasFirst: boolean;
+  hasLast: boolean;
+};
+
+export type KeyframeView = {
+  title: string;
+  version: number;
+  cells: KeyframeCell[];
+  /** 有多少镜已经有首帧 / 尾帧 */
+  firstCount: number;
+  lastCount: number;
+  /** 关键帧这一类资产花掉的钱（按 id 前缀认） */
+  keyframeSpend: number;
+  /** 生成了但价目表里没有模型的关键帧张数 */
+  keyframeUnpriced: number;
+  spent: number;
+  spend: Spend;
+  unpriced: number;
+  budget: number;
+};
+
+/**
+ * 关键帧页的读模型：一格一镜，只看首尾两帧够不够用。
+ *
+ * 关键帧的钱单独算：它们混在 `assets` 里，但这一页要回答的是
+ * "为了这两帧花了多少"，不是整片花了多少。
+ */
+export function toKeyframeView(project: Project, options: { budgetCny?: number } = {}): KeyframeView {
+  const view = toStageView(project, {});
+  const cells: KeyframeCell[] = view.shots.map((shot) => ({
+    id: shot.id,
+    no: shot.no,
+    art: shot.art,
+    action: shot.action,
+    size: shot.size,
+    angle: shot.angle,
+    locked: shot.locked,
+    firstUri: shot.keyframeUri,
+    lastUri: shot.lastKeyframeUri,
+    hasFirst: shot.hasKeyframe,
+    hasLast: shot.hasLastFrame,
+  }));
+
+  let keyframeSpend = 0;
+  let keyframeUnpriced = 0;
+  for (const asset of project.assets) {
+    const isFrame = asset.id.startsWith("a-keyframe-") || asset.id.startsWith("a-lastframe-");
+    if (!isFrame) continue;
+    if (asset.costCny === undefined) {
+      keyframeUnpriced += 1;
+      continue;
+    }
+    keyframeSpend += asset.costCny;
+  }
+
+  return {
+    title: view.title,
+    version: view.version,
+    cells,
+    firstCount: cells.filter((cell) => cell.hasFirst).length,
+    lastCount: cells.filter((cell) => cell.hasLast).length,
+    keyframeSpend: Math.round(keyframeSpend * 100) / 100,
+    keyframeUnpriced,
+    spent: view.spent,
+    spend: view.spend,
+    unpriced: view.unpriced,
+    budget: options.budgetCny ?? view.budget,
+  };
+}
+
 // ── 定妆（ADR-0028）───────────────────────────────────────────────
 
 export type CastPanel = {
