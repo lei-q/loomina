@@ -16,6 +16,11 @@ function Cell({
   current: boolean;
   onSelect: (shotId: string) => void;
 }) {
+  // 这一镜的帧对不上了：轨道条上一眼能看见，不点进去才知道（ADR-0057）
+  const stale = [
+    shot.staleFirst ? `首帧（${shot.staleFirst.reasons.join("、")}）` : null,
+    shot.staleLast ? `尾帧（${shot.staleLast.reasons.join("、")}）` : null,
+  ].filter((item): item is string => item !== null);
   return (
     <button
       type="button"
@@ -38,6 +43,12 @@ function Cell({
 
       {shot.state === "pick" && <span className="absolute inset-x-0 bottom-0 h-[2px] bg-pick" />}
       {shot.state === "reject" && <span className="absolute inset-x-0 bottom-0 h-[2px] bg-reject" />}
+      {stale.length > 0 && (
+        <span
+          title={`出图之后改过：${stale.join("、")}，这一帧已对不上`}
+          className="absolute left-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-pick"
+        />
+      )}
       {shot.locked && (
         <span
           title="这一镜已锁定"
