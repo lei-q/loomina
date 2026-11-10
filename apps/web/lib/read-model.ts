@@ -9,7 +9,12 @@ import {
   type Shot,
   type Take,
 } from "@loomina/ir";
-import { SHOT_ANGLE_CN, SHOT_SIZE_CN } from "@loomina/pipeline";
+import {
+  buildKeyframePrompt,
+  SHOT_ANGLE_CN,
+  SHOT_SIZE_CN,
+  shotMaterial,
+} from "@loomina/pipeline";
 import { requoteProject, requoteShot, type ProjectRequote, type Requote } from "./pricing";
 
 export type SceneKind = "door" | "two" | "table" | "corridor";
@@ -33,6 +38,8 @@ export type StageShot = {
   angle: string;
   /** 一句话指令落下的补充要求（ADR-0039） */
   notes: string[];
+  /** 首尾两帧真正会送出的提示词：说了什么、改了什么，在这里对得上（ADR-0040） */
+  prompts: { first: string; last: string };
   /** 这一镜带进生成的参考图（ADR-0029）；缺锚点时生成会被拒绝 */
   anchors: { labels: string[]; missing: string[] };
   /** 首帧的真图（data URI，ADR-0037）；没生成过就为空 */
@@ -194,6 +201,7 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
     const lastFrame = shot.keyframes.lastAssetId
       ? assetById.get(shot.keyframes.lastAssetId)
       : undefined;
+    const material = shotMaterial(project, shot);
     return {
       no: i + 1,
       id: shot.id,
@@ -206,6 +214,10 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
       size: SHOT_SIZE_CN[shot.shotSize],
       angle: SHOT_ANGLE_CN[shot.camera.angle],
       notes: shot.promptNotes,
+      prompts: {
+        first: buildKeyframePrompt(material, "first"),
+        last: buildKeyframePrompt(material, "last"),
+      },
       anchors: {
         labels: anchors.refs.map((ref) => ref.label),
         missing: anchors.missing,

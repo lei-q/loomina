@@ -284,4 +284,24 @@ describe("一句话指令进读模型（ADR-0039）", () => {
     expect(shot?.angle).toBe("仰拍");
     expect(shot?.notes).toEqual(["整体提亮，补足曝光，阴影保留细节"]);
   });
+
+  it("首尾两帧的提示词都在读模型里，带补充、带机位、互不相同（ADR-0040）", () => {
+    const project = {
+      ...sampleProject,
+      shots: sampleProject.shots.map((shot) =>
+        shot.id === "s-03"
+          ? { ...shot, promptNotes: ["整体提亮，补足曝光，阴影保留细节"] }
+          : shot,
+      ),
+    };
+    const shot = toStageView(project, { currentShotId: "s-03" }).shots.find(
+      (item) => item.id === "s-03",
+    )!;
+
+    expect(shot.prompts.first).toContain("补充：整体提亮，补足曝光，阴影保留细节");
+    expect(shot.prompts.first).toContain("mm");
+    expect(shot.prompts.first).toContain("动作起势");
+    expect(shot.prompts.last).toContain("动作收势");
+    expect(shot.prompts.first).not.toBe(shot.prompts.last);
+  });
 });

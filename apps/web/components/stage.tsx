@@ -144,6 +144,14 @@ function Current({
         )}
       </div>
 
+      {/* 真正送出的提示词：说了什么、改了什么，在这里对得上（ADR-0040） */}
+      <details className="max-w-[340px] text-[9.5px] text-muted-2">
+        <summary className="cursor-pointer select-none hover:text-muted">这一镜会送出的提示词</summary>
+        <p className="mt-1 max-h-[8.5rem] overflow-y-auto whitespace-pre-wrap text-[10px] leading-[1.7] text-muted-2">
+          {shown === "first" ? shot.prompts.first : shot.prompts.last}
+        </p>
+      </details>
+
       {/* 一句话指令改出来的补充要求：说过什么要看得见（ADR-0039） */}
       {shot.notes.length > 0 && (
         <div className="flex max-w-[340px] flex-wrap items-center justify-center gap-x-2 gap-y-1">
@@ -194,16 +202,19 @@ export function Stage({ view, generating, quoteCny, onGenerateKeyframe }: StageP
   const next = view.shots[view.current + 1];
 
   return (
-    <main className="flex min-h-0 flex-1 items-center justify-center gap-7 px-6 py-4">
-      {prev && <Neighbour shot={prev} />}
-      <Current
-        shot={current}
-        subtitle={view.subtitle}
-        generating={generating}
-        quoteCny={quoteCny}
-        onGenerate={onGenerateKeyframe}
-      />
-      {next && <Neighbour shot={next} />}
+    // 内容比一屏高时（比如展开提示词）要能滚：用 m-auto 居中，溢出时自动贴顶
+    <main className="flex min-h-0 flex-1 overflow-y-auto px-6 py-4">
+      <div className="m-auto flex items-center gap-7">
+        {prev && <Neighbour shot={prev} />}
+        <Current
+          shot={current}
+          subtitle={view.subtitle}
+          generating={generating}
+          quoteCny={quoteCny}
+          onGenerate={onGenerateKeyframe}
+        />
+        {next && <Neighbour shot={next} />}
+      </div>
     </main>
   );
 }
