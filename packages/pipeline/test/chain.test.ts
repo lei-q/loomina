@@ -7,7 +7,12 @@ import {
   type Project,
 } from "@loomina/ir";
 import minimalJson from "../../../examples/minimal.json";
-import { AnchorError, buildShotPrompt, runMinimalChain } from "../src/index";
+import {
+  AnchorError,
+  buildSheetPrompt,
+  buildShotPrompt,
+  runMinimalChain,
+} from "../src/index";
 
 const NOW = () => "2026-11-09T12:00:00Z";
 
@@ -133,5 +138,20 @@ describe("提示词里的道具", () => {
 
     const prompt = buildShotPrompt(project, project.shots[0]!);
     expect(prompt).toContain("道具：搪瓷杯，白底蓝边，杯沿磕了一块");
+  });
+});
+
+describe("三视图提示词", () => {
+  it("带上人物固定串与角度，四格同源", () => {
+    const project = load();
+    const lin = project.characters[0]!;
+    const front = buildSheetPrompt(lin, "front");
+    const back = buildSheetPrompt(lin, "back");
+
+    expect(front).toContain("正面");
+    expect(back).toContain("背面");
+    expect(front).toContain("林晚");
+    expect(front).toContain("左眼下的痣");
+    expect(front).toContain("纯浅灰背景");
   });
 });

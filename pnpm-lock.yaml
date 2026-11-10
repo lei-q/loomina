@@ -32,6 +32,9 @@ importers:
       '@loomina/ir':
         specifier: workspace:*
         version: link:../../packages/ir
+      '@loomina/pipeline':
+        specifier: workspace:*
+        version: link:../../packages/pipeline
       clsx:
         specifier: ^2.1.1
         version: 2.1.1

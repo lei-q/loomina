@@ -1,5 +1,5 @@
 import { rebuild } from "@loomina/ir";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toStageView } from "./read-model";
 import { useWorkbench } from "./workbench-store";
 
@@ -110,5 +110,69 @@ describe("审片台 store", () => {
     state().decide("rejected");
 
     expect(rebuild(state().events)).toEqual(state().project);
+  });
+});
+
+describe("生成三视图（ADR-0031）", () => {
+  beforeEach(() => {
+    state().reset();
+  });
+
+  const stub = (impl: (body: { angle: string }) => Response) => {
+    const calls: string[] = [];
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { angle: string };
+      calls.push(body.angle);
+      return impl(body);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return calls;
+  };
+
+  it("四格逐张生成，每落一张写一条 asset.updated", async () => {
+    const calls = stub(
+      (body) =>
+        new Response(
+          JSON.stringify({
+            uri: `data:image/png;base64,${body.angle}`,
+            model: "gemini-2.5-flash-image",
+            prompt: `定妆 ${body.angle}`,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+
+    await state().generateSheet("c-lin");
+
+    expect(calls).toEqual(["front", "threeQuarter", "side", "back"]);
+    expect(state().events.filter((event) => event.type === "asset.updated")).toHaveLength(4);
+    const asset = state().project.assets.find((item) => item.id === "a-lin-front")!;
+    expect(asset.uri).toContain("front");
+    expect(asset.provenance?.modelId).toBe("gemini-2.5-flash-image");
+    expect(state().sheetJobs["c-lin"]).toBeUndefined();
+
+    vi.unstubAllGlobals();
+  });
+
+  it("锁定的定妆不重生成，一次请求都不发", async () => {
+    state().lockCast("character", "c-lin");
+    const calls = stub(() => new Response("{}", { status: 200 }));
+
+    await state().generateSheet("c-lin");
+
+    expect(calls).toHaveLength(0);
+    vi.unstubAllGlobals();
+  });
+
+  it("失败就停下，写一句人话，不写资产事件", async () => {
+    stub(() => new Response(JSON.stringify({ error: "上游 429 配额不足" }), { status: 502 }));
+
+    await state().generateSheet("c-lin");
+
+    expect(state().sheetError).toContain("配额不足");
+    expect(state().events.filter((event) => event.type === "asset.updated")).toHaveLength(0);
+    expect(state().sheetJobs["c-lin"]).toBeUndefined();
+
+    vi.unstubAllGlobals();
   });
 });

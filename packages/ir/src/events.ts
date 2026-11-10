@@ -1,5 +1,5 @@
 import { clone } from "./clone";
-import type { Approval, Id, Project, Shot, Take } from "./schema";
+import type { Approval, Asset, Id, Project, Shot, Take } from "./schema";
 
 /**
  * 事件日志（ADR-0011）。
@@ -26,6 +26,12 @@ export type ProjectEvent =
       takeId: Id;
       /** 只允许改生成结果的状态与元数据，id 与 shotId 不可改 */
       patch: Partial<Omit<Take, "id" | "shotId">>;
+    }
+  | {
+      /** 资产回写：生成结果落成一张图，按 id upsert。 */
+      type: "asset.updated";
+      at: string;
+      asset: Asset;
     };
 
 export function applyEvent(
@@ -73,6 +79,17 @@ export function applyEvent(
           )
         : [...current.approvals, event.approval];
       return { ...current, approvals };
+    }
+
+    case "asset.updated": {
+      if (!current) throw new Error("asset.updated 之前必须有 project.created");
+      const exists = current.assets.some((item) => item.id === event.asset.id);
+      const assets = exists
+        ? current.assets.map((item) =>
+            item.id === event.asset.id ? { ...item, ...event.asset } : item,
+          )
+        : [...current.assets, event.asset];
+      return { ...current, assets };
     }
 
     case "take.added": {

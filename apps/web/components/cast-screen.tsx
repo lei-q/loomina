@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMemo } from "react";
+import { SHEET_LABELS, type SheetView } from "@loomina/ir";
 import { Bust } from "@/components/bust";
 import { PropObject } from "@/components/prop-object";
 import { Scene } from "@/components/scene";
@@ -53,10 +54,15 @@ function StatusChip({
 
 function CharacterRow({
   character,
+  generating,
+  onGenerate,
   onLock,
   onUnlock,
 }: {
   character: CastCharacterView;
+  /** 正在生成的那一格 */
+  generating?: SheetView;
+  onGenerate: () => void;
   onLock: () => void;
   onUnlock: () => void;
 }) {
@@ -90,11 +96,22 @@ function CharacterRow({
                   panel.assetId ? "border-line" : "border-dashed border-line-2",
                 )}
               >
-                {panel.assetId ? (
+                {panel.uri ? (
+                  <img
+                    src={panel.uri}
+                    alt={`${character.name} · ${panel.label}`}
+                    className="h-full w-full object-cover"
+                  />
+                ) : panel.assetId ? (
                   <Bust view={panel.angle} className="h-full w-full" />
                 ) : (
                   <span className="absolute inset-0 grid place-items-center text-[9px] text-muted-2">
                     待生成
+                  </span>
+                )}
+                {generating === panel.angle && (
+                  <span className="absolute inset-0 grid place-items-center bg-bg/75 text-[9px] text-text">
+                    生成中…
                   </span>
                 )}
               </div>
@@ -116,19 +133,32 @@ function CharacterRow({
               </button>
             </>
           ) : (
-            <button
-              type="button"
-              onClick={onLock}
-              disabled={character.status === "incomplete"}
-              title={
-                character.status === "incomplete"
-                  ? "三视图缺格，补齐才能锁"
-                  : "锁定后下游只能引用，不能替换"
-              }
-              className="rounded-token bg-text px-3 py-1.5 text-[11.5px] text-bg transition-opacity duration-[var(--dur)] hover:opacity-85 disabled:pointer-events-none disabled:opacity-30"
-            >
-              锁定定妆
-            </button>
+            <>
+              {generating ? (
+                <span className="tnum text-[9px] text-muted">生成中 · {SHEET_LABELS[generating]}</span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onGenerate}
+                  className="rounded-token border border-line px-3 py-1.5 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                >
+                  生成三视图
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onLock}
+                disabled={character.status === "incomplete"}
+                title={
+                  character.status === "incomplete"
+                    ? "三视图缺格，补齐才能锁"
+                    : "锁定后下游只能引用，不能替换"
+                }
+                className="rounded-token bg-text px-3 py-1.5 text-[11.5px] text-bg transition-opacity duration-[var(--dur)] hover:opacity-85 disabled:pointer-events-none disabled:opacity-30"
+              >
+                锁定定妆
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -276,6 +306,9 @@ export function CastScreen() {
   const project = useWorkbench((state) => state.project);
   const lockCast = useWorkbench((state) => state.lockCast);
   const unlockCast = useWorkbench((state) => state.unlockCast);
+  const generateSheet = useWorkbench((state) => state.generateSheet);
+  const sheetJobs = useWorkbench((state) => state.sheetJobs);
+  const sheetError = useWorkbench((state) => state.sheetError);
 
   const cast = useMemo(() => toCastView(project), [project]);
   const done = cast.lockedCount === cast.totalRequired;
@@ -304,6 +337,12 @@ export function CastScreen() {
                 />
               </span>
             </div>
+
+            {sheetError && (
+              <p className="mt-3 max-w-[60ch] text-[10.5px] leading-[1.6] text-pick">
+                {sheetError}
+              </p>
+            )}
           </header>
 
           <section className="mt-7">
@@ -312,6 +351,8 @@ export function CastScreen() {
               <CharacterRow
                 key={character.id}
                 character={character}
+                generating={sheetJobs[character.id]}
+                onGenerate={() => void generateSheet(character.id)}
                 onLock={() => lockCast("character", character.id)}
                 onUnlock={() => unlockCast("character", character.id)}
               />

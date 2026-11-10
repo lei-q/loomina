@@ -3,9 +3,11 @@
 import {
   applyEvent,
   castReadiness,
+  SHEET_ANGLES,
   type ApprovalTargetType,
   type Project,
   type ProjectEvent,
+  type SheetView,
 } from "@loomina/ir";
 import { create } from "zustand";
 import { latestTake, toStageView } from "@/lib/read-model";
@@ -24,11 +26,16 @@ type WorkbenchState = {
   project: Project;
   events: ProjectEvent[];
   currentShotId: string;
+  /** 正在生成哪一格：characterId → angle。出图是分钟级，界面要如实显示进度 */
+  sheetJobs: Record<string, SheetView | undefined>;
+  sheetError?: string;
   select: (shotId: string) => void;
   decide: (status: Decision) => void;
   /** 定妆闸门：锁定 / 解锁一个角色、场景或道具 */
   lockCast: (targetType: ApprovalTargetType, targetId: string) => void;
   unlockCast: (targetType: ApprovalTargetType, targetId: string) => void;
+  /** 逐格生成三视图；每落一张写一条 `asset.updated` */
+  generateSheet: (characterId: string) => Promise<void>;
   reset: () => void;
 };
 
@@ -61,6 +68,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   project: sampleProject,
   events: initialEvents,
   currentShotId: initialShotId,
+  sheetJobs: {},
 
   select: (shotId) => {
     if (shotId === get().currentShotId) return;
@@ -141,8 +149,97 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     set({ project: applyEvent(project, event), events: [...events, event] });
   },
 
+  generateSheet: async (characterId) => {
+    const character = get().project.characters.find((item) => item.id === characterId);
+    if (!character) return;
+    // 锁定的定妆不能被覆盖：要重做先解锁（准则 P14）
+    const locked = get().project.approvals.some(
+      (item) =>
+        item.targetType === "character" &&
+        item.targetId === characterId &&
+        item.status === "approved",
+    );
+    if (locked) return;
+
+    const angles = SHEET_ANGLES.filter((angle) => character.sheet[angle]);
+    if (angles.length === 0) {
+      set({ sheetError: "这个角色还没有三视图的资产位，先建四个格子" });
+      return;
+    }
+
+    set({ sheetError: undefined });
+    for (const angle of angles) {
+      set({ sheetJobs: { ...get().sheetJobs, [characterId]: angle } });
+      const setAngle = (value: SheetView | undefined) =>
+        set({ sheetJobs: { ...get().sheetJobs, [characterId]: value } });
+
+      try {
+        const response = await fetch("/api/sheet", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            character: {
+              name: character.name,
+              appearance: character.appearance,
+              mustNotChange: character.mustNotChange,
+            },
+            angle,
+          }),
+        });
+        const payload = (await response.json()) as {
+          uri?: string;
+          model?: string;
+          prompt?: string;
+          error?: string;
+        };
+        if (!response.ok || !payload.uri) {
+          throw new Error(payload.error ?? `生成失败（${response.status}）`);
+        }
+
+        const assetId = character.sheet[angle]!;
+        const at = new Date().toISOString();
+        const event: ProjectEvent = {
+          type: "asset.updated",
+          at,
+          asset: {
+            id: assetId,
+            kind: "image",
+            source: "generated",
+            uri: payload.uri,
+            mime: "image/png",
+            provenance: {
+              modelId: payload.model ?? "unknown",
+              prompt: payload.prompt,
+              referenceAssetIds: [],
+              createdAt: at,
+            },
+            createdAt: at,
+          },
+        };
+        set({
+          project: applyEvent(get().project, event),
+          events: [...get().events, event],
+        });
+        setAngle(undefined);
+      } catch (error) {
+        setAngle(undefined);
+        set({
+          sheetError:
+            error instanceof Error ? `「${character.name}」${error.message}` : "生成失败",
+        });
+        return;
+      }
+    }
+  },
+
   reset: () => {
     const project = applyEvent(null, initialEvents[0]!);
-    set({ project, events: bootstrap(project), currentShotId: initialShotId });
+    set({
+      project,
+      events: bootstrap(project),
+      currentShotId: initialShotId,
+      sheetJobs: {},
+      sheetError: undefined,
+    });
   },
 }));

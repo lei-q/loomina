@@ -185,6 +185,8 @@ export type CastPanel = {
   label: string;
   /** 没有资产时这一格还没生成 */
   assetId?: string;
+  /** 生成出来的图（data URI）；示例素材为空，界面画剪影 */
+  uri?: string;
 };
 
 export type CastCharacterView = {
@@ -239,6 +241,7 @@ export function toCastView(project: Project): CastView {
   const locationById = new Map(project.locations.map((item) => [item.id, item]));
 
   const propById = new Map(project.props.map((item) => [item.id, item]));
+  const assetById = new Map(project.assets.map((item) => [item.id, item]));
 
   const characters: CastCharacterView[] = readiness.characters.flatMap((item) => {
     const character = characterById.get(item.targetId);
@@ -253,6 +256,7 @@ export function toCastView(project: Project): CastView {
           angle,
           label: SHEET_LABELS[angle],
           assetId: character.sheet[angle],
+          uri: assetById.get(character.sheet[angle] ?? "")?.uri,
         })),
         status: item.status,
         required: item.required,

@@ -352,6 +352,16 @@ type TakeStatus = "draft" | "approved" | "rejected";
 - 锁定（`shot.locked`）的镜头在审片台只读；要改必须先解锁，解锁本身要留痕。
 - `takeId` 不存在时事件应用失败并报错，不静默跳过。
 
+生成结果回写资产也是同一个模式（ADR-0031）：一张图落成一条 `asset.updated`，按 `id` upsert；占位资产带 id 没有 `uri`，生成后只补 `uri / mime / provenance`，不换 id。
+
+```ts
+type AssetUpdatedEvent = {
+  type: "asset.updated";
+  at: ISODate;
+  asset: Asset;   // 按 id upsert；已锁定的资产不得被覆盖（准则 P14）
+};
+```
+
 ## 4.5 分镜规划与一致性
 
 ### Beat 与覆盖率

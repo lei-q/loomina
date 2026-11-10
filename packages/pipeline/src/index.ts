@@ -1,9 +1,11 @@
 import {
   assertValidProject,
+  SHEET_LABELS,
   shotAnchors,
   type Character,
   type Id,
   type Project,
+  type SheetView,
   type Shot,
   type Take,
 } from "@loomina/ir";
@@ -247,4 +249,19 @@ export function buildShotPrompt(project: Project, shot: Shot): string {
 
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+/** 三视图一格的提示词。人物固定串与镜头提示词同源，避免两处描述不一致。 */
+export function buildSheetPrompt(
+  character: Pick<Character, "name" | "appearance" | "mustNotChange">,
+  angle: SheetView,
+): string {
+  const parts = [`角色定妆照，${SHEET_LABELS[angle]}视角：${character.name}`];
+  if (character.appearance) parts.push(character.appearance);
+  if (character.mustNotChange.length) {
+    parts.push(`不许变：${character.mustNotChange.join("、")}`);
+  }
+  parts.push("全身站姿，自然表情，纯浅灰背景，无文字，无水印");
+  parts.push("竖屏 9:16，实拍电影质感，柔光棚拍");
+  return parts.join("。");
 }

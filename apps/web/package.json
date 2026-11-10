@@ -14,6 +14,7 @@
     "@loomina/design-tokens": "workspace:*",
     "@loomina/gateway": "workspace:*",
     "@loomina/ir": "workspace:*",
+    "@loomina/pipeline": "workspace:*",
     "clsx": "^2.1.1",
     "next": "^16.4.5",
     "react": "^19.3.1",

@@ -129,3 +129,43 @@ describe("approval.updated", () => {
     expect(unlocked.approvals[0]!.status).toBe("pending");
   });
 });
+
+describe("asset.updated", () => {
+  const generated: Extract<ProjectEvent, { type: "asset.updated" }> = {
+    type: "asset.updated",
+    at: AT,
+    asset: {
+      id: "a-lin-front",
+      kind: "image",
+      source: "generated",
+      uri: "data:image/png;base64,AAAA",
+      mime: "image/png",
+      provenance: {
+        modelId: "gemini-2.5-flash-image",
+        prompt: "定妆三视图",
+        referenceAssetIds: [],
+        createdAt: AT,
+      },
+      createdAt: AT,
+    },
+  };
+
+  it("已有的占位资产被生成结果覆盖，不新增一条", () => {
+    const project = load();
+    const before = project.assets.length;
+    const next = applyEvent(project, generated);
+
+    expect(next.assets).toHaveLength(before);
+    const asset = next.assets.find((item) => item.id === "a-lin-front")!;
+    expect(asset.uri).toBe("data:image/png;base64,AAAA");
+    expect(asset.provenance?.modelId).toBe("gemini-2.5-flash-image");
+  });
+
+  it("没有的资产按 id 追加", () => {
+    const next = applyEvent(load(), {
+      ...generated,
+      asset: { ...generated.asset, id: "a-new-panel" },
+    });
+    expect(next.assets.some((item) => item.id === "a-new-panel")).toBe(true);
+  });
+});
