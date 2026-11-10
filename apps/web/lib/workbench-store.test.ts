@@ -965,3 +965,41 @@ describe("换说话人（ADR-0046）", () => {
     expect(state().events).toHaveLength(snapshot);
   });
 });
+
+describe("台词排序（ADR-0047）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("下移一句：写一条 shot.updated 换顺序，可回放", () => {
+    state().addDialogue("s-01", "c-zhou", "又是我。");
+    const added = state().project.shots.find((item) => item.id === "s-01")!.dialogueIds[1]!;
+    const ok = state().moveDialogue("d-01", "down");
+
+    expect(ok).toBe(true);
+    expect(state().project.shots.find((item) => item.id === "s-01")?.dialogueIds).toEqual([
+      added,
+      "d-01",
+    ]);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.updated",
+      shotId: "s-01",
+      patch: { dialogueIds: [added, "d-01"] },
+    });
+    expect(rebuild(state().events).shots.find((item) => item.id === "s-01")?.dialogueIds).toEqual([
+      added,
+      "d-01",
+    ]);
+  });
+
+  it("到顶就停、锁定不能调，都不写事件", () => {
+    const snapshot = state().events.length;
+    expect(state().moveDialogue("d-01", "up")).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+
+    expect(state().moveDialogue("d-04", "down")).toBe(false); // d-04 在锁定的 s-08
+    expect(state().castError).toContain("锁定");
+    expect(state().events).toHaveLength(snapshot);
+  });
+});

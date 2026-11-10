@@ -92,6 +92,8 @@ type WorkbenchState = {
   removeDialogue: (lineId: string) => boolean;
   /** 换说话人：写一条 `dialogue.speaker.updated`，文本与时长不动（ADR-0046） */
   changeSpeaker: (lineId: string, characterId: string) => boolean;
+  /** 调整台词顺序：写一条 `shot.updated` 换 dialogueIds 的顺序（ADR-0047） */
+  moveDialogue: (lineId: string, direction: "up" | "down") => boolean;
   /** 划掉一条补充要求：同样写一条 shot.updated（ADR-0039 附记） */
   removeNote: (shotId: string, note: string) => void;
   reset: () => void;
@@ -764,6 +766,38 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       at: new Date().toISOString(),
       lineId,
       characterId,
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  moveDialogue: (lineId, direction) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.dialogueIds.includes(lineId));
+    if (!shot) return false;
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定：要调顺序先解锁。" });
+      return false;
+    }
+
+    const ids = [...shot.dialogueIds];
+    const from = ids.indexOf(lineId);
+    const to = direction === "up" ? from - 1 : from + 1;
+    if (to < 0 || to >= ids.length) return false;
+    const [moved] = ids.splice(from, 1);
+    if (!moved) return false;
+    ids.splice(to, 0, moved);
+
+    const event: ProjectEvent = {
+      type: "shot.updated",
+      at: new Date().toISOString(),
+      shotId: shot.id,
+      patch: { dialogueIds: ids },
     };
     set({
       project: applyEvent(project, event),

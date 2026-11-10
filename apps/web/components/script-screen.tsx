@@ -23,6 +23,7 @@ export function ScriptScreen() {
   const addDialogue = useWorkbench((state) => state.addDialogue);
   const removeDialogue = useWorkbench((state) => state.removeDialogue);
   const changeSpeaker = useWorkbench((state) => state.changeSpeaker);
+  const moveDialogue = useWorkbench((state) => state.moveDialogue);
   const events = useWorkbench((state) => state.events);
 
   const [editing, setEditing] = useState<string | null>(null);
@@ -71,6 +72,10 @@ export function ScriptScreen() {
     } else {
       setNote(useWorkbench.getState().castError);
     }
+  };
+
+  const move = (lineId: string, direction: "up" | "down") => {
+    if (!moveDialogue(lineId, direction)) setNote(useWorkbench.getState().castError);
   };
 
   const remove = (lineId: string) => {
@@ -164,7 +169,7 @@ export function ScriptScreen() {
 
                         {shot.lines.length > 0 && (
                           <div className="mt-2 space-y-2">
-                            {shot.lines.map((line) =>
+                            {shot.lines.map((line, lineIndex) =>
                               editing === line.id ? (
                                 <div key={line.id} className="border-l border-pick/70 pl-3">
                                   <p className="text-[9px] tracking-[.12em] text-muted-2">
@@ -288,6 +293,30 @@ export function ScriptScreen() {
                                           >
                                             删
                                           </button>
+                                          {shot.lines.length > 1 && (
+                                            <>
+                                              <button
+                                                type="button"
+                                                disabled={shot.locked || lineIndex === 0}
+                                                onClick={() => move(line.id, "up")}
+                                                title="往前挪一句"
+                                                aria-label="上移台词"
+                                                className="shrink-0 rounded-token border border-line px-1 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                                              >
+                                                ↑
+                                              </button>
+                                              <button
+                                                type="button"
+                                                disabled={shot.locked || lineIndex === shot.lines.length - 1}
+                                                onClick={() => move(line.id, "down")}
+                                                title="往后挪一句"
+                                                aria-label="下移台词"
+                                                className="shrink-0 rounded-token border border-line px-1 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                                              >
+                                                ↓
+                                              </button>
+                                            </>
+                                          )}
                                         </span>
                                       ))}
                                   </div>
