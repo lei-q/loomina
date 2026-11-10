@@ -431,7 +431,8 @@ describe("台词版本（ADR-0044 附记）", () => {
 
   it("最初一版从引导事件取，改写按先后排好", () => {
     const history = dialogueHistory(events, "d-01");
-    expect(history.original).toBe("你早就知道，对吧。");
+    expect(history.original?.text).toBe("你早就知道，对吧。");
+    expect(history.original?.dur).toBe(2.6);
     expect(history.edits.map((edit) => edit.text)).toEqual([
       "你早就知道了。",
       "你早就知道了吧。",
@@ -448,7 +449,7 @@ describe("台词版本（ADR-0044 附记）", () => {
 
   it("没改过的台词没有版本，别人的改写不算进来", () => {
     const untouched = dialogueHistory(events, "d-03");
-    expect(untouched.original).toBe("灯是我关的。");
+    expect(untouched.original?.text).toBe("灯是我关的。");
     expect(untouched.edits).toEqual([]);
     expect(previousDialogueText(untouched)).toBeUndefined();
     expect(dialogueHistory(events, "d-01").edits).toHaveLength(2);

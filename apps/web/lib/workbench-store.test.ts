@@ -836,6 +836,32 @@ describe("台词改写（ADR-0044）", () => {
     expect(state().castError).toContain("锁定");
   });
 
+  it("用回最初那版：文本与当时时长一起写回，镜头也挪回去", () => {
+    const before = state().project.shots.find((item) => item.id === "s-01")!;
+    state().editDialogue("d-01", "你早就知道了。");
+    const ok = state().restoreDialogue("d-01", "你早就知道，对吧。", 2600);
+
+    expect(ok).toBe(true);
+    const line = state().project.dialogue.find((item) => item.id === "d-01")!;
+    // 还原用的是那一版当时的时长，不是按字数重新估的
+    expect(line).toMatchObject({ text: "你早就知道，对吧。", durationMs: 2600 });
+    expect(state().project.shots.find((item) => item.id === "s-01")?.durationMs).toBe(
+      before.durationMs,
+    );
+    expect(state().events.at(-2)).toMatchObject({
+      type: "dialogue.updated",
+      lineId: "d-01",
+      patch: { text: "你早就知道，对吧。", durationMs: 2600 },
+    });
+    expect(rebuild(state().events).dialogue.find((item) => item.id === "d-01")?.text).toBe(
+      "你早就知道，对吧。",
+    );
+
+    // 已经是这一版就不动
+    expect(state().restoreDialogue("d-01", "你早就知道，对吧。", 2600)).toBe(false);
+    expect(state().castError).toContain("已经是这一版");
+  });
+
   it("空台词与没改动的台词都不写事件", () => {
     const before = state().project.dialogue.find((line) => line.id === "d-01")!;
     const snapshot = state().events.length;

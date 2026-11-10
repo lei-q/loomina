@@ -19,6 +19,7 @@ export function ScriptScreen() {
   const storageError = useWorkbench((state) => state.storageError);
   const setBudget = useWorkbench((state) => state.setBudget);
   const editDialogue = useWorkbench((state) => state.editDialogue);
+  const restoreDialogue = useWorkbench((state) => state.restoreDialogue);
   const events = useWorkbench((state) => state.events);
 
   const [editing, setEditing] = useState<string | null>(null);
@@ -39,6 +40,15 @@ export function ScriptScreen() {
 
   const save = (lineId: string) => {
     if (editDialogue(lineId, draft)) {
+      setEditing(null);
+      setNote(undefined);
+    } else {
+      setNote(useWorkbench.getState().castError);
+    }
+  };
+
+  const restore = (lineId: string, text: string, durMs: number) => {
+    if (restoreDialogue(lineId, text, durMs)) {
       setEditing(null);
       setNote(undefined);
     } else {
@@ -190,7 +200,7 @@ export function ScriptScreen() {
                                         </summary>
                                         <ul className="mt-1 space-y-0.5 text-[9.5px] leading-[1.7]">
                                           {[...history.edits].reverse().map((edit, i) => (
-                                            <li key={`${edit.at}-${i}`} className="flex gap-2">
+                                            <li key={`${edit.at}-${i}`} className="flex items-baseline gap-2">
                                               <span className="tnum shrink-0 text-muted-2">
                                                 {clock(edit.at)}
                                               </span>
@@ -198,15 +208,51 @@ export function ScriptScreen() {
                                               <span className="tnum shrink-0 text-muted-2">
                                                 {edit.dur.toFixed(1)}s
                                               </span>
+                                              {!readOnly && (
+                                                <button
+                                                  type="button"
+                                                  disabled={shot.locked || edit.text === line.text}
+                                                  onClick={() =>
+                                                    restore(line.id, edit.text, Math.round(edit.dur * 1000))
+                                                  }
+                                                  title={shot.locked ? "这一镜已锁定，先解锁才能改台词" : "用回这一版"}
+                                                  className="ml-auto shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                                                >
+                                                  用这版
+                                                </button>
+                                              )}
                                             </li>
                                           ))}
                                           {history.original && (
-                                            <li className="flex gap-2">
+                                            <li className="flex items-baseline gap-2">
                                               <span className="shrink-0 text-muted-2">最初</span>
-                                              <span className="text-muted-2">{history.original}</span>
+                                              <span className="text-muted-2">{history.original.text}</span>
+                                              <span className="tnum shrink-0 text-muted-2">
+                                                {history.original.dur.toFixed(1)}s
+                                              </span>
+                                              {!readOnly && (
+                                                <button
+                                                  type="button"
+                                                  disabled={shot.locked || history.original.text === line.text}
+                                                  onClick={() =>
+                                                    restore(
+                                                      line.id,
+                                                      history.original!.text,
+                                                      Math.round(history.original!.dur * 1000),
+                                                    )
+                                                  }
+                                                  title={shot.locked ? "这一镜已锁定，先解锁才能改台词" : "用回最初这一版"}
+                                                  className="ml-auto shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                                                >
+                                                  用这版
+                                                </button>
+                                              )}
                                             </li>
                                           )}
                                         </ul>
+                                        {note && !editing && (
+                                          <p className="mt-1 text-[9.5px] text-pick">{note}</p>
+                                        )}
                                       </details>
                                     );
                                   })()}

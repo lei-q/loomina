@@ -657,8 +657,8 @@ export type DialogueRevision = {
 };
 
 export type DialogueHistory = {
-  /** 引导事件里最初的那句；日志里没有就省掉 */
-  original?: string;
+  /** 引导事件里最初的那句（含当时的时长）；日志里没有就省掉 */
+  original?: { text: string; dur: number };
   /** 从旧到新，一次改写一条 */
   edits: DialogueRevision[];
 };
@@ -673,10 +673,11 @@ export function dialogueHistory(
   events: ProjectEvent[],
   lineId: string,
 ): DialogueHistory {
-  let original: string | undefined;
+  let original: DialogueHistory["original"];
   const first = events[0];
   if (first?.type === "project.created") {
-    original = first.project.dialogue.find((line) => line.id === lineId)?.text;
+    const line = first.project.dialogue.find((item) => item.id === lineId);
+    if (line) original = { text: line.text, dur: line.durationMs / 1000 };
   }
 
   const edits: DialogueRevision[] = [];
@@ -698,5 +699,5 @@ export function dialogueHistory(
 /** 上一版的文本：改过一次就是最初那版，改过多次就是倒数第二版的文本。 */
 export function previousDialogueText(history: DialogueHistory): string | undefined {
   if (history.edits.length === 0) return undefined;
-  return history.edits[history.edits.length - 2]?.text ?? history.original;
+  return history.edits[history.edits.length - 2]?.text ?? history.original?.text;
 }

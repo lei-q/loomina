@@ -84,6 +84,8 @@ type WorkbenchState = {
    * 所属镜头跟着挪，保持"镜头时长 ≈ 台词 + 余量"（ADR-0044）
    */
   editDialogue: (lineId: string, text: string) => boolean;
+  /** 用回某一版：文本与该版当时的时长一起写回，仍是一次改写（ADR-0044 附记） */
+  restoreDialogue: (lineId: string, text: string, durationMs: number) => boolean;
   /** 划掉一条补充要求：同样写一条 shot.updated（ADR-0039 附记） */
   removeNote: (shotId: string, note: string) => void;
   reset: () => void;
@@ -244,6 +246,69 @@ export function resetPersistenceForTests(): void {
 function firstOpenShotId(project: Project): string {
   const { shots } = toStageView(project);
   return (shots.find((shot) => shot.state === "open") ?? shots[0])?.id ?? "";
+}
+
+/**
+ * 台词落库（ADR-0044）：一条 `dialogue.updated`，时长变了再一条 `shot.updated`
+ * 让所属镜头挪同样的量（不动别人写进去的表演余量）。
+ *
+ * `durationMs` 不给就按字数估；给了就是还原某一版当时的时长。
+ * `textOnly` 只比文本：手动改写时历史时长未必是按估算口径来的，不能顺手改掉。
+ */
+function commitDialogue(
+  { get, set }: Store,
+  input: {
+    lineId: string;
+    text: string;
+    durationMs?: number;
+    unchanged: string;
+    textOnly?: boolean;
+  },
+): boolean {
+  if (get().readOnly) return false;
+  const text = input.text.replace(/\s+$/, "");
+  if (text.length === 0) {
+    set({ castError: "台词不能是空的。" });
+    return false;
+  }
+  const { project, events } = get();
+  const line = project.dialogue.find((item) => item.id === input.lineId);
+  if (!line) return false;
+  const shot = project.shots.find((item) => item.dialogueIds.includes(input.lineId));
+  if (shot?.locked) {
+    set({ castError: "这一镜已锁定：要改台词先解锁。" });
+    return false;
+  }
+
+  const durationMs = input.durationMs ?? estimateDialogueMs(text);
+  const unchanged =
+    text === line.text &&
+    (input.textOnly === true || durationMs === line.durationMs);
+  if (unchanged) {
+    set({ castError: input.unchanged });
+    return false;
+  }
+
+  const at = new Date().toISOString();
+  const next: ProjectEvent[] = [
+    { type: "dialogue.updated", at, lineId: input.lineId, patch: { text, durationMs } },
+  ];
+  const delta = durationMs - line.durationMs;
+  if (shot && delta !== 0) {
+    next.push({
+      type: "shot.updated",
+      at,
+      shotId: shot.id,
+      patch: { durationMs: Math.max(500, shot.durationMs + delta) },
+    });
+  }
+
+  set({
+    project: next.reduce(applyEvent, project),
+    events: [...events, ...next],
+    castError: undefined,
+  });
+  return true;
 }
 
 export const useWorkbench = create<WorkbenchState>()((set, get) => ({
@@ -588,56 +653,17 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     if (batch) set({ batch: { ...batch, stop: true } });
   },
 
-  editDialogue: (lineId, rawText) => {
-    if (get().readOnly) return false;
-    const text = rawText.replace(/\s+$/, "");
-    if (text.length === 0) {
-      set({ castError: "台词不能是空的。" });
-      return false;
-    }
-    const { project, events } = get();
-    const line = project.dialogue.find((item) => item.id === lineId);
-    if (!line) return false;
-    const shot = project.shots.find((item) => item.dialogueIds.includes(lineId));
-    if (shot?.locked) {
-      set({ castError: "这一镜已锁定：要改台词先解锁。" });
-      return false;
-    }
+  editDialogue: (lineId, rawText) =>
+    commitDialogue(
+      { get, set },
+      { lineId, text: rawText, unchanged: "台词没改。", textOnly: true },
+    ),
 
-    const durationMs = estimateDialogueMs(text);
-    // 文本没动就不碰时长：历史时长可能不是按这个口径估出来的，别顺手改掉
-    if (text === line.text) {
-      set({ castError: "台词没改。" });
-      return false;
-    }
-
-    const at = new Date().toISOString();
-    const next: ProjectEvent[] = [
-      {
-        type: "dialogue.updated",
-        at,
-        lineId,
-        patch: { text, durationMs },
-      },
-    ];
-    // 时长变了，所属镜头跟着挪同样的量；不动别人写进去的余量
-    const delta = durationMs - line.durationMs;
-    if (shot && delta !== 0) {
-      next.push({
-        type: "shot.updated",
-        at,
-        shotId: shot.id,
-        patch: { durationMs: Math.max(500, shot.durationMs + delta) },
-      });
-    }
-
-    set({
-      project: next.reduce(applyEvent, project),
-      events: [...events, ...next],
-      castError: undefined,
-    });
-    return true;
-  },
+  restoreDialogue: (lineId, text, durationMs) =>
+    commitDialogue(
+      { get, set },
+      { lineId, text, durationMs, unchanged: "这句已经是这一版了。" },
+    ),
 
   instruct: (text) => {
     if (get().readOnly) return false;
