@@ -41,6 +41,13 @@ describe("toStageView", () => {
     expect(short.requote.basis).toContain("2.4s");
   });
 
+  it("整片重做一遍：12 镜逐镜相加，不是拿平均时长乘", () => {
+    const view = toStageView(sampleProject);
+    expect(view.requoteAll.shots).toBe(12);
+    expect(view.requoteAll.totalCny).toBeCloseTo(17.74, 2); // 32.6s × 0.5 + 12 × 0.12
+    expect(view.requoteAll.basis).toContain("12 镜");
+  });
+
   it("不指定当前镜时，落在第一个还没定的镜头上", () => {
     const view = toStageView(sampleProject);
     expect(view.shots[view.current]?.id).toBe("s-03");

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import type { ProjectRequote } from "@/lib/pricing";
 import { ExportIcon, Logomark } from "@/components/icons";
 
 /** 阶段是一列，但只有已经做出来的两步可以点。 */
@@ -21,9 +22,22 @@ export type TopBarProps = {
   stage: StageName;
   spentCny?: number;
   budgetCny?: number;
+  /** 整片重做一遍的报价；给了才展开说明书 */
+  allRequote?: ProjectRequote;
 };
 
-export function TopBar({ title, version, stage, spentCny, budgetCny }: TopBarProps) {
+function Money({ value }: { value?: number }) {
+  return <span className="tnum">{value === undefined ? "—" : `¥${value.toFixed(2)}`}</span>;
+}
+
+export function TopBar({
+  title,
+  version,
+  stage,
+  spentCny,
+  budgetCny,
+  allRequote,
+}: TopBarProps) {
   return (
     <header className="flex h-[46px] shrink-0 items-center gap-6 border-b border-line px-4">
       <div className="flex items-center gap-2">
@@ -60,10 +74,40 @@ export function TopBar({ title, version, stage, spentCny, budgetCny }: TopBarPro
 
       <div className="ml-auto flex items-center gap-4">
         {spentCny !== undefined && (
-          <span className="tnum text-[10px] text-muted">
-            ¥{spentCny.toFixed(2)}
-            <span className="text-muted-2"> / {budgetCny ?? 60}</span>
-          </span>
+          <details className="relative">
+            <summary className="tnum cursor-pointer list-none text-[10px] text-muted transition-colors duration-[var(--dur)] hover:text-text [&::-webkit-details-marker]:hidden">
+              ¥{spentCny.toFixed(2)}
+              <span className="text-muted-2"> / {budgetCny ?? 60}</span>
+            </summary>
+
+            {allRequote && (
+              <div className="absolute right-0 top-full z-20 mt-2.5 w-[252px] rounded-token border border-line bg-surface p-3">
+                <dl className="space-y-1.5 text-[10.5px]">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="text-muted-2">已花</dt>
+                    <dd className="text-muted">
+                      <Money value={spentCny} />
+                    </dd>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="text-muted-2">全部重做一遍</dt>
+                    <dd className="text-text">
+                      <Money value={allRequote.totalCny} />
+                    </dd>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="text-muted-2">预算</dt>
+                    <dd className="text-muted">
+                      <Money value={budgetCny ?? 60} />
+                    </dd>
+                  </div>
+                </dl>
+                <p className="mt-2.5 border-t border-line pt-2 text-[9px] leading-[1.5] text-muted-2">
+                  {allRequote.basis}
+                </p>
+              </div>
+            )}
+          </details>
         )}
         <button
           type="button"

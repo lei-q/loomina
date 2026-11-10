@@ -55,6 +55,7 @@ export function Workbench() {
         stage="分镜"
         spentCny={view.spent}
         budgetCny={view.budget}
+        allRequote={view.requoteAll}
       />
       <Stage view={view} />
       <ReelBar view={view} onSelect={select} onDecide={decide} />

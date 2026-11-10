@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { DRAFT_RESOLUTION, KEYFRAME_MODEL, requoteShot } from "./pricing";
+import {
+  DRAFT_RESOLUTION,
+  KEYFRAME_MODEL,
+  requoteProject,
+  requoteShot,
+} from "./pricing";
 
 describe("重做报价", () => {
   it("按镜头时长 × 每秒单价 + 一张首帧算", () => {
@@ -36,5 +41,26 @@ describe("重做报价", () => {
   it("默认档位是草稿：minimax-h3 @ 768p", () => {
     expect(DRAFT_RESOLUTION).toBe("768p");
     expect(KEYFRAME_MODEL).toBe("gpt-image-2-c");
+  });
+});
+
+describe("整片报价", () => {
+  it("逐镜算再相加，镜数写进依据", () => {
+    const quote = requoteProject([3100, 2400, 2400]);
+    expect(quote.shots).toBe(3);
+    expect(quote.videoCny).toBeCloseTo(3.95, 2); // 7.9s × 0.5
+    expect(quote.keyframeCny).toBeCloseTo(0.36, 2); // 3 张首帧
+    expect(quote.totalCny).toBeCloseTo(4.31, 2);
+    expect(quote.basis).toContain("3 镜");
+  });
+
+  it("有一镜报不出价，整片就不给总数", () => {
+    const quote = requoteProject([2400], { resolution: "4k" });
+    expect(quote.totalCny).toBeUndefined();
+    expect(quote.basis).toContain("不给总数");
+  });
+
+  it("没有镜头时是 0 元，不是空", () => {
+    expect(requoteProject([]).totalCny).toBe(0);
   });
 });

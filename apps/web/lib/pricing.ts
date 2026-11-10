@@ -22,6 +22,9 @@ export type Requote = {
   basis: string;
 };
 
+/** 整片重做一遍的报价。镜数写进来，因为它决定这个数怎么来的。 */
+export type ProjectRequote = Requote & { shots: number };
+
 const round2 = (value: number) => Math.round(value * 100) / 100;
 
 export function requoteShot(
@@ -55,5 +58,43 @@ export function requoteShot(
     videoCny,
     keyframeCny,
     basis: `${seconds.toFixed(1)}s × ¥${quote.cnyPerSecond.toFixed(2)}/s + 首帧 ¥${keyframeCny.toFixed(2)}`,
+  };
+}
+
+/**
+ * 整片重做一遍要多少钱：每一镜各算一次，再相加。
+ *
+ * 逐镜取整再求和，因为实际是按镜下单，账要对得上；有一镜报不出价，
+ * 整片就不给总数——少算一镜的价格比不给更糟。
+ */
+export function requoteProject(
+  durationsMs: number[],
+  options: { model?: string; resolution?: string; keyframeModel?: string } = {},
+): ProjectRequote {
+  const shots = durationsMs.length;
+  const model = options.model ?? DRAFT_MODEL;
+  const resolution = options.resolution ?? DRAFT_RESOLUTION;
+  const keyframeModel = options.keyframeModel ?? KEYFRAME_MODEL;
+  const basisPrefix = `${shots} 镜，${model} @ ${resolution} + 首帧 ${keyframeModel}`;
+
+  let total = 0;
+  let video = 0;
+  let keyframe = 0;
+  for (const durationMs of durationsMs) {
+    const quote = requoteShot(durationMs, options);
+    if (quote.totalCny === undefined) {
+      return { shots, basis: `${basisPrefix}：有镜头报不出价，整片不给总数` };
+    }
+    total += quote.totalCny;
+    video += quote.videoCny ?? 0;
+    keyframe += quote.keyframeCny ?? 0;
+  }
+
+  return {
+    totalCny: round2(total),
+    videoCny: round2(video),
+    keyframeCny: round2(keyframe),
+    shots,
+    basis: basisPrefix,
   };
 }
