@@ -2165,3 +2165,90 @@ describe("编辑不许变清单（ADR-0074）", () => {
     expect(snapshot).toBeGreaterThan(0);
   });
 });
+
+describe("撤销删除（ADR-0076）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("删人物再撤销：人物带着原来的 id、清单与三视图回来", () => {
+    const before = state().project.characters.find((item) => item.id === "c-lin")!;
+    const id = state().addCharacter("阿棠", "齐耳短发")!;
+    state().addMustNotChange(id, "耳后一颗小痣");
+    const snapshot = state().events.length;
+
+    expect(state().removeCharacter(id)).toBe(true);
+    const undone = state().undoLastRemoval();
+    if (!undone) console.log("undo error:", state().castError);
+    expect(undone).toBe(true);
+
+    const back = state().project.characters.find((item) => item.id === id)!;
+    expect(back).toMatchObject({ id, name: "阿棠", mustNotChange: ["耳后一颗小痣"] });
+    expect(state().events).toHaveLength(snapshot + 2); // removed + added
+    expect(state().events.at(-1)).toMatchObject({ type: "character.added", character: { id } });
+    expect(rebuild(state().events)).toEqual(state().project);
+    expect(before).toBeTruthy();
+  });
+
+  it("删一镜再撤销：台词、时长与顺序按删之前的样子回来", () => {
+    const before = state().project.shots.find((item) => item.id === "s-03")!;
+    const beforeLines = before.dialogueIds.map(
+      (id) => state().project.dialogue.find((line) => line.id === id)!,
+    );
+    expect(beforeLines.length).toBeGreaterThan(0);
+
+    expect(state().removeShot("s-03")).toBe(true);
+    expect(state().undoLastRemoval()).toBe(true);
+
+    const back = state().project.shots.find((item) => item.id === "s-03")!;
+    expect(back).toMatchObject({
+      id: "s-03",
+      sceneId: before.sceneId,
+      durationMs: before.durationMs,
+      dialogueIds: before.dialogueIds,
+    });
+    for (const line of beforeLines) {
+      expect(state().project.dialogue.find((item) => item.id === line.id)).toEqual(line);
+    }
+    expect(
+      state().project.scenes.find((item) => item.id === before.sceneId)?.shotIds,
+    ).toContain("s-03");
+    expect(state().currentShotId).toBe("s-03");
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("先删镜、再删场：撤销按删除的反向一步来", () => {
+    const sceneId = state().addScene()!;
+    const shotId = state().addShot(sceneId)!;
+    state().toggleShotCharacter(shotId, "c-lin");
+
+    expect(state().removeShot(shotId)).toBe(true);
+    expect(state().removeScene(sceneId)).toBe(true);
+
+    // 第一步：场次回来（还是空的）
+    expect(state().undoLastRemoval()).toBe(true);
+    expect(state().project.scenes.some((item) => item.id === sceneId)).toBe(true);
+    expect(state().project.shots.some((item) => item.id === shotId)).toBe(false);
+
+    // 第二步：镜头回来，出场也跟着回来
+    expect(state().undoLastRemoval()).toBe(true);
+    expect(state().project.shots.find((item) => item.id === shotId)?.characterIds).toEqual([
+      "c-lin",
+    ]);
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("没有可撤销的删除、或只读时不写事件", () => {
+    const snapshot = state().events.length;
+    expect(state().undoLastRemoval()).toBe(false);
+    expect(state().castError).toContain("没有可撤销的删除");
+    expect(state().events).toHaveLength(snapshot);
+
+    state().removeCharacter(state().addCharacter("阿棠", "")!);
+    useWorkbench.setState({ readOnly: true });
+    expect(state().undoLastRemoval()).toBe(false);
+    useWorkbench.setState({ readOnly: false });
+    expect(state().undoLastRemoval()).toBe(true);
+  });
+});

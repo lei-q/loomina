@@ -10,6 +10,7 @@ import { Scene } from "@/components/scene";
 import { TopBar } from "@/components/top-bar";
 import {
   toCastView,
+  undoableRemoval,
   type CastCharacterView,
   type CastLocationView,
   type CastPropView,
@@ -963,6 +964,7 @@ export function CastScreen() {
   const removeCharacter = useWorkbench((state) => state.removeCharacter);
   const addMustNotChange = useWorkbench((state) => state.addMustNotChange);
   const removeMustNotChange = useWorkbench((state) => state.removeMustNotChange);
+  const undoLastRemoval = useWorkbench((state) => state.undoLastRemoval);
   const removeProp = useWorkbench((state) => state.removeProp);
 
   const [creating, setCreating] = useState(false);
@@ -1005,6 +1007,14 @@ export function CastScreen() {
 
   const events = useWorkbench((state) => state.events);
   const cast = useMemo(() => toCastView(project, events), [project, events]);
+  const removal = useMemo(() => undoableRemoval(events, project), [events, project]);
+  /** 定妆页只管人物 / 道具 / 地点的撤销：场次与镜头在剧本页 */
+  const pageRemoval =
+    removal && (removal.kind === "character" || removal.kind === "prop" || removal.kind === "location")
+      ? removal
+      : undefined;
+  const removalNoun =
+    pageRemoval?.kind === "character" ? "人物" : pageRemoval?.kind === "prop" ? "道具" : "地点";
   const done = cast.lockedCount === cast.totalRequired;
   const progress = cast.totalRequired === 0 ? 0 : (cast.lockedCount / cast.totalRequired) * 100;
 
@@ -1046,6 +1056,22 @@ export function CastScreen() {
             {castError && (
               <p className="mt-3 max-w-[60ch] text-[10.5px] leading-[1.6] text-pick">
                 {castError}
+              </p>
+            )}
+
+            {!readOnly && pageRemoval && (
+              <p className="mt-2 flex flex-wrap items-center gap-2 text-[10.5px] text-muted">
+                <span className="text-muted-2">
+                  刚删掉{removalNoun}「{pageRemoval.label}」
+                </span>
+                <button
+                  type="button"
+                  onClick={() => undoLastRemoval()}
+                  title="把它和它的资产引用一起放回来"
+                  className="rounded-token border border-line px-1.5 py-px text-[9.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                >
+                  撤销
+                </button>
               </p>
             )}
           </header>

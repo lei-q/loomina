@@ -19,6 +19,7 @@ import {
   toKeyframeView,
   toScriptView,
   toStageView,
+  undoableRemoval,
 } from "./read-model";
 import { sampleProject } from "./sample-project";
 
@@ -880,5 +881,100 @@ describe("改过场景描述：主镜过期（ADR-0075）", () => {
       reasons: ["场景描述"],
     });
     expect(toCastView(withMaster).locations.find((item) => item.id === "loc-corridor")?.masterStale).toBeUndefined();
+  });
+});
+
+describe("撤销删除（ADR-0076）", () => {
+  const at = (h: number) => `2026-11-10T${String(h).padStart(2, "0")}:00:00+08:00`;
+  const head = { type: "project.created" as const, at: at(0), project: sampleProject };
+  const lin = sampleProject.characters.find((item) => item.id === "c-lin")!;
+  const s01 = sampleProject.shots.find((item) => item.id === "s-01")!;
+  /** 试验人物没有被任何镜头点着，删得掉 */
+  const trial = { ...lin, id: "c-trial", name: "阿棠", mustNotChange: [] };
+  const trialHead = {
+    type: "project.created" as const,
+    at: at(0),
+    project: ProjectSchema.parse({
+      ...sampleProject,
+      characters: [...sampleProject.characters, trial],
+    }),
+  };
+  /** 空场次：没有镜头，删得掉 */
+  const emptyScene = {
+    id: "sc-empty",
+    index: sampleProject.scenes.length,
+    locationId: "loc-corridor",
+    space: "int" as const,
+    timeOfDay: "night" as const,
+    shotIds: [],
+  };
+  const emptyHead = {
+    type: "project.created" as const,
+    at: at(0),
+    project: ProjectSchema.parse({
+      ...sampleProject,
+      scenes: [...sampleProject.scenes, emptyScene],
+    }),
+  };
+
+  it("没有删除时没有可撤销的", () => {
+    expect(undoableRemoval([head], sampleProject)).toBeUndefined();
+  });
+
+  it("人物：名字用删除之前那一份，索引指向那条事件", () => {
+    const events = [
+      trialHead,
+      { type: "character.removed" as const, at: at(9), characterId: "c-trial" },
+    ];
+    const project = rebuild(events);
+    expect(undoableRemoval(events, project)).toEqual({
+      index: 1,
+      kind: "character",
+      id: "c-trial",
+      label: "阿棠",
+      at: at(9),
+    });
+  });
+
+  it("恢复过又删一次：两条都记，取最近一条", () => {
+    const events = [
+      trialHead,
+      { type: "character.removed" as const, at: at(9), characterId: "c-trial" },
+      { type: "character.added" as const, at: at(10), character: trial },
+      { type: "character.removed" as const, at: at(11), characterId: "c-trial" },
+    ];
+    expect(undoableRemoval(events, rebuild(events))).toMatchObject({ index: 3, at: at(11) });
+  });
+
+  it("已经放回来的删除跳过，去找更早的一条", () => {
+    const events = [
+      trialHead,
+      { type: "character.removed" as const, at: at(9), characterId: "c-trial" },
+      { type: "character.added" as const, at: at(10), character: trial },
+    ];
+    expect(undoableRemoval(events, rebuild(events))).toBeUndefined();
+  });
+
+  it("镜头用删除之前的镜号，场次用第几场", () => {
+    const shotEvents = [
+      head,
+      { type: "shot.removed" as const, at: at(9), shotId: "s-01" },
+    ];
+    expect(undoableRemoval(shotEvents, rebuild(shotEvents))).toMatchObject({
+      kind: "shot",
+      id: "s-01",
+      label: "SH-01",
+    });
+    expect(s01.id).toBe("s-01");
+
+    const sceneEvents = [
+      emptyHead,
+      { type: "scene.removed" as const, at: at(9), sceneId: emptyScene.id },
+    ];
+    expect(undoableRemoval(sceneEvents, rebuild(sceneEvents))).toMatchObject({
+      kind: "scene",
+      id: emptyScene.id,
+      label: `第 ${emptyScene.index + 1} 场`,
+    });
   });
 });

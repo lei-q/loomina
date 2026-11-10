@@ -1,5 +1,6 @@
 import {
   castReadiness,
+  rebuild,
   shotAnchors,
   SHEET_ANGLES,
   SHEET_LABELS,
@@ -285,6 +286,86 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
 
 export function shotLabel(no: number): string {
   return `SH-${String(no).padStart(2, "0")}`;
+}
+
+// ── 撤销删除（ADR-0076）─────────────────────────────────────────
+
+export type RemovalKind = "character" | "prop" | "location" | "shot" | "scene";
+
+export type UndoableRemoval = {
+  /** 删除事件在日志里的位置：前缀重放用它取回被删对象的快照 */
+  index: number;
+  kind: RemovalKind;
+  id: string;
+  /** 界面上怎么称呼它：人物 / 道具 / 地点用名字，镜头用 SH-xx，场次用第 N 场 */
+  label: string;
+  at: string;
+};
+
+function removalTarget(
+  event: ProjectEvent,
+): { kind: RemovalKind; id: string } | undefined {
+  switch (event.type) {
+    case "character.removed":
+      return { kind: "character", id: event.characterId };
+    case "prop.removed":
+      return { kind: "prop", id: event.propId };
+    case "location.removed":
+      return { kind: "location", id: event.locationId };
+    case "shot.removed":
+      return { kind: "shot", id: event.shotId };
+    case "scene.removed":
+      return { kind: "scene", id: event.sceneId };
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * 下一次「撤销删除」会撤销哪一条（ADR-0076）。
+ *
+ * 从日志末尾往回找第一条"删掉之后还没回来"的记录：同一个对象删了又删，
+ * 撤的永远是最新那一次；撤销过的那条因为对象已经回来，会被跳过。
+ */
+export function undoableRemoval(
+  events: ProjectEvent[],
+  project: Project,
+): UndoableRemoval | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]!;
+    const target = removalTarget(event);
+    if (!target) continue;
+    const alive =
+      target.kind === "character"
+        ? project.characters.some((item) => item.id === target.id)
+        : target.kind === "prop"
+          ? project.props.some((item) => item.id === target.id)
+          : target.kind === "location"
+            ? project.locations.some((item) => item.id === target.id)
+            : target.kind === "shot"
+              ? project.shots.some((item) => item.id === target.id)
+              : project.scenes.some((item) => item.id === target.id);
+    if (alive) continue;
+
+    // 被删时它叫什么：用删除之前的那份项目算
+    const before = rebuild(events.slice(0, index));
+    let label = target.id;
+    if (target.kind === "character") {
+      label = before.characters.find((item) => item.id === target.id)?.name ?? label;
+    } else if (target.kind === "prop") {
+      label = before.props.find((item) => item.id === target.id)?.name ?? label;
+    } else if (target.kind === "location") {
+      label = before.locations.find((item) => item.id === target.id)?.name ?? label;
+    } else if (target.kind === "shot") {
+      const no = toStageView(before).shots.findIndex((item) => item.id === target.id);
+      label = no >= 0 ? shotLabel(no + 1) : label;
+    } else {
+      const scene = before.scenes.find((item) => item.id === target.id);
+      label = scene ? `第 ${scene.index + 1} 场` : label;
+    }
+    return { index, kind: target.kind, id: target.id, label, at: event.at };
+  }
+  return undefined;
 }
 
 // ── 关键帧页（ADR-0042）───────────────────────────────────────────

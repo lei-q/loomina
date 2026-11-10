@@ -21,7 +21,14 @@ import { create } from "zustand";
 import { diffEvents, getEventLog, migrateLog } from "@/lib/event-log";
 import { estimateDialogueMs } from "@/lib/dialogue";
 import { claimWriter } from "@/lib/writer-lock";
-import { latestTake, removedLines, shotLabel, spendOf, toStageView } from "@/lib/read-model";
+import {
+  latestTake,
+  removedLines,
+  shotLabel,
+  spendOf,
+  toStageView,
+  undoableRemoval,
+} from "@/lib/read-model";
 import { sampleProject } from "@/lib/sample-project";
 
 export type Decision = "approved" | "rejected";
@@ -166,6 +173,8 @@ type WorkbenchState = {
   moveSceneTo: (sceneId: string, toIndex: number) => boolean;
   /** 删一个地点；还有场次占着就先把它们搬到 `moveToId` 再删（ADR-0061 / ADR-0062） */
   removeLocation: (locationId: string, moveToId?: string) => boolean;
+  /** 撤销最近一次删除：按前缀重放取回快照，再写补偿事件（ADR-0076） */
+  undoLastRemoval: () => boolean;
   /** 划掉一条补充要求：同样写一条 shot.updated（ADR-0039 附记） */
   removeNote: (shotId: string, note: string) => void;
   reset: () => void;
@@ -1748,6 +1757,117 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       castError: undefined,
     });
     return true;
+  },
+
+  undoLastRemoval: () => {
+    if (get().readOnly) return false;
+    const { project, events, currentShotId } = get();
+    const target = undoableRemoval(events, project);
+    if (!target) {
+      set({ castError: "没有可撤销的删除。" });
+      return false;
+    }
+    // 删除之前的那一份项目：被删对象与它的从属物都还在里面
+    const before = rebuild(events.slice(0, target.index));
+    const at = new Date().toISOString();
+    const written: ProjectEvent[] = [];
+    let focusShotId: string | undefined;
+
+    try {
+      switch (target.kind) {
+        case "character": {
+          const character = before.characters.find((item) => item.id === target.id);
+          if (!character) throw new Error("找不到被删的人物。");
+          written.push({ type: "character.added", at, character });
+          break;
+        }
+        case "prop": {
+          const prop = before.props.find((item) => item.id === target.id);
+          if (!prop) throw new Error("找不到被删的道具。");
+          written.push({ type: "prop.added", at, prop });
+          break;
+        }
+        case "location": {
+          const location = before.locations.find((item) => item.id === target.id);
+          if (!location) throw new Error("找不到被删的地点。");
+          written.push({ type: "location.added", at, location });
+          break;
+        }
+        case "scene": {
+          const scene = before.scenes.find((item) => item.id === target.id);
+          if (!scene) throw new Error("找不到被删的场次。");
+          // 场次先回来，镜头随后一次一步地撤（ADR-0067 是逐镜删、再删场）
+          written.push({
+            type: "scene.added",
+            at,
+            scene: { ...scene, index: Math.min(scene.index, project.scenes.length), shotIds: [] },
+          });
+          break;
+        }
+        case "shot": {
+          const shot = before.shots.find((item) => item.id === target.id);
+          if (!shot) throw new Error("找不到被删的镜头。");
+          const scene = project.scenes.find((item) => item.id === shot.sceneId);
+          if (!scene) {
+            const sceneBefore = before.scenes.find((item) => item.id === shot.sceneId);
+            throw new Error(
+              `这一镜原来在${sceneBefore ? `第 ${sceneBefore.index + 1} 场` : "已删的场次"}，那一场也删了：先撤销那一场。`,
+            );
+          }
+          const lines = shot.dialogueIds.flatMap((id) => {
+            const line = before.dialogue.find((item) => item.id === id);
+            return line ? [line] : [];
+          });
+          const takes = shot.takeIds.flatMap((id) => {
+            const take = before.takes.find((item) => item.id === id);
+            return take ? [take] : [];
+          });
+          // 镜头先回来（台词、take 各自再补：shot.added 不收这两样）
+          written.push({
+            type: "shot.added",
+            at,
+            shot: { ...shot, index: Math.min(shot.index, scene.shotIds.length), dialogueIds: [], takeIds: [] },
+          });
+          for (const line of lines) {
+            // 这一句可能已经被「恢复」回别的镜头：不重复添加
+            if (!project.dialogue.some((item) => item.id === line.id)) {
+              written.push({ type: "dialogue.added", at, shotId: shot.id, line });
+            }
+          }
+          for (const take of takes) {
+            if (!project.takes.some((item) => item.id === take.id)) {
+              written.push({ type: "take.added", at, take });
+            }
+          }
+          // 台词顺序按删之前的样子写一遍（已有同 id 的句子也排进来）
+          const order = shot.dialogueIds.filter(
+            (id) =>
+              project.dialogue.some((item) => item.id === id) ||
+              lines.some((item) => item.id === id),
+          );
+          if (order.length > 0) {
+            written.push({ type: "shot.updated", at, shotId: shot.id, patch: { dialogueIds: order } });
+          }
+          focusShotId = shot.id;
+          break;
+        }
+      }
+
+      const next = written.reduce(applyEvent, project);
+      set({
+        project: next,
+        events: [...events, ...written],
+        castError: undefined,
+        ...(focusShotId ? { currentShotId: focusShotId } : {}),
+      });
+      return true;
+    } catch (error) {
+      set({
+        castError:
+          error instanceof Error ? `撤销不了这次删除：${error.message}` : "撤销不了这次删除。",
+      });
+      return false;
+    }
   },
 
   addDialogue: (shotId, characterId, rawText) => {

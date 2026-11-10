@@ -13,6 +13,7 @@ import {
   sceneHead,
   sceneHeadHistory,
   scriptToText,
+  undoableRemoval,
   SPACE_LABEL,
   shotLabel,
   TIME_LABEL,
@@ -43,6 +44,7 @@ export function ScriptScreen() {
   const moveDialogue = useWorkbench((state) => state.moveDialogue);
   const editAction = useWorkbench((state) => state.editAction);
   const editScene = useWorkbench((state) => state.editScene);
+  const undoLastRemoval = useWorkbench((state) => state.undoLastRemoval);
   const moveScene = useWorkbench((state) => state.moveScene);
   const moveSceneTo = useWorkbench((state) => state.moveSceneTo);
   const addScene = useWorkbench((state) => state.addScene);
@@ -93,6 +95,10 @@ export function ScriptScreen() {
   }, [editingScene]);
 
   const view = useMemo(() => toScriptView(project), [project]);
+  const removal = useMemo(() => undoableRemoval(events, project), [events, project]);
+  /** 撤销只在剧本页管场次与镜头：人物 / 道具 / 地点的撤销在定妆页 */
+  const pageRemoval =
+    removal && (removal.kind === "shot" || removal.kind === "scene") ? removal : undefined;
 
   const nameOf = (characterId: string) =>
     view.characters.find((item) => item.id === characterId)?.name ?? characterId;
@@ -284,6 +290,24 @@ export function ScriptScreen() {
               </div>
             </dl>
           </header>
+
+          {!readOnly && pageRemoval && (
+            <p className="mt-3 flex flex-wrap items-center gap-2 text-[10.5px] text-muted">
+              <span className="text-muted-2">
+                刚删掉 {pageRemoval.kind === "scene" ? pageRemoval.label : `镜 ${pageRemoval.label}`}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!undoLastRemoval()) setNote(useWorkbench.getState().castError);
+                }}
+                title="把它和它的台词、take 一起放回来"
+                className="rounded-token border border-line px-1.5 py-px text-[9.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+              >
+                撤销
+              </button>
+            </p>
+          )}
 
           <div className="mt-8 space-y-10">
             {view.scenes.map((scene, at) => (
