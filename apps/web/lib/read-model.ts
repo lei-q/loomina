@@ -381,6 +381,120 @@ export function toKeyframeView(project: Project, options: { budgetCny?: number }
   };
 }
 
+// ── 剧本（只读）─────────────────────────────────────────────────
+
+const round2 = (value: number) => Math.round(value * 100) / 100;
+
+export type ScriptLine = {
+  id: string;
+  /** 说话人；角色表里找不到就写"未知" */
+  character: string;
+  text: string;
+  /** 配音时长，秒 */
+  dur: number;
+};
+
+export type ScriptShot = {
+  id: string;
+  no: number;
+  action: string;
+  dur: number;
+  size: string;
+  angle: string;
+  lines: ScriptLine[];
+};
+
+export type ScriptScene = {
+  id: string;
+  /** 场号，从 1 开始 */
+  no: number;
+  place: string;
+  dur: number;
+  shots: ScriptShot[];
+};
+
+export type ScriptView = {
+  title: string;
+  version: number;
+  scenes: ScriptScene[];
+  shotCount: number;
+  dialogueCount: number;
+  /** 全片时长，秒 */
+  totalDur: number;
+  spent: number;
+  spend: Spend;
+  unpriced: number;
+  budget: number;
+};
+
+/**
+ * 剧本页的读模型：按场次、场内镜序排，把每镜的动作与台词摊平。
+ *
+ * 只读：这一页回答"这条片子写了什么"，不提供编辑（A5 台词编辑另做）。
+ */
+export function toScriptView(project: Project, options: { budgetCny?: number } = {}): ScriptView {
+  const stage = toStageView(project, {});
+  const stageById = new Map(stage.shots.map((shot) => [shot.id, shot]));
+  const locationById = new Map(project.locations.map((item) => [item.id, item]));
+  const characterById = new Map(project.characters.map((item) => [item.id, item]));
+  const dialogueById = new Map(project.dialogue.map((item) => [item.id, item]));
+
+  const scenes: ScriptScene[] = [...project.scenes]
+    .sort((a, b) => a.index - b.index)
+    .map((scene, at) => {
+      const shots: ScriptShot[] = project.shots
+        .filter((shot) => shot.sceneId === scene.id)
+        .sort((a, b) => a.index - b.index)
+        .map((shot) => {
+          const view = stageById.get(shot.id);
+          const lines: ScriptLine[] = [];
+          for (const dialogueId of shot.dialogueIds) {
+            const line = dialogueById.get(dialogueId);
+            if (!line) continue;
+            lines.push({
+              id: line.id,
+              character: characterById.get(line.characterId)?.name ?? "未知",
+              text: line.text,
+              dur: line.durationMs / 1000,
+            });
+          }
+          return {
+            id: shot.id,
+            no: view?.no ?? shot.index + 1,
+            action: shot.description,
+            dur: shot.durationMs / 1000,
+            size: view?.size ?? "",
+            angle: view?.angle ?? "",
+            lines,
+          };
+        });
+
+      return {
+        id: scene.id,
+        no: at + 1,
+        place: locationById.get(scene.locationId)?.name ?? "未命名场景",
+        dur: round2(shots.reduce((sum, shot) => sum + shot.dur, 0)),
+        shots,
+      };
+    });
+
+  return {
+    title: stage.title,
+    version: stage.version,
+    scenes,
+    shotCount: scenes.reduce((sum, scene) => sum + scene.shots.length, 0),
+    dialogueCount: scenes.reduce(
+      (sum, scene) => sum + scene.shots.reduce((n, shot) => n + shot.lines.length, 0),
+      0,
+    ),
+    totalDur: round2(scenes.reduce((sum, scene) => sum + scene.dur, 0)),
+    spent: stage.spent,
+    spend: stage.spend,
+    unpriced: stage.unpriced,
+    budget: options.budgetCny ?? stage.budget,
+  };
+}
+
 // ── 定妆（ADR-0028）───────────────────────────────────────────────
 
 export type CastPanel = {

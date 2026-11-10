@@ -9,7 +9,7 @@ import { ExportIcon, Logomark } from "@/components/icons";
 /** 阶段是一列，但只有已经做出来的两步可以点。 */
 const stages = [
   { name: "故事", href: null },
-  { name: "剧本", href: null },
+  { name: "剧本", href: "/script" },
   { name: "定妆", href: "/cast" },
   { name: "分镜", href: "/" },
   { name: "关键帧", href: "/keyframes" },

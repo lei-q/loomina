@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ProjectSchema, type ProjectInput } from "@loomina/ir";
-import { filterKeyframeCells, keyframeTally, toCastView, toKeyframeView, toStageView } from "./read-model";
+import { filterKeyframeCells, keyframeTally, toCastView, toKeyframeView, toScriptView, toStageView } from "./read-model";
 import { sampleProject } from "./sample-project";
 
 describe("toStageView", () => {
@@ -380,5 +380,33 @@ describe("关键帧页读模型（ADR-0042）", () => {
     });
     expect(filterKeyframeCells(cells, "complete")).toHaveLength(0);
     expect(filterKeyframeCells(cells, "missing-first")).toHaveLength(12);
+  });
+});
+
+describe("剧本页读模型（只读）", () => {
+  it("按场次与场内镜序摊平，台词带说话人", () => {
+    const view = toScriptView(sampleProject);
+
+    expect(view.scenes).toHaveLength(5);
+    expect(view.shotCount).toBe(12);
+    expect(view.scenes[0]!.place).toBe("走廊");
+    expect(view.scenes[0]!.shots.map((shot) => shot.id)).toEqual(["s-01", "s-02", "s-03"]);
+    expect(view.scenes[1]!.shots.map((shot) => shot.id)).toEqual(["s-04", "s-05"]);
+
+    const line = view.scenes[0]!.shots[0]!.lines[0]!;
+    expect(line.character).toBe("周");
+    expect(line.text).toContain("你早就知道");
+    expect(line.dur).toBeGreaterThan(0);
+    expect(view.dialogueCount).toBe(4);
+    expect(view.totalDur).toBeGreaterThan(30);
+  });
+
+  it("没有台词的镜头不编台词，镜号用整片顺序", () => {
+    const view = toScriptView(sampleProject);
+    const s05 = view.scenes[1]!.shots.find((shot) => shot.id === "s-05")!;
+
+    expect(s05.lines).toEqual([]);
+    // s-05 是第二场的第一镜，整片是第五镜
+    expect(s05.no).toBe(5);
   });
 });
