@@ -978,3 +978,28 @@ describe("撤销删除（ADR-0076）", () => {
     });
   });
 });
+
+describe("道具签按场筛选（ADR-0078）", () => {
+  it("每一镜带着它所在的场次，同一场的镜头能按场挑出来", () => {
+    const view = toStageView(sampleProject);
+    expect(view.shots.find((shot) => shot.id === "s-01")?.sceneId).toBe("sc-1");
+    expect(view.shots.find((shot) => shot.id === "s-05")?.sceneId).toBe("sc-2");
+
+    const inScene = view.shots
+      .filter((shot) => shot.sceneId === "sc-1")
+      .map((shot) => shot.id);
+    expect(inScene).toEqual(["s-01", "s-02", "s-03"]);
+  });
+
+  it("一场里用过的道具去重后是这个集合", () => {
+    const view = toStageView(sampleProject);
+    const props = [
+      ...new Set(
+        view.shots
+          .filter((shot) => shot.sceneId === "sc-2")
+          .flatMap((shot) => shot.propIds),
+      ),
+    ];
+    expect(props).toEqual(["p-lamp"]);
+  });
+});

@@ -30,6 +30,7 @@ function Current({
   quoteCny,
   characters,
   props,
+  scenePropIds,
   readOnly,
   onGenerate,
   onRemoveNote,
@@ -48,6 +49,8 @@ function Current({
   characters: { id: string; name: string }[];
   /** 全部道具：给这一镜点名（ADR-0066） */
   props: { id: string; name: string }[];
+  /** 这一场里出现过的道具：道具签可以只列这些（ADR-0078） */
+  scenePropIds: string[];
   readOnly: boolean;
   onGenerate: (frame: Frame) => void;
   onRemoveNote: (note: string) => void;
@@ -65,6 +68,11 @@ function Current({
     ...shot.propIds.flatMap((id) => props.filter((prop) => prop.id === id)),
     ...props.filter((prop) => !shot.propIds.includes(prop.id)),
   ];
+  // 道具签只列这一场用过的：道具一多，一排签会盖住舞台（ADR-0078）
+  const [sceneOnly, setSceneOnly] = useState(false);
+  const visibleProps = sceneOnly
+    ? orderedProps.filter((prop) => scenePropIds.includes(prop.id))
+    : orderedProps;
   // 正在看哪一帧：首帧是视频的起点，尾帧是落点（ADR-0038）
   const [shown, setShown] = useState<Frame>("first");
   const frames: Array<{ key: Frame; uri?: string; has: boolean }> = [
@@ -293,7 +301,27 @@ function Current({
       {/* 这一镜里有哪些道具：与人物同一套点签，锚点会带上道具参考（ADR-0066） */}
       <div className="flex max-w-[360px] flex-wrap items-center justify-center gap-x-2 gap-y-1">
         <span className="tnum text-[9px] tracking-[.14em] text-muted-2">道具</span>
-        {orderedProps.map((prop) => {
+        {props.length > 0 && (
+          <button
+            type="button"
+            aria-pressed={sceneOnly}
+            onClick={() => setSceneOnly((on) => !on)}
+            title={
+              sceneOnly
+                ? "现在只列这一场用过的道具：点一下列出全部"
+                : "道具太多时，只列这一场用过的"
+            }
+            className={cn(
+              "-ml-1 rounded-[1px] px-1 py-[1px] text-[9px] transition-colors duration-[var(--dur)]",
+              sceneOnly
+                ? "border border-line-2 text-text"
+                : "border border-dashed border-line text-muted-2 hover:border-line-2 hover:text-text",
+            )}
+          >
+            只列本场
+          </button>
+        )}
+        {visibleProps.map((prop) => {
           const present = shot.propIds.includes(prop.id);
           const disabled = readOnly || shot.locked;
           const at = shot.propIds.indexOf(prop.id);
@@ -355,6 +383,9 @@ function Current({
           );
         })}
         {props.length === 0 && <span className="text-[10px] text-muted-2">还没有道具</span>}
+        {props.length > 0 && visibleProps.length === 0 && (
+          <span className="text-[10px] text-muted-2">这一场还没用过道具。点「只列本场」列全部。</span>
+        )}
       </div>
 
       {/* 这一镜带进生成的参考图：审片时就知道生成靠什么钉住（ADR-0029） */}
@@ -410,6 +441,14 @@ export function Stage({
   const current = view.shots[view.current]!;
   const prev = view.shots[view.current - 1];
   const next = view.shots[view.current + 1];
+  // 这一场里出现过的道具：只列本场时用（ADR-0078）
+  const scenePropIds = [
+    ...new Set(
+      view.shots
+        .filter((shot) => shot.sceneId === current.sceneId)
+        .flatMap((shot) => shot.propIds),
+    ),
+  ];
 
   return (
     // 内容比一屏高时（比如展开提示词）要能滚：用 m-auto 居中，溢出时自动贴顶
@@ -423,6 +462,7 @@ export function Stage({
           quoteCny={quoteCny}
           characters={view.characters}
           props={view.props}
+          scenePropIds={scenePropIds}
           readOnly={readOnly}
           onGenerate={onGenerateKeyframe}
           onRemoveNote={onRemoveNote}
