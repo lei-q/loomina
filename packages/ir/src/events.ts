@@ -7,6 +7,7 @@ import type {
   Id,
   Location,
   Project,
+  Prop,
   Scene,
   Shot,
   Take,
@@ -119,6 +120,19 @@ export type ProjectEvent =
       at: string;
       characterId: Id;
       patch: Partial<Pick<Character, "name" | "appearance">>;
+    }
+  | {
+      /** 加一件道具（ADR-0072）：先有道具，分镜页的道具签才点得出来 */
+      type: "prop.added";
+      at: string;
+      prop: Prop;
+    }
+  | {
+      /** 改道具（ADR-0072）：名字与描述；参考图走资产那条路 */
+      type: "prop.updated";
+      at: string;
+      propId: Id;
+      patch: Partial<Pick<Prop, "name" | "description">>;
     }
   | {
       /**
@@ -424,6 +438,32 @@ export function applyEvent(
         character.id === event.characterId ? { ...character, ...event.patch } : character,
       );
       return { ...current, characters };
+    }
+
+    case "prop.added": {
+      if (!current) throw new Error("prop.added 之前必须有 project.created");
+      if (event.prop.name.trim().length === 0) throw new Error("道具总得有个名字");
+      if (current.props.some((prop) => prop.id === event.prop.id)) {
+        throw new Error(`prop.added 重复的道具: ${event.prop.id}`);
+      }
+      return { ...current, props: [...current.props, event.prop] };
+    }
+
+    case "prop.updated": {
+      if (!current) throw new Error("prop.updated 之前必须有 project.created");
+      if (!current.props.some((prop) => prop.id === event.propId)) {
+        throw new Error(`prop.updated 指向不存在的道具: ${event.propId}`);
+      }
+      if (Object.keys(event.patch).length === 0) {
+        throw new Error("prop.updated 的 patch 是空的");
+      }
+      if (event.patch.name !== undefined && event.patch.name.trim().length === 0) {
+        throw new Error("道具总得有个名字");
+      }
+      const props = current.props.map((prop) =>
+        prop.id === event.propId ? { ...prop, ...event.patch } : prop,
+      );
+      return { ...current, props };
     }
 
     case "dialogue.updated": {

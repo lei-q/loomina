@@ -845,6 +845,76 @@ describe("character.added / character.updated（ADR-0071）", () => {
   });
 });
 
+describe("prop.added / prop.updated（ADR-0072）", () => {
+  it("加一件道具，重放后一致", () => {
+    const project = load();
+    const event: ProjectEvent = {
+      type: "prop.added",
+      at: AT,
+      prop: { id: "prop-key", name: "旧钥匙", description: "黄铜钥匙，齿口磨圆", referenceImages: [] },
+    };
+    const after = applyEvent(project, event);
+    expect(after.props.at(-1)).toMatchObject({ id: "prop-key", name: "旧钥匙" });
+    expect(rebuild([created(project), event])).toEqual(after);
+    expect(validateProject(after)).toEqual([]);
+  });
+
+  it("改名与描述：只动 patch 里的字段，重放后一致", () => {
+    const project = load();
+    const added: ProjectEvent = {
+      type: "prop.added",
+      at: AT,
+      prop: { id: "prop-cup", name: "搪瓷杯", description: "", referenceImages: [] },
+    };
+    const edited: ProjectEvent = {
+      type: "prop.updated",
+      at: AT,
+      propId: "prop-cup",
+      patch: { name: "旧搪瓷缸", description: "白底蓝边，磕掉一块瓷" },
+    };
+    const after = rebuild([created(project), added, edited]);
+    expect(after.props.at(-1)).toMatchObject({
+      id: "prop-cup",
+      name: "旧搪瓷缸",
+      description: "白底蓝边，磕掉一块瓷",
+      referenceImages: [],
+    });
+  });
+
+  it("空名字、重复 id、陌生 id、空 patch 都拒绝", () => {
+    const project = load();
+    const one: ProjectEvent = {
+      type: "prop.added",
+      at: AT,
+      prop: { id: "prop-cup", name: "搪瓷杯", description: "", referenceImages: [] },
+    };
+    expect(() =>
+      applyEvent(project, {
+        type: "prop.added",
+        at: AT,
+        prop: { id: "prop-blank", name: " ", description: "", referenceImages: [] },
+      }),
+    ).toThrow(/总得有个名字/);
+    expect(() => applyEvent(applyEvent(project, one), one)).toThrow(/重复的道具/);
+    expect(() =>
+      applyEvent(project, {
+        type: "prop.updated",
+        at: AT,
+        propId: "prop-nobody",
+        patch: { name: "谁" },
+      }),
+    ).toThrow(/不存在的道具/);
+    expect(() =>
+      applyEvent(applyEvent(project, one), {
+        type: "prop.updated",
+        at: AT,
+        propId: "prop-cup",
+        patch: {},
+      }),
+    ).toThrow(/patch 是空的/);
+  });
+});
+
 describe("location.added / location.updated（ADR-0059）", () => {
   it("加一个地点，重放后一致", () => {
     const project = load();

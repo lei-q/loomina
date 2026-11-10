@@ -1461,6 +1461,70 @@ describe("人物库：新建与改名（ADR-0071）", () => {
   });
 });
 
+describe("道具库：新建与改名（ADR-0072）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("新建道具：一条 prop.added，名字与描述去掉首尾空白", () => {
+    const snapshot = state().events.length;
+
+    const id = state().addProp(" 旧钥匙 ", " 黄铜钥匙，齿口磨圆 ");
+    expect(id).toBeTruthy();
+
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "prop.added" });
+    const prop = state().project.props.find((item) => item.id === id);
+    expect(prop).toMatchObject({
+      name: "旧钥匙",
+      description: "黄铜钥匙，齿口磨圆",
+      referenceImages: [],
+    });
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("重名、空名字、超长描述都拒绝，不写事件", () => {
+    const snapshot = state().events.length;
+
+    expect(state().addProp("搪瓷杯")).toBeUndefined();
+    expect(state().castError).toContain("已经有一件叫「搪瓷杯」的道具");
+
+    expect(state().addProp("  ")).toBeUndefined();
+    expect(state().castError).toContain("总得有个名字");
+
+    expect(state().addProp("旧钥匙", "长".repeat(201))).toBeUndefined();
+    expect(state().castError).toContain("道具描述太长");
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().addProp("旧钥匙")).toBeUndefined();
+
+    expect(state().events).toHaveLength(snapshot);
+  });
+
+  it("改道具：一条 prop.updated，重名与没改都拒绝", () => {
+    const snapshot = state().events.length;
+
+    expect(state().editProp("p-cup", { name: "旧搪瓷缸", description: "白底蓝边，磕掉一块瓷" })).toBe(true);
+
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "prop.updated",
+      propId: "p-cup",
+      patch: { name: "旧搪瓷缸", description: "白底蓝边，磕掉一块瓷" },
+    });
+    expect(state().project.props.find((item) => item.id === "p-cup")).toMatchObject({
+      name: "旧搪瓷缸",
+      description: "白底蓝边，磕掉一块瓷",
+    });
+
+    expect(state().editProp("p-cup", { name: "台灯" })).toBe(false);
+    expect(state().castError).toContain("已经有一件叫「台灯」的道具");
+    expect(state().editProp("p-cup", { name: "旧搪瓷缸" })).toBe(false);
+    expect(state().castError).toContain("道具没改");
+  });
+});
+
 describe("这一镜里换人（ADR-0070）", () => {
   beforeEach(() => {
     state().reset();

@@ -588,13 +588,16 @@ function LocationRow({
 
 function PropRow({
   prop,
+  readOnly,
   generating,
   quoteCny,
   onGenerate,
   onLock,
   onUnlock,
+  onEdit,
 }: {
   prop: CastPropView;
+  readOnly: boolean;
   /** 参考图正在生成 */
   generating: boolean;
   /** 这一次生成要花多少（元）；价目不知道就不给 */
@@ -602,16 +605,93 @@ function PropRow({
   onGenerate: () => void;
   onLock: () => void;
   onUnlock: () => void;
+  /** 改名字 / 描述：成功返回 true，表单据此收起（ADR-0072） */
+  onEdit: (name: string, description: string) => boolean;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [draftName, setDraftName] = useState("");
+  const [draftDescription, setDraftDescription] = useState("");
+
+  const beginEdit = () => {
+    setDraftName(prop.name);
+    setDraftDescription(prop.description);
+    setEditing(true);
+  };
+
   return (
     <section className="border-t border-line py-5">
       <div className="flex flex-wrap items-start gap-6">
         <div className="w-[168px] shrink-0">
-          <div className="flex items-baseline gap-2.5">
-            <h2 className="text-[17px] leading-none text-text">{prop.name}</h2>
-            <StatusChip status={prop.status} missingText="缺参考图" />
-          </div>
-          <p className="mt-2 text-[11px] leading-[1.5] text-muted">{prop.description}</p>
+          {editing ? (
+            <form
+              className="flex flex-col gap-1.5"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (onEdit(draftName, draftDescription)) setEditing(false);
+              }}
+            >
+              <input
+                type="text"
+                value={draftName}
+                onChange={(event) => setDraftName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setEditing(false);
+                }}
+                autoFocus
+                aria-label="道具名字"
+                className="w-full rounded-token border border-line-2 bg-surface px-2 py-1.5 text-[13px] text-text focus:border-pick focus:outline-none"
+              />
+              <textarea
+                value={draftDescription}
+                onChange={(event) => setDraftDescription(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setEditing(false);
+                }}
+                rows={3}
+                aria-label="道具描述"
+                placeholder="长什么样：白底蓝边搪瓷缸，杯沿有一道旧磕痕"
+                className="w-full resize-none rounded-token border border-line bg-surface px-2 py-1.5 text-[11px] leading-[1.6] text-text placeholder:text-muted-2 focus:border-pick focus:outline-none"
+              />
+              <p className="text-[9px] leading-[1.5] text-muted-2">
+                描述整句进提示词，200 字以内；参考图不跟着变。
+              </p>
+              <div className="flex gap-1.5">
+                <button
+                  type="submit"
+                  className="rounded-token border border-line-2 px-2 py-0.5 text-[10.5px] text-text transition-colors duration-[var(--dur)] hover:border-pick hover:text-pick"
+                >
+                  保存
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditing(false)}
+                  className="rounded-token border border-line px-2 py-0.5 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                >
+                  取消
+                </button>
+              </div>
+            </form>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-baseline gap-2.5">
+                <h2 className="text-[17px] leading-none text-text">{prop.name}</h2>
+                <StatusChip status={prop.status} missingText="缺参考图" />
+                {!readOnly && (
+                  <button
+                    type="button"
+                    onClick={beginEdit}
+                    title="改名字或描述"
+                    className="text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
+                  >
+                    改
+                  </button>
+                )}
+              </div>
+              <p className="mt-2 text-[11px] leading-[1.5] text-muted">
+                {prop.description || "还没写道具描述。"}
+              </p>
+            </>
+          )}
         </div>
 
         <figure className="w-[120px]">
@@ -709,6 +789,8 @@ export function CastScreen() {
   const removeLocation = useWorkbench((state) => state.removeLocation);
   const addCharacter = useWorkbench((state) => state.addCharacter);
   const editCharacter = useWorkbench((state) => state.editCharacter);
+  const addProp = useWorkbench((state) => state.addProp);
+  const editProp = useWorkbench((state) => state.editProp);
 
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -717,11 +799,20 @@ export function CastScreen() {
   const [creatingCharacter, setCreatingCharacter] = useState(false);
   const [newCharacterName, setNewCharacterName] = useState("");
   const [newCharacterAppearance, setNewCharacterAppearance] = useState("");
+  const [creatingProp, setCreatingProp] = useState(false);
+  const [newPropName, setNewPropName] = useState("");
+  const [newPropDescription, setNewPropDescription] = useState("");
 
   const closeCreateCharacter = () => {
     setCreatingCharacter(false);
     setNewCharacterName("");
     setNewCharacterAppearance("");
+  };
+
+  const closeCreateProp = () => {
+    setCreatingProp(false);
+    setNewPropName("");
+    setNewPropDescription("");
   };
 
   const closeCreate = () => {
@@ -971,16 +1062,86 @@ export function CastScreen() {
 
           {cast.props.length > 0 && (
             <section className="mt-8">
-              <h2 className="tnum text-[9px] tracking-[.14em] text-muted-2">道具 · 参考</h2>
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="tnum text-[9px] tracking-[.14em] text-muted-2">道具 · 参考</h2>
+                {!readOnly && !creatingProp && (
+                  <button
+                    type="button"
+                    onClick={() => setCreatingProp(true)}
+                    className="rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                  >
+                    新建道具
+                  </button>
+                )}
+              </div>
+
+              {creatingProp && (
+                <form
+                  className="mt-3 flex flex-wrap items-center gap-2 rounded-token border border-dashed border-line-2 px-3 py-2.5"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (addProp(newPropName, newPropDescription)) closeCreateProp();
+                  }}
+                >
+                  <input
+                    type="text"
+                    value={newPropName}
+                    onChange={(event) => setNewPropName(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") closeCreateProp();
+                    }}
+                    autoFocus
+                    aria-label="新道具名字"
+                    placeholder="道具名字：搪瓷杯 · 台灯 · 旧钥匙"
+                    className="min-w-[220px] flex-1 bg-transparent text-[12.5px] text-text placeholder:text-muted-2 focus:outline-none"
+                  />
+                  <button
+                    type="submit"
+                    className="rounded-token border border-line-2 px-2.5 py-1 text-[10.5px] text-text transition-colors duration-[var(--dur)] hover:border-pick hover:text-pick"
+                  >
+                    创建
+                  </button>
+                  <button
+                    type="button"
+                    onClick={closeCreateProp}
+                    className="rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                  >
+                    取消
+                  </button>
+                  <textarea
+                    value={newPropDescription}
+                    onChange={(event) => setNewPropDescription(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") closeCreateProp();
+                    }}
+                    rows={2}
+                    aria-label="新道具描述"
+                    placeholder="长什么样：白底蓝边搪瓷缸，杯沿有一道旧磕痕（选填，会进提示词）"
+                    className="w-full resize-none rounded-token border border-line bg-surface px-2 py-1.5 text-[11.5px] leading-[1.6] text-text placeholder:text-muted-2 focus:border-pick focus:outline-none"
+                  />
+                  <span className="w-full text-[10px] text-muted-2">
+                    参考图随后生成；描述 200 字以内。
+                  </span>
+                </form>
+              )}
+
+              {cast.props.length === 0 && (
+                <p className="mt-3 rounded-token border border-dashed border-line px-3 py-5 text-center text-[10.5px] leading-[1.8] text-muted-2">
+                  还没有道具。上面新建一件，再到分镜页把它点进出场。
+                </p>
+              )}
+
               {cast.props.map((prop) => (
                 <PropRow
                   key={prop.id}
                   prop={prop}
+                  readOnly={readOnly ?? false}
                   generating={jobs[prop.id]?.kind === "prop"}
                   quoteCny={imageCny}
                   onGenerate={() => void generateProp(prop.id)}
                   onLock={() => lockCast("prop", prop.id)}
                   onUnlock={() => unlockCast("prop", prop.id)}
+                  onEdit={(name, description) => editProp(prop.id, { name, description })}
                 />
               ))}
             </section>

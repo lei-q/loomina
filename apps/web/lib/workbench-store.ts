@@ -10,6 +10,7 @@ import {
   type Character,
   type Location,
   type Project,
+  type Prop,
   type ProjectEvent,
   type Scene,
   type SheetView,
@@ -136,6 +137,13 @@ type WorkbenchState = {
     characterId: string,
     patch: Partial<Pick<Character, "name" | "appearance">>,
   ) => boolean;
+  /** 加一件道具：一条 `prop.added`（ADR-0072） */
+  addProp: (name: string, description?: string) => string | undefined;
+  /** 改道具名字 / 描述：一条 `prop.updated`（ADR-0072） */
+  editProp: (
+    propId: string,
+    patch: Partial<Pick<Prop, "name" | "description">>,
+  ) => boolean;
   /** 新建场次：一条 `scene.added`，加在末尾或指定场之后，沿用前一场的地点与日夜（ADR-0064 / 0068 / 0069） */
   addScene: (locationId?: string, afterSceneId?: string) => string | undefined;
   /** 新建镜头：一条 `shot.added`，加在这一场末尾或指定镜之后（ADR-0064 / ADR-0068） */
@@ -173,6 +181,9 @@ const LOCATION_DESCRIPTION_MAX = 200;
 
 /** 外形描述的上限：同样会整句进提示词（ADR-0071） */
 const CHARACTER_APPEARANCE_MAX = 200;
+
+/** 道具描述的上限：同样会整句进提示词（ADR-0072） */
+const PROP_DESCRIPTION_MAX = 200;
 
 const initialEvents = bootstrap(sampleProject);
 const initialView = toStageView(sampleProject);
@@ -1233,6 +1244,93 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       type: "character.updated",
       at: new Date().toISOString(),
       characterId,
+      patch: next,
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  addProp: (name, description) => {
+    if (get().readOnly) return undefined;
+    const { project, events } = get();
+    const trimmed = name.trim();
+    if (!trimmed) {
+      set({ castError: "道具总得有个名字。" });
+      return undefined;
+    }
+    if (project.props.some((item) => item.name === trimmed)) {
+      set({ castError: `已经有一件叫「${trimmed}」的道具了。` });
+      return undefined;
+    }
+    const trimmedDescription = (description ?? "").trim();
+    if (trimmedDescription.length > PROP_DESCRIPTION_MAX) {
+      set({ castError: `道具描述太长了：${PROP_DESCRIPTION_MAX} 字以内。` });
+      return undefined;
+    }
+    let id = `p-${Date.now().toString(36)}`;
+    while (project.props.some((item) => item.id === id)) id += "x";
+    const prop: Prop = {
+      id,
+      name: trimmed,
+      description: trimmedDescription,
+      referenceImages: [],
+    };
+    const event: ProjectEvent = {
+      type: "prop.added",
+      at: new Date().toISOString(),
+      prop,
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return id;
+  },
+
+  editProp: (propId, patch) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const prop = project.props.find((item) => item.id === propId);
+    if (!prop) {
+      set({ castError: "找不到这件道具。" });
+      return false;
+    }
+    const next: Partial<Pick<Prop, "name" | "description">> = {};
+    if (patch.name !== undefined) {
+      const trimmed = patch.name.trim();
+      if (!trimmed) {
+        set({ castError: "道具总得有个名字。" });
+        return false;
+      }
+      if (trimmed !== prop.name) {
+        if (project.props.some((item) => item.id !== propId && item.name === trimmed)) {
+          set({ castError: `已经有一件叫「${trimmed}」的道具了。` });
+          return false;
+        }
+        next.name = trimmed;
+      }
+    }
+    if (patch.description !== undefined) {
+      const trimmed = patch.description.trim();
+      if (trimmed.length > PROP_DESCRIPTION_MAX) {
+        set({ castError: `道具描述太长了：${PROP_DESCRIPTION_MAX} 字以内。` });
+        return false;
+      }
+      if (trimmed !== prop.description) next.description = trimmed;
+    }
+    if (Object.keys(next).length === 0) {
+      set({ castError: "道具没改。" });
+      return false;
+    }
+    const event: ProjectEvent = {
+      type: "prop.updated",
+      at: new Date().toISOString(),
+      propId,
       patch: next,
     };
     set({
