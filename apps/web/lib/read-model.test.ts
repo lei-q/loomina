@@ -8,8 +8,10 @@ import {
   keyframeTally,
   previousActionText,
   previousDialogueText,
+  previousSceneHead,
   removedLines,
   sceneHead,
+  sceneHeadHistory,
   scriptToText,
   staleFrames,
   toCastView,
@@ -529,6 +531,51 @@ describe("动作版本（ADR-0051）", () => {
     expect(untouched.edits).toEqual([]);
     expect(previousActionText(untouched)).toBeUndefined();
     expect(actionHistory(events, "s-01").edits).toHaveLength(2);
+  });
+});
+
+describe("场头版本（ADR-0058）", () => {
+  const at = (h: number) => `2026-11-10T${String(h).padStart(2, "0")}:00:00+08:00`;
+  const events = [
+    { type: "project.created" as const, at: at(0), project: sampleProject },
+    { type: "scene.updated" as const, at: at(9), sceneId: "sc-1", patch: { timeOfDay: "day" as const } },
+    { type: "scene.updated" as const, at: at(10), sceneId: "sc-1", patch: { locationId: "loc-table" } },
+    { type: "scene.updated" as const, at: at(11), sceneId: "sc-2", patch: { space: "ext" as const } },
+    { type: "shot.updated" as const, at: at(12), shotId: "s-01", patch: { description: "灯灭了" } },
+  ];
+
+  it("最初一版从引导事件取；每条改动叠成完整的场头", () => {
+    const history = sceneHeadHistory(events, "sc-1");
+    expect(history.original).toEqual({ space: "int", timeOfDay: "night", locationId: "loc-corridor" });
+    expect(history.edits).toEqual([
+      { at: at(9), head: { space: "int", timeOfDay: "day", locationId: "loc-corridor" } },
+      { at: at(10), head: { space: "int", timeOfDay: "day", locationId: "loc-table" } },
+    ]);
+  });
+
+  it("上一版：改过一次是最初那版，改过多次是倒数第二版", () => {
+    expect(previousSceneHead(sceneHeadHistory(events.slice(0, 2), "sc-1"))).toEqual({
+      space: "int",
+      timeOfDay: "night",
+      locationId: "loc-corridor",
+    });
+    expect(previousSceneHead(sceneHeadHistory(events, "sc-1"))).toEqual({
+      space: "int",
+      timeOfDay: "day",
+      locationId: "loc-corridor",
+    });
+  });
+
+  it("没改过的场没有版本；别的场与镜头事件都不算进来", () => {
+    const untouched = sceneHeadHistory(events, "sc-3");
+    expect(untouched.original).toEqual({
+      space: "int",
+      timeOfDay: "night",
+      locationId: "loc-corridor",
+    });
+    expect(untouched.edits).toEqual([]);
+    expect(previousSceneHead(untouched)).toBeUndefined();
+    expect(sceneHeadHistory(events, "sc-2").edits).toHaveLength(1);
   });
 });
 

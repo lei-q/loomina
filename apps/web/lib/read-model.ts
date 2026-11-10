@@ -990,6 +990,64 @@ export function previousActionText(history: ActionHistory): string | undefined {
   return history.edits[history.edits.length - 2]?.text ?? history.original;
 }
 
+export type SceneHead = {
+  space: "int" | "ext";
+  timeOfDay: "day" | "night" | "dawn" | "dusk";
+  locationId: string;
+};
+
+export type SceneHeadRevision = { at: string; head: SceneHead };
+
+export type SceneHeadHistory = {
+  /** 引导事件里最初的场头；日志里没有这一场就省掉 */
+  original?: SceneHead;
+  /** 从旧到新，一次改动一条；每条是改完之后完整的场头 */
+  edits: SceneHeadRevision[];
+};
+
+/**
+ * 场头被改过几次（ADR-0058）。
+ *
+ * 场头三项挤在同一条 `scene.updated` 里（ADR-0050 / 0056），所以历史不是「改过哪一项」，
+ * 而是「那一版长什么样」：每条事件之后把 patch 叠上去，存完整的场头。
+ * 最初那版从 `project.created` 的快照里取，与动作、台词同一套读法。
+ */
+export function sceneHeadHistory(events: ProjectEvent[], sceneId: string): SceneHeadHistory {
+  let current: SceneHead | undefined;
+  const first = events[0];
+  if (first?.type === "project.created") {
+    const scene = first.project.scenes.find((item) => item.id === sceneId);
+    if (scene) {
+      current = {
+        space: scene.space,
+        timeOfDay: scene.timeOfDay,
+        locationId: scene.locationId,
+      };
+    }
+  }
+  const original = current ? { ...current } : undefined;
+
+  const edits: SceneHeadRevision[] = [];
+  for (const event of events) {
+    if (event.type !== "scene.updated" || event.sceneId !== sceneId) continue;
+    const patch = event.patch;
+    current = {
+      space: patch.space ?? current?.space ?? "int",
+      timeOfDay: patch.timeOfDay ?? current?.timeOfDay ?? "day",
+      locationId: patch.locationId ?? current?.locationId ?? "",
+    };
+    edits.push({ at: event.at, head: { ...current } });
+  }
+
+  return { original, edits };
+}
+
+/** 上一版的场头：改过一次就是最初那版，改过多次就是倒数第二版。 */
+export function previousSceneHead(history: SceneHeadHistory): SceneHead | undefined {
+  if (history.edits.length === 0) return undefined;
+  return history.edits[history.edits.length - 2]?.head ?? history.original;
+}
+
 /**
  * 剧本导出成纯文本（ADR-0048）：给存档、给外部工具、给人看。
  *

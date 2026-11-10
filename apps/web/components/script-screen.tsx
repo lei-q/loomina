@@ -8,13 +8,16 @@ import {
   dialogueOrderHistory,
   previousActionText,
   previousDialogueText,
+  previousSceneHead,
   removedLines,
   sceneHead,
+  sceneHeadHistory,
   scriptToText,
   SPACE_LABEL,
   shotLabel,
   TIME_LABEL,
   toScriptView,
+  type SceneHead,
 } from "@/lib/read-model";
 import { useWorkbench } from "@/lib/workbench-store";
 
@@ -106,8 +109,7 @@ export function ScriptScreen() {
     if (!editScene(sceneId, patch)) setNote(useWorkbench.getState().castError);
   };
 
-  const saveAction = (shotId: string) => {
-    if (editAction(shotId, actionDraft)) {
+  const saveAction = (shotId: string) => {    if (editAction(shotId, actionDraft)) {
       setEditingAction(null);
       setNote(undefined);
     } else {
@@ -118,6 +120,23 @@ export function ScriptScreen() {
   const restoreAction = (shotId: string, text: string) => {
     if (editAction(shotId, text)) setNote(undefined);
     else setNote(useWorkbench.getState().castError);
+  };
+
+  const restoreScene = (sceneId: string, head: SceneHead) => {
+    const ok = editScene(sceneId, {
+      space: head.space,
+      timeOfDay: head.timeOfDay,
+      locationId: head.locationId,
+    });
+    if (ok) setNote(undefined);
+    else setNote(useWorkbench.getState().castError);
+  };
+
+  /** 一版场头怎么写：`内 · 夜 · 走廊`。地点已不在库里也不装看不见。 */
+  const headText = (head: SceneHead) => {
+    const place =
+      project.locations.find((item) => item.id === head.locationId)?.name ?? "（地点已不在库里）";
+    return `${SPACE_LABEL[head.space]} · ${TIME_LABEL[head.timeOfDay]} · ${place}`;
   };
 
   const revertSpeaker = (lineId: string, characterId: string) => {
@@ -336,6 +355,68 @@ export function ScriptScreen() {
                     {scene.dur.toFixed(1)}s · {scene.shots.length} 镜
                   </span>
                 </div>
+
+                {/* 场头改过几次（ADR-0058）：一场一件事，折叠在标题下面，不占正文 */}
+                {(() => {
+                  const history = sceneHeadHistory(events, scene.id);
+                  if (history.edits.length === 0) return null;
+                  const prev = previousSceneHead(history);
+                  const current = {
+                    space: scene.space,
+                    timeOfDay: scene.timeOfDay,
+                    locationId: scene.locationId,
+                  };
+                  const same = (head: SceneHead) =>
+                    head.space === current.space &&
+                    head.timeOfDay === current.timeOfDay &&
+                    head.locationId === current.locationId;
+                  return (
+                    <details className="mt-1.5">
+                      <summary className="tnum cursor-pointer list-none text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-muted [&::-webkit-details-marker]:hidden">
+                        改过 {history.edits.length} 次
+                        {prev ? ` · 上一版 ${headText(prev)}` : ""}
+                      </summary>
+                      <ul className="mt-1 space-y-0.5 text-[9.5px] leading-[1.7]">
+                        {[...history.edits].reverse().map((edit, i) => (
+                          <li key={`${edit.at}-${i}`} className="flex items-baseline gap-2">
+                            <span className="tnum shrink-0 text-muted-2">{clock(edit.at)}</span>
+                            <span className="text-muted">{headText(edit.head)}</span>
+                            {!readOnly && (
+                              <button
+                                type="button"
+                                disabled={same(edit.head)}
+                                onClick={() => restoreScene(scene.id, edit.head)}
+                                title={same(edit.head) ? "场头已经是这一版" : "用回这一版"}
+                                className="shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                用这版
+                              </button>
+                            )}
+                          </li>
+                        ))}
+                        {history.original && (
+                          <li className="flex items-baseline gap-2">
+                            <span className="shrink-0 text-muted-2">最初</span>
+                            <span className="text-muted-2">{headText(history.original)}</span>
+                            {!readOnly && (
+                              <button
+                                type="button"
+                                disabled={same(history.original)}
+                                onClick={() => restoreScene(scene.id, history.original!)}
+                                title={
+                                  same(history.original) ? "场头已经是这一版" : "用回最初这一版"
+                                }
+                                className="shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                用这版
+                              </button>
+                            )}
+                          </li>
+                        )}
+                      </ul>
+                    </details>
+                  );
+                })()}
 
                 <ol className="mt-4 space-y-5">
                   {scene.shots.map((shot) => (
