@@ -1,4 +1,5 @@
 import type { Project, Shot, Take } from "@loomina/ir";
+import { requoteShot, type Requote } from "./pricing";
 
 export type SceneKind = "door" | "two" | "table" | "corridor";
 export type ShotState = "open" | "pick" | "reject";
@@ -26,8 +27,8 @@ export type StageView = {
   budget: number;
   /** 当前镜在 shots 里的下标 */
   current: number;
-  /** 重做一次要多少钱，元 */
-  requote: number;
+  /** 当前镜重做一次的报价（含首帧），价目来自 gateway 的价目表 */
+  requote: Requote;
   /** 烧在画面里的字幕；当前镜没有台词时为空串 */
   subtitle: string;
   shots: StageShot[];
@@ -35,7 +36,6 @@ export type StageView = {
 
 export type StageOptions = {
   budgetCny?: number;
-  requoteCny?: number;
   /** 指定看哪一格；不传则挑第一个还没定的镜头 */
   currentShotId?: string;
 };
@@ -148,7 +148,7 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
     spent,
     budget: options.budgetCny ?? 60,
     current,
-    requote: options.requoteCny ?? 2.12,
+    requote: currentShot ? requoteShot(currentShot.durationMs) : { basis: "没有当前镜" },
     subtitle,
     shots,
   };

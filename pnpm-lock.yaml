@@ -26,6 +26,9 @@ importers:
       '@loomina/design-tokens':
         specifier: workspace:*
         version: link:../../packages/design-tokens
+      '@loomina/gateway':
+        specifier: workspace:*
+        version: link:../../packages/gateway
       '@loomina/ir':
         specifier: workspace:*
         version: link:../../packages/ir

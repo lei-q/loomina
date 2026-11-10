@@ -4,6 +4,9 @@ import { ProjectSchema, type ProjectInput } from "@loomina/ir";
  * 示例项目「夜班」：一份符合 Project IR 的最小项目，
  * 用来把前端三带撑满。解析一次，schema 不合法在构建时就炸。
  *
+ * take 上的 `costCny` 是"当时记账"，不随价目表变化；
+ * 重做报价（lib/pricing.ts）才是"现在重新做一次要多少钱"，两者刻意分开。
+ *
  * 换成真实数据时，只有这个文件被替换——读模型与组件不动。
  */
 const raw: ProjectInput = {

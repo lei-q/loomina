@@ -101,12 +101,16 @@ export function ReelBar({ view, onSelect, onDecide }: ReelBarProps) {
             <button
               type="button"
               disabled
-              title="重做要接生成，还没通"
+              title={`${view.requote.basis} · 生成还没接通`}
               className="flex items-center gap-1.5 rounded-token border border-line px-3 py-2 text-[12px] text-text opacity-40 disabled:pointer-events-none"
             >
               <RedoIcon className="h-3.5 w-3.5" />
               重做
-              <span className="tnum text-[9px] text-muted">¥{view.requote.toFixed(2)}</span>
+              <span className="tnum text-[9px] text-muted">
+                {view.requote.totalCny === undefined
+                  ? "价目未知"
+                  : `¥${view.requote.totalCny.toFixed(2)}`}
+              </span>
             </button>
 
             <button

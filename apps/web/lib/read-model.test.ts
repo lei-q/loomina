@@ -33,6 +33,14 @@ describe("toStageView", () => {
     expect(view.spent).toBeCloseTo(18.96, 2);
   });
 
+  it("重做报价跟着当前镜头的时长走，不再是一个写死的数", () => {
+    const short = toStageView(sampleProject, { currentShotId: "s-03" }); // 2.4s
+    const long = toStageView(sampleProject, { currentShotId: "s-09" }); // 3.0s
+    expect(short.requote.totalCny).toBeCloseTo(1.32, 2);
+    expect(long.requote.totalCny).toBeCloseTo(1.62, 2);
+    expect(short.requote.basis).toContain("2.4s");
+  });
+
   it("不指定当前镜时，落在第一个还没定的镜头上", () => {
     const view = toStageView(sampleProject);
     expect(view.shots[view.current]?.id).toBe("s-03");
