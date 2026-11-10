@@ -137,6 +137,10 @@ type WorkbenchState = {
     characterId: string,
     patch: Partial<Pick<Character, "name" | "appearance">>,
   ) => boolean;
+  /** 加一条「不许变」：一条 `character.updated`，清单整份写回（ADR-0074） */
+  addMustNotChange: (characterId: string, text: string) => boolean;
+  /** 划掉一条「不许变」：同上（ADR-0074） */
+  removeMustNotChange: (characterId: string, text: string) => boolean;
   /** 加一件道具：一条 `prop.added`（ADR-0072） */
   addProp: (name: string, description?: string) => string | undefined;
   /** 改道具名字 / 描述：一条 `prop.updated`（ADR-0072） */
@@ -188,6 +192,12 @@ const CHARACTER_APPEARANCE_MAX = 200;
 
 /** 道具描述的上限：同样会整句进提示词（ADR-0072） */
 const PROP_DESCRIPTION_MAX = 200;
+
+/** 「不许变」单条上限：整句进提示词，太长会把镜头指令挤掉（ADR-0074） */
+const MUST_NOT_CHANGE_MAX = 60;
+
+/** 「不许变」条数上限：同上（ADR-0074） */
+const MUST_NOT_CHANGE_COUNT_MAX = 20;
 
 const initialEvents = bootstrap(sampleProject);
 const initialView = toStageView(sampleProject);
@@ -1249,6 +1259,70 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       at: new Date().toISOString(),
       characterId,
       patch: next,
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  addMustNotChange: (characterId, rawText) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const character = project.characters.find((item) => item.id === characterId);
+    if (!character) {
+      set({ castError: "找不到这个人物。" });
+      return false;
+    }
+    const text = rawText.trim();
+    if (!text) {
+      set({ castError: "这一条是空的。" });
+      return false;
+    }
+    if (text.length > MUST_NOT_CHANGE_MAX) {
+      set({ castError: `这一条太长了：${MUST_NOT_CHANGE_MAX} 字以内。` });
+      return false;
+    }
+    if (character.mustNotChange.includes(text)) {
+      set({ castError: `已经有一条「${text}」了。` });
+      return false;
+    }
+    if (character.mustNotChange.length >= MUST_NOT_CHANGE_COUNT_MAX) {
+      set({
+        castError: `「不许变」最多 ${MUST_NOT_CHANGE_COUNT_MAX} 条：再多会把镜头指令挤掉。`,
+      });
+      return false;
+    }
+    const event: ProjectEvent = {
+      type: "character.updated",
+      at: new Date().toISOString(),
+      characterId,
+      patch: { mustNotChange: [...character.mustNotChange, text] },
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  removeMustNotChange: (characterId, text) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const character = project.characters.find((item) => item.id === characterId);
+    if (!character) {
+      set({ castError: "找不到这个人物。" });
+      return false;
+    }
+    if (!character.mustNotChange.includes(text)) return false;
+    const event: ProjectEvent = {
+      type: "character.updated",
+      at: new Date().toISOString(),
+      characterId,
+      patch: { mustNotChange: character.mustNotChange.filter((item) => item !== text) },
     };
     set({
       project: applyEvent(project, event),

@@ -1078,3 +1078,55 @@ describe("location.added / location.updated（ADR-0059）", () => {
     ).toThrow(/名字/);
   });
 });
+
+describe("character.updated · mustNotChange（ADR-0074）", () => {
+  it("整份替换清单：重放后一致，其它字段不动", () => {
+    const project = load();
+    const before = project.characters[0]!;
+    const event: ProjectEvent = {
+      type: "character.updated",
+      at: AT,
+      characterId: before.id,
+      patch: { mustNotChange: ["左眼下的痣", "左手腕一道旧疤"] },
+    };
+    const after = rebuild([created(project), event]);
+    expect(after.characters[0]).toMatchObject({
+      name: before.name,
+      appearance: before.appearance,
+      mustNotChange: ["左眼下的痣", "左手腕一道旧疤"],
+    });
+    expect(validateProject(after)).toEqual([]);
+  });
+
+  it("清空清单是合法的", () => {
+    const project = load();
+    const before = project.characters[0]!;
+    const after = rebuild([
+      created(project),
+      {
+        type: "character.updated",
+        at: AT,
+        characterId: before.id,
+        patch: { mustNotChange: [] },
+      },
+    ]);
+    expect(after.characters[0]!.mustNotChange).toEqual([]);
+  });
+
+  it("空条目、重复条目、过长、过多都拒绝", () => {
+    const project = load();
+    const characterId = project.characters[0]!.id;
+    const update = (mustNotChange: string[]): ProjectEvent => ({
+      type: "character.updated",
+      at: AT,
+      characterId,
+      patch: { mustNotChange },
+    });
+    expect(() => applyEvent(project, update([" "]))).toThrow(/空条目/);
+    expect(() => applyEvent(project, update(["痣", "痣"]))).toThrow(/重复条目/);
+    expect(() => applyEvent(project, update(["字".repeat(61)]))).toThrow(/超过 60 字/);
+    expect(() =>
+      applyEvent(project, update(Array.from({ length: 21 }, (_, i) => `第 ${i} 条`))),
+    ).toThrow(/超过 20 条/);
+  });
+});

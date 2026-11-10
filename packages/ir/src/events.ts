@@ -13,6 +13,12 @@ import type {
   Take,
 } from "./schema";
 
+/** "不许变"清单：单条上限（整句进提示词，ADR-0074） */
+export const MUST_NOT_CHANGE_MAX = 60;
+
+/** "不许变"清单：条数上限，防止把镜头指令挤掉（ADR-0074） */
+export const MUST_NOT_CHANGE_COUNT_MAX = 20;
+
 /**
  * 事件日志（ADR-0011）。
  *
@@ -115,11 +121,15 @@ export type ProjectEvent =
       character: Character;
     }
   | {
-      /** 改人物（ADR-0071）：名字与外形描述；三视图、参考图走资产那条路 */
+      /**
+       * 改人物（ADR-0071 / ADR-0074）：名字、外形描述与"不许变"清单；
+       * 三视图、参考图走资产那条路。`mustNotChange` 整份替换——清单短，
+       * 一条一条增删反而让日志更长。
+       */
       type: "character.updated";
       at: string;
       characterId: Id;
-      patch: Partial<Pick<Character, "name" | "appearance">>;
+      patch: Partial<Pick<Character, "name" | "appearance" | "mustNotChange">>;
     }
   | {
       /** 加一件道具（ADR-0072）：先有道具，分镜页的道具签才点得出来 */
@@ -448,6 +458,23 @@ export function applyEvent(
       }
       if (event.patch.name !== undefined && event.patch.name.trim().length === 0) {
         throw new Error("人物总得有个名字");
+      }
+      if (event.patch.mustNotChange !== undefined) {
+        const items = event.patch.mustNotChange;
+        if (items.some((item) => item.trim().length === 0)) {
+          throw new Error("character.updated 的 mustNotChange 里有空条目");
+        }
+        if (new Set(items).size !== items.length) {
+          throw new Error("character.updated 的 mustNotChange 有重复条目");
+        }
+        if (items.some((item) => item.length > MUST_NOT_CHANGE_MAX)) {
+          throw new Error(`character.updated 的 mustNotChange 单条超过 ${MUST_NOT_CHANGE_MAX} 字`);
+        }
+        if (items.length > MUST_NOT_CHANGE_COUNT_MAX) {
+          throw new Error(
+            `character.updated 的 mustNotChange 超过 ${MUST_NOT_CHANGE_COUNT_MAX} 条`,
+          );
+        }
       }
       const characters = current.characters.map((character) =>
         character.id === event.characterId ? { ...character, ...event.patch } : character,

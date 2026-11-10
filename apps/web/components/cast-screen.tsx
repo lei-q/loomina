@@ -71,6 +71,8 @@ function CharacterRow({
   onUnlock,
   onEdit,
   onRemove,
+  onAddMustNotChange,
+  onRemoveMustNotChange,
 }: {
   character: CastCharacterView;
   readOnly: boolean;
@@ -85,12 +87,18 @@ function CharacterRow({
   onEdit: (name: string, appearance: string) => boolean;
   /** 删掉这个人物：成功返回 true（ADR-0073） */
   onRemove: () => boolean;
+  /** 加一条「不许变」：成功返回 true，输入框据此收起（ADR-0074） */
+  onAddMustNotChange: (text: string) => boolean;
+  /** 划掉一条「不许变」（ADR-0074） */
+  onRemoveMustNotChange: (text: string) => boolean;
 }) {
   const missing = character.panels.filter((panel) => !panel.assetId).length;
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [draftAppearance, setDraftAppearance] = useState("");
+  const [addingRule, setAddingRule] = useState(false);
+  const [draftRule, setDraftRule] = useState("");
 
   const beginEdit = () => {
     setDraftName(character.name);
@@ -209,11 +217,88 @@ function CharacterRow({
           <p className="tnum mt-4 text-[8.5px] tracking-[.12em] text-muted-2">不许变</p>
           <ul className="mt-1.5 space-y-1">
             {character.mustNotChange.map((item) => (
-              <li key={item} className="text-[10.5px] leading-[1.5] text-muted">
-                {item}
+              <li
+                key={item}
+                className="flex items-baseline gap-1.5 text-[10.5px] leading-[1.5] text-muted"
+              >
+                <span className="flex-1">{item}</span>
+                {!readOnly && (
+                  <button
+                    type="button"
+                    onClick={() => onRemoveMustNotChange(item)}
+                    title={`划掉「${item}」：从之后的每一张图里去掉了`}
+                    aria-label={`划掉${item}`}
+                    className="text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-pick"
+                  >
+                    ×
+                  </button>
+                )}
               </li>
             ))}
           </ul>
+          {!readOnly &&
+            (addingRule ? (
+              <form
+                className="mt-1.5"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (onAddMustNotChange(draftRule)) {
+                    setDraftRule("");
+                    setAddingRule(false);
+                  }
+                }}
+              >
+                <input
+                  type="text"
+                  value={draftRule}
+                  onChange={(event) => setDraftRule(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      setDraftRule("");
+                      setAddingRule(false);
+                    }
+                  }}
+                  autoFocus
+                  maxLength={60}
+                  aria-label="新的一条不许变"
+                  placeholder="左耳后有一颗小痣"
+                  className="w-full rounded-token border border-line-2 bg-surface px-1.5 py-1 text-[10.5px] text-text placeholder:text-muted-2 focus:border-pick focus:outline-none"
+                />
+                <div className="mt-1 flex items-center gap-1.5">
+                  <button
+                    type="submit"
+                    className="rounded-token border border-line-2 px-1.5 py-px text-[9.5px] text-text transition-colors duration-[var(--dur)] hover:border-pick hover:text-pick"
+                  >
+                    保存
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDraftRule("");
+                      setAddingRule(false);
+                    }}
+                    className="rounded-token border border-line px-1.5 py-px text-[9.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                  >
+                    取消
+                  </button>
+                  <span className="text-[9px] text-muted-2">整句进提示词，60 字以内</span>
+                </div>
+              </form>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setAddingRule(true)}
+                title="痣、疤、发型分缝、耳饰：每一张图都得原样带上"
+                className="mt-1.5 text-[9.5px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
+              >
+                ＋ 加一条
+              </button>
+            ))}
+          {!readOnly && character.mustNotChange.length === 0 && !addingRule && (
+            <p className="mt-1 text-[9px] leading-[1.5] text-muted-2">
+              还没写：痣、疤、发型分缝这些必须原样带进每一张图。
+            </p>
+          )}
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -868,6 +953,8 @@ export function CastScreen() {
   const addProp = useWorkbench((state) => state.addProp);
   const editProp = useWorkbench((state) => state.editProp);
   const removeCharacter = useWorkbench((state) => state.removeCharacter);
+  const addMustNotChange = useWorkbench((state) => state.addMustNotChange);
+  const removeMustNotChange = useWorkbench((state) => state.removeMustNotChange);
   const removeProp = useWorkbench((state) => state.removeProp);
 
   const [creating, setCreating] = useState(false);
@@ -1038,6 +1125,10 @@ export function CastScreen() {
                     editCharacter(character.id, { name, appearance })
                   }
                   onRemove={() => removeCharacter(character.id)}
+                  onAddMustNotChange={(text) => addMustNotChange(character.id, text)}
+                  onRemoveMustNotChange={(text) =>
+                    removeMustNotChange(character.id, text)
+                  }
                 />
               );
             })}

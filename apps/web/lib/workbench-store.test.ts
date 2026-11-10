@@ -2101,3 +2101,67 @@ describe("恢复被删的台词（ADR-0055）", () => {
     expect(state().restoreLine(added)).toBe(false);
   });
 });
+
+describe("编辑不许变清单（ADR-0074）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("加一条：一条 character.updated，清单整份写回", () => {
+    // 示例项目里林已经有「左眼下的痣」等三条
+    const snapshot = state().events.length;
+    const before = state().project.characters.find((item) => item.id === "c-lin")!;
+
+    expect(state().addMustNotChange("c-lin", " 耳后一颗小痣 ")).toBe(true);
+
+    expect(state().events).toHaveLength(snapshot + 1);
+    const character = state().project.characters.find((item) => item.id === "c-lin")!;
+    expect(character.mustNotChange).toEqual([...before.mustNotChange, "耳后一颗小痣"]);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "character.updated",
+      characterId: "c-lin",
+      patch: { mustNotChange: character.mustNotChange },
+    });
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("划掉一条：只去掉那一条，重复划掉不写事件", () => {
+    const before = state().project.characters.find((item) => item.id === "c-lin")!;
+    const target = before.mustNotChange[0]!;
+    const snapshot = state().events.length;
+
+    expect(state().removeMustNotChange("c-lin", target)).toBe(true);
+    expect(
+      state().project.characters.find((item) => item.id === "c-lin")!.mustNotChange,
+    ).toEqual(before.mustNotChange.slice(1));
+
+    expect(state().removeMustNotChange("c-lin", target)).toBe(false);
+    expect(state().events).toHaveLength(snapshot + 1);
+  });
+
+  it("空条目、重复、过长、太多、只读都不写事件", () => {
+    const snapshot = state().events.length;
+
+    expect(state().addMustNotChange("c-lin", "  ")).toBe(false);
+    expect(state().castError).toContain("空的");
+
+    expect(state().addMustNotChange("c-lin", "左眼下的痣")).toBe(false);
+    expect(state().castError).toContain("已经有一条");
+
+    expect(state().addMustNotChange("c-lin", "字".repeat(61))).toBe(false);
+    expect(state().castError).toContain("60 字以内");
+
+    const many = state().addCharacter("话很多", "")!;
+    for (let i = 0; i < 20; i += 1) state().addMustNotChange(many, `第 ${i} 条`);
+    expect(state().addMustNotChange(many, "第 21 条")).toBe(false);
+    expect(state().castError).toContain("最多 20 条");
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().addMustNotChange("c-lin", "只读") ).toBe(false);
+
+    // 20 条成功的 + 前面都被拒
+    expect(state().events.filter((item) => item.type === "character.updated")).toHaveLength(20);
+    expect(snapshot).toBeGreaterThan(0);
+  });
+});
