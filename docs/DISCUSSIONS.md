@@ -1024,3 +1024,32 @@ ADR-0031 只通了人物三视图。定妆闸门里另外两类必锁资产—�
 2. 按阶段分组的账本（H4）。
 3. 对象存储（用户已定：先存在本地）。
 4. 回到一致性：四格仍不是同一个人（ADR-0031 负面首条）。
+
+### 第二十九次讨论：分镜页能生成首帧了（2026-11-10）
+
+到上一轮为止，分镜页只能审不能生成：画面永远是剪影，「重做」是灰的，标着"生成还没接通"。视频生成本身被供应商配额挡住（`17003 AI token quota exceeded`），但图片接口是通的——那就先把视频之前这一步做出来，让用户第一次能在这个界面里"造画面"。决策见 [ADR-0037](adr/0037-keyframe-first-frame.md)。
+
+**改了什么**
+- IR：`Shot.keyframes { firstAssetId?, lastAssetId? }`（zod 默认 `{}`，老日志靠默认值补齐，`LOG_VERSION` 仍为 1）。
+- pipeline：把 `buildShotPrompt` 拆成"原料 → 句子"，新增 `shotMaterial` 与 `buildKeyframePrompt`；两者共用 `shotParts`，首帧只多一句"首帧画面，动作起势，无字幕，无文字，无水印"。
+- 服务端：`POST /api/asset` 新增 `kind: "keyframe"`，收业务字段（镜头描述、景别、机位、人物、场景、道具），**不收 id**；机位参数用 `CameraSchema` 校验。
+- store：`generateKeyframe(shotId)`；资产 id 固定 `a-keyframe-<shotId>`，落 `asset.updated` + `shot.updated { keyframes: { firstAssetId } }`；`provenance.referenceAssetIds` 写这一镜已锁定的锚点；预算闸门复用（ADR-0035）。
+- 界面：画面位置显示首帧真图，没图时显示剪影；按钮「生成首帧 ¥0.12」/「重生成首帧 ¥0.12」；生成中盖一层；锁定时换成"镜头已锁定 · 只读"；舞台上方显示生成错误。
+
+**验证**
+- 测试：ir 53 / gateway 17 / pipeline 12 / web 70，共 **152 条通过**；`pnpm typecheck`、`pnpm build` 通过。
+- 新增 8 条：pipeline 两条（首帧语义与人物锚点、提示词里没有 id）、store 四条（两条事件有序、溯源锚点非空、锁定不生成、超预算不发请求并点名 SH-03）、读模型两条（有图时 `keyframeUri`、没图时 `hasKeyframe` 为 false）。
+- 真实链路（`next start` + 无头 Chrome）：点「生成首帧 ¥0.12」，48 秒出图；画面替换剪影（画面里是"齐肩黑发、米色风衣"的林，走廊背景，字幕烧在下面），按钮变「重生成首帧 ¥0.12」，已花 `¥18.96 → ¥19.08`，事件是 `project.created, asset.updated, shot.updated`，刷新后图还在。
+
+**诚实地说**
+- **只有首帧，没有尾帧**：`lastAssetId` 在 schema 里，界面没有入口。
+- **还不是图生图**：提示词与锚点都在，但接口不收参考图，所以首帧与定妆四格不是同一个人——只是同一套描述。
+- **首帧不参与 take**：留用 / 淘汰对首帧不生效，take 仍等视频。
+- 重生成没有二次确认：点一下花 ¥0.12 并覆盖当前首帧，可逆（再生成一次），暂不拦。
+- 出图是前台请求，48 秒占着页面；没有取消，关掉页面请求仍在跑。
+
+**下一步**
+1. 尾帧生成与"只换尾帧"。
+2. 视频接通：首帧 → submit → poll → `take.added`，并把首帧挂到 take 上一起记账。
+3. 一句话指令（输入框已在界面上，还没接）：先只做提示词增补，不碰结构化参数。
+4. 对象存储（用户已定：先存在本地）。

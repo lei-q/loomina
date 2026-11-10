@@ -120,6 +120,13 @@ export const CameraSchema = z.object({
 });
 export type Camera = z.infer<typeof CameraSchema>;
 
+/** 首/尾帧（ADR-0037）：视频生成先有一张定住这一刻的图。 */
+export const KeyframesSchema = z.object({
+  firstAssetId: Id.optional(),
+  lastAssetId: Id.optional(),
+});
+export type Keyframes = z.infer<typeof KeyframesSchema>;
+
 export const ShotSchema = z.object({
   id: Id,
   sceneId: Id,
@@ -134,6 +141,7 @@ export const ShotSchema = z.object({
   propIds: z.array(Id).default([]),
   dialogueIds: z.array(Id).default([]),
   takeIds: z.array(Id).default([]),
+  keyframes: KeyframesSchema.default({}),
   locked: z.boolean().default(false),
 });
 export type Shot = z.infer<typeof ShotSchema>;

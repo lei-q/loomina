@@ -211,41 +211,90 @@ const MOVE_CN: Record<Shot["camera"]["movement"], string> = {
  * 人物的描述与 `mustNotChange` 用固定串原样带上——每次改写描述，
  * 模型就会把它当成另一个人（CONSISTENCY.md 第三层）。
  */
-export function buildShotPrompt(project: Project, shot: Shot): string {
-  const parts: string[] = [];
-  if (shot.description) parts.push(shot.description);
+/** 镜头提示词的原料：只收业务字段，不收 id——服务端不接受资产 id（ADR-0032）。 */
+export type ShotPromptMaterial = {
+  description: string;
+  shotSize: Shot["shotSize"];
+  camera: Shot["camera"];
+  characters: Pick<Character, "name" | "appearance" | "mustNotChange">[];
+  location?: Pick<Location, "name">;
+  props: Pick<Prop, "name" | "description">[];
+};
 
-  const people = shot.characterIds
-    .map((id) => project.characters.find((character) => character.id === id))
-    .filter((character): character is Character => Boolean(character))
-    .map((character) => {
-      const look = character.appearance ? `，${character.appearance}` : "";
-      const keep = character.mustNotChange.length
-        ? `；不许变：${character.mustNotChange.join("、")}`
-        : "";
-      return `${character.name}${look}${keep}`;
-    });
-  if (people.length) parts.push(`人物：${people.join("；")}`);
-
+/** 把项目里的 id 解析成提示词原料。 */
+export function shotMaterial(project: Project, shot: Shot): ShotPromptMaterial {
   const scene = project.scenes.find((item) => item.id === shot.sceneId);
   const location = scene
     ? project.locations.find((item) => item.id === scene.locationId)
     : undefined;
-  if (location) parts.push(`场景：${location.name}`);
 
-  const props = shot.propIds.flatMap((id) => {
-    const prop = project.props.find((item) => item.id === id);
-    if (!prop) return [];
-    return [prop.description ? `${prop.name}，${prop.description}` : prop.name];
+  return {
+    description: shot.description,
+    shotSize: shot.shotSize,
+    camera: shot.camera,
+    characters: shot.characterIds
+      .map((id) => project.characters.find((character) => character.id === id))
+      .filter((character): character is Character => Boolean(character)),
+    location: location ? { name: location.name } : undefined,
+    props: shot.propIds.flatMap((id) => {
+      const prop = project.props.find((item) => item.id === id);
+      return prop ? [prop] : [];
+    }),
+  };
+}
+
+/** "看到什么 → 人物锚点 → 场景与道具 → 机位"；不含画面质感那一句。 */
+function shotParts(material: ShotPromptMaterial): string[] {
+  const parts: string[] = [];
+  if (material.description) parts.push(material.description);
+
+  const people = material.characters.map((character) => {
+    const look = character.appearance ? `，${character.appearance}` : "";
+    const keep = character.mustNotChange.length
+      ? `；不许变：${character.mustNotChange.join("、")}`
+      : "";
+    return `${character.name}${look}${keep}`;
   });
+  if (people.length) parts.push(`人物：${people.join("；")}`);
+
+  if (material.location) parts.push(`场景：${material.location.name}`);
+
+  const props = material.props.map((prop) =>
+    prop.description ? `${prop.name}，${prop.description}` : prop.name,
+  );
   if (props.length) parts.push(`道具：${props.join("；")}`);
 
-  const { shotSize, camera } = shot;
+  const { shotSize, camera } = material;
   parts.push(
     `${SIZE_CN[shotSize]}，${ANGLE_CN[camera.angle]}，${MOVE_CN[camera.movement]}，${camera.focalMm}mm`,
   );
-  parts.push("竖屏 9:16，实拍电影质感，自然光，轻微胶片颗粒");
 
+  return parts;
+}
+
+const LOOK = "竖屏 9:16，实拍电影质感，自然光，轻微胶片颗粒";
+
+/**
+ * 镜头提示词：先写“看到什么”，再写人物锚点与技术参数。
+ *
+ * 人物的描述与 `mustNotChange` 用固定串原样带上——每次改写描述，
+ * 模型就会把它当成另一个人（CONSISTENCY.md 第三层）。
+ */
+export function buildShotPrompt(project: Project, shot: Shot): string {
+  const parts = shotParts(shotMaterial(project, shot));
+  parts.push(LOOK);
+  return parts.join("。");
+}
+
+/**
+ * 首帧提示词（ADR-0037）：同一镜的提示词，但明确"这是一张定住这一刻的静帧"。
+ *
+ * 关键帧是视频的起点：动作还没展开，画面要能当封面看，不要字幕与水印。
+ */
+export function buildKeyframePrompt(material: ShotPromptMaterial): string {
+  const parts = shotParts(material);
+  parts.push("首帧画面，动作起势，无字幕，无文字，无水印");
+  parts.push(LOOK);
   return parts.join("。");
 }
 

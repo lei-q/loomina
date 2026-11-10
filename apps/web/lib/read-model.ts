@@ -29,6 +29,10 @@ export type StageShot = {
   locked: boolean;
   /** 这一镜带进生成的参考图（ADR-0029）；缺锚点时生成会被拒绝 */
   anchors: { labels: string[]; missing: string[] };
+  /** 首帧的真图（data URI，ADR-0037）；没生成过就为空 */
+  keyframeUri?: string;
+  /** 首帧这张资产是否存在（有没有生成过） */
+  hasKeyframe: boolean;
 };
 
 export type Spend = {
@@ -161,6 +165,7 @@ function orderShots(project: Project): Shot[] {
  */
 export function toStageView(project: Project, options: StageOptions = {}): StageView {
   const takesById = new Map(project.takes.map((take) => [take.id, take]));
+  const assetById = new Map(project.assets.map((asset) => [asset.id, asset]));
   const dialogueById = new Map(project.dialogue.map((line) => [line.id, line]));
   const templateByLocation = new Map<string, string | undefined>(
     project.locations.map((location) => [location.id, location.templateId]),
@@ -174,6 +179,9 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
   const shots: StageShot[] = ordered.map((shot, i) => {
     const take = latestTake(shot, takesById);
     const anchors = shotAnchors(project, shot);
+    const keyframe = shot.keyframes.firstAssetId
+      ? assetById.get(shot.keyframes.firstAssetId)
+      : undefined;
     return {
       no: i + 1,
       id: shot.id,
@@ -187,6 +195,8 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
         labels: anchors.refs.map((ref) => ref.label),
         missing: anchors.missing,
       },
+      keyframeUri: keyframe?.uri,
+      hasKeyframe: Boolean(keyframe),
     };
   });
 

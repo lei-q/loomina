@@ -12,8 +12,10 @@ import {
   buildMasterPrompt,
   buildPropPrompt,
   buildSheetPrompt,
+  buildKeyframePrompt,
   buildShotPrompt,
   runMinimalChain,
+  shotMaterial,
 } from "../src/index";
 
 const NOW = () => "2026-11-09T12:00:00Z";
@@ -140,6 +142,31 @@ describe("提示词里的道具", () => {
 
     const prompt = buildShotPrompt(project, project.shots[0]!);
     expect(prompt).toContain("道具：搪瓷杯，白底蓝边，杯沿磕了一块");
+  });
+});
+
+describe("首帧提示词（ADR-0037）", () => {
+  it("与镜头提示词同源，但明确是定住这一刻的静帧", () => {
+    const project = load();
+    const shot = project.shots[0]!;
+    const prompt = buildKeyframePrompt(shotMaterial(project, shot));
+
+    expect(prompt).toContain("首帧画面");
+    expect(prompt).toContain("无字幕");
+    expect(prompt).toContain(shot.description);
+    expect(prompt).toContain("mm");
+  });
+
+  it("人物锚点照旧原样带上，不含 id", () => {
+    const project = load();
+    const shot = project.shots.find((item) => item.characterIds.length > 0) ?? project.shots[0]!;
+    const prompt = buildKeyframePrompt(shotMaterial(project, shot));
+
+    for (const character of project.characters.filter((item) => shot.characterIds.includes(item.id))) {
+      expect(prompt).toContain(character.name);
+      for (const keep of character.mustNotChange) expect(prompt).toContain(keep);
+    }
+    expect(prompt).not.toContain("c-");
   });
 });
 

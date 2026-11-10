@@ -101,7 +101,9 @@ function required(flag: string, value: string | undefined): string {
  * 首批镜头银行：覆盖“特写 / 中景 / 全景”和“固定 / 推 / 手持”，
  * 都是竖屏短剧里最常出现的调度，不是随机审美。
  */
-const SHOT_BANK: Array<Omit<Shot, "id" | "sceneId" | "index" | "takeIds">> = [
+const SHOT_BANK: Array<
+  Omit<Shot, "id" | "sceneId" | "index" | "takeIds" | "keyframes">
+> = [
   {
     durationMs: 4000,
     description: "电梯门关闭前，短发女人抬头看向镜头外，眼神从疲惫转为警觉，米色风衣领口微湿",
@@ -187,7 +189,13 @@ const SHOT_BANK: Array<Omit<Shot, "id" | "sceneId" | "index" | "takeIds">> = [
 function buildProject(count: number): Project {
   const shots = Array.from({ length: count }, (_, index) => {
     const template = SHOT_BANK[index % SHOT_BANK.length]!;
-    return { ...template, id: `probe-sh-${index + 1}`, sceneId: "probe-sc-1", index };
+    return {
+      ...template,
+      id: `probe-sh-${index + 1}`,
+      sceneId: "probe-sc-1",
+      index,
+      keyframes: {},
+    };
   });
 
   // 测绘也要走锚点：探针人物配一套占位三视图，免得链路因为"缺锚点"拒绝。

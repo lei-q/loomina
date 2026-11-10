@@ -204,7 +204,11 @@ interface Keyframes {
   firstAssetId?: ID;
   lastAssetId?: ID;
 }
+```
 
+> **落地情况（ADR-0037，2026-11-10）**：`Shot.keyframes` 已进 IR（zod 默认 `{}`，老日志靠默认值补齐，`LOG_VERSION` 仍为 1）。首帧由分镜页生成：资产 id 固定为 `a-keyframe-<shotId>`，一条 `asset.updated` 加一条 `shot.updated { keyframes: { firstAssetId } }`；重生成按 id 覆盖。**尾帧 `lastAssetId` 只有字段，没有界面入口。**
+
+```ts
 interface CameraSpec {
   shotSize:
     | "extreme-close" | "close" | "medium-close"

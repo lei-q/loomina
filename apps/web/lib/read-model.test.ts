@@ -194,3 +194,35 @@ describe("已花的构成（ADR-0036）", () => {
     expect(toStageView(cleared).spend.rejected).toBe(0);
   });
 });
+
+describe("首帧进读模型（ADR-0037）", () => {
+  it("shot.keyframes 指向有图资产时，当前镜有 keyframeUri", () => {
+    const project = {
+      ...sampleProject,
+      shots: sampleProject.shots.map((shot) =>
+        shot.id === "s-03"
+          ? { ...shot, keyframes: { firstAssetId: "a-key-03" } }
+          : shot,
+      ),
+      assets: [
+        ...sampleProject.assets,
+        {
+          id: "a-key-03",
+          kind: "image" as const,
+          source: "generated" as const,
+          uri: "data:image/png;base64,RkFLRQ==",
+          createdAt: "2026-11-10T00:00:00+08:00",
+        },
+      ],
+    };
+    const view = toStageView(project, { currentShotId: "s-03" });
+
+    expect(view.shots[view.current]?.keyframeUri).toContain("RkFLRQ");
+    expect(view.shots[view.current]?.hasKeyframe).toBe(true);
+  });
+
+  it("没有首帧时 hasKeyframe 是 false，不是缺省 undefined", () => {
+    const view = toStageView(sampleProject, { currentShotId: "s-03" });
+    expect(view.shots[view.current]?.hasKeyframe).toBe(false);
+  });
+});

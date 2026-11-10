@@ -5,11 +5,13 @@ import {
   castReadiness,
   rebuild,
   SHEET_ANGLES,
+  shotAnchors,
   type ApprovalTargetType,
   type Project,
   type ProjectEvent,
   type SheetView,
 } from "@loomina/ir";
+import { shotMaterial } from "@loomina/pipeline";
 import { create } from "zustand";
 import { diffEvents, getEventLog, migrateLog } from "@/lib/event-log";
 import { claimWriter } from "@/lib/writer-lock";
@@ -22,7 +24,8 @@ export type Decision = "approved" | "rejected";
 export type GenerateJob =
   | { kind: "sheet"; angle: SheetView }
   | { kind: "master" }
-  | { kind: "prop" };
+  | { kind: "prop" }
+  | { kind: "keyframe" };
 
 /**
  * 审片台的本地状态（ADR-0027）。
@@ -61,6 +64,8 @@ type WorkbenchState = {
   generateMaster: (locationId: string) => Promise<void>;
   /** 生成道具参考图 */
   generateProp: (propId: string) => Promise<void>;
+  /** 给当前镜生成首帧；落一张图 + 一条 shot.updated（ADR-0037） */
+  generateKeyframe: (shotId: string) => Promise<void>;
   reset: () => void;
 };
 
@@ -122,6 +127,10 @@ async function generateOne(
     assetId: string;
     job: GenerateJob;
     body: Record<string, unknown>;
+    /** 这张图还要改项目结构时，在这里追加事件（例如首帧挂回镜头） */
+    after?: (assetId: string, at: string) => ProjectEvent | undefined;
+    /** 溯源里记下这一张引用了哪些已锁定的锚点 */
+    referenceAssetIds?: string[];
   },
 ): Promise<boolean> {
   const setJob = (value: GenerateJob | undefined) =>
@@ -174,16 +183,17 @@ async function generateOne(
         provenance: {
           modelId: payload.model ?? "unknown",
           prompt: payload.prompt,
-          referenceAssetIds: [],
+          referenceAssetIds: input.referenceAssetIds ?? [],
           createdAt: at,
         },
         createdAt: at,
       },
     };
-    set({
-      project: applyEvent(get().project, event),
-      events: [...get().events, event],
-    });
+    const extra = input.after?.(input.assetId, at);
+    const appended = extra ? [event, extra] : [event];
+    let project = get().project;
+    for (const item of appended) project = applyEvent(project, item);
+    set({ project, events: [...get().events, ...appended] });
     setJob(undefined);
     return true;
   } catch (error) {
@@ -414,6 +424,35 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         assetId: location.masterShotId,
         job: { kind: "master" },
         body: { kind: "master", location: { name: location.name } },
+      },
+    );
+  },
+
+  generateKeyframe: async (shotId) => {
+    if (get().readOnly) return;
+    const { project } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) return;
+    // 锁定的镜头只读：要重做先解锁
+    if (shot.locked) return;
+
+    const assetId = `a-keyframe-${shot.id}`;
+    set({ castError: undefined });
+    await generateOne(
+      { get, set },
+      {
+        key: shot.id,
+        label: `SH-${String(shot.index + 1).padStart(2, "0")}`,
+        assetId,
+        job: { kind: "keyframe" },
+        body: { kind: "keyframe", shot: shotMaterial(project, shot) },
+        referenceAssetIds: shotAnchors(project, shot).refs.map((ref) => ref.assetId),
+        after: (id, at) => ({
+          type: "shot.updated",
+          at,
+          shotId: shot.id,
+          patch: { keyframes: { ...shot.keyframes, firstAssetId: id } },
+        }),
       },
     );
   },

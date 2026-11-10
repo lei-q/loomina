@@ -9,9 +9,11 @@ import {
   treecloudEnvFrom,
 } from "@loomina/gateway";
 import {
+  buildKeyframePrompt,
   buildMasterPrompt,
   buildPropPrompt,
   buildSheetPrompt,
+  type ShotPromptMaterial,
 } from "@loomina/pipeline";
 import type { Character, Id, Location, Prop, SheetView } from "@loomina/ir";
 
@@ -47,7 +49,8 @@ export type CastImageRequest =
       angle: SheetView;
     }
   | { kind: "master"; location: Pick<Location, "name"> }
-  | { kind: "prop"; prop: Pick<Prop, "name" | "description"> };
+  | { kind: "prop"; prop: Pick<Prop, "name" | "description"> }
+  | { kind: "keyframe"; shot: ShotPromptMaterial };
 
 export type GeneratedImage = {
   uri: string;
@@ -71,9 +74,16 @@ function plan(request: CastImageRequest): { prompt: string; label: string } {
       label: `master-${request.location.name}`,
     };
   }
+  if (request.kind === "prop") {
+    return {
+      prompt: buildPropPrompt(request.prop),
+      label: `prop-${request.prop.name}`,
+    };
+  }
+  // 关键帧是某一镜的静帧：用描述当标签，方便在溯源里认出是哪一格
   return {
-    prompt: buildPropPrompt(request.prop),
-    label: `prop-${request.prop.name}`,
+    prompt: buildKeyframePrompt(request.shot),
+    label: `keyframe-${request.shot.description.slice(0, 16) || "shot"}`,
   };
 }
 

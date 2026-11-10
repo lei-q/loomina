@@ -5,6 +5,7 @@ import { ReelBar } from "@/components/reel-bar";
 import { Stage } from "@/components/stage";
 import { TopBar } from "@/components/top-bar";
 import { toStageView } from "@/lib/read-model";
+import { fetchImagePrice } from "@/lib/image-price";
 import { useWorkbench } from "@/lib/workbench-store";
 
 export function Workbench() {
@@ -16,10 +17,19 @@ export function Workbench() {
   const storageError = useWorkbench((state) => state.storageError);
   const readOnly = useWorkbench((state) => state.readOnly);
   const setBudget = useWorkbench((state) => state.setBudget);
+  const generateKeyframe = useWorkbench((state) => state.generateKeyframe);
+  const jobs = useWorkbench((state) => state.jobs);
+  const castError = useWorkbench((state) => state.castError);
+  const imageCny = useWorkbench((state) => state.imageCny);
+  const setImagePrice = useWorkbench((state) => state.setImagePrice);
 
   useEffect(() => {
     void hydrate();
-  }, [hydrate]);
+    // 首帧的价目同样来自服务端：进页面问一次，用来标价并在提交前拦超预算
+    void fetchImagePrice().then((price) => {
+      if (price) setImagePrice(price);
+    });
+  }, [hydrate, setImagePrice]);
 
   const view = useMemo(
     () => toStageView(project, { currentShotId }),
@@ -70,7 +80,15 @@ export function Workbench() {
         onBudgetChange={setBudget}
         allRequote={view.requoteAll}
       />
-      <Stage view={view} />
+      {castError && (
+        <p className="shrink-0 px-6 pb-1 text-[10.5px] leading-[1.6] text-pick">{castError}</p>
+      )}
+      <Stage
+        view={view}
+        generating={jobs[view.shots[view.current]!.id]?.kind === "keyframe"}
+        quoteCny={imageCny}
+        onGenerateKeyframe={() => void generateKeyframe(view.shots[view.current]!.id)}
+      />
       <ReelBar view={view} onSelect={select} onDecide={decide} />
     </div>
   );

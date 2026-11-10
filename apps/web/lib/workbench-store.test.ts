@@ -229,6 +229,71 @@ describe("生成定妆资产（ADR-0031 / ADR-0032）", () => {
   });
 });
 
+describe("首帧（ADR-0037）", () => {
+  beforeEach(() => {
+    state().reset();
+    state().setImagePrice({ model: "gpt-image-2-c", cny: 0.12 });
+  });
+
+  const stub = () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        calls.push(JSON.parse(String(init?.body)).kind);
+        return new Response(
+          JSON.stringify({ uri: "data:image/png;base64,RkFLRQ==", model: "gpt-image-2-c", cny: 0.12 }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+    return calls;
+  };
+
+  it("落一张图并挂回镜头首帧，两条事件先后有序", async () => {
+    const calls = stub();
+    await state().generateKeyframe("s-03");
+
+    expect(calls).toEqual(["keyframe"]);
+    const types = state().events.map((event) => event.type);
+    expect(types.slice(-2)).toEqual(["asset.updated", "shot.updated"]);
+
+    const shot = state().project.shots.find((item) => item.id === "s-03");
+    expect(shot?.keyframes.firstAssetId).toBe("a-keyframe-s-03");
+    expect(state().project.assets.find((item) => item.id === "a-keyframe-s-03")?.costCny).toBe(0.12);
+    expect(state().jobs["s-03"]).toBeUndefined();
+    vi.unstubAllGlobals();
+  });
+
+  it("溯源记下这一镜引用的锚点，不记空的", async () => {
+    stub();
+    await state().generateKeyframe("s-03");
+
+    const asset = state().project.assets.find((item) => item.id === "a-keyframe-s-03");
+    expect(asset?.provenance?.referenceAssetIds.length).toBeGreaterThan(0);
+    vi.unstubAllGlobals();
+  });
+
+  it("锁定的镜头不生成，一次请求都不发", async () => {
+    const calls = stub();
+    await state().generateKeyframe("s-08");
+
+    expect(calls).toHaveLength(0);
+    vi.unstubAllGlobals();
+  });
+
+  it("超预算时不发请求，说清是哪一镜", async () => {
+    state().setBudget(19);
+    const calls = stub();
+    await state().generateKeyframe("s-03");
+
+    expect(calls).toHaveLength(0);
+    expect(state().castError).toContain("SH-03");
+    expect(state().castError).toContain("超出预算");
+    vi.unstubAllGlobals();
+  });
+});
+
 describe("预算（ADR-0035）", () => {
   beforeEach(() => {
     state().reset();
