@@ -1268,6 +1268,38 @@ describe("新建 / 编辑地点（ADR-0059）", () => {
     expect(state().removeLocation("loc-door")).toBe(false);
     expect(state().events).toHaveLength(snapshot);
   });
+
+  it("把占用它的场次搬到别的地点再删：N 条 scene.updated + 1 条 location.removed（ADR-0062）", () => {
+    const snapshot = state().events.length;
+
+    // loc-door 只被 sc-4 用；搬到 loc-table
+    expect(state().removeLocation("loc-door", "loc-table")).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 2);
+    expect(state().events.at(-2)).toMatchObject({
+      type: "scene.updated",
+      sceneId: "sc-4",
+      patch: { locationId: "loc-table" },
+    });
+    expect(state().events.at(-1)).toMatchObject({ type: "location.removed", locationId: "loc-door" });
+
+    expect(state().project.scenes.find((scene) => scene.id === "sc-4")?.locationId).toBe(
+      "loc-table",
+    );
+    expect(state().project.locations.some((item) => item.id === "loc-door")).toBe(false);
+    expect(rebuild(state().events).scenes.find((scene) => scene.id === "sc-4")?.locationId).toBe(
+      "loc-table",
+    );
+  });
+
+  it("搬到自己或不存在的地点都拒绝，不写事件", () => {
+    const snapshot = state().events.length;
+
+    expect(state().removeLocation("loc-door", "loc-door")).toBe(false);
+    expect(state().castError).toContain("搬不到");
+    expect(state().removeLocation("loc-door", "loc-404")).toBe(false);
+    expect(state().castError).toContain("搬不到");
+    expect(state().events).toHaveLength(snapshot);
+  });
 });
 
 describe("台词顺序整组写回（ADR-0053）", () => {

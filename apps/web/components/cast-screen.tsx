@@ -191,6 +191,7 @@ function LocationRow({
   onUnlock,
   onRename,
   onRemove,
+  otherLocations,
 }: {
   location: CastLocationView;
   /** 主镜正在生成 */
@@ -203,11 +204,14 @@ function LocationRow({
   onUnlock: () => void;
   /** 改名 / 换模板：成功返回 true，表单据此收起 */
   onRename: (name: string, templateId: string) => boolean;
-  /** 删掉这个地点：成功返回 true（ADR-0061） */
-  onRemove: () => boolean;
+  /** 删掉这个地点：成功返回 true（ADR-0061 / ADR-0062） */
+  onRemove: (moveToId?: string) => boolean;
+  /** 还有哪些地点可以搬：这一行自己不在里面 */
+  otherLocations: { id: string; name: string }[];
 }) {
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [moveTarget, setMoveTarget] = useState(otherLocations[0]?.id ?? "");
   const [draftName, setDraftName] = useState("");
   const [draftTemplate, setDraftTemplate] = useState(location.templateId ?? "doorway");
 
@@ -285,45 +289,74 @@ function LocationRow({
                     改名
                   </button>
                 )}
-                {!readOnly &&
-                  (deleting ? (
-                    <span className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (onRemove()) setDeleting(false);
-                        }}
-                        className="text-[9px] text-pick transition-colors duration-[var(--dur)] hover:opacity-75"
+                {!readOnly && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMoveTarget(otherLocations[0]?.id ?? "");
+                      setDeleting(true);
+                    }}
+                    disabled={location.required && otherLocations.length === 0}
+                    title={
+                      location.required && otherLocations.length === 0
+                        ? "还有场次在这个地点，又没有别的地点可搬：先新建一个地点"
+                        : location.required
+                          ? "还有场次在这个地点：把它们搬到别处，再删"
+                          : "删掉这个地点：日志里留一条记录，已经出的主镜图不删"
+                    }
+                    className="text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:text-pick disabled:cursor-default disabled:opacity-40"
+                  >
+                    删
+                  </button>
+                )}
+              </div>
+              {deleting ? (
+                <form
+                  className="mt-2 flex flex-col gap-1.5"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (onRemove(location.required ? moveTarget : undefined)) setDeleting(false);
+                  }}
+                >
+                  {location.required && (
+                    <label className="flex flex-col gap-1 text-[9px] text-muted-2">
+                      这一地点还有场次，先搬到哪里
+                      <select
+                        value={moveTarget}
+                        onChange={(event) => setMoveTarget(event.target.value)}
+                        autoFocus
+                        aria-label="搬到哪个地点"
+                        className="w-full rounded-token border border-line bg-surface px-1.5 py-1 text-[10.5px] text-text focus:border-pick focus:outline-none"
                       >
-                        确认删
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDeleting(false)}
-                        className="text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
-                      >
-                        取消
-                      </button>
-                    </span>
-                  ) : (
+                        {otherLocations.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  <div className="flex gap-1.5">
+                    <button
+                      type="submit"
+                      className="rounded-token border border-pick/70 px-2 py-0.5 text-[10.5px] text-pick transition-colors duration-[var(--dur)] hover:bg-pick hover:text-bg"
+                    >
+                      {location.required ? "搬过去再删" : "确认删"}
+                    </button>
                     <button
                       type="button"
-                      onClick={() => setDeleting(true)}
-                      disabled={location.required}
-                      title={
-                        location.required
-                          ? `还有场次在「${location.name}」：先把场次改到别的地点再删`
-                          : "删掉这个地点：日志里留一条记录，已经出的主镜图不删"
-                      }
-                      className="text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:text-pick disabled:cursor-default disabled:opacity-40"
+                      onClick={() => setDeleting(false)}
+                      className="rounded-token border border-line px-2 py-0.5 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
                     >
-                      删
+                      取消
                     </button>
-                  ))}
-              </div>
-              <p className="tnum mt-2 text-[10px] text-muted-2">
-                {location.required ? "主镜 · 全场共用" : "主镜 · 还没挂场次"}
-              </p>
+                  </div>
+                </form>
+              ) : (
+                <p className="tnum mt-2 text-[10px] text-muted-2">
+                  {location.required ? "主镜 · 全场共用" : "主镜 · 还没挂场次"}
+                </p>
+              )}
             </>
           )}
         </div>
@@ -687,7 +720,10 @@ export function CastScreen() {
                 onLock={() => lockCast("location", location.id)}
                 onUnlock={() => unlockCast("location", location.id)}
                 onRename={(name, templateId) => editLocation(location.id, { name, templateId })}
-                onRemove={() => removeLocation(location.id)}
+                onRemove={(moveToId) => removeLocation(location.id, moveToId)}
+                otherLocations={cast.locations
+                  .filter((item) => item.id !== location.id)
+                  .map((item) => ({ id: item.id, name: item.name }))}
               />
             ))}
           </section>

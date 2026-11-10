@@ -117,8 +117,8 @@ type WorkbenchState = {
   ) => boolean;
   /** 调整场序：写一条 `scene.moved`，场号与镜号跟着重排（ADR-0060） */
   moveScene: (sceneId: string, direction: "up" | "down") => boolean;
-  /** 删一个没被场次占用的地点：一条 `location.removed`（ADR-0061） */
-  removeLocation: (locationId: string) => boolean;
+  /** 删一个地点；还有场次占着就先把它们搬到 `moveToId` 再删（ADR-0061 / ADR-0062） */
+  removeLocation: (locationId: string, moveToId?: string) => boolean;
   /** 划掉一条补充要求：同样写一条 shot.updated（ADR-0039 附记） */
   removeNote: (shotId: string, note: string) => void;
   reset: () => void;
@@ -993,7 +993,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     return true;
   },
 
-  removeLocation: (locationId) => {
+  removeLocation: (locationId, moveToId) => {
     if (get().readOnly) return false;
     const { project, events } = get();
     const location = project.locations.find((item) => item.id === locationId);
@@ -1002,11 +1002,37 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       return false;
     }
     const used = project.scenes.filter((scene) => scene.locationId === locationId);
+    // 被场次占着：先整批搬走，再删；顺序不能反，回放到任一前缀都不会有悬挂引用
     if (used.length > 0) {
+      if (!moveToId) {
+        set({
+          castError: `还有 ${used.length} 场在「${location.name}」：先把它们搬到别的地点再删。`,
+        });
+        return false;
+      }
+      const target = project.locations.find((item) => item.id === moveToId);
+      if (!target || target.id === locationId) {
+        set({ castError: "搬不到这个地点。" });
+        return false;
+      }
+      const at = new Date().toISOString();
+      const written: ProjectEvent[] = [
+        ...used.map(
+          (scene): ProjectEvent => ({
+            type: "scene.updated",
+            at,
+            sceneId: scene.id,
+            patch: { locationId: moveToId },
+          }),
+        ),
+        { type: "location.removed", at, locationId },
+      ];
       set({
-        castError: `还有 ${used.length} 场在「${location.name}」：先把场次改到别的地点再删。`,
+        project: written.reduce(applyEvent, project),
+        events: [...events, ...written],
+        castError: undefined,
       });
-      return false;
+      return true;
     }
     const event: ProjectEvent = {
       type: "location.removed",
