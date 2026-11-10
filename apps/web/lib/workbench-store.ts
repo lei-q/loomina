@@ -57,6 +57,8 @@ type WorkbenchState = {
   select: (shotId: string) => void;
   /** 锁 / 解锁一镜：留用过的镜头才能锁；读写都留痕（ADR-0041） */
   setShotLock: (shotId: string, locked: boolean) => void;
+  /** 一步留用并锁定：写一条 take.updated + 一条 shot.updated（ADR-0041 附记） */
+  approveAndLock: (shotId: string) => void;
   decide: (status: Decision) => void;
   /** 定妆闸门：锁定 / 解锁一个角色、场景或道具 */
   lockCast: (targetType: ApprovalTargetType, targetId: string) => void;
@@ -343,6 +345,45 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     set({
       project: applyEvent(project, event),
       events: [...events, event],
+      castError: undefined,
+    });
+  },
+
+  approveAndLock: (shotId) => {
+    if (get().readOnly) return;
+    const { project, events, currentShotId } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot || shot.locked) return;
+
+    const take = latestTake(shot, new Map(project.takes.map((item) => [item.id, item])));
+    if (!take) {
+      set({ castError: "这一镜还没有 take，先有一条才能留用。" });
+      return;
+    }
+
+    // 两步合成一个动作：先留用（如果还不是 approved），再锁；两条事件都可回放
+    const next: ProjectEvent[] = [];
+    if (take.status !== "approved") {
+      next.push({
+        type: "take.updated",
+        at: new Date().toISOString(),
+        takeId: take.id,
+        patch: { status: "approved" },
+      });
+    }
+    next.push({
+      type: "shot.updated",
+      at: new Date().toISOString(),
+      shotId: shot.id,
+      patch: { locked: true },
+    });
+
+    const after = next.reduce((current, event) => applyEvent(current, event), project);
+    set({
+      project: after,
+      events: [...events, ...next],
+      // 与「留用」一致：定下来的镜头不挡路，选中挪到下一格还没定的
+      currentShotId: nextOpenShotId(after, currentShotId),
       castError: undefined,
     });
   },

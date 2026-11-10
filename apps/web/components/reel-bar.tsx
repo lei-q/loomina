@@ -51,13 +51,23 @@ export type ReelBarProps = {
   onInstruct: (text: string) => boolean;
   /** 锁 / 解锁这一镜（ADR-0041） */
   onSetLock: (locked: boolean) => void;
+  /** 一步留用并锁定：还没留用时，锁定按钮换个说法（ADR-0041 附记） */
+  onApproveAndLock: () => void;
 };
 
-export function ReelBar({ view, onSelect, onDecide, onInstruct, onSetLock }: ReelBarProps) {
+export function ReelBar({ view, onSelect, onDecide, onInstruct, onSetLock, onApproveAndLock }: ReelBarProps) {
   const current = view.shots[view.current]!;
   const decidable = !current.locked && current.take !== undefined;
   // 锁定是"这一镜定了"：先留用，再锁（ADR-0041）
   const canLock = !current.locked && current.state === "pick";
+  // 还没留用时，同一个按钮改做"留用并锁"：一次点击写两条事件（ADR-0041 附记）
+  const canApproveLock = !current.locked && current.state !== "pick" && current.take !== undefined;
+  const lockLabel = current.state === "pick" ? "锁定" : "留用并锁";
+  const lockTitle = canLock
+    ? "锁定这一镜：不再改、不再生成"
+    : canApproveLock
+      ? "留用这一条 take 并锁定这一镜：写两条事件，一步到位"
+      : "先留用一条 take，再锁定这一镜";
   const [draft, setDraft] = useState("");
 
   return (
@@ -158,16 +168,16 @@ export function ReelBar({ view, onSelect, onDecide, onInstruct, onSetLock }: Ree
 
             <button
               type="button"
-              onClick={() => onSetLock(true)}
-              disabled={!canLock}
-              title={canLock ? "锁定这一镜：不再改、不再生成" : "先留用一条 take，再锁定这一镜"}
+              onClick={() => (canLock ? onSetLock(true) : onApproveAndLock())}
+              disabled={!canLock && !canApproveLock}
+              title={lockTitle}
               className={cn(
                 "flex items-center gap-1.5 rounded-token border border-line px-3 py-2 text-[12px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text",
                 "disabled:pointer-events-none disabled:opacity-40",
               )}
             >
               <LockIcon className="h-3.5 w-3.5" />
-              锁定
+              {lockLabel}
             </button>
           </>
         )}

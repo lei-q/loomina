@@ -21,6 +21,7 @@ export function Workbench() {
   const instruct = useWorkbench((state) => state.instruct);
   const removeNote = useWorkbench((state) => state.removeNote);
   const setShotLock = useWorkbench((state) => state.setShotLock);
+  const approveAndLock = useWorkbench((state) => state.approveAndLock);
   const jobs = useWorkbench((state) => state.jobs);
   const castError = useWorkbench((state) => state.castError);
   const imageCny = useWorkbench((state) => state.imageCny);
@@ -105,6 +106,7 @@ export function Workbench() {
         onDecide={decide}
         onInstruct={instruct}
         onSetLock={(locked) => setShotLock(view.shots[view.current]!.id, locked)}
+        onApproveAndLock={() => approveAndLock(view.shots[view.current]!.id)}
       />
     </div>
   );

@@ -448,6 +448,22 @@ describe("镜头锁定（ADR-0041）", () => {
     expect(rebuild(state().events).shots.find((item) => item.id === id)?.locked).toBe(false);
   });
 
+  it("一步留用并锁：写两条事件，锁定生效，选中照常前进", () => {
+    const id = state().currentShotId;
+    const before = state().events.length;
+    state().approveAndLock(id);
+
+    const shot = state().project.shots.find((item) => item.id === id)!;
+    expect(shot.locked).toBe(true);
+    expect(shot.takeIds.map((takeId) => state().project.takes.find((item) => item.id === takeId)?.status)).toContain("approved");
+    expect(state().events.slice(before).map((event) => event.type)).toEqual([
+      "take.updated",
+      "shot.updated",
+    ]);
+    expect(state().currentShotId).not.toBe(id);
+    expect(rebuild(state().events).shots.find((item) => item.id === id)?.locked).toBe(true);
+  });
+
   it("锁定的镜头拒绝生成与一句话指令", async () => {
     const id = state().currentShotId;
     state().decide("approved");
