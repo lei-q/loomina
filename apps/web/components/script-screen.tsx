@@ -39,6 +39,7 @@ export function ScriptScreen() {
   const editAction = useWorkbench((state) => state.editAction);
   const editScene = useWorkbench((state) => state.editScene);
   const setDialogueOrder = useWorkbench((state) => state.setDialogueOrder);
+  const moveDialogueTo = useWorkbench((state) => state.moveDialogueTo);
   const events = useWorkbench((state) => state.events);
 
   const [editing, setEditing] = useState<string | null>(null);
@@ -48,6 +49,7 @@ export function ScriptScreen() {
   const [editingScene, setEditingScene] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [swapping, setSwapping] = useState<string | null>(null);
+  const [moving, setMoving] = useState<string | null>(null);
   const [adding, setAdding] = useState<string | null>(null);
   const [addSpeaker, setAddSpeaker] = useState("");
   const [addText, setAddText] = useState("");
@@ -73,6 +75,10 @@ export function ScriptScreen() {
 
   const nameOf = (characterId: string) =>
     view.characters.find((item) => item.id === characterId)?.name ?? characterId;
+
+  const shotChoices = view.scenes.flatMap((scene) =>
+    scene.shots.map((shot) => ({ id: shot.id, label: `${shotLabel(shot.no)} · 第 ${scene.no} 场` })),
+  );
 
   const startEdit = (lineId: string, text: string) => {
     setEditing(lineId);
@@ -111,6 +117,15 @@ export function ScriptScreen() {
   const revertSpeaker = (lineId: string, characterId: string) => {
     if (changeSpeaker(lineId, characterId)) setNote(undefined);
     else setNote(useWorkbench.getState().castError);
+  };
+
+  const moveLine = (lineId: string, targetShotId: string) => {
+    if (moveDialogueTo(lineId, targetShotId)) {
+      setMoving(null);
+      setNote(undefined);
+    } else {
+      setNote(useWorkbench.getState().castError);
+    }
   };
 
   const restoreOrder = (shotId: string, lineIds: string[]) => {
@@ -547,6 +562,48 @@ export function ScriptScreen() {
                                           >
                                             删
                                           </button>
+                                          {moving === line.id ? (
+                                            <select
+                                              autoFocus
+                                              value=""
+                                              onChange={(event) => {
+                                                if (event.target.value) {
+                                                  moveLine(line.id, event.target.value);
+                                                }
+                                              }}
+                                              onBlur={() => setMoving(null)}
+                                              aria-label="移到哪一镜"
+                                              className="rounded-token border border-pick/70 bg-surface px-1 py-0 text-[9px] text-text focus:outline-none"
+                                            >
+                                              <option value="" disabled>
+                                                移到…
+                                              </option>
+                                              {shotChoices
+                                                .filter((choice) => choice.id !== shot.id)
+                                                .map((choice) => (
+                                                  <option key={choice.id} value={choice.id}>
+                                                    {choice.label}
+                                                  </option>
+                                                ))}
+                                            </select>
+                                          ) : (
+                                            <button
+                                              type="button"
+                                              disabled={shot.locked}
+                                              onClick={() => {
+                                                setMoving(line.id);
+                                                setNote(undefined);
+                                              }}
+                                              title={
+                                                shot.locked
+                                                  ? "这一镜已锁定，先解锁才能挪台词"
+                                                  : "把这一句挪到别的镜头"
+                                              }
+                                              className="shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+                                            >
+                                              移
+                                            </button>
+                                          )}
                                           {shot.lines.length > 1 && (
                                             <>
                                               <button

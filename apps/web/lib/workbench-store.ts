@@ -101,6 +101,8 @@ type WorkbenchState = {
   editScene: (sceneId: string, patch: Partial<Pick<Scene, "space" | "timeOfDay">>) => boolean;
   /** 把台词顺序整组写回：一条 `shot.updated { dialogueIds }`（ADR-0053） */
   setDialogueOrder: (shotId: string, lineIds: string[]) => boolean;
+  /** 把一句台词挪到另一镜：两条 `shot.updated`，两镜时长各加减这一句（ADR-0054） */
+  moveDialogueTo: (lineId: string, targetShotId: string) => boolean;
   /** 划掉一条补充要求：同样写一条 shot.updated（ADR-0039 附记） */
   removeNote: (shotId: string, note: string) => void;
   reset: () => void;
@@ -709,6 +711,52 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     return true;
   },
 
+
+  moveDialogueTo: (lineId, targetShotId) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const line = project.dialogue.find((item) => item.id === lineId);
+    if (!line) return false;
+    const source = project.shots.find((item) => item.dialogueIds.includes(lineId));
+    if (!source) return false;
+    const target = project.shots.find((item) => item.id === targetShotId);
+    if (!target) return false;
+    if (source.id === target.id) {
+      set({ castError: "这句已经在这一镜里了。" });
+      return false;
+    }
+    if (source.locked || target.locked) {
+      set({ castError: "这一镜已锁定：要挪台词先解锁。" });
+      return false;
+    }
+    const at = new Date().toISOString();
+    const written: ProjectEvent[] = [
+      {
+        type: "shot.updated",
+        at,
+        shotId: source.id,
+        patch: {
+          dialogueIds: source.dialogueIds.filter((id) => id !== lineId),
+          durationMs: Math.max(500, source.durationMs - line.durationMs),
+        },
+      },
+      {
+        type: "shot.updated",
+        at,
+        shotId: target.id,
+        patch: {
+          dialogueIds: [...target.dialogueIds, lineId],
+          durationMs: target.durationMs + line.durationMs,
+        },
+      },
+    ];
+    set({
+      project: written.reduce(applyEvent, project),
+      events: [...events, ...written],
+      castError: undefined,
+    });
+    return true;
+  },
 
   setDialogueOrder: (shotId, lineIds) => {
     if (get().readOnly) return false;

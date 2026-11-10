@@ -761,21 +761,48 @@ export type OrderRevision = { at: string; lineIds: string[] };
 /**
  * 这一镜的台词顺序被改过几次（ADR-0053）。
  *
- * 只收显式换了 `dialogueIds` 的 `shot.updated`：排序是一次镜头级改写；
- * 加句 / 删句走的是 `dialogue.added` / `dialogue.removed`，不算在这里。
+ * 只收显式换了 `dialogueIds`、且句子集合没变的 `shot.updated`：排序是一次镜头级改写；
+ * 加句 / 删句走的是 `dialogue.added` / `dialogue.removed`，跨镜头挪台词改的是集合（ADR-0054），
+ * 都不算在这里。
  */
 export function dialogueOrderHistory(
   events: ProjectEvent[],
   shotId: string,
 ): OrderRevision[] {
+  // 这一镜当前的台词集合：从快照起，加句 / 删句也一起跟。排序的判据是「集合没变、只换顺序」。
+  let previous: Set<string> | undefined;
+  const first = events[0];
+  if (first?.type === "project.created") {
+    const shot = first.project.shots.find((item) => item.id === shotId);
+    if (shot) previous = new Set(shot.dialogueIds);
+  }
+
   const revisions: OrderRevision[] = [];
   for (const event of events) {
+    if (event.type === "dialogue.added" && event.shotId === shotId) {
+      previous?.add(event.line.id);
+      continue;
+    }
+    if (event.type === "dialogue.removed") {
+      previous?.delete(event.lineId);
+      continue;
+    }
     if (event.type !== "shot.updated" || event.shotId !== shotId) continue;
     const lineIds = event.patch.dialogueIds;
     if (lineIds === undefined) continue;
-    revisions.push({ at: event.at, lineIds: [...lineIds] });
+    const next = new Set(lineIds);
+    // 集合变了就不是「换顺序」，是句子进出（跨镜头挪台词，ADR-0054）。
+    const reorder = previous === undefined || sameLineSet(previous, next);
+    previous = next;
+    if (reorder) revisions.push({ at: event.at, lineIds: [...lineIds] });
   }
   return revisions;
+}
+
+function sameLineSet(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const id of a) if (!b.has(id)) return false;
+  return true;
 }
 
 export type ActionRevision = { at: string; text: string };

@@ -558,8 +558,15 @@ describe("台词历史里的换人（ADR-0052）", () => {
 
 describe("台词顺序的变更记录（ADR-0053）", () => {
   const at = (h: number) => `2026-11-10T${String(h).padStart(2, "0")}:00:00+08:00`;
+  // 示例里 s-02 没有台词；给这一镜先挂上两句，排序才有可排的东西。
+  const project = {
+    ...sampleProject,
+    shots: sampleProject.shots.map((shot) =>
+      shot.id === "s-02" ? { ...shot, dialogueIds: ["d-01", "d-03"] } : shot,
+    ),
+  };
   const events = [
-    { type: "project.created" as const, at: at(0), project: sampleProject },
+    { type: "project.created" as const, at: at(0), project },
     { type: "shot.updated" as const, at: at(9), shotId: "s-02", patch: { dialogueIds: ["d-03", "d-01"] } },
     { type: "shot.updated" as const, at: at(10), shotId: "s-02", patch: { dialogueIds: ["d-01", "d-03"] } },
     { type: "shot.updated" as const, at: at(11), shotId: "s-02", patch: { description: "换了动作" } },
@@ -579,5 +586,22 @@ describe("台词顺序的变更记录（ADR-0053）", () => {
     expect(dialogueOrderHistory(events, "s-03")).toHaveLength(1);
     expect(dialogueOrderHistory(events, "s-04")).toEqual([]);
     expect(dialogueOrderHistory(events.slice(0, 1), "s-02")).toEqual([]);
+  });
+
+  it("跨镜头挪台词改了句子集合，不算一次「换顺序」", () => {
+    const moved = [
+      ...events,
+      { type: "shot.updated" as const, at: at(13), shotId: "s-02", patch: { dialogueIds: ["d-01", "d-03", "d-04"] } },
+      { type: "shot.updated" as const, at: at(13), shotId: "s-03", patch: { dialogueIds: [] } },
+      { type: "shot.updated" as const, at: at(14), shotId: "s-02", patch: { dialogueIds: ["d-04", "d-03", "d-01"] } },
+    ];
+    // SH-02：两条真排序 + 挪进来那条不算；挪完再排序仍算。
+    expect(dialogueOrderHistory(moved, "s-02").map((rev) => rev.lineIds)).toEqual([
+      ["d-03", "d-01"],
+      ["d-01", "d-03"],
+      ["d-04", "d-03", "d-01"],
+    ]);
+    // SH-03：原本一条排序；挪走清空台词不算。
+    expect(dialogueOrderHistory(moved, "s-03")).toHaveLength(1);
   });
 });

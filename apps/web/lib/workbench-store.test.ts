@@ -1147,3 +1147,68 @@ describe("台词顺序整组写回（ADR-0053）", () => {
     expect(state().events).toHaveLength(snapshot);
   });
 });
+
+describe("跨镜头挪台词（ADR-0054）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("挪到另一镜：两镜时长各加减这一句，两条 shot.updated", () => {
+    const source = state().project.shots.find((item) => item.id === "s-01")!;
+    const target = state().project.shots.find((item) => item.id === "s-02")!;
+    const line = state().project.dialogue.find((item) => item.id === "d-01")!;
+    const snapshot = state().events.length;
+
+    expect(state().moveDialogueTo("d-01", "s-02")).toBe(true);
+
+    const afterSource = state().project.shots.find((item) => item.id === "s-01")!;
+    const afterTarget = state().project.shots.find((item) => item.id === "s-02")!;
+    expect(afterSource.dialogueIds).not.toContain("d-01");
+    expect(afterTarget.dialogueIds).toContain("d-01");
+    expect(afterSource.durationMs).toBe(Math.max(500, source.durationMs - line.durationMs));
+    expect(afterTarget.durationMs).toBe(target.durationMs + line.durationMs);
+    // 台词本体不动：说话人、文本、时长都留在原处
+    expect(state().project.dialogue.find((item) => item.id === "d-01")).toMatchObject({
+      characterId: "c-zhou",
+      text: "你早就知道，对吧。",
+      durationMs: 2600,
+    });
+
+    const tail = state().events.slice(-2);
+    expect(tail[0]).toMatchObject({
+      type: "shot.updated",
+      shotId: "s-01",
+      patch: { durationMs: afterSource.durationMs },
+    });
+    expect(tail[1]).toMatchObject({
+      type: "shot.updated",
+      shotId: "s-02",
+      patch: { durationMs: afterTarget.durationMs },
+    });
+    expect(state().events).toHaveLength(snapshot + 2);
+
+    const replay = rebuild(state().events);
+    expect(replay.shots.find((item) => item.id === "s-01")?.dialogueIds).not.toContain("d-01");
+    expect(replay.shots.find((item) => item.id === "s-02")?.dialogueIds).toContain("d-01");
+  });
+
+  it("同一镜、锁定的镜、陌生的台词都不写事件", () => {
+    const snapshot = state().events.length;
+
+    expect(state().moveDialogueTo("d-01", "s-01")).toBe(false);
+    expect(state().castError).toContain("这一镜");
+    // d-04 在锁定的 s-08 里
+    expect(state().moveDialogueTo("d-04", "s-02")).toBe(false);
+    expect(state().castError).toContain("锁定");
+    // 目标是锁定的 s-08
+    expect(state().moveDialogueTo("d-01", "s-08")).toBe(false);
+    expect(state().castError).toContain("锁定");
+    expect(state().moveDialogueTo("d-404", "s-02")).toBe(false);
+    expect(state().moveDialogueTo("d-01", "s-404")).toBe(false);
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().moveDialogueTo("d-01", "s-02")).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+  });
+});
