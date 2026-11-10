@@ -42,6 +42,7 @@ export function ScriptScreen() {
   const moveDialogue = useWorkbench((state) => state.moveDialogue);
   const editAction = useWorkbench((state) => state.editAction);
   const editScene = useWorkbench((state) => state.editScene);
+  const moveScene = useWorkbench((state) => state.moveScene);
   const setDialogueOrder = useWorkbench((state) => state.setDialogueOrder);
   const moveDialogueTo = useWorkbench((state) => state.moveDialogueTo);
   const restoreLine = useWorkbench((state) => state.restoreLine);
@@ -270,7 +271,7 @@ export function ScriptScreen() {
           </header>
 
           <div className="mt-8 space-y-10">
-            {view.scenes.map((scene) => (
+            {view.scenes.map((scene, at) => (
               <section key={scene.id}>
                 <div className="flex items-baseline gap-3 border-b border-line pb-2">
                   <span className="tnum shrink-0 text-[9.5px] tracking-[.14em] text-muted-2">
@@ -354,6 +355,29 @@ export function ScriptScreen() {
                   <span className="tnum ml-auto shrink-0 text-[9.5px] text-muted-2">
                     {scene.dur.toFixed(1)}s · {scene.shots.length} 镜
                   </span>
+                  {/* 调整场序（ADR-0060）：上移 / 下移一位，镜号跟着重排 */}
+                  {!readOnly && (
+                    <span className="flex shrink-0 items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => moveScene(scene.id, "up")}
+                        disabled={at === 0}
+                        title="上移一场：场号与镜号跟着重排"
+                        className="tnum rounded-token border border-line px-1 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-default disabled:opacity-40"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveScene(scene.id, "down")}
+                        disabled={at === view.scenes.length - 1}
+                        title="下移一场：场号与镜号跟着重排"
+                        className="tnum rounded-token border border-line px-1 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-default disabled:opacity-40"
+                      >
+                        ↓
+                      </button>
+                    </span>
+                  )}
                 </div>
 
                 {/* 场头改过几次（ADR-0058）：一场一件事，折叠在标题下面，不占正文 */}

@@ -40,12 +40,22 @@ export type ProjectEvent =
       patch: Partial<Pick<Scene, "space" | "timeOfDay" | "locationId">>;
     }
   | {
+      /**
+       * 调整场序（ADR-0060）：一场一位。镜号跟着场序重排；
+       * 台词、take、关键帧都按 id 引用，不跟着动。
+       */
+      type: "scene.moved";
+      at: string;
+      sceneId: Id;
+      /** 挪到第几位（从 0 数），必须落在现有场次范围内 */
+      toIndex: number;
+    }
+  | {
       /** 加一个地点（ADR-0059）：先有地点，场次才挂得上去 */
       type: "location.added";
       at: string;
       location: Location;
-    }
-  | {
+    }  | {
       /** 改地点（ADR-0059）：名字与模板；主镜与参考图走资产那条路 */
       type: "location.updated";
       at: string;
@@ -144,6 +154,29 @@ export function applyEvent(
       const scenes = current.scenes.map((scene) =>
         scene.id === event.sceneId ? { ...scene, ...event.patch } : scene,
       );
+      return { ...current, scenes };
+    }
+
+    case "scene.moved": {
+      if (!current) throw new Error("scene.moved 之前必须有 project.created");
+      const ordered = [...current.scenes].sort((a, b) => a.index - b.index);
+      const from = ordered.findIndex((scene) => scene.id === event.sceneId);
+      if (from < 0) {
+        throw new Error(`scene.moved 指向不存在的场次: ${event.sceneId}`);
+      }
+      if (
+        !Number.isInteger(event.toIndex) ||
+        event.toIndex < 0 ||
+        event.toIndex >= ordered.length
+      ) {
+        throw new Error(`scene.moved 的目标位置越界: ${event.toIndex}`);
+      }
+      if (event.toIndex === from) {
+        throw new Error(`场次 ${event.sceneId} 已经在这个位置`);
+      }
+      const [moved] = ordered.splice(from, 1);
+      ordered.splice(event.toIndex, 0, moved!);
+      const scenes = ordered.map((scene, index) => ({ ...scene, index }));
       return { ...current, scenes };
     }
 

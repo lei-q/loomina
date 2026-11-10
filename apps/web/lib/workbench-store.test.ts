@@ -2,7 +2,7 @@ import { rebuild, type ProjectEvent } from "@loomina/ir";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setEventLog, type EventLog } from "./event-log";
 import { claimWriter, releaseWriter } from "./writer-lock";
-import { toStageView } from "./read-model";
+import { toScriptView, toStageView } from "./read-model";
 import { resetPersistenceForTests, useWorkbench } from "./workbench-store";
 
 const state = () => useWorkbench.getState();
@@ -1114,6 +1114,59 @@ describe("场头改写（ADR-0050）", () => {
     // 不存在的地点
     expect(state().editScene("sc-1", { locationId: "loc-404" })).toBe(false);
     expect(state().castError).toContain("地点");
+    expect(state().events).toHaveLength(snapshot);
+  });
+});
+
+describe("调整场序（ADR-0060）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("上移一场：一条 scene.moved，场号与镜号跟着重排", () => {
+    const snapshot = state().events.length;
+
+    expect(state().moveScene("sc-2", "up")).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "scene.moved",
+      sceneId: "sc-2",
+      toIndex: 0,
+    });
+
+    const view = toScriptView(state().project);
+    expect(view.scenes.map((scene) => scene.id)).toEqual([
+      "sc-2", "sc-1", "sc-3", "sc-4", "sc-5",
+    ]);
+    expect(view.scenes.map((scene) => scene.no)).toEqual([1, 2, 3, 4, 5]);
+    // 镜号按新的场序重排：第 2 场的两镜变成 SH-01 / SH-02
+    expect(
+      view.scenes.flatMap((scene) => scene.shots.map((shot) => [shot.id, shot.no])).slice(0, 3),
+    ).toEqual([
+      ["s-04", 1],
+      ["s-05", 2],
+      ["s-01", 3],
+    ]);
+    // 场里的台词不属于场序，不跟着动
+    expect(view.scenes[0]?.shots.find((shot) => shot.id === "s-04")?.lines[0]?.text).toBe(
+      "灯是我关的。",
+    );
+    expect(rebuild(state().events).scenes.find((scene) => scene.id === "sc-2")?.index).toBe(0);
+  });
+
+  it("第一场不能再上移、最后一场不能再下移、陌生场次与只读都不写事件", () => {
+    const snapshot = state().events.length;
+
+    expect(state().moveScene("sc-1", "up")).toBe(false);
+    expect(state().castError).toContain("第一场");
+    expect(state().moveScene("sc-5", "down")).toBe(false);
+    expect(state().castError).toContain("最后一场");
+    expect(state().moveScene("sc-404", "up")).toBe(false);
+    expect(state().castError).toContain("找不到");
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().moveScene("sc-1", "down")).toBe(false);
     expect(state().events).toHaveLength(snapshot);
   });
 });

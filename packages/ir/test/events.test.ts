@@ -422,6 +422,50 @@ describe("scene.updated（ADR-0050）", () => {
   });
 });
 
+describe("调整场序（ADR-0060）", () => {
+  const threeScenes = (): Project => {
+    const base = load();
+    return {
+      ...base,
+      scenes: [
+        base.scenes[0]!,
+        { id: "sc-b", index: 1, locationId: "loc-living", space: "int", timeOfDay: "day", shotIds: [] },
+        { id: "sc-c", index: 2, locationId: "loc-living", space: "int", timeOfDay: "night", shotIds: [] },
+      ],
+    };
+  };
+
+  it("把第 1 场挪到最后：全场重编号，可回放", () => {
+    const project = threeScenes();
+    const event: ProjectEvent = { type: "scene.moved", at: AT, sceneId: "sc-1", toIndex: 2 };
+    const after = applyEvent(project, event);
+
+    expect(after.scenes.map((scene) => scene.id)).toEqual(["sc-b", "sc-c", "sc-1"]);
+    expect(after.scenes.map((scene) => scene.index)).toEqual([0, 1, 2]);
+    // 场里的镜头原样跟着场走
+    expect(after.scenes.find((scene) => scene.id === "sc-1")?.shotIds).toEqual(
+      project.scenes.find((scene) => scene.id === "sc-1")?.shotIds,
+    );
+    expect(rebuild([created(project), event])).toEqual(after);
+  });
+
+  it("越界、原地、不存在的场次都拒绝", () => {
+    const project = threeScenes();
+    expect(() =>
+      applyEvent(project, { type: "scene.moved", at: AT, sceneId: "sc-1", toIndex: 3 }),
+    ).toThrow(/越界/);
+    expect(() =>
+      applyEvent(project, { type: "scene.moved", at: AT, sceneId: "sc-1", toIndex: -1 }),
+    ).toThrow(/越界/);
+    expect(() =>
+      applyEvent(project, { type: "scene.moved", at: AT, sceneId: "sc-1", toIndex: 0 }),
+    ).toThrow(/已经在这个位置/);
+    expect(() =>
+      applyEvent(project, { type: "scene.moved", at: AT, sceneId: "sc-404", toIndex: 1 }),
+    ).toThrow(/不存在/);
+  });
+});
+
 describe("location.added / location.updated（ADR-0059）", () => {
   it("加一个地点，重放后一致", () => {
     const project = load();

@@ -104,8 +104,7 @@ type WorkbenchState = {
     patch: Partial<Pick<Scene, "space" | "timeOfDay" | "locationId">>,
   ) => boolean;
   /** 把台词顺序整组写回：一条 `shot.updated { dialogueIds }`（ADR-0053） */
-  setDialogueOrder: (shotId: string, lineIds: string[]) => boolean;
-  /** 把一句台词挪到另一镜：两条 `shot.updated`，两镜时长各加减这一句（ADR-0054） */
+  setDialogueOrder: (shotId: string, lineIds: string[]) => boolean;  /** 把一句台词挪到另一镜：两条 `shot.updated`，两镜时长各加减这一句（ADR-0054） */
   moveDialogueTo: (lineId: string, targetShotId: string) => boolean;
   /** 把一句删掉的台词放回它原来的镜头：`dialogue.added` + 镜头时长加回（ADR-0055） */
   restoreLine: (lineId: string) => boolean;
@@ -116,6 +115,8 @@ type WorkbenchState = {
     locationId: string,
     patch: Partial<Pick<Location, "name" | "templateId">>,
   ) => boolean;
+  /** 调整场序：写一条 `scene.moved`，场号与镜号跟着重排（ADR-0060） */
+  moveScene: (sceneId: string, direction: "up" | "down") => boolean;
   /** 划掉一条补充要求：同样写一条 shot.updated（ADR-0039 附记） */
   removeNote: (shotId: string, note: string) => void;
   reset: () => void;
@@ -953,6 +954,34 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       at: new Date().toISOString(),
       locationId,
       patch: next,
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  moveScene: (sceneId, direction) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const ordered = [...project.scenes].sort((a, b) => a.index - b.index);
+    const from = ordered.findIndex((scene) => scene.id === sceneId);
+    if (from < 0) {
+      set({ castError: "找不到这一场。" });
+      return false;
+    }
+    const toIndex = from + (direction === "up" ? -1 : 1);
+    if (toIndex < 0 || toIndex >= ordered.length) {
+      set({ castError: direction === "up" ? "已经是第一场。" : "已经是最后一场。" });
+      return false;
+    }
+    const event: ProjectEvent = {
+      type: "scene.moved",
+      at: new Date().toISOString(),
+      sceneId,
+      toIndex,
     };
     set({
       project: applyEvent(project, event),
