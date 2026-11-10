@@ -775,6 +775,26 @@ describe("出图后改了画面：帧过期（ADR-0057）", () => {
     });
   });
 
+  it("换人：这一镜的帧过期，原因是人物；剧本页也标出有帧（ADR-0081）", () => {
+    const events = [
+      ...base,
+      {
+        type: "shot.updated" as const,
+        at: at(9),
+        shotId: "s-01",
+        patch: { characterIds: ["c-lin", "c-zhou"] },
+      },
+    ];
+    expect(staleFrames(events, withFrames).get("s-01")).toEqual({
+      first: { at: at(9), reasons: ["人物"] },
+    });
+
+    const script = toScriptView(withFrames);
+    const shots = script.scenes.flatMap((scene) => scene.shots);
+    expect(shots.find((shot) => shot.id === "s-01")?.hasFrames).toBe(true);
+    expect(shots.find((shot) => shot.id === "s-03")?.hasFrames).toBe(false);
+  });
+
   it("只改台词、或者帧是在改动之后出的，都不算过期", () => {
     const dialogueOnly = [
       ...base,

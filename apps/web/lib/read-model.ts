@@ -634,6 +634,8 @@ export type ScriptShot = {
   locked: boolean;
   /** 这一镜里有谁，加台词时默认第一个 */
   characterIds: string[];
+  /** 已经出过首帧或尾帧：换人之后这两帧会挂「过期」（ADR-0081） */
+  hasFrames: boolean;
   lines: ScriptLine[];
 };
 
@@ -728,6 +730,7 @@ export function toScriptView(project: Project, options: { budgetCny?: number } =
             angle: view?.angle ?? "",
             locked: shot.locked,
             characterIds: shot.characterIds,
+            hasFrames: Boolean(shot.keyframes.firstAssetId || shot.keyframes.lastAssetId),
             lines,
           };
         });

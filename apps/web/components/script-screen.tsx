@@ -41,6 +41,8 @@ export function ScriptScreen() {
   const removeDialogue = useWorkbench((state) => state.removeDialogue);
   const changeSpeaker = useWorkbench((state) => state.changeSpeaker);
   const swapShotCharacter = useWorkbench((state) => state.swapShotCharacter);
+  const undoSwap = useWorkbench((state) => state.undoSwap);
+  const lastSwap = useWorkbench((state) => state.lastSwap);
   const moveDialogue = useWorkbench((state) => state.moveDialogue);
   const editAction = useWorkbench((state) => state.editAction);
   const editScene = useWorkbench((state) => state.editScene);
@@ -1317,39 +1319,46 @@ export function ScriptScreen() {
                               const replacing =
                                 swappingCast?.shotId === shot.id && swappingCast.characterId === id;
                               return replacing ? (
-                                <select
-                                  key={id}
-                                  autoFocus
-                                  value=""
-                                  aria-label={`把${name}换成`}
-                                  onChange={(event) => {
-                                    const toId = event.target.value;
-                                    if (!toId) return;
-                                    if (swapShotCharacter(shot.id, id, toId)) {
-                                      setSwappingCast(null);
-                                      setCastNote(null);
-                                    } else {
-                                      setCastNote({
-                                        id: shot.id,
-                                        text: useWorkbench.getState().castError ?? "换不了这一镜的人。",
-                                      });
-                                    }
-                                  }}
-                                  onBlur={() => setSwappingCast(null)}
-                                  className="rounded-token border border-pick/70 bg-surface px-1 py-0 text-[9px] text-text focus:outline-none"
-                                >
-                                  <option value="">换下 {name} →</option>
-                                  {view.characters
-                                    .filter((character) => character.id !== id)
-                                    .map((character) => (
-                                      <option key={character.id} value={character.id}>
-                                        {character.name}
-                                        {shot.characterIds.includes(character.id)
-                                          ? "（已在这一镜）"
-                                          : ""}
-                                      </option>
-                                    ))}
-                                </select>
+                                <span key={id} className="flex items-baseline gap-1.5">
+                                  <select
+                                    autoFocus
+                                    value=""
+                                    aria-label={`把${name}换成`}
+                                    onChange={(event) => {
+                                      const toId = event.target.value;
+                                      if (!toId) return;
+                                      if (swapShotCharacter(shot.id, id, toId)) {
+                                        setSwappingCast(null);
+                                        setCastNote(null);
+                                      } else {
+                                        setCastNote({
+                                          id: shot.id,
+                                          text: useWorkbench.getState().castError ?? "换不了这一镜的人。",
+                                        });
+                                      }
+                                    }}
+                                    onBlur={() => setSwappingCast(null)}
+                                    className="rounded-token border border-pick/70 bg-surface px-1 py-0 text-[9px] text-text focus:outline-none"
+                                  >
+                                    <option value="">换下 {name} →</option>
+                                    {view.characters
+                                      .filter((character) => character.id !== id)
+                                      .map((character) => (
+                                        <option key={character.id} value={character.id}>
+                                          {character.name}
+                                          {shot.characterIds.includes(character.id)
+                                            ? "（已在这一镜）"
+                                            : ""}
+                                        </option>
+                                      ))}
+                                  </select>
+                                  {/* 换人是画面输入：已出的帧会挂「过期」（ADR-0081） */}
+                                  {shot.hasFrames && (
+                                    <span className="text-[8.5px] text-muted-2">
+                                      换人后已出的帧会挂过期
+                                    </span>
+                                  )}
+                                </span>
                               ) : (
                                 <button
                                   key={id}
@@ -1371,6 +1380,32 @@ export function ScriptScreen() {
                               );
                             })}
                           </div>
+                        )}
+                        {/* 撤销换人（ADR-0081）：出场顺序与这一镜的台词说话人一起写回 */}
+                        {!readOnly && lastSwap?.shotId === shot.id && (
+                          <p className="mt-1 flex flex-wrap items-baseline gap-2 text-[9.5px] text-muted">
+                            <span className="text-muted-2">
+                              刚把「{nameOf(lastSwap.fromId)}」换成「{nameOf(lastSwap.toId)}」
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (undoSwap()) setCastNote(null);
+                                else
+                                  setCastNote({
+                                    id: shot.id,
+                                    text: useWorkbench.getState().castError ?? "撤不回这次换人。",
+                                  });
+                              }}
+                              title="把出场顺序与这一镜的说话人一起换回去"
+                              className="rounded-token border border-line px-1.5 py-px text-[9.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                            >
+                              撤销
+                            </button>
+                            {shot.hasFrames && (
+                              <span className="text-muted-2">已出的帧挂了「过期」</span>
+                            )}
+                          </p>
                         )}
                         {castNote?.id === shot.id && (
                           <p className="mt-1 text-[9.5px] leading-[1.7] text-pick">{castNote.text}</p>

@@ -60,6 +60,19 @@ type WorkbenchState = {
   storageError?: string;
   /** 另一个标签页在编辑：这里只读，改了也存不下 */
   readOnly?: boolean;
+  /**
+   * 刚做完的一次换人（ADR-0081）：只留最近一条，供「撤销」写回交换之前的样子。
+   * 只在内存里，刷新就没了——撤销是"刚点错了"，不是历史功能。
+   */
+  lastSwap?: {
+    shotId: string;
+    fromId: string;
+    toId: string;
+    /** 交换之前的出场顺序，撤销时整组写回 */
+    prevCharacterIds: string[];
+    /** 这次换人顺手改过说话人的台词（仍以 toId 说话才撤得回） */
+    lineIds: string[];
+  };
   /** 当前出图模型的单价（元 / 张）。由服务端价目接口给，不知道就不拦（ADR-0035） */
   imageCny?: number;
   /** 登记价目：定妆台进页面时问一次服务端 */
@@ -83,6 +96,8 @@ type WorkbenchState = {
    * 这一镜里他说的台词一起换过去（ADR-0070）
    */
   swapShotCharacter: (shotId: string, fromId: string, toId: string) => boolean;
+  /** 撤销刚做完的那次换人：出场顺序与说话人一起写回（ADR-0081） */
+  undoSwap: () => boolean;
   /** 一步留用并锁定：写一条 take.updated + 一条 shot.updated（ADR-0041 附记） */
   approveAndLock: (shotId: string) => void;
   decide: (status: Decision) => void;
@@ -661,10 +676,12 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     const written: ProjectEvent[] = [
       { type: "shot.updated", at, shotId, patch: { characterIds } },
     ];
+    const lineIds: string[] = [];
     for (const lineId of shot.dialogueIds) {
       const line = project.dialogue.find((item) => item.id === lineId);
       if (line?.characterId === fromId) {
         written.push({ type: "dialogue.speaker.updated", at, lineId, characterId: toId });
+        lineIds.push(lineId);
       }
     }
 
@@ -672,6 +689,61 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       project: written.reduce(applyEvent, project),
       events: [...events, ...written],
       castError: undefined,
+      // 只留最近一条：再换一次，上一条就撤不回来了
+      lastSwap: {
+        shotId,
+        fromId,
+        toId,
+        prevCharacterIds: [...shot.characterIds],
+        lineIds,
+      },
+    });
+    return true;
+  },
+
+  undoSwap: () => {
+    if (get().readOnly) return false;
+    const { project, events, lastSwap } = get();
+    if (!lastSwap) {
+      set({ castError: "没有刚做完的换人可撤。" });
+      return false;
+    }
+    const shot = project.shots.find((item) => item.id === lastSwap.shotId);
+    if (!shot) {
+      set({ castError: "这一镜已经不在了，撤不回换人。", lastSwap: undefined });
+      return false;
+    }
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定，先解锁再撤销换人。" });
+      return false;
+    }
+    if (!shot.characterIds.includes(lastSwap.toId)) {
+      set({ castError: "这一镜里已经没有换上来的人了，撤不回这次换人。", lastSwap: undefined });
+      return false;
+    }
+
+    const at = new Date().toISOString();
+    const written: ProjectEvent[] = [
+      {
+        type: "shot.updated",
+        at,
+        shotId: lastSwap.shotId,
+        patch: { characterIds: [...lastSwap.prevCharacterIds] },
+      },
+    ];
+    for (const lineId of lastSwap.lineIds) {
+      const line = project.dialogue.find((item) => item.id === lineId);
+      // 之后又被人改过说话人的句子不动：撤销只撤这一次换人
+      if (line?.characterId === lastSwap.toId && shot.dialogueIds.includes(lineId)) {
+        written.push({ type: "dialogue.speaker.updated", at, lineId, characterId: lastSwap.fromId });
+      }
+    }
+
+    set({
+      project: written.reduce(applyEvent, project),
+      events: [...events, ...written],
+      castError: undefined,
+      lastSwap: undefined,
     });
     return true;
   },
@@ -2374,6 +2446,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       jobs: {},
       batch: undefined,
       castError: undefined,
+      lastSwap: undefined,
     });
   },
 }));

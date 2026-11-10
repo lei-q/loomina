@@ -1672,6 +1672,92 @@ describe("这一镜里换人（ADR-0070）", () => {
   });
 });
 
+describe("换人撤销（ADR-0081）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("撤销：出场顺序与这一镜的说话人一起写回", () => {
+    expect(state().swapShotCharacter("s-03", "c-lin", "c-zhou")).toBe(true);
+    expect(state().lastSwap).toMatchObject({
+      shotId: "s-03",
+      fromId: "c-lin",
+      toId: "c-zhou",
+      lineIds: ["d-02"],
+    });
+    const snapshot = state().events.length;
+
+    expect(state().undoSwap()).toBe(true);
+
+    expect(state().events).toHaveLength(snapshot + 2);
+    expect(state().events.at(-2)).toMatchObject({
+      type: "shot.updated",
+      shotId: "s-03",
+      patch: { characterIds: ["c-lin"] },
+    });
+    expect(state().events.at(-1)).toMatchObject({
+      type: "dialogue.speaker.updated",
+      lineId: "d-02",
+      characterId: "c-lin",
+    });
+    expect(state().project.shots.find((shot) => shot.id === "s-03")?.characterIds).toEqual(["c-lin"]);
+    expect(state().project.dialogue.find((line) => line.id === "d-02")?.characterId).toBe("c-lin");
+    expect(state().lastSwap).toBeUndefined();
+    expect(rebuild(state().events)).toEqual(state().project);
+
+    // 撤过就没有可撤的了
+    expect(state().undoSwap()).toBe(false);
+    expect(state().castError).toContain("没有刚做完的换人");
+  });
+
+  it("出场顺序整组回原位：两个人对调再撤", () => {
+    // s-04 是「林、周」；把周换成林会并成一位
+    expect(state().swapShotCharacter("s-04", "c-zhou", "c-lin")).toBe(true);
+    expect(state().project.shots.find((shot) => shot.id === "s-04")?.characterIds).toEqual(["c-lin"]);
+
+    expect(state().undoSwap()).toBe(true);
+    expect(state().project.shots.find((shot) => shot.id === "s-04")?.characterIds).toEqual([
+      "c-lin",
+      "c-zhou",
+    ]);
+    expect(state().project.dialogue.find((line) => line.id === "d-03")?.characterId).toBe("c-zhou");
+  });
+
+  it("只留最近一次；锁定、只读、手改过的说话人都不乱撤", () => {
+    expect(state().swapShotCharacter("s-03", "c-lin", "c-zhou")).toBe(true);
+    expect(state().swapShotCharacter("s-03", "c-zhou", "c-lin")).toBe(true);
+    expect(state().lastSwap?.toId).toBe("c-lin");
+
+    // 撤销一次换回来：撤的是「周 → 林」，出场回到周
+    expect(state().undoSwap()).toBe(true);
+    expect(state().project.shots.find((shot) => shot.id === "s-03")?.characterIds).toEqual([
+      "c-zhou",
+    ]);
+    expect(state().project.dialogue.find((line) => line.id === "d-02")?.characterId).toBe("c-zhou");
+
+    // 换完之后锁上：撤不了；解锁再撤可以
+    expect(state().swapShotCharacter("s-03", "c-zhou", "c-lin")).toBe(true);
+    state().approveAndLock("s-03");
+    expect(state().undoSwap()).toBe(false);
+    expect(state().castError).toContain("已锁定");
+    state().setShotLock("s-03", false);
+    expect(state().undoSwap()).toBe(true);
+
+    // 换完之后这一句又被改成别人说的：撤销只回出场，句子保持后来改的
+    expect(state().swapShotCharacter("s-03", "c-zhou", "c-lin")).toBe(true);
+    expect(state().changeSpeaker("d-02", "c-zhou")).toBe(true);
+    expect(state().undoSwap()).toBe(true);
+    expect(state().project.shots.find((shot) => shot.id === "s-03")?.characterIds).toEqual([
+      "c-zhou",
+    ]);
+    expect(state().project.dialogue.find((line) => line.id === "d-02")?.characterId).toBe("c-zhou");
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().undoSwap()).toBe(false);
+  });
+});
+
 describe("删一场、删一镜（ADR-0067）", () => {
   beforeEach(() => {
     state().reset();
