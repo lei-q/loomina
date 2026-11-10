@@ -70,6 +70,7 @@ function CharacterRow({
   onLock,
   onUnlock,
   onEdit,
+  onRemove,
 }: {
   character: CastCharacterView;
   readOnly: boolean;
@@ -82,9 +83,12 @@ function CharacterRow({
   onUnlock: () => void;
   /** 改名字 / 外形描述：成功返回 true，表单据此收起（ADR-0071） */
   onEdit: (name: string, appearance: string) => boolean;
+  /** 删掉这个人物：成功返回 true（ADR-0073） */
+  onRemove: () => boolean;
 }) {
   const missing = character.panels.filter((panel) => !panel.assetId).length;
   const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [draftAppearance, setDraftAppearance] = useState("");
 
@@ -162,7 +166,41 @@ function CharacterRow({
                     改
                   </button>
                 )}
+                {!readOnly && (
+                  <button
+                    type="button"
+                    onClick={() => setDeleting(true)}
+                    disabled={deleting}
+                    title="删掉这个人：还在镜头里 / 还有台词时删不掉"
+                    className="text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:text-pick disabled:cursor-default"
+                  >
+                    删
+                  </button>
+                )}
               </div>
+              {deleting && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[9px]">
+                  <span className="text-muted-2">删这个人？</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // 删不掉也收起确认：原因写在页头，停在原地只会让几个确认框叠在一起
+                      onRemove();
+                      setDeleting(false);
+                    }}
+                    className="rounded-token border border-pick/70 px-1.5 py-px text-pick transition-colors duration-[var(--dur)] hover:bg-pick hover:text-bg"
+                  >
+                    确认删
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDeleting(false)}
+                    className="rounded-token border border-line px-1.5 py-px text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                  >
+                    取消
+                  </button>
+                </div>
+              )}
               <p className="mt-2 text-[11.5px] leading-[1.5] text-muted">
                 {character.appearance || "还没写外形描述。"}
               </p>
@@ -595,6 +633,7 @@ function PropRow({
   onLock,
   onUnlock,
   onEdit,
+  onRemove,
 }: {
   prop: CastPropView;
   readOnly: boolean;
@@ -607,8 +646,11 @@ function PropRow({
   onUnlock: () => void;
   /** 改名字 / 描述：成功返回 true，表单据此收起（ADR-0072） */
   onEdit: (name: string, description: string) => boolean;
+  /** 删掉这件道具：成功返回 true（ADR-0073） */
+  onRemove: () => boolean;
 }) {
   const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [draftDescription, setDraftDescription] = useState("");
 
@@ -686,7 +728,41 @@ function PropRow({
                     改
                   </button>
                 )}
+                {!readOnly && (
+                  <button
+                    type="button"
+                    onClick={() => setDeleting(true)}
+                    disabled={deleting}
+                    title="删掉这件道具：还在镜头里时删不掉"
+                    className="text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:text-pick disabled:cursor-default"
+                  >
+                    删
+                  </button>
+                )}
               </div>
+              {deleting && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[9px]">
+                  <span className="text-muted-2">删这件道具？</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // 删不掉也收起确认：原因写在页头，停在原地只会让几个确认框叠在一起
+                      onRemove();
+                      setDeleting(false);
+                    }}
+                    className="rounded-token border border-pick/70 px-1.5 py-px text-pick transition-colors duration-[var(--dur)] hover:bg-pick hover:text-bg"
+                  >
+                    确认删
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDeleting(false)}
+                    className="rounded-token border border-line px-1.5 py-px text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                  >
+                    取消
+                  </button>
+                </div>
+              )}
               <p className="mt-2 text-[11px] leading-[1.5] text-muted">
                 {prop.description || "还没写道具描述。"}
               </p>
@@ -791,6 +867,8 @@ export function CastScreen() {
   const editCharacter = useWorkbench((state) => state.editCharacter);
   const addProp = useWorkbench((state) => state.addProp);
   const editProp = useWorkbench((state) => state.editProp);
+  const removeCharacter = useWorkbench((state) => state.removeCharacter);
+  const removeProp = useWorkbench((state) => state.removeProp);
 
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -959,6 +1037,7 @@ export function CastScreen() {
                   onEdit={(name, appearance) =>
                     editCharacter(character.id, { name, appearance })
                   }
+                  onRemove={() => removeCharacter(character.id)}
                 />
               );
             })}
@@ -1142,6 +1221,7 @@ export function CastScreen() {
                   onLock={() => lockCast("prop", prop.id)}
                   onUnlock={() => unlockCast("prop", prop.id)}
                   onEdit={(name, description) => editProp(prop.id, { name, description })}
+                  onRemove={() => removeProp(prop.id)}
                 />
               ))}
             </section>

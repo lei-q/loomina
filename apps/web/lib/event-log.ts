@@ -58,6 +58,8 @@ const EVENT_TYPES: Record<ProjectEvent["type"], true> = {
   "character.updated": true,
   "prop.added": true,
   "prop.updated": true,
+  "character.removed": true,
+  "prop.removed": true,
   "dialogue.updated": true,
   "dialogue.speaker.updated": true,
   "dialogue.added": true,

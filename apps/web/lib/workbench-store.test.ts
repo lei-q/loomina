@@ -1525,6 +1525,50 @@ describe("道具库：新建与改名（ADR-0072）", () => {
   });
 });
 
+describe("删除人物与道具（ADR-0073）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("删掉没被引用的人物：一条 character.removed", () => {
+    const id = state().addCharacter("阿棠", "齐耳短发")!;
+    const snapshot = state().events.length;
+
+    expect(state().removeCharacter(id)).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "character.removed", characterId: id });
+    expect(state().project.characters.some((item) => item.id === id)).toBe(false);
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("还在出场里的人物删不掉：提示先去分镜页点掉", () => {
+    const snapshot = state().events.length;
+
+    expect(state().removeCharacter("c-lin")).toBe(false);
+    expect(state().castError).toContain("出场里");
+    expect(state().removeCharacter("c-nobody")).toBe(false);
+    expect(state().castError).toContain("找不到这个人物");
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().removeCharacter("c-zhou")).toBe(false);
+
+    expect(state().events).toHaveLength(snapshot);
+  });
+
+  it("删掉没被镜头用着的道具；被用着时提示先点掉", () => {
+    const id = state().addProp("旧钥匙")!;
+    const snapshot = state().events.length;
+    expect(state().removeProp(id)).toBe(true);
+    expect(state().events.at(-1)).toMatchObject({ type: "prop.removed", propId: id });
+
+    // p-cup 在 s-09 的道具里
+    expect(state().removeProp("p-cup")).toBe(false);
+    expect(state().castError).toContain("还在 1 镜里");
+    expect(state().events).toHaveLength(snapshot + 1); // 只有那条 prop.removed，拒绝不写事件
+  });
+});
+
 describe("这一镜里换人（ADR-0070）", () => {
   beforeEach(() => {
     state().reset();

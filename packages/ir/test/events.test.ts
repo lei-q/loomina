@@ -915,6 +915,70 @@ describe("prop.added / prop.updated（ADR-0072）", () => {
   });
 });
 
+describe("character.removed / prop.removed（ADR-0073）", () => {
+  it("删掉没被引用的人物，重放后一致", () => {
+    const project = load();
+    const added: ProjectEvent = {
+      type: "character.added",
+      at: AT,
+      character: {
+        id: "cha-tang",
+        name: "阿棠",
+        appearance: "",
+        sheet: {},
+        referenceImages: [],
+        mustNotChange: [],
+      },
+    };
+    const removed: ProjectEvent = { type: "character.removed", at: AT, characterId: "cha-tang" };
+    const after = rebuild([created(project), added, removed]);
+    expect(after.characters.map((item) => item.id)).toEqual(project.characters.map((item) => item.id));
+    expect(validateProject(after)).toEqual([]);
+  });
+
+  it("还点着这个人、或还有台词属于他时拒绝", () => {
+    const project = load();
+    expect(() =>
+      applyEvent(project, { type: "character.removed", at: AT, characterId: "c-lin" }),
+    ).toThrow(/点着这个人/);
+
+    const withoutCast: ProjectEvent = {
+      type: "shot.updated",
+      at: AT,
+      shotId: "sh-1",
+      patch: { characterIds: [] },
+    };
+    const noCast = applyEvent(project, withoutCast);
+    expect(() =>
+      applyEvent(noCast, { type: "character.removed", at: AT, characterId: "c-lin" }),
+    ).toThrow(/句台词属于这个人/);
+  });
+
+  it("删一件没被镜头用着的道具；被用着时拒绝", () => {
+    const project = load();
+    const added: ProjectEvent = {
+      type: "prop.added",
+      at: AT,
+      prop: { id: "prop-key", name: "旧钥匙", description: "", referenceImages: [] },
+    };
+    const removed: ProjectEvent = { type: "prop.removed", at: AT, propId: "prop-key" };
+    const after = rebuild([created(project), added, removed]);
+    expect(after.props).toEqual(project.props);
+    expect(validateProject(after)).toEqual([]);
+
+    const used: ProjectEvent = {
+      type: "shot.updated",
+      at: AT,
+      shotId: "sh-1",
+      patch: { propIds: ["prop-key"] },
+    };
+    const inUse = rebuild([created(project), added, used]);
+    expect(() =>
+      applyEvent(inUse, { type: "prop.removed", at: AT, propId: "prop-key" }),
+    ).toThrow(/用着这件道具/);
+  });
+});
+
 describe("location.added / location.updated（ADR-0059）", () => {
   it("加一个地点，重放后一致", () => {
     const project = load();

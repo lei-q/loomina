@@ -136,6 +136,21 @@ export type ProjectEvent =
     }
   | {
       /**
+       * 删一个人物（ADR-0073）：还有镜头点着他、或还有台词属于他时拒绝，不留悬挂引用。
+       * 三视图与参考图留着不删（孤儿资产另行回收）。
+       */
+      type: "character.removed";
+      at: string;
+      characterId: Id;
+    }
+  | {
+      /** 删一件道具（ADR-0073）：还有镜头用着它时拒绝；参考图留着不删 */
+      type: "prop.removed";
+      at: string;
+      propId: Id;
+    }
+  | {
+      /**
        * 台词改写（ADR-0044）：只允许改文本与时长。
        * 说话人不在这里改——换人等于换一句台词，应该新增而不是覆盖。
        */
@@ -464,6 +479,45 @@ export function applyEvent(
         prop.id === event.propId ? { ...prop, ...event.patch } : prop,
       );
       return { ...current, props };
+    }
+
+    case "character.removed": {
+      if (!current) throw new Error("character.removed 之前必须有 project.created");
+      if (!current.characters.some((character) => character.id === event.characterId)) {
+        throw new Error(`character.removed 指向不存在的人物: ${event.characterId}`);
+      }
+      const inShots = current.shots.filter((shot) =>
+        shot.characterIds.includes(event.characterId),
+      );
+      if (inShots.length > 0) {
+        throw new Error(
+          `character.removed 还有 ${inShots.length} 镜点着这个人: ${event.characterId}`,
+        );
+      }
+      const speaking = current.dialogue.filter(
+        (line) => line.characterId === event.characterId,
+      );
+      if (speaking.length > 0) {
+        throw new Error(
+          `character.removed 还有 ${speaking.length} 句台词属于这个人: ${event.characterId}`,
+        );
+      }
+      return {
+        ...current,
+        characters: current.characters.filter((character) => character.id !== event.characterId),
+      };
+    }
+
+    case "prop.removed": {
+      if (!current) throw new Error("prop.removed 之前必须有 project.created");
+      if (!current.props.some((prop) => prop.id === event.propId)) {
+        throw new Error(`prop.removed 指向不存在的道具: ${event.propId}`);
+      }
+      const used = current.shots.filter((shot) => shot.propIds.includes(event.propId));
+      if (used.length > 0) {
+        throw new Error(`prop.removed 还有 ${used.length} 镜用着这件道具: ${event.propId}`);
+      }
+      return { ...current, props: current.props.filter((prop) => prop.id !== event.propId) };
     }
 
     case "dialogue.updated": {

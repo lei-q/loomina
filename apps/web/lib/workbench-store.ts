@@ -144,6 +144,10 @@ type WorkbenchState = {
     propId: string,
     patch: Partial<Pick<Prop, "name" | "description">>,
   ) => boolean;
+  /** 删一个人物：还有镜头点着 / 台词属于他时拒绝（ADR-0073） */
+  removeCharacter: (characterId: string) => boolean;
+  /** 删一件道具：还有镜头用着它时拒绝（ADR-0073） */
+  removeProp: (propId: string) => boolean;
   /** 新建场次：一条 `scene.added`，加在末尾或指定场之后，沿用前一场的地点与日夜（ADR-0064 / 0068 / 0069） */
   addScene: (locationId?: string, afterSceneId?: string) => string | undefined;
   /** 新建镜头：一条 `shot.added`，加在这一场末尾或指定镜之后（ADR-0064 / ADR-0068） */
@@ -1332,6 +1336,67 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       at: new Date().toISOString(),
       propId,
       patch: next,
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  removeCharacter: (characterId) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const character = project.characters.find((item) => item.id === characterId);
+    if (!character) {
+      set({ castError: "找不到这个人物。" });
+      return false;
+    }
+    const inShots = project.shots.filter((shot) => shot.characterIds.includes(characterId));
+    if (inShots.length > 0) {
+      set({
+        castError: `「${character.name}」还在 ${inShots.length} 镜的出场里：先去分镜页把他点掉（有台词的要先换人）。`,
+      });
+      return false;
+    }
+    const speaking = project.dialogue.filter((line) => line.characterId === characterId);
+    if (speaking.length > 0) {
+      set({ castError: `「${character.name}」还有 ${speaking.length} 句台词：先删掉或换人。` });
+      return false;
+    }
+    const event: ProjectEvent = {
+      type: "character.removed",
+      at: new Date().toISOString(),
+      characterId,
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  removeProp: (propId) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const prop = project.props.find((item) => item.id === propId);
+    if (!prop) {
+      set({ castError: "找不到这件道具。" });
+      return false;
+    }
+    const used = project.shots.filter((shot) => shot.propIds.includes(propId));
+    if (used.length > 0) {
+      set({
+        castError: `「${prop.name}」还在 ${used.length} 镜里：先去分镜页把它点掉，再删。`,
+      });
+      return false;
+    }
+    const event: ProjectEvent = {
+      type: "prop.removed",
+      at: new Date().toISOString(),
+      propId,
     };
     set({
       project: applyEvent(project, event),
