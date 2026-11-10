@@ -466,6 +466,33 @@ describe("调整场序（ADR-0060）", () => {
   });
 });
 
+describe("删地点（ADR-0061）", () => {
+  it("删掉没被场次占用的地点，重放后一致", () => {
+    const project = load();
+    const added: ProjectEvent = {
+      type: "location.added",
+      at: AT,
+      location: { id: "loc-balcony", name: "阳台", templateId: "corridor", referenceImages: [] },
+    };
+    const removed: ProjectEvent = { type: "location.removed", at: AT, locationId: "loc-balcony" };
+    const after = rebuild([created(project), added, removed]);
+
+    expect(after.locations.some((location) => location.id === "loc-balcony")).toBe(false);
+    // 原来的地点一个不少
+    expect(after.locations.map((location) => location.id)).toEqual(project.locations.map((location) => location.id));
+  });
+
+  it("被场次占用、不存在的地点都拒绝", () => {
+    const project = load();
+    expect(() =>
+      applyEvent(project, { type: "location.removed", at: AT, locationId: "loc-living" }),
+    ).toThrow(/还有 1 场/);
+    expect(() =>
+      applyEvent(project, { type: "location.removed", at: AT, locationId: "loc-404" }),
+    ).toThrow(/不存在/);
+  });
+});
+
 describe("location.added / location.updated（ADR-0059）", () => {
   it("加一个地点，重放后一致", () => {
     const project = load();

@@ -117,6 +117,8 @@ type WorkbenchState = {
   ) => boolean;
   /** 调整场序：写一条 `scene.moved`，场号与镜号跟着重排（ADR-0060） */
   moveScene: (sceneId: string, direction: "up" | "down") => boolean;
+  /** 删一个没被场次占用的地点：一条 `location.removed`（ADR-0061） */
+  removeLocation: (locationId: string) => boolean;
   /** 划掉一条补充要求：同样写一条 shot.updated（ADR-0039 附记） */
   removeNote: (shotId: string, note: string) => void;
   reset: () => void;
@@ -982,6 +984,34 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       at: new Date().toISOString(),
       sceneId,
       toIndex,
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  removeLocation: (locationId) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const location = project.locations.find((item) => item.id === locationId);
+    if (!location) {
+      set({ castError: "找不到这个地点。" });
+      return false;
+    }
+    const used = project.scenes.filter((scene) => scene.locationId === locationId);
+    if (used.length > 0) {
+      set({
+        castError: `还有 ${used.length} 场在「${location.name}」：先把场次改到别的地点再删。`,
+      });
+      return false;
+    }
+    const event: ProjectEvent = {
+      type: "location.removed",
+      at: new Date().toISOString(),
+      locationId,
     };
     set({
       project: applyEvent(project, event),

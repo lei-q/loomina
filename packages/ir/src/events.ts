@@ -63,6 +63,12 @@ export type ProjectEvent =
       patch: Partial<Pick<Location, "name" | "templateId">>;
     }
   | {
+      /** 删地点（ADR-0061）：还有场次指向它时拒绝，不留悬挂引用 */
+      type: "location.removed";
+      at: string;
+      locationId: Id;
+    }
+  | {
       /**
        * 台词改写（ADR-0044）：只允许改文本与时长。
        * 说话人不在这里改——换人等于换一句台词，应该新增而不是覆盖。
@@ -204,6 +210,23 @@ export function applyEvent(
         location.id === event.locationId ? { ...location, ...event.patch } : location,
       );
       return { ...current, locations };
+    }
+
+    case "location.removed": {
+      if (!current) throw new Error("location.removed 之前必须有 project.created");
+      if (!current.locations.some((location) => location.id === event.locationId)) {
+        throw new Error(`location.removed 指向不存在的地点: ${event.locationId}`);
+      }
+      const used = current.scenes.filter((scene) => scene.locationId === event.locationId);
+      if (used.length > 0) {
+        throw new Error(
+          `location.removed 还有 ${used.length} 场在这个地点: ${event.locationId}`,
+        );
+      }
+      return {
+        ...current,
+        locations: current.locations.filter((location) => location.id !== event.locationId),
+      };
     }
 
     case "dialogue.updated": {

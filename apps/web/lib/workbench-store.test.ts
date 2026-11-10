@@ -1243,6 +1243,31 @@ describe("新建 / 编辑地点（ADR-0059）", () => {
     expect(state().editLocation("loc-table", { name: "餐桌边" })).toBe(false);
     expect(state().events).toHaveLength(snapshot);
   });
+
+  it("删一个没被场次占用的地点：一条 location.removed，可回放", () => {
+    const id = state().addLocation("阳台", "corridor")!;
+    const snapshot = state().events.length;
+
+    expect(state().removeLocation(id)).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "location.removed", locationId: id });
+    expect(state().project.locations.some((item) => item.id === id)).toBe(false);
+    expect(rebuild(state().events).locations.some((item) => item.id === id)).toBe(false);
+  });
+
+  it("还有场次的地点不删；陌生地点、只读都不写事件", () => {
+    const snapshot = state().events.length;
+
+    // 示例里 loc-corridor 被 sc-1 与 sc-3 用了
+    expect(state().removeLocation("loc-corridor")).toBe(false);
+    expect(state().castError).toContain("还有 2 场");
+    expect(state().removeLocation("loc-404")).toBe(false);
+    expect(state().castError).toContain("找不到");
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().removeLocation("loc-door")).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+  });
 });
 
 describe("台词顺序整组写回（ADR-0053）", () => {

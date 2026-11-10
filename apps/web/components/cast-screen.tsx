@@ -190,6 +190,7 @@ function LocationRow({
   onLock,
   onUnlock,
   onRename,
+  onRemove,
 }: {
   location: CastLocationView;
   /** 主镜正在生成 */
@@ -202,8 +203,11 @@ function LocationRow({
   onUnlock: () => void;
   /** 改名 / 换模板：成功返回 true，表单据此收起 */
   onRename: (name: string, templateId: string) => boolean;
+  /** 删掉这个地点：成功返回 true（ADR-0061） */
+  onRemove: () => boolean;
 }) {
   const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [draftTemplate, setDraftTemplate] = useState(location.templateId ?? "doorway");
 
@@ -281,6 +285,41 @@ function LocationRow({
                     改名
                   </button>
                 )}
+                {!readOnly &&
+                  (deleting ? (
+                    <span className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (onRemove()) setDeleting(false);
+                        }}
+                        className="text-[9px] text-pick transition-colors duration-[var(--dur)] hover:opacity-75"
+                      >
+                        确认删
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDeleting(false)}
+                        className="text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
+                      >
+                        取消
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setDeleting(true)}
+                      disabled={location.required}
+                      title={
+                        location.required
+                          ? `还有场次在「${location.name}」：先把场次改到别的地点再删`
+                          : "删掉这个地点：日志里留一条记录，已经出的主镜图不删"
+                      }
+                      className="text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:text-pick disabled:cursor-default disabled:opacity-40"
+                    >
+                      删
+                    </button>
+                  ))}
               </div>
               <p className="tnum mt-2 text-[10px] text-muted-2">
                 {location.required ? "主镜 · 全场共用" : "主镜 · 还没挂场次"}
@@ -484,6 +523,7 @@ export function CastScreen() {
   const setBudget = useWorkbench((state) => state.setBudget);
   const addLocation = useWorkbench((state) => state.addLocation);
   const editLocation = useWorkbench((state) => state.editLocation);
+  const removeLocation = useWorkbench((state) => state.removeLocation);
 
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -647,6 +687,7 @@ export function CastScreen() {
                 onLock={() => lockCast("location", location.id)}
                 onUnlock={() => unlockCast("location", location.id)}
                 onRename={(name, templateId) => editLocation(location.id, { name, templateId })}
+                onRemove={() => removeLocation(location.id)}
               />
             ))}
           </section>
