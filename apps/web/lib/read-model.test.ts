@@ -49,6 +49,8 @@ describe("toStageView", () => {
     const view = toStageView(project);
     expect(view.spent).toBeCloseTo(19.08, 2);
     expect(view.unpriced).toBe(1);
+    expect(view.spend.assets).toBeCloseTo(0.12, 2);
+    expect(view.spend.takes).toBeCloseTo(18.96, 2);
   });
 
   it("重做报价跟着当前镜头的时长走，不再是一个写死的数", () => {
@@ -170,5 +172,25 @@ describe("预算来自项目（ADR-0035）", () => {
   it("budget 取项目自己的上限，不再是写死的 60", () => {
     const view = toStageView({ ...sampleProject, budgetCny: 120 });
     expect(view.budget).toBe(120);
+  });
+});
+
+describe("已花的构成（ADR-0036）", () => {
+  it("淘汰掉的 take 的钱单独算出来，不藏在总数里", () => {
+    const view = toStageView(sampleProject);
+    const rejected = sampleProject.takes
+      .filter((take) => take.status === "rejected")
+      .reduce((sum, take) => sum + take.costCny, 0);
+
+    expect(view.spend.rejected).toBeCloseTo(rejected, 2);
+    expect(view.spend.rejected).toBeLessThanOrEqual(view.spend.spent);
+  });
+
+  it("没有淘汰时是 0，不是缺省 undefined", () => {
+    const cleared = {
+      ...sampleProject,
+      takes: sampleProject.takes.map((take) => ({ ...take, status: "approved" as const })),
+    };
+    expect(toStageView(cleared).spend.rejected).toBe(0);
   });
 });

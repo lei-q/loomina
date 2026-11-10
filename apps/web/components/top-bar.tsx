@@ -27,6 +27,8 @@ export type TopBarProps = {
   budgetCny?: number;
   /** 生成过但价目表里没有模型的图，算不进已花（ADR-0033） */
   unpriced?: number;
+  /** 已花怎么构成的：分镜 / 定妆 / 已淘汰（ADR-0036） */
+  spendBreakdown?: { takes: number; assets: number; rejected: number };
   /** 本地写入失败：如实说没存住（ADR-0034） */
   storageError?: string;
   /** 另一个标签页在编辑：这一页只读 */
@@ -48,6 +50,7 @@ export function TopBar({
   spentCny,
   budgetCny,
   unpriced = 0,
+  spendBreakdown,
   storageError,
   readOnly,
   allRequote,
@@ -135,6 +138,30 @@ export function TopBar({
                     <Money value={spentCny} />
                   </dd>
                 </div>
+                {spendBreakdown && spendBreakdown.takes > 0 && (
+                  <div className="flex items-baseline justify-between gap-3 pl-3">
+                    <dt className="text-muted-2">分镜 take</dt>
+                    <dd className="text-muted-2">
+                      <Money value={spendBreakdown.takes} />
+                    </dd>
+                  </div>
+                )}
+                {spendBreakdown && spendBreakdown.assets > 0 && (
+                  <div className="flex items-baseline justify-between gap-3 pl-3">
+                    <dt className="text-muted-2">定妆图</dt>
+                    <dd className="text-muted-2">
+                      <Money value={spendBreakdown.assets} />
+                    </dd>
+                  </div>
+                )}
+                {spendBreakdown && spendBreakdown.rejected > 0 && (
+                  <div className="flex items-baseline justify-between gap-3 pl-3">
+                    <dt className="text-muted-2">已淘汰 take</dt>
+                    <dd className="text-muted-2">
+                      <Money value={spendBreakdown.rejected} />
+                    </dd>
+                  </div>
+                )}
                 {allRequote && (
                   <div className="flex items-baseline justify-between gap-3">
                     <dt className="text-muted-2">全部重做一遍</dt>

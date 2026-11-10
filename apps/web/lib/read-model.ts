@@ -34,6 +34,12 @@ export type StageShot = {
 export type Spend = {
   /** 已花：take 的费用 + 有价目的生成资产，元 */
   spent: number;
+  /** 其中分镜 take 的钱 */
+  takes: number;
+  /** 其中定妆 / 场景 / 道具资产的钱 */
+  assets: number;
+  /** 其中已淘汰 take 的钱：钱花了，但那一版不要了（ADR-0036） */
+  rejected: number;
   /** 生成过、但价目表里没有这个模型，算不进已花的图（ADR-0033） */
   unpriced: number;
 };
@@ -46,13 +52,23 @@ export type Spend = {
  */
 export function spendOf(project: Project): Spend {
   const takes = project.takes.reduce((sum, take) => sum + take.costCny, 0);
+  const rejected = project.takes
+    .filter((take) => take.status === "rejected")
+    .reduce((sum, take) => sum + take.costCny, 0);
   let assets = 0;
   let unpriced = 0;
   for (const asset of project.assets) {
     if (asset.costCny !== undefined) assets += asset.costCny;
     else if (asset.source === "generated" && asset.uri) unpriced += 1;
   }
-  return { spent: Math.round((takes + assets) * 100) / 100, unpriced };
+  const round = (value: number) => Math.round(value * 100) / 100;
+  return {
+    spent: round(takes + assets),
+    takes: round(takes),
+    assets: round(assets),
+    rejected: round(rejected),
+    unpriced,
+  };
 }
 
 export type StageView = {
@@ -60,6 +76,8 @@ export type StageView = {
   version: number;
   /** 已花 / 预算，元 */
   spent: number;
+  /** 已花的构成（分镜 / 定妆 / 已淘汰） */
+  spend: Spend;
   /** 算不进已花的生成资产张数 */
   unpriced: number;
   budget: number;
@@ -185,12 +203,14 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
         .join(" ")
     : "";
 
-  const { spent, unpriced } = spendOf(project);
+  const spend = spendOf(project);
+  const { spent, unpriced } = spend;
 
   return {
     title: project.title,
     version: project.version,
     spent,
+    spend,
     unpriced,
     budget: options.budgetCny ?? project.budgetCny,
     current,

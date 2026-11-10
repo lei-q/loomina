@@ -64,6 +64,7 @@ export function Workbench() {
         spentCny={view.spent}
         budgetCny={view.budget}
         unpriced={view.unpriced}
+        spendBreakdown={view.spend}
         storageError={storageError}
         readOnly={readOnly}
         onBudgetChange={setBudget}

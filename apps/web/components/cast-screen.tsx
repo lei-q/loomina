@@ -416,6 +416,7 @@ export function CastScreen() {
         spentCny={cast.spend.spent}
         budgetCny={project.budgetCny}
         unpriced={cast.spend.unpriced}
+        spendBreakdown={cast.spend}
         storageError={storageError}
         readOnly={readOnly}
         onBudgetChange={setBudget}
