@@ -35,9 +35,10 @@ export function Workbench() {
     });
   }, [hydrate, setImagePrice]);
 
+  const events = useWorkbench((state) => state.events);
   const view = useMemo(
-    () => toStageView(project, { currentShotId }),
-    [project, currentShotId],
+    () => toStageView(project, { currentShotId, events }),
+    [project, currentShotId, events],
   );
 
   // 键盘：← → 换格，⌘⏎ 留用；输入框里只让 ⌘⏎ 生效

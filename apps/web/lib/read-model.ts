@@ -50,6 +50,9 @@ export type StageShot = {
   /** 尾帧的真图（data URI，ADR-0038）；没生成过就为空 */
   lastKeyframeUri?: string;
   hasLastFrame: boolean;
+  /** 出图之后这一镜的画面改过（ADR-0057）：值是那次改动的时间 */
+  staleFirst?: string;
+  staleLast?: string;
 };
 
 export type Spend = {
@@ -117,6 +120,8 @@ export type StageOptions = {
   budgetCny?: number;
   /** 指定看哪一格；不传则挑第一个还没定的镜头 */
   currentShotId?: string;
+  /** 给了日志就算出关键帧的过期标记（ADR-0057） */
+  events?: ProjectEvent[];
 };
 
 const artByTemplate: Record<string, SceneKind> = {
@@ -192,6 +197,7 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
   );
 
   const ordered = orderShots(project);
+  const stale = options.events ? staleFrames(options.events, project) : new Map<string, StaleFrame>();
 
   const shots: StageShot[] = ordered.map((shot, i) => {
     const take = latestTake(shot, takesById);
@@ -227,6 +233,8 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
       hasKeyframe: Boolean(keyframe),
       lastKeyframeUri: lastFrame?.uri,
       hasLastFrame: Boolean(lastFrame),
+      staleFirst: stale.get(shot.id)?.first,
+      staleLast: stale.get(shot.id)?.last,
     };
   });
 

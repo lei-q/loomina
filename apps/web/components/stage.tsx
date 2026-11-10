@@ -48,6 +48,9 @@ function Current({
   ];
   const shownUri = shown === "first" ? shot.keyframeUri : shot.lastKeyframeUri;
   const shownHas = shown === "first" ? shot.hasKeyframe : shot.hasLastFrame;
+  // 出图之后画面输入改过：这一帧已经对不上这一镜（ADR-0057）
+  const shownStale = shown === "first" ? shot.staleFirst : shot.staleLast;
+  const staleOf = (frame: Frame) => (frame === "first" ? shot.staleFirst : shot.staleLast);
 
   return (
     <figure className="flex shrink-0 flex-col items-center gap-2">
@@ -69,6 +72,15 @@ function Current({
           />
         ) : (
           <Scene kind={shot.art} className="h-full w-full" />
+        )}
+
+        {shownStale && generating !== shown && (
+          <span
+            title={`${FRAME_LABEL[shown]}出图之后，这一镜的画面又改过，建议重生成`}
+            className="absolute bottom-1.5 left-1.5 rounded-[1px] bg-pick/85 px-1 text-[8.5px] leading-[1.5] text-white"
+          >
+            过期
+          </span>
         )}
 
         {generating === shown && (
@@ -111,6 +123,12 @@ function Current({
                   <span className="absolute inset-0 grid place-items-center bg-bg/75 text-[8px] text-text">
                     ……
                   </span>
+                )}
+                {staleOf(frame.key) && (
+                  <span
+                    title="出图之后画面改过，这一帧已对不上"
+                    className="absolute right-0 top-0 h-1.5 w-1.5 rounded-full bg-pick"
+                  />
                 )}
               </span>
               <span

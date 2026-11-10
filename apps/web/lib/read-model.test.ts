@@ -715,5 +715,12 @@ describe("出图后改了画面：帧过期（ADR-0057）", () => {
     const view = toKeyframeView(withFrames, { events });
     expect(view.cells.find((cell) => cell.id === "s-01")?.staleFirst).toBe(at(9));
     expect(view.cells.find((cell) => cell.id === "s-02")?.staleFirst).toBeUndefined();
+
+    // 分镜页的 StageShot 也带同样的标记
+    const stage = toStageView(withFrames, { events });
+    expect(stage.shots.find((shot) => shot.id === "s-01")?.staleFirst).toBe(at(9));
+    expect(stage.shots.find((shot) => shot.id === "s-02")?.staleFirst).toBeUndefined();
+    // 不给日志就不算
+    expect(toStageView(withFrames).shots.find((shot) => shot.id === "s-01")?.staleFirst).toBeUndefined();
   });
 });

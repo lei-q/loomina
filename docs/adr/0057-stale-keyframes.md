@@ -63,3 +63,7 @@
 | 新增 `keyframe.stale` 事件 | 过期是推导出来的状态，不是发生过的事；存下来会与日志打架 |
 | 在生成时就锁死这一镜 | 锁定是闸门（ADR-0041），要求先留用 take；不该为了帧强行锁镜 |
 | 只在资产上记来源时间 | 已经有 `createdAt`；缺的是「改动时刻」的聚合，属于读模型的事 |
+
+## 附记（2026-11-10）分镜页也挂上
+
+只在一页标过期，另一页照旧看不见，是「两处看到的东西不一样」。`StageOptions` 加可选 `events`，`toStageView` 把同一份 `staleFrames` 写进 `StageShot.staleFirst / staleLast`：分镜页大画面左下角挂`过期`，首 / 尾缩略图右上角一个小红点、帧名变 pick 色。不给 `events` 就不算——store 内部那些只用来挑镜头的 `toStageView` 调用不受影响。
