@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { TopBar } from "@/components/top-bar";
 import {
+  actionHistory,
   dialogueHistory,
+  previousActionText,
   previousDialogueText,
   sceneHead,
   scriptToText,
@@ -94,6 +96,11 @@ export function ScriptScreen() {
     } else {
       setNote(useWorkbench.getState().castError);
     }
+  };
+
+  const restoreAction = (shotId: string, text: string) => {
+    if (editAction(shotId, text)) setNote(undefined);
+    else setNote(useWorkbench.getState().castError);
   };
 
   const save = (lineId: string) => {
@@ -330,6 +337,75 @@ export function ScriptScreen() {
                           </button>
                         )}
 
+                        {editingAction !== shot.id &&
+                          (() => {
+                            const history = actionHistory(events, shot.id);
+                            if (history.edits.length === 0) return null;
+                            const prev = previousActionText(history);
+                            return (
+                              <details className="mt-1">
+                                <summary className="tnum cursor-pointer list-none text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-muted [&::-webkit-details-marker]:hidden">
+                                  改过 {history.edits.length} 次
+                                  {prev ? ` · 上一版「${prev}」` : ""}
+                                </summary>
+                                <ul className="mt-1 space-y-0.5 text-[9.5px] leading-[1.7]">
+                                  {[...history.edits].reverse().map((edit, i) => (
+                                    <li
+                                      key={`${edit.at}-${i}`}
+                                      className="flex items-baseline gap-2"
+                                    >
+                                      <span className="tnum shrink-0 text-muted-2">
+                                        {clock(edit.at)}
+                                      </span>
+                                      <span className="text-muted">{edit.text}</span>
+                                      {!readOnly && (
+                                        <button
+                                          type="button"
+                                          disabled={shot.locked || edit.text === shot.action}
+                                          onClick={() => restoreAction(shot.id, edit.text)}
+                                          title={
+                                            shot.locked
+                                              ? "这一镜已锁定，先解锁才能改动作"
+                                              : "用回这一版"
+                                          }
+                                          className="shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                                        >
+                                          用这版
+                                        </button>
+                                      )}
+                                    </li>
+                                  ))}
+                                  {history.original !== undefined && (
+                                    <li className="flex items-baseline gap-2">
+                                      <span className="shrink-0 text-muted-2">最初</span>
+                                      <span className="text-muted-2">{history.original}</span>
+                                      {!readOnly && (
+                                        <button
+                                          type="button"
+                                          disabled={
+                                            shot.locked || history.original === shot.action
+                                          }
+                                          onClick={() =>
+                                            restoreAction(shot.id, history.original!)
+                                          }
+                                          title={
+                                            shot.locked
+                                              ? "这一镜已锁定，先解锁才能改动作"
+                                              : "用回最初这一版"
+                                          }
+                                          className="shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                                        >
+                                          用这版
+                                        </button>
+                                      )}
+                                    </li>
+                                  )}
+                                </ul>
+                                {note && <p className="mt-1 text-[9.5px] text-pick">{note}</p>}
+                              </details>
+                            );
+                          })()}
+
                         {shot.lines.length > 0 && (
                           <div className="mt-2 space-y-2">
                             {shot.lines.map((line, lineIndex) =>
@@ -514,7 +590,7 @@ export function ScriptScreen() {
                                                     restore(line.id, edit.text, Math.round(edit.dur * 1000))
                                                   }
                                                   title={shot.locked ? "这一镜已锁定，先解锁才能改台词" : "用回这一版"}
-                                                  className="ml-auto shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                                                  className="shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
                                                 >
                                                   用这版
                                                 </button>
@@ -540,7 +616,7 @@ export function ScriptScreen() {
                                                     )
                                                   }
                                                   title={shot.locked ? "这一镜已锁定，先解锁才能改台词" : "用回最初这一版"}
-                                                  className="ml-auto shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                                                  className="shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
                                                 >
                                                   用这版
                                                 </button>

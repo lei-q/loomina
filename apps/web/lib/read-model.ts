@@ -732,6 +732,45 @@ export function previousDialogueText(history: DialogueHistory): string | undefin
   return history.edits[history.edits.length - 2]?.text ?? history.original?.text;
 }
 
+export type ActionRevision = { at: string; text: string };
+
+export type ActionHistory = {
+  /** 引导事件里最初那句动作；日志里没有就省掉 */
+  original?: string;
+  /** 从旧到新，一次改写一条 */
+  edits: ActionRevision[];
+};
+
+/**
+ * 一镜的动作被改过几次（ADR-0051）。
+ *
+ * 动作没有自己的事件：每次改写就是一条带 `description` 的 `shot.updated`；
+ * 最初那版从 `project.created` 的快照里取。与台词的历史同一套读法。
+ */
+export function actionHistory(events: ProjectEvent[], shotId: string): ActionHistory {
+  let original: string | undefined;
+  const first = events[0];
+  if (first?.type === "project.created") {
+    const shot = first.project.shots.find((item) => item.id === shotId);
+    if (shot) original = shot.description;
+  }
+
+  const edits: ActionRevision[] = [];
+  for (const event of events) {
+    if (event.type !== "shot.updated" || event.shotId !== shotId) continue;
+    if (event.patch.description === undefined) continue;
+    edits.push({ at: event.at, text: event.patch.description });
+  }
+
+  return { original, edits };
+}
+
+/** 上一版的动作：改过一次就是最初那版，改过多次就是倒数第二版的文本。 */
+export function previousActionText(history: ActionHistory): string | undefined {
+  if (history.edits.length === 0) return undefined;
+  return history.edits[history.edits.length - 2]?.text ?? history.original;
+}
+
 /**
  * 剧本导出成纯文本（ADR-0048）：给存档、给外部工具、给人看。
  *

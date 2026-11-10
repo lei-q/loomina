@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { ProjectSchema, type ProjectInput } from "@loomina/ir";
 import {
+  actionHistory,
   dialogueHistory,
   filterKeyframeCells,
   keyframeTally,
+  previousActionText,
   previousDialogueText,
   sceneHead,
   scriptToText,
@@ -489,5 +491,40 @@ describe("剧本导出（ADR-0048）", () => {
   it("场头带内 / 外景与日夜，第四场在门外", () => {
     const view = toScriptView(sampleProject);
     expect(view.scenes.map(sceneHead)).toEqual(["内 · 夜", "内 · 夜", "内 · 夜", "外 · 夜", "内 · 夜"]);
+  });
+});
+
+describe("动作版本（ADR-0051）", () => {
+  const at = (h: number) => `2026-11-10T${String(h).padStart(2, "0")}:00:00+08:00`;
+  const events = [
+    { type: "project.created" as const, at: at(0), project: sampleProject },
+    { type: "shot.updated" as const, at: at(9), shotId: "s-01", patch: { description: "走廊尽头，灯管闪了两下。" } },
+    { type: "shot.updated" as const, at: at(10), shotId: "s-01", patch: { description: "走廊尽头，灯管彻底灭了。" } },
+    { type: "shot.updated" as const, at: at(11), shotId: "s-02", patch: { description: "门缝里透出一条光。" } },
+    { type: "shot.updated" as const, at: at(12), shotId: "s-01", patch: { locked: true } },
+  ];
+
+  it("最初一版从引导事件取，只收带 description 的改写", () => {
+    const history = actionHistory(events, "s-01");
+    expect(history.original).toBe("走廊尽头，灯管闪了一下");
+    expect(history.edits.map((edit) => edit.text)).toEqual([
+      "走廊尽头，灯管闪了两下。",
+      "走廊尽头，灯管彻底灭了。",
+    ]);
+  });
+
+  it("上一版：改过一次是最初那版，改过多次是倒数第二版", () => {
+    expect(previousActionText(actionHistory(events.slice(0, 2), "s-01"))).toBe(
+      "走廊尽头，灯管闪了一下",
+    );
+    expect(previousActionText(actionHistory(events, "s-01"))).toBe("走廊尽头，灯管闪了两下。");
+  });
+
+  it("没改过的镜头没有版本，别的镜头与锁定事件都不算进来", () => {
+    const untouched = actionHistory(events, "s-03");
+    expect(untouched.original).toBe("她站在门口，没有进来");
+    expect(untouched.edits).toEqual([]);
+    expect(previousActionText(untouched)).toBeUndefined();
+    expect(actionHistory(events, "s-01").edits).toHaveLength(2);
   });
 });
