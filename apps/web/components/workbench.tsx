@@ -20,6 +20,7 @@ export function Workbench() {
   const generateKeyframe = useWorkbench((state) => state.generateKeyframe);
   const instruct = useWorkbench((state) => state.instruct);
   const removeNote = useWorkbench((state) => state.removeNote);
+  const setShotLock = useWorkbench((state) => state.setShotLock);
   const jobs = useWorkbench((state) => state.jobs);
   const castError = useWorkbench((state) => state.castError);
   const imageCny = useWorkbench((state) => state.imageCny);
@@ -98,7 +99,13 @@ export function Workbench() {
         onGenerateKeyframe={(frame) => void generateKeyframe(view.shots[view.current]!.id, frame)}
         onRemoveNote={(note) => removeNote(view.shots[view.current]!.id, note)}
       />
-      <ReelBar view={view} onSelect={select} onDecide={decide} onInstruct={instruct} />
+      <ReelBar
+        view={view}
+        onSelect={select}
+        onDecide={decide}
+        onInstruct={instruct}
+        onSetLock={(locked) => setShotLock(view.shots[view.current]!.id, locked)}
+      />
     </div>
   );
 }

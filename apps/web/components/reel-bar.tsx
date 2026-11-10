@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Scene } from "@/components/scene";
-import { CheckIcon, CrossIcon, RedoIcon } from "@/components/icons";
+import { CheckIcon, CrossIcon, LockIcon, RedoIcon, UnlockIcon } from "@/components/icons";
 import type { StageShot, StageView } from "@/lib/read-model";
 import type { Decision } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
@@ -49,11 +49,15 @@ export type ReelBarProps = {
   onDecide: (status: Decision) => void;
   /** 一句话指令：成功返回 true，输入框据此清空（ADR-0039） */
   onInstruct: (text: string) => boolean;
+  /** 锁 / 解锁这一镜（ADR-0041） */
+  onSetLock: (locked: boolean) => void;
 };
 
-export function ReelBar({ view, onSelect, onDecide, onInstruct }: ReelBarProps) {
+export function ReelBar({ view, onSelect, onDecide, onInstruct, onSetLock }: ReelBarProps) {
   const current = view.shots[view.current]!;
   const decidable = !current.locked && current.take !== undefined;
+  // 锁定是"这一镜定了"：先留用，再锁（ADR-0041）
+  const canLock = !current.locked && current.state === "pick";
   const [draft, setDraft] = useState("");
 
   return (
@@ -89,14 +93,25 @@ export function ReelBar({ view, onSelect, onDecide, onInstruct }: ReelBarProps) 
               onChange={(event) => setDraft(event.target.value)}
               disabled={current.locked}
               placeholder="说哪里不对：太暗了 · 换个角度 · 她笑得太早了"
-              className="w-full bg-transparent text-[12.5px] text-text placeholder:text-muted-2 focus:outline-none disabled:cursor-not-allowed"
+              className="w-full bg-transparent text-[12.5px] text-text placeholder:text-muted-2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
             />
             <kbd className="tnum shrink-0 text-[9px] text-muted-2">⏎</kbd>
           </label>
         </form>
 
         {current.locked ? (
-          <span className="tnum shrink-0 px-1 text-[10.5px] text-muted-2">已锁定 · 只读</span>
+          <>
+            <span className="tnum shrink-0 px-1 text-[10.5px] text-muted-2">已锁定 · 只读</span>
+            <button
+              type="button"
+              onClick={() => onSetLock(false)}
+              title="解锁会留痕：之后的改动都写进日志"
+              className="flex items-center gap-1.5 rounded-token border border-line px-3 py-2 text-[12px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+            >
+              <UnlockIcon className="h-3.5 w-3.5" />
+              解锁
+            </button>
+          </>
         ) : (
           <>
             <button
@@ -139,6 +154,20 @@ export function ReelBar({ view, onSelect, onDecide, onInstruct }: ReelBarProps) 
             >
               <CheckIcon className="h-3.5 w-3.5" />
               留用
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onSetLock(true)}
+              disabled={!canLock}
+              title={canLock ? "锁定这一镜：不再改、不再生成" : "先留用一条 take，再锁定这一镜"}
+              className={cn(
+                "flex items-center gap-1.5 rounded-token border border-line px-3 py-2 text-[12px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text",
+                "disabled:pointer-events-none disabled:opacity-40",
+              )}
+            >
+              <LockIcon className="h-3.5 w-3.5" />
+              锁定
             </button>
           </>
         )}

@@ -55,6 +55,8 @@ type WorkbenchState = {
   /** 从本地日志恢复；已经恢复过就什么都不做 */
   hydrate: () => Promise<void>;
   select: (shotId: string) => void;
+  /** 锁 / 解锁一镜：留用过的镜头才能锁；读写都留痕（ADR-0041） */
+  setShotLock: (shotId: string, locked: boolean) => void;
   decide: (status: Decision) => void;
   /** 定妆闸门：锁定 / 解锁一个角色、场景或道具 */
   lockCast: (targetType: ApprovalTargetType, targetId: string) => void;
@@ -315,6 +317,33 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       project: next,
       events: [...events, event],
       currentShotId: nextOpenShotId(next, currentShotId),
+    });
+  },
+
+  setShotLock: (shotId, locked) => {
+    if (get().readOnly) return;
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot || Boolean(shot.locked) === locked) return;
+    // 锁定是"这一镜定了"：没有留用过的 take 就不许锁（ADR-0041）
+    if (locked) {
+      const take = latestTake(shot, new Map(project.takes.map((item) => [item.id, item])));
+      if (!take || take.status !== "approved") {
+        set({ castError: "先留用一条 take，再锁定这一镜。" });
+        return;
+      }
+    }
+
+    const event: ProjectEvent = {
+      type: "shot.updated",
+      at: new Date().toISOString(),
+      shotId: shot.id,
+      patch: { locked },
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
     });
   },
 

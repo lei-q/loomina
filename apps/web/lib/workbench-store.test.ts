@@ -417,6 +417,51 @@ describe("一句话指令（ADR-0039）", () => {
   });
 });
 
+describe("镜头锁定（ADR-0041）", () => {
+  beforeEach(() => {
+    state().reset();
+  });
+
+  it("没有留用过的 take 不许锁，只给一句说明", async () => {
+    const id = state().currentShotId;
+    state().setShotLock(id, true);
+
+    const shot = state().project.shots.find((item) => item.id === id);
+    expect(shot?.locked).toBe(false);
+    expect(state().events).toHaveLength(1);
+    expect(state().castError).toContain("先留用");
+  });
+
+  it("留用之后可以锁，写一条 shot.updated；解锁也留痕", () => {
+    const id = state().currentShotId;
+    state().decide("approved");
+    state().setShotLock(id, true);
+
+    expect(state().project.shots.find((item) => item.id === id)?.locked).toBe(true);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.updated",
+      patch: { locked: true },
+    });
+
+    state().setShotLock(id, false);
+    expect(state().project.shots.find((item) => item.id === id)?.locked).toBe(false);
+    expect(rebuild(state().events).shots.find((item) => item.id === id)?.locked).toBe(false);
+  });
+
+  it("锁定的镜头拒绝生成与一句话指令", async () => {
+    const id = state().currentShotId;
+    state().decide("approved");
+    state().select(id); // 留用会把选中挪到下一格，这里回到原镜
+    state().setShotLock(id, true);
+    const before = state().events.length;
+
+    state().instruct("太暗了");
+    await state().generateKeyframe(id, "first");
+
+    expect(state().events).toHaveLength(before);
+  });
+});
+
 describe("预算（ADR-0035）", () => {
   beforeEach(() => {
     state().reset();
