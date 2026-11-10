@@ -76,7 +76,7 @@ function Current({
 
         {shownStale && generating !== shown && (
           <span
-            title={`${FRAME_LABEL[shown]}出图之后，这一镜的画面又改过，建议重生成`}
+            title={`${FRAME_LABEL[shown]}出图之后改过：${shownStale.reasons.join("、")}，建议重生成`}
             className="absolute bottom-1.5 left-1.5 rounded-[1px] bg-pick/85 px-1 text-[8.5px] leading-[1.5] text-white"
           >
             过期
@@ -126,7 +126,7 @@ function Current({
                 )}
                 {staleOf(frame.key) && (
                   <span
-                    title="出图之后画面改过，这一帧已对不上"
+                    title={`出图之后改过：${staleOf(frame.key)?.reasons.join("、")}，这一帧已对不上`}
                     className="absolute right-0 top-0 h-1.5 w-1.5 rounded-full bg-pick"
                   />
                 )}

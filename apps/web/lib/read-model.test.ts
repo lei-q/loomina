@@ -673,7 +673,7 @@ describe("出图后改了画面：帧过期（ADR-0057）", () => {
       { type: "shot.updated" as const, at: at(9), shotId: "s-01", patch: { description: "灯灭了" } },
     ];
     const stale = staleFrames(events, withFrames);
-    expect(stale.get("s-01")).toEqual({ first: at(9) });
+    expect(stale.get("s-01")).toEqual({ first: { at: at(9), reasons: ["动作"] } });
     expect(stale.has("s-02")).toBe(false);
   });
 
@@ -683,8 +683,20 @@ describe("出图后改了画面：帧过期（ADR-0057）", () => {
       { type: "scene.updated" as const, at: at(10), sceneId: "sc-1", patch: { timeOfDay: "day" as const } },
     ];
     const stale = staleFrames(events, withFrames);
-    expect(stale.get("s-01")?.first).toBe(at(10));
-    expect(stale.get("s-02")?.first).toBe(at(10));
+    expect(stale.get("s-01")?.first).toEqual({ at: at(10), reasons: ["场头"] });
+    expect(stale.get("s-02")?.first).toEqual({ at: at(10), reasons: ["场头"] });
+  });
+
+  it("改过好几处：原因去重，时刻取最后一次", () => {
+    const events = [
+      ...base,
+      { type: "shot.updated" as const, at: at(9), shotId: "s-01", patch: { description: "灯灭了" } },
+      { type: "shot.updated" as const, at: at(12), shotId: "s-01", patch: { shotSize: "close" as const } },
+      { type: "shot.updated" as const, at: at(13), shotId: "s-01", patch: { description: "又亮了" } },
+    ];
+    expect(staleFrames(events, withFrames).get("s-01")).toEqual({
+      first: { at: at(13), reasons: ["动作", "景别"] },
+    });
   });
 
   it("只改台词、或者帧是在改动之后出的，都不算过期", () => {
@@ -713,12 +725,18 @@ describe("出图后改了画面：帧过期（ADR-0057）", () => {
       { type: "shot.updated" as const, at: at(9), shotId: "s-01", patch: { description: "灯灭了" } },
     ];
     const view = toKeyframeView(withFrames, { events });
-    expect(view.cells.find((cell) => cell.id === "s-01")?.staleFirst).toBe(at(9));
+    expect(view.cells.find((cell) => cell.id === "s-01")?.staleFirst).toEqual({
+      at: at(9),
+      reasons: ["动作"],
+    });
     expect(view.cells.find((cell) => cell.id === "s-02")?.staleFirst).toBeUndefined();
 
     // 分镜页的 StageShot 也带同样的标记
     const stage = toStageView(withFrames, { events });
-    expect(stage.shots.find((shot) => shot.id === "s-01")?.staleFirst).toBe(at(9));
+    expect(stage.shots.find((shot) => shot.id === "s-01")?.staleFirst).toEqual({
+      at: at(9),
+      reasons: ["动作"],
+    });
     expect(stage.shots.find((shot) => shot.id === "s-02")?.staleFirst).toBeUndefined();
     // 不给日志就不算
     expect(toStageView(withFrames).shots.find((shot) => shot.id === "s-01")?.staleFirst).toBeUndefined();

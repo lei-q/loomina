@@ -50,9 +50,9 @@ export type StageShot = {
   /** 尾帧的真图（data URI，ADR-0038）；没生成过就为空 */
   lastKeyframeUri?: string;
   hasLastFrame: boolean;
-  /** 出图之后这一镜的画面改过（ADR-0057）：值是那次改动的时间 */
-  staleFirst?: string;
-  staleLast?: string;
+  /** 出图之后这一镜的画面改过（ADR-0057）：时间是最后一次改动，另带改过哪几项 */
+  staleFirst?: StaleMark;
+  staleLast?: StaleMark;
 };
 
 export type Spend = {
@@ -287,22 +287,26 @@ export type KeyframeCell = {
   lastUri?: string;
   hasFirst: boolean;
   hasLast: boolean;
-  /** 出图之后这一镜的画面输入改过（ADR-0057）：值是最后一次改动的时间 */
-  staleFirst?: string;
-  staleLast?: string;
+  /** 出图之后这一镜的画面输入改过（ADR-0057）：时间是最后一次改动，另带改过哪几项 */
+  staleFirst?: StaleMark;
+  staleLast?: StaleMark;
 };
 
 /** 影响画面的镜头字段：改了这些，已经出的帧就不算数了（ADR-0057） */
-const VISUAL_SHOT_KEYS = [
-  "description",
-  "promptNotes",
-  "shotSize",
-  "camera",
-  "characterIds",
-  "propIds",
-] as const;
+/** 画面字段 → 人话（ADR-0057 附记：过期要能说出改了什么） */
+const VISUAL_SHOT_KEYS: Array<[keyof Shot, string]> = [
+  ["description", "动作"],
+  ["promptNotes", "补充要求"],
+  ["shotSize", "景别"],
+  ["camera", "机位"],
+  ["characterIds", "人物"],
+  ["propIds", "道具"],
+];
 
-export type StaleFrame = { first?: string; last?: string };
+/** 一帧过期：最后一次改动的时间，与出图之后改过的那几项 */
+export type StaleMark = { at: string; reasons: string[] };
+
+export type StaleFrame = { first?: StaleMark; last?: StaleMark };
 
 /**
  * 哪些帧在出图之后又改过画面输入（ADR-0057）。
@@ -312,10 +316,12 @@ export type StaleFrame = { first?: string; last?: string };
  * 内 / 外景、日夜、地点算进来；台词改动不算——它不改变一张静止画面。
  */
 export function staleFrames(events: ProjectEvent[], project: Project): Map<string, StaleFrame> {
-  const edits = new Map<string, string>();
-  const bump = (shotId: string, at: string) => {
-    const previous = edits.get(shotId);
-    if (!previous || Date.parse(at) > Date.parse(previous)) edits.set(shotId, at);
+  // 每一镜记下每一条画面改动的时刻与原因：哪一帧过期，取决于它出图之后发生了哪些
+  const edits = new Map<string, Array<{ at: string; reason: string }>>();
+  const bump = (shotId: string, at: string, reason: string) => {
+    const list = edits.get(shotId);
+    if (list) list.push({ at, reason });
+    else edits.set(shotId, [{ at, reason }]);
   };
 
   const first = events[0];
@@ -326,18 +332,18 @@ export function staleFrames(events: ProjectEvent[], project: Project): Map<strin
 
   for (const event of events.slice(first?.type === "project.created" ? 1 : 0)) {
     if (event.type === "shot.updated") {
-      if (VISUAL_SHOT_KEYS.some((key) => event.patch[key] !== undefined)) {
-        bump(event.shotId, event.at);
+      for (const [key, label] of VISUAL_SHOT_KEYS) {
+        if (event.patch[key] !== undefined) bump(event.shotId, event.at, label);
       }
     } else if (event.type === "scene.updated") {
-      for (const shotId of sceneShots.get(event.sceneId) ?? []) bump(shotId, event.at);
+      for (const shotId of sceneShots.get(event.sceneId) ?? []) bump(shotId, event.at, "场头");
     }
   }
 
   const stale = new Map<string, StaleFrame>();
   for (const shot of project.shots) {
-    const editedAt = edits.get(shot.id);
-    if (!editedAt) continue;
+    const shotEdits = edits.get(shot.id);
+    if (!shotEdits) continue;
     const out: StaleFrame = {};
     for (const [key, assetId] of [
       ["first", shot.keyframes.firstAssetId],
@@ -345,7 +351,11 @@ export function staleFrames(events: ProjectEvent[], project: Project): Map<strin
     ] as const) {
       if (!assetId) continue;
       const asset = project.assets.find((item) => item.id === assetId);
-      if (asset && Date.parse(asset.createdAt) < Date.parse(editedAt)) out[key] = editedAt;
+      if (!asset) continue;
+      const after = shotEdits.filter((edit) => Date.parse(edit.at) > Date.parse(asset.createdAt));
+      if (after.length === 0) continue;
+      const at = after.reduce((latest, edit) => (Date.parse(edit.at) > Date.parse(latest) ? edit.at : latest), after[0]!.at);
+      out[key] = { at, reasons: [...new Set(after.map((edit) => edit.reason))] };
     }
     if (out.first || out.last) stale.set(shot.id, out);
   }

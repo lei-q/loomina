@@ -74,7 +74,7 @@ function Cell({
         <span className="tnum absolute left-1.5 top-1 text-[9px] text-white/70">{shotLabel(cell.no)}</span>
         {uri && staleAt && (
           <span
-            title={`${frame === "first" ? "首帧" : "尾帧"}出图之后，这一镜的画面在 ${clock(staleAt)} 改过，建议重生成`}
+            title={`${frame === "first" ? "首帧" : "尾帧"}出图之后改过：${staleAt.reasons.join("、")}（${clock(staleAt.at)}），建议重生成`}
             className="absolute bottom-1.5 left-1.5 rounded-[1px] bg-pick/85 px-1 text-[8.5px] leading-[1.5] text-white"
           >
             过期
