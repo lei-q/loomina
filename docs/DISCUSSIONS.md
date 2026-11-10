@@ -801,3 +801,28 @@
 1. 重做真的接生成：先只做单镜重做，写事件、记账、出 take。
 2. 档位选择（草稿 / 成片）进报价面板，价格随档位变。
 3. 通过率除以预算：用历史 take 的淘汰率算"预计实际花费"。
+
+### 第二十一次讨论：图片接口复测，出图恢复、参考图仍然进不去（2026-11-10）
+
+前面几轮都写着"图片接口不通"，所有视觉能力都停在这句话后面。今天花了几十秒和几张图的钱，把这句话拆开验了一遍。结论见 [MODEL-GATEWAY.md](MODEL-GATEWAY.md) 第九节。
+
+**测到了什么**
+- `GET /v1/models` 已是 LiteLLM 目录：71 个模型，字段是 `mode`（chat 46 / video_generation 7 / image_generation 10 / realtime 3 / audio_speech 2 / audio_transcription 3），没有 `pricing`、没有 `api_interfaces`。
+- 新发现 `GET /v1/model/info`：带 `litellm_params` 的价格字段（`output_cost_per_image`、`output_cost_per_second_<分辨率>`），10 个图片模型、7 个视频模型都有数。
+- `POST /v1/images/generations` **能用**：`gemini-2.5-flash-image` 1024×1536 用时 25.6s、`gpt-image-2` 23.8s、`gpt-image-2-c` 43.1s，都返回 `b64_json` + `url`。11-09 的 503 是当时的偶发故障，同型号今天可以出图。
+- `POST /v1/images/edits`（multipart 带一张图）→ 400 `unsupported_parameter` / `Image request rejected`；chat + `modalities` 仍是 400 `invalid model price`。**参考图这条路没有出口。**
+
+**这意味着什么**
+- "能不能出图"与"能不能带参考图"是两件事，之前混着说，导致 FEATURES 里的判断偏悲观。关键帧能出了；身份一致性还不能靠参考图保证，ADR-0029 的约束一条都不用改。
+- 价格信号分两套：`/v1/model/info` 的数是 LiteLLM 口径（惯例是美元），和 `/v1/models` 昨天抓到的人民币快照对不上（`gpt-image-2-c` 一个 0.0278、一个 ¥0.12）。**没对过账单之前不拿它改 CNY 价目表**，只用来比型号之间的相对贵贱：`gpt-image-2` 是 `-c` 的约 10 倍，草稿档没有理由用它。
+- 更新的文档：MODEL-GATEWAY 第九节（原始数据与单价表）、FEATURES B1/B2、CONSISTENCY 的 intra-sheet 说明、ADR-0029 的负面后果补了一行日期注，ADR-0030 同步。
+
+**诚实地说**
+- 视频没复测，配额与路由状态仍然未知，不据此下任何结论。
+- 单价单位（美元还是人民币）没有账单佐证；上表只能横向比较，不能直接算预算。
+- 只测了三个图片型号各一次，样本量是 1；耗时和稳定性都还没有分布。
+
+**下一步**
+1. 用出图接口补"去生成三视图"与"生成道具参考图"，生成后过 intra-sheet 检查再允许锁定。
+2. 拿一张真实账单确认 `/v1/model/info` 的计价单位，再决定要不要换掉 `packages/gateway/src/pricing.ts` 的 CNY 快照。
+3. 视频配额恢复后，用 `gemini-2.5-flash-image` 出首帧 → `minimax-h3` 图生视频，跑通最小 i2v。

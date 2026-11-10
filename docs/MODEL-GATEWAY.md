@@ -1,7 +1,7 @@
 # 模型网关：中转站实况与适配策略
 
 > 本文件记录**实测**得到的供应商契约，不是推测。
-> 最后一次实测：2026-11-09（`GET /v1/models`、`POST /v1/images/generations`、`POST /v1/videos/generations`）。
+> 最后一次实测：2026-11-10（`GET /v1/models`、`GET /v1/model/info`、`POST /v1/images/generations`、`POST /v1/images/edits`、`POST /v1/chat/completions`）。
 > 供应商换版本时，先改这里，再改代码（[`../packages/gateway/src/treecloud.ts`](../packages/gateway/src/treecloud.ts)）。
 
 ## 一、结论先行
@@ -185,3 +185,47 @@ S1 仍未完成，且不是代码问题：
 2. 视频配额在上游耗尽 → 文生视频也无法开始。
 
 **需要用户侧解决**（任一即可）：给上游媒体账户充值/提额；让代理方修好图片计价；或提供官方直连 Key（火山方舟 Seedance / 阿里云百炼 Wan / OpenAI 或 Gemini 图片）。
+
+## 九、2026-11-10 复测：图片接口恢复，参考图仍然进不去
+
+2026-11-09 的结论是"图片在两家都坏"。今天在第二家（LiteLLM 代理）复测，**普通出图已经能用**，坏掉的是"带参考图"那条路。
+
+| 能力 | 端点 | 结果 |
+| --- | --- | --- |
+| 模型目录 | `GET /v1/models` | 200，71 个模型：chat 46 / video_generation 7 / image_generation 10 / realtime 3 / audio_speech 2 / audio_transcription 3。字段仍是 `mode`，**没有 `pricing`、没有 `api_interfaces`** |
+| 模型价格 | `GET /v1/model/info` | 200，LiteLLM 的 `litellm_params` 里带 `output_cost_per_image` / `output_cost_per_second_<res>`。这是 11-09 时不知道的端点 |
+| 图片（生成） | `POST /v1/images/generations` | **200**。`gemini-2.5-flash-image` 1024×1536 → 25.6s；`gpt-image-2` 1024×1024 → 23.8s；`gpt-image-2-c` 1024×1024 → 43.1s。返回 `data[0].b64_json` 与 `url` |
+| 图片（编辑 / 参考） | `POST /v1/images/edits`（multipart，一张 PNG） | **400** `unsupported_parameter` / `Image request rejected`（LiteLLM 转到 OpenAI 后拒绝） |
+| 图片（走 chat） | `POST /v1/chat/completions` + `modalities:["image","text"]` | 仍是 **400** `invalid model price` |
+| 视频 | 未复测 | 配额与路由状态未知，见第八节 |
+
+### 结论
+
+1. **出图能力恢复，不是代码问题。** 11-09 的 `503 image_response_invalid` 是当时的偶发上游故障，同型号今天连 `gpt-image-2-c` 都能出图（只是慢）。
+2. **参考图依然送不进去。** 生成接口只吃 `model / prompt / size / n`；`images/edits` 被代理直接拒绝；chat 的图片计价是坏的。ADR-0029 的约束不变：`ImageInput.referenceAssetIds` 只进契约与溯源，**不要塞进没验证过的字段**。
+3. **"能不能带参考图生成"与"能不能出图"是两件事**，之前混在一起说成"图片接口不通"，导致 FEATURES 里的判断偏悲观。分开记：关键帧能出，身份一致性还不能靠参考图保证。
+4. **价格信号要分开看。** `/v1/model/info` 的 `output_cost_per_image` 是 LiteLLM 口径（惯例为美元），与第三节 `/v1/models` 抓到的人民币快照不是同一套数：`gpt-image-2-c` 在 LiteLLM 是 `0.0278`，快照是 ¥0.12。**在拿到账单对上之前，不拿它改写 CNY 价目表**，只用来比较型号之间的相对贵贱。
+
+### 这轮测到的媒体单价（LiteLLM 口径，单位未确认）
+
+| 类型 | 模型 | `output_cost_*` |
+| --- | --- | --- |
+| 图片 / 张 | `gpt-image-2-c` | 0.0278 |
+| 图片 / 张 | `qwen-image-3.0` | 0.03 |
+| 图片 / 张 | `gemini-2.5-flash-image` | 0.039 |
+| 图片 / 张 | `gemini-3.1-flash-image` | 0.045 |
+| 图片 / 张 | `gpt-image-2.5-flare` / `sunburst` | 0.07 |
+| 图片 / 张 | `gemini-3-pro-image-preview` | 0.134 |
+| 图片 / 张 | `gpt-image-2` | 0.27 |
+| 视频 / 秒 | `minimax-h3` 768p / 2k | 0.08 / 0.13 |
+| 视频 / 秒 | `wan3.0-video` 480p / 720p / 1080p | 0.041 / 0.083 / 0.165 |
+| 视频 / 秒 | `wan3.0-video-prime` 480p / 720p / 1080p | 0.064 / 0.127 / 0.254 |
+| 视频 / 秒 | `seedance-2.0` 480p / 720p / 1080p / 4k | 0.135 / 0.303 / 0.682 / 1.555 |
+
+`gpt-image-2` 是 `gpt-image-2-c` 的约 10 倍价，同样是出图，草稿档没有理由用它。`wan3.0-video-prime` 比 `wan3.0-video` 贵一倍多，是否值这个价要在 S1 里按通过率算。
+
+### 下一步
+
+1. 拿一张真实账单，确认 `/v1/model/info` 的计价单位，再决定要不要用它替换 `packages/gateway/src/pricing.ts` 里的人民币快照（不变量 39：价目只有一份）。
+2. 参考图这条路没有现成出口。要等代理支持 `images/edits`，或换一家能收图的接口；在此之前，三视图与道具参考只能靠提示词与验收基线起作用。
+3. 视频配额一旦恢复，用 `gemini-2.5-flash-image` 出首帧 → `minimax-h3` 图生视频跑通最小 i2v 链路。
