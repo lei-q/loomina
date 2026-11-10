@@ -1,14 +1,17 @@
 import { cn } from "@/lib/utils";
-import { currentStage, stages, type Project } from "@/lib/demo";
+import type { StageView } from "@/lib/read-model";
 import { ExportIcon, Logomark } from "@/components/icons";
 
-export function TopBar({ project }: { project: Project }) {
+const stages = ["故事", "剧本", "分镜", "关键帧", "声音", "成片"] as const;
+const currentStage = "分镜";
+
+export function TopBar({ view }: { view: StageView }) {
   return (
     <header className="flex h-[46px] shrink-0 items-center gap-6 border-b border-line px-4">
       <div className="flex items-center gap-2">
         <Logomark className="h-[17px] w-[17px] text-text" />
-        <span className="text-[13px] tracking-[.08em] text-text">{project.title}</span>
-        <span className="tnum text-[9px] text-muted-2">v{project.version}</span>
+        <span className="text-[13px] tracking-[.08em] text-text">{view.title}</span>
+        <span className="tnum text-[9px] text-muted-2">v{view.version}</span>
         <span className="tnum rounded-token border border-line px-1.5 py-px text-[8.5px] text-muted-2">示例</span>
       </div>
 
@@ -23,8 +26,8 @@ export function TopBar({ project }: { project: Project }) {
 
       <div className="ml-auto flex items-center gap-4">
         <span className="tnum text-[10px] text-muted">
-          ¥{project.spent.toFixed(2)}
-          <span className="text-muted-2"> / {project.budget}</span>
+          ¥{view.spent.toFixed(2)}
+          <span className="text-muted-2"> / {view.budget}</span>
         </span>
         <button
           type="button"

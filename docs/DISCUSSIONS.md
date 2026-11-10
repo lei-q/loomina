@@ -587,3 +587,33 @@
 1. 把示例数据换成 Project IR 读模型（`packages/ir` → 前端），先只读。
 2. 胶片轨三态接交互：点格切当前、留用/淘汰写入 IR。
 3. 一句话指令：先解析"太暗了""换个角度"两条，接到重做报价。
+
+### 第十四次讨论（续）：接上 IR 读模型（2026-11-10）
+
+把示例数据换成 Project IR，前端第一次真正从 `packages/ir` 取数（只读）。
+
+**结构**
+- `apps/web/lib/sample-project.ts`：一份符合 schema 的示例项目「夜班」——3 个场景地点、2 个角色、5 场、12 个镜头、12 条 take、4 句台词。
+  用 `ProjectSchema.parse` 在模块加载时校验，不合法构建就失败。
+- `apps/web/lib/read-model.ts`：`toStageView(project, options)` 把 IR 压成组件认的 `StageView`。组件不再认识 IR 字段。
+- 删掉 `lib/demo.ts`，示例数据只此一份。
+
+**映射规则（写进代码注释，这里记结论）**
+1. 顺序：按 `scene.index` 排场，场内按 `scene.shotIds` 排镜；没挂进 `shotIds` 的镜头兜底接在最后，不丢。
+2. 状态：最新一条 take 为 approved → 留用；rejected → 淘汰；draft 或没有 take → 待定；`shot.locked` 视为留用。
+3. 多条 take 按 `provenance.createdAt` 取最新一条，`take` 字段给出是第几版。
+4. 已花 = 全部 take 的 `costCny` 之和（示例里正好 ¥18.96）。
+5. 字幕 = 当前镜 `dialogueIds` 拼起来的文本；没有台词就是空串。
+6. 剪影：两个及以上角色用双人；否则按镜头所在场景 → 地点 `templateId` 选走廊 / 门口 / 桌边。
+7. 当前镜：可指定 `currentShotId`；不指定则落在第一个待定的镜头上。
+
+**IR 侧的小改动**
+- `packages/ir` 增加类型导出 `ProjectInput = z.input<typeof ProjectSchema>`。写项目时带默认值的字段可以省略，`parse` 后再补齐；`Project`（输出类型）不变，schema 与不变量没动。
+
+**测试**
+- `apps/web` 接 vitest，新增 8 条读模型测试：排序与镜号、take 状态映射、成本求和、默认当前镜、字幕取词、多条 take 取最新、剪影选择、镜头不丢失。
+- 全仓 46 个测试通过（ir 18 / gateway 17 / pipeline 3 / web 8），`pnpm typecheck`、`pnpm build` 均通过。
+
+**下一步**
+1. 胶片轨三态接交互，写入 IR（需要先定 UI 状态放哪、事件怎么写，按 IR 的 append-only 事件日志走）。
+2. 一句话指令解析，接到重做报价——报价应来自价目快照，而不是现在写死的 2.12。

@@ -26,6 +26,9 @@ importers:
       '@loomina/design-tokens':
         specifier: workspace:*
         version: link:../../packages/design-tokens
+      '@loomina/ir':
+        specifier: workspace:*
+        version: link:../../packages/ir
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
@@ -60,6 +63,9 @@ importers:
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.20.5)(lightningcss@1.33.0)
 
   packages/design-tokens: {}
 

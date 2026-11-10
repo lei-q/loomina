@@ -1,9 +1,9 @@
 import { Scene } from "@/components/scene";
 import { CheckIcon, RedoIcon } from "@/components/icons";
-import type { Project, Shot } from "@/lib/demo";
+import type { StageShot, StageView } from "@/lib/read-model";
 import { cn } from "@/lib/utils";
 
-function Cell({ shot, current }: { shot: Shot; current: boolean }) {
+function Cell({ shot, current }: { shot: StageShot; current: boolean }) {
   return (
     <button
       type="button"
@@ -15,7 +15,7 @@ function Cell({ shot, current }: { shot: Shot; current: boolean }) {
         shot.state === "reject" ? "opacity-70" : "opacity-100",
       )}
     >
-      <Scene kind={shot.scene} className="h-full w-full" />
+      <Scene kind={shot.art} className="h-full w-full" />
 
       {shot.state === "reject" && <span className="absolute inset-0 bg-black/50" />}
 
@@ -30,15 +30,15 @@ function Cell({ shot, current }: { shot: Shot; current: boolean }) {
   );
 }
 
-export function ReelBar({ project }: { project: Project }) {
-  const current = project.shots[project.current]!;
+export function ReelBar({ view }: { view: StageView }) {
+  const current = view.shots[view.current]!;
 
   return (
     <footer className="shrink-0 border-t border-line">
       {/* 整条片子常驻：一格一格等比，不折叠 */}
       <div className="reel-scroll h-[104px] overflow-x-auto px-5">
         <div className="mx-auto flex h-full w-max items-center gap-[5px]">
-          {project.shots.map((shot) => (
+          {view.shots.map((shot) => (
             <Cell key={shot.no} shot={shot} current={shot.no === current.no} />
           ))}
         </div>
@@ -62,7 +62,7 @@ export function ReelBar({ project }: { project: Project }) {
         >
           <RedoIcon className="h-3.5 w-3.5" />
           重做
-          <span className="tnum text-[9px] text-muted">¥{project.requote.toFixed(2)}</span>
+          <span className="tnum text-[9px] text-muted">¥{view.requote.toFixed(2)}</span>
         </button>
 
         <button

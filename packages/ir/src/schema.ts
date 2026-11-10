@@ -123,3 +123,5 @@ export const ProjectSchema = z.object({
   publishPackages: z.array(PublishPackageSchema).default([]),
 });
 export type Project = z.infer<typeof ProjectSchema>;
+/** 写项目时的形状：带 default 的字段可以省略，parse 后补齐。 */
+export type ProjectInput = z.input<typeof ProjectSchema>;

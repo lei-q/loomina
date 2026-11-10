@@ -1,4 +1,4 @@
-import type { SceneKind } from "@/lib/demo";
+import type { SceneKind } from "@/lib/read-model";
 import { cn } from "@/lib/utils";
 
 /**
