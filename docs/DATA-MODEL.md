@@ -471,6 +471,7 @@ interface Asset {
   hash?: string;            // 去重与缓存
   source: AssetSource;      // 上传 / 生成 / 素材库
   provenance?: Take;
+  costCny?: number;         // 生成这张实际花了多少；没价目就不写（ADR-0033）
   createdAt: ISODate;
 }
 
@@ -539,6 +540,7 @@ interface Asset {
   height?: number;
   durationMs?: number;
   provenance?: Provenance;  // 哪个模型、什么时候、什么参数
+  costCny?: number;         // 价目表里的单价（元）；没价目就不写，别当 0（ADR-0033）
   createdAt: ISODate;
 }
 
@@ -902,3 +904,4 @@ interface CostLedger {
 38. **确认动作之前的渲染必须是 draft 档**，不得直接 final。
 39. **模型单价只能来自 `ModelPrice` 表**，不得在业务代码中硬编码。
 40. **同一镜头连续两次在同一 QA 维度失败时，禁止继续重试**，必须回到设计层修改。
+41. **生成资产的成本只能来自价目表**；价目表里没有这个模型时不得记 0，只能留空并单独计数（ADR-0033）。

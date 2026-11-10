@@ -22,7 +22,9 @@ export type TopBarProps = {
   stage: StageName;
   spentCny?: number;
   budgetCny?: number;
-  /** 整片重做一遍的报价；给了才展开说明书 */
+  /** 生成过但价目表里没有模型的图，算不进已花（ADR-0033） */
+  unpriced?: number;
+  /** 整片重做一遍的报价；给了才多一行 */
   allRequote?: ProjectRequote;
 };
 
@@ -36,6 +38,7 @@ export function TopBar({
   stage,
   spentCny,
   budgetCny,
+  unpriced = 0,
   allRequote,
 }: TopBarProps) {
   return (
@@ -80,33 +83,40 @@ export function TopBar({
               <span className="text-muted-2"> / {budgetCny ?? 60}</span>
             </summary>
 
-            {allRequote && (
-              <div className="absolute right-0 top-full z-20 mt-2.5 w-[252px] rounded-token border border-line bg-surface p-3">
-                <dl className="space-y-1.5 text-[10.5px]">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <dt className="text-muted-2">已花</dt>
-                    <dd className="text-muted">
-                      <Money value={spentCny} />
-                    </dd>
-                  </div>
+            <div className="absolute right-0 top-full z-20 mt-2.5 w-[252px] rounded-token border border-line bg-surface p-3">
+              <dl className="space-y-1.5 text-[10.5px]">
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-muted-2">已花</dt>
+                  <dd className="text-muted">
+                    <Money value={spentCny} />
+                  </dd>
+                </div>
+                {allRequote && (
                   <div className="flex items-baseline justify-between gap-3">
                     <dt className="text-muted-2">全部重做一遍</dt>
                     <dd className="text-text">
                       <Money value={allRequote.totalCny} />
                     </dd>
                   </div>
-                  <div className="flex items-baseline justify-between gap-3">
-                    <dt className="text-muted-2">预算</dt>
-                    <dd className="text-muted">
-                      <Money value={budgetCny ?? 60} />
-                    </dd>
-                  </div>
-                </dl>
+                )}
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-muted-2">预算</dt>
+                  <dd className="text-muted">
+                    <Money value={budgetCny ?? 60} />
+                  </dd>
+                </div>
+              </dl>
+              {unpriced > 0 && (
+                <p className="mt-2.5 border-t border-line pt-2 text-[9px] leading-[1.5] text-muted-2">
+                  另有 {unpriced} 张定妆图没有价目，没算进已花
+                </p>
+              )}
+              {allRequote && (
                 <p className="mt-2.5 border-t border-line pt-2 text-[9px] leading-[1.5] text-muted-2">
                   {allRequote.basis}
                 </p>
-              </div>
-            )}
+              )}
+            </div>
           </details>
         )}
         <button

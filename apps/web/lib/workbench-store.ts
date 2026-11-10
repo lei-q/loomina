@@ -123,6 +123,7 @@ async function generateOne(
       uri?: string;
       model?: string;
       prompt?: string;
+      cny?: number;
       error?: string;
     };
     if (!response.ok || !payload.uri) {
@@ -139,6 +140,8 @@ async function generateOne(
         source: "generated",
         uri: payload.uri,
         mime: "image/png",
+        // 价目表给了单价就记上；没给就让 costCny 缺省，界面如实说"无价目"
+        costCny: typeof payload.cny === "number" ? payload.cny : undefined,
         provenance: {
           modelId: payload.model ?? "unknown",
           prompt: payload.prompt,

@@ -28,9 +28,27 @@ describe("toStageView", () => {
     expect(stateById.get("s-08")).toBe("pick"); // approved + locked
   });
 
-  it("已花是全部 take 的成本之和", () => {
+  it("已花是全部 take 的成本之和（示例资产没有像素也没有价目）", () => {
     const view = toStageView(sampleProject);
     expect(view.spent).toBeCloseTo(18.96, 2);
+    expect(view.unpriced).toBe(0);
+  });
+
+  it("出图成本加进已花，没有价目的图单独数出来", () => {
+    const project = ProjectSchema.parse({
+      ...sampleProject,
+      assets: sampleProject.assets.map((asset) =>
+        asset.id === "a-lin-front"
+          ? { ...asset, uri: "data:image/png;base64,AA", costCny: 0.12 }
+          : asset.id === "a-lin-34"
+            ? { ...asset, uri: "data:image/png;base64,BB" }
+            : asset,
+      ),
+    });
+
+    const view = toStageView(project);
+    expect(view.spent).toBeCloseTo(19.08, 2);
+    expect(view.unpriced).toBe(1);
   });
 
   it("重做报价跟着当前镜头的时长走，不再是一个写死的数", () => {

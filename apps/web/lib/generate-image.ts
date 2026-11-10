@@ -4,6 +4,7 @@ import {
   ConfigError,
   TreecloudClient,
   TreecloudImageAdapter,
+  imageCostCny,
   loadEnvFile,
   treecloudEnvFrom,
 } from "@loomina/gateway";
@@ -52,6 +53,8 @@ export type GeneratedImage = {
   uri: string;
   model: string;
   prompt: string;
+  /** 价目表里的单价（元）；没有这个模型就不给，界面上显示"无价目"（ADR-0033） */
+  cny?: number;
 };
 
 /** 提示词与占位 shotId 都按资产语义走，不按"这一格是哪个角色的"走。 */
@@ -89,5 +92,10 @@ export async function generateCastImage(
     size: "1024x1536",
   });
 
-  return { uri: output.uri, model: output.provenance.modelId, prompt };
+  return {
+    uri: output.uri,
+    model: output.provenance.modelId,
+    prompt,
+    cny: imageCostCny(output.provenance.modelId),
+  };
 }

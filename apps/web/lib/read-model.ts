@@ -31,11 +31,37 @@ export type StageShot = {
   anchors: { labels: string[]; missing: string[] };
 };
 
+export type Spend = {
+  /** 已花：take 的费用 + 有价目的生成资产，元 */
+  spent: number;
+  /** 生成过、但价目表里没有这个模型，算不进已花的图（ADR-0033） */
+  unpriced: number;
+};
+
+/**
+ * 一个项目已经花了多少钱。
+ *
+ * 只加"知道单价"的东西：没有价目的资产宁可单独数出来，也不当 0 算进去——
+ * 把未知算成免费，预算就成了摆设（准则 P21）。
+ */
+export function spendOf(project: Project): Spend {
+  const takes = project.takes.reduce((sum, take) => sum + take.costCny, 0);
+  let assets = 0;
+  let unpriced = 0;
+  for (const asset of project.assets) {
+    if (asset.costCny !== undefined) assets += asset.costCny;
+    else if (asset.source === "generated" && asset.uri) unpriced += 1;
+  }
+  return { spent: Math.round((takes + assets) * 100) / 100, unpriced };
+}
+
 export type StageView = {
   title: string;
   version: number;
   /** 已花 / 预算，元 */
   spent: number;
+  /** 算不进已花的生成资产张数 */
+  unpriced: number;
   budget: number;
   /** 当前镜在 shots 里的下标 */
   current: number;
@@ -159,12 +185,13 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
         .join(" ")
     : "";
 
-  const spent = project.takes.reduce((sum, take) => sum + take.costCny, 0);
+  const { spent, unpriced } = spendOf(project);
 
   return {
     title: project.title,
     version: project.version,
     spent,
+    unpriced,
     budget: options.budgetCny ?? 60,
     current,
     requote: currentShot ? requoteShot(currentShot.durationMs) : { basis: "没有当前镜" },
@@ -236,6 +263,8 @@ export type CastView = {
   complete: boolean;
   lockedCount: number;
   totalRequired: number;
+  /** 已花 / 无价目张数，顶栏用 */
+  spend: Spend;
 };
 
 /** Project IR → 定妆台读模型：只给画面与状态，不给锁的规则（规则在 `@loomina/ir`）。 */
@@ -315,6 +344,7 @@ export function toCastView(project: Project): CastView {
     complete: readiness.complete,
     lockedCount: readiness.lockedCount,
     totalRequired: readiness.totalRequired,
+    spend: spendOf(project),
   };
 }
 

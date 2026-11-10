@@ -376,7 +376,13 @@ export function CastScreen() {
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg text-text">
-      <TopBar title={project.title} version={project.version} stage="定妆" />
+      <TopBar
+        title={project.title}
+        version={project.version}
+        stage="定妆"
+        spentCny={cast.spend.spent}
+        unpriced={cast.spend.unpriced}
+      />
 
       <main className="flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-[1080px] px-5 pb-10 pt-7 sm:px-8">

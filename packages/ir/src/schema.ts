@@ -79,6 +79,11 @@ export const AssetSchema = z.object({
   height: z.number().int().positive().optional(),
   durationMs: z.number().int().positive().optional(),
   provenance: ProvenanceSchema.optional(),
+  /**
+   * 生成这一张实际花了多少（元），来自价目表（ADR-0033）。
+   * 价目表里没有这个模型就不写：未知不等于免费。
+   */
+  costCny: z.number().nonnegative().optional(),
   createdAt: z.string().min(1),
 });
 export type Asset = z.infer<typeof AssetSchema>;

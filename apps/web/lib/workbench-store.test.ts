@@ -191,6 +191,7 @@ describe("生成定妆资产（ADR-0031 / ADR-0032）", () => {
             uri: `data:image/png;base64,${body.kind}`,
             model: "gpt-image-2-c",
             prompt: body.kind,
+            cny: 0.12,
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
@@ -207,6 +208,7 @@ describe("生成定妆资产（ADR-0031 / ADR-0032）", () => {
       "prop",
     );
     expect(state().jobs["loc-corridor"]).toBeUndefined();
+    expect(state().project.assets.find((item) => item.id === "a-cup")?.costCny).toBe(0.12);
     expect(state().jobs["p-cup"]).toBeUndefined();
 
     vi.unstubAllGlobals();
