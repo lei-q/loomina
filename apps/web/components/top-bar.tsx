@@ -37,6 +37,10 @@ export type TopBarProps = {
   allRequote?: ProjectRequote;
   /** 改预算上限（元）；给了才显示可改的输入框 */
   onBudgetChange?: (cny: number) => void;
+  /** 导出当前页；给了才真的导出（ADR-0048） */
+  onExport?: () => void;
+  /** 导出按钮的说明；不给就沿用「导出」 */
+  exportLabel?: string;
 };
 
 function Money({ value }: { value?: number }) {
@@ -55,6 +59,8 @@ export function TopBar({
   readOnly,
   allRequote,
   onBudgetChange,
+  onExport,
+  exportLabel,
 }: TopBarProps) {
   const [draftBudget, setDraftBudget] = useState<string>("");
   const budget = budgetCny ?? 60;
@@ -223,7 +229,10 @@ export function TopBar({
         )}
         <button
           type="button"
-          className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          onClick={onExport}
+          disabled={!onExport}
+          title={onExport ? exportLabel ?? "导出当前页" : "这一页还不能导出"}
+          className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-45"
         >
           <ExportIcon className="h-3.5 w-3.5" />
           导出

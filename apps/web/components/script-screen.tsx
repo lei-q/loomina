@@ -2,7 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { TopBar } from "@/components/top-bar";
-import { dialogueHistory, previousDialogueText, shotLabel, toScriptView } from "@/lib/read-model";
+import {
+  dialogueHistory,
+  previousDialogueText,
+  scriptToText,
+  shotLabel,
+  toScriptView,
+} from "@/lib/read-model";
 import { useWorkbench } from "@/lib/workbench-store";
 
 /** 事件时间只到分钟：版本列表看的是先后，不是秒。 */
@@ -74,6 +80,16 @@ export function ScriptScreen() {
     }
   };
 
+  const exportScript = () => {
+    const blob = new Blob([scriptToText(view)], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${view.title}-v${view.version}.txt`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
   const move = (lineId: string, direction: "up" | "down") => {
     if (!moveDialogue(lineId, direction)) setNote(useWorkbench.getState().castError);
   };
@@ -109,6 +125,8 @@ export function ScriptScreen() {
         storageError={storageError}
         readOnly={readOnly}
         onBudgetChange={setBudget}
+        onExport={exportScript}
+        exportLabel="把剧本导出成纯文本（.txt）"
       />
 
       <main className="min-h-0 flex-1 overflow-y-auto px-6 py-8">

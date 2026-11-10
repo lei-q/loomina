@@ -5,6 +5,7 @@ import {
   filterKeyframeCells,
   keyframeTally,
   previousDialogueText,
+  scriptToText,
   toCastView,
   toKeyframeView,
   toScriptView,
@@ -467,5 +468,20 @@ describe("剧本页的说话人与选角（ADR-0045）", () => {
     expect(s04.locked).toBe(false);
     const s08 = view.scenes.flatMap((scene) => scene.shots).find((shot) => shot.id === "s-08")!;
     expect(s08.locked).toBe(true);
+  });
+});
+
+describe("剧本导出（ADR-0048）", () => {
+  it("标题、页头四个数、场头、镜号、台词与技术行都在", () => {
+    const text = scriptToText(toScriptView(sampleProject));
+
+    expect(text).toContain("夜班 v3");
+    expect(text).toContain("5 场 · 12 镜 · 4 句台词 · 32.6s");
+    expect(text).toContain("第 1 场 · 走廊（7.9s · 3 镜）");
+    expect(text).toContain("SH-01 · 全景 · 平视 · 3.1s");
+    expect(text).toContain("周：你早就知道，对吧。");
+    // 十二镜、四处台词都在，行数不是三两行
+    expect(text.trimEnd().split("\n").length).toBeGreaterThan(20);
+    expect(text.match(/SH-\d\d/g)).toHaveLength(12);
   });
 });

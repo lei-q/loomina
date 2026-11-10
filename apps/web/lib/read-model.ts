@@ -710,3 +710,33 @@ export function previousDialogueText(history: DialogueHistory): string | undefin
   if (history.edits.length === 0) return undefined;
   return history.edits[history.edits.length - 2]?.text ?? history.original?.text;
 }
+
+/**
+ * 剧本导出成纯文本（ADR-0048）：给存档、给外部工具、给人看。
+ *
+ * 只取屏上已有的东西：标题、页头四个数、场头、镜号、动作、台词、技术行。
+ * 不做 Markdown 或 PDF——先保证"导出来的是剧本"。
+ */
+export function scriptToText(view: ScriptView): string {
+  const lines: string[] = [];
+  lines.push(`${view.title} v${view.version}`);
+  lines.push(
+    `${view.scenes.length} 场 · ${view.shotCount} 镜 · ${view.dialogueCount} 句台词 · ${view.totalDur.toFixed(1)}s`,
+  );
+
+  for (const scene of view.scenes) {
+    lines.push("");
+    lines.push(`第 ${scene.no} 场 · ${scene.place}（${scene.dur.toFixed(1)}s · ${scene.shots.length} 镜）`);
+    for (const shot of scene.shots) {
+      lines.push("");
+      lines.push(`${shotLabel(shot.no)} · ${shot.size} · ${shot.angle} · ${shot.dur.toFixed(1)}s`);
+      if (shot.action) lines.push(shot.action);
+      for (const line of shot.lines) {
+        lines.push(`　${line.character}：${line.text}`);
+      }
+    }
+  }
+
+  lines.push("");
+  return lines.join("\n");
+}
