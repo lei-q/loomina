@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { TopBar } from "@/components/top-bar";
 import { shotLabel, toScriptView } from "@/lib/read-model";
 import { useWorkbench } from "@/lib/workbench-store";
@@ -11,12 +11,32 @@ export function ScriptScreen() {
   const readOnly = useWorkbench((state) => state.readOnly);
   const storageError = useWorkbench((state) => state.storageError);
   const setBudget = useWorkbench((state) => state.setBudget);
+  const editDialogue = useWorkbench((state) => state.editDialogue);
+
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [note, setNote] = useState<string | undefined>();
 
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
 
   const view = useMemo(() => toScriptView(project), [project]);
+
+  const startEdit = (lineId: string, text: string) => {
+    setEditing(lineId);
+    setDraft(text);
+    setNote(undefined);
+  };
+
+  const save = (lineId: string) => {
+    if (editDialogue(lineId, draft)) {
+      setEditing(null);
+      setNote(undefined);
+    } else {
+      setNote(useWorkbench.getState().castError);
+    }
+  };
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg text-text">
@@ -39,7 +59,8 @@ export function ScriptScreen() {
             <div>
               <h1 className="text-[13px] tracking-[.06em] text-text">剧本</h1>
               <p className="mt-1 text-[10.5px] leading-[1.6] text-muted-2">
-                按场次和镜序摊平：动作在前，台词在后。这一页只读，改动去分镜页说。
+                按场次和镜序摊平：动作在前，台词在后。台词点「改」可以重写，
+                时长按 0.3 秒 / 字重估，所属镜头跟着挪。
               </p>
             </div>
             <dl className="tnum flex items-baseline gap-5 text-[10.5px]">
@@ -90,21 +111,74 @@ export function ScriptScreen() {
 
                         {shot.lines.length > 0 && (
                           <div className="mt-2 space-y-2">
-                            {shot.lines.map((line) => (
-                              <div key={line.id} className="border-l border-line-2 pl-3">
-                                <p className="text-[9px] tracking-[.12em] text-muted-2">
-                                  {line.character}
-                                </p>
-                                <p className="mt-0.5 text-[12.5px] leading-[1.8] text-text">
-                                  {line.text}
-                                </p>
-                              </div>
-                            ))}
+                            {shot.lines.map((line) =>
+                              editing === line.id ? (
+                                <div key={line.id} className="border-l border-pick/70 pl-3">
+                                  <p className="text-[9px] tracking-[.12em] text-muted-2">
+                                    {line.character}
+                                  </p>
+                                  <textarea
+                                    autoFocus
+                                    value={draft}
+                                    rows={2}
+                                    onChange={(event) => setDraft(event.target.value)}
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                                        save(line.id);
+                                      }
+                                      if (event.key === "Escape") setEditing(null);
+                                    }}
+                                    className="mt-1 w-full resize-none rounded-token border border-line-2 bg-surface px-2 py-1.5 text-[12.5px] leading-[1.8] text-text focus:border-pick focus:outline-none"
+                                  />
+                                  <div className="mt-1 flex flex-wrap items-center gap-2 text-[9.5px]">
+                                    <button
+                                      type="button"
+                                      onClick={() => save(line.id)}
+                                      className="rounded-token border border-line-2 px-2 py-0.5 text-text transition-colors duration-[var(--dur)] hover:border-pick hover:text-pick"
+                                    >
+                                      保存
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditing(null)}
+                                      className="rounded-token border border-line px-2 py-0.5 text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                                    >
+                                      取消
+                                    </button>
+                                    <span className="text-muted-2">⌘↩ 保存 · Esc 取消</span>
+                                    {note && <span className="text-pick">{note}</span>}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div key={line.id} className="border-l border-line-2 pl-3">
+                                  <div className="flex items-baseline gap-2">
+                                    <p className="tnum text-[9px] tracking-[.12em] text-muted-2">
+                                      {line.character} · {line.dur.toFixed(1)}s
+                                    </p>
+                                    {!readOnly && (
+                                      <button
+                                        type="button"
+                                        disabled={shot.locked}
+                                        onClick={() => startEdit(line.id, line.text)}
+                                        title={shot.locked ? "这一镜已锁定，先解锁才能改台词" : "改写这句台词"}
+                                        className="shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+                                      >
+                                        改
+                                      </button>
+                                    )}
+                                  </div>
+                                  <p className="mt-0.5 text-[12.5px] leading-[1.8] text-text">
+                                    {line.text}
+                                  </p>
+                                </div>
+                              ),
+                            )}
                           </div>
                         )}
 
                         <p className="tnum mt-2 text-[8.5px] text-muted-2">
                           {shot.size} · {shot.angle} · {shot.dur.toFixed(1)}s
+                          {shot.locked && <span className="ml-2 text-muted-2">· 已锁定</span>}
                         </p>
                       </div>
                     </li>

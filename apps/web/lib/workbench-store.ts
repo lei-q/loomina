@@ -15,6 +15,7 @@ import {
 import { parseInstruction, shotMaterial, type Frame } from "@loomina/pipeline";
 import { create } from "zustand";
 import { diffEvents, getEventLog, migrateLog } from "@/lib/event-log";
+import { estimateDialogueMs } from "@/lib/dialogue";
 import { claimWriter } from "@/lib/writer-lock";
 import { latestTake, shotLabel, spendOf, toStageView } from "@/lib/read-model";
 import { sampleProject } from "@/lib/sample-project";
@@ -78,6 +79,11 @@ type WorkbenchState = {
   stopBatch: () => void;
   /** 一句话指令：查表翻成镜头补丁，写一条 shot.updated；没听懂返回 false（ADR-0039） */
   instruct: (text: string) => boolean;
+  /**
+   * 改写一条台词：写一条 `dialogue.updated`，时长按字数重估；
+   * 所属镜头跟着挪，保持"镜头时长 ≈ 台词 + 余量"（ADR-0044）
+   */
+  editDialogue: (lineId: string, text: string) => boolean;
   /** 划掉一条补充要求：同样写一条 shot.updated（ADR-0039 附记） */
   removeNote: (shotId: string, note: string) => void;
   reset: () => void;
@@ -580,6 +586,57 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     const batch = get().batch;
     // 当前这一张已经发出去了，停下只在它结束后生效
     if (batch) set({ batch: { ...batch, stop: true } });
+  },
+
+  editDialogue: (lineId, rawText) => {
+    if (get().readOnly) return false;
+    const text = rawText.replace(/\s+$/, "");
+    if (text.length === 0) {
+      set({ castError: "台词不能是空的。" });
+      return false;
+    }
+    const { project, events } = get();
+    const line = project.dialogue.find((item) => item.id === lineId);
+    if (!line) return false;
+    const shot = project.shots.find((item) => item.dialogueIds.includes(lineId));
+    if (shot?.locked) {
+      set({ castError: "这一镜已锁定：要改台词先解锁。" });
+      return false;
+    }
+
+    const durationMs = estimateDialogueMs(text);
+    // 文本没动就不碰时长：历史时长可能不是按这个口径估出来的，别顺手改掉
+    if (text === line.text) {
+      set({ castError: "台词没改。" });
+      return false;
+    }
+
+    const at = new Date().toISOString();
+    const next: ProjectEvent[] = [
+      {
+        type: "dialogue.updated",
+        at,
+        lineId,
+        patch: { text, durationMs },
+      },
+    ];
+    // 时长变了，所属镜头跟着挪同样的量；不动别人写进去的余量
+    const delta = durationMs - line.durationMs;
+    if (shot && delta !== 0) {
+      next.push({
+        type: "shot.updated",
+        at,
+        shotId: shot.id,
+        patch: { durationMs: Math.max(500, shot.durationMs + delta) },
+      });
+    }
+
+    set({
+      project: next.reduce(applyEvent, project),
+      events: [...events, ...next],
+      castError: undefined,
+    });
+    return true;
   },
 
   instruct: (text) => {

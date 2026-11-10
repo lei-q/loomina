@@ -203,3 +203,51 @@ describe("Project.budgetCny", () => {
     expect(() => ProjectSchema.parse({ ...clone(minimalJson), budgetCny: -1 })).toThrow();
   });
 });
+
+describe("dialogue.updated（ADR-0044）", () => {
+  it("改写文本与时长，重放后一致", () => {
+    const project = load();
+    const event: ProjectEvent = {
+      type: "dialogue.updated",
+      at: AT,
+      lineId: "dl-1",
+      patch: { text: "你早就知道了。", durationMs: 1800 },
+    };
+    const after = applyEvent(project, event);
+
+    expect(after.dialogue.find((line) => line.id === "dl-1")).toMatchObject({
+      text: "你早就知道了。",
+      durationMs: 1800,
+      characterId: "c-lin",
+    });
+    expect(rebuild([created(project), event])).toEqual(after);
+  });
+
+  it("空台词、非正时长、指向不存在的台词都拒绝", () => {
+    const project = load();
+    expect(() =>
+      applyEvent(project, {
+        type: "dialogue.updated",
+        at: AT,
+        lineId: "dl-1",
+        patch: { text: "   " },
+      }),
+    ).toThrow(/空/);
+    expect(() =>
+      applyEvent(project, {
+        type: "dialogue.updated",
+        at: AT,
+        lineId: "dl-1",
+        patch: { durationMs: 0 },
+      }),
+    ).toThrow(/大于 0/);
+    expect(() =>
+      applyEvent(project, {
+        type: "dialogue.updated",
+        at: AT,
+        lineId: "dl-404",
+        patch: { text: "嗯。" },
+      }),
+    ).toThrow(/不存在/);
+  });
+});

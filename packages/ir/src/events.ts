@@ -1,5 +1,13 @@
 import { clone } from "./clone";
-import type { Approval, Asset, Id, Project, Shot, Take } from "./schema";
+import type {
+  Approval,
+  Asset,
+  DialogueLine,
+  Id,
+  Project,
+  Shot,
+  Take,
+} from "./schema";
 
 /**
  * 事件日志（ADR-0011）。
@@ -19,6 +27,16 @@ export type ProjectEvent =
       budgetCny: number;
     }
   | { type: "shot.updated"; at: string; shotId: Id; patch: Partial<Shot> }
+  | {
+      /**
+       * 台词改写（ADR-0044）：只允许改文本与时长。
+       * 说话人不在这里改——换人等于换一句台词，应该新增而不是覆盖。
+       */
+      type: "dialogue.updated";
+      at: string;
+      lineId: Id;
+      patch: Partial<Omit<DialogueLine, "id" | "characterId">>;
+    }
   | { type: "take.added"; at: string; take: Take }
   | {
       /** 闸门：定妆锁定 / 解锁。同一目标只保留一条，按 (targetType, targetId) 覆盖。 */
@@ -62,6 +80,24 @@ export function applyEvent(
         shot.id === event.shotId ? { ...shot, ...event.patch } : shot,
       );
       return { ...current, shots };
+    }
+
+    case "dialogue.updated": {
+      if (!current) throw new Error("dialogue.updated 之前必须有 project.created");
+      const line = current.dialogue.find((item) => item.id === event.lineId);
+      if (!line) {
+        throw new Error(`dialogue.updated 指向不存在的台词: ${event.lineId}`);
+      }
+      if (event.patch.text !== undefined && event.patch.text.trim().length === 0) {
+        throw new Error("台词不能改成空");
+      }
+      if (event.patch.durationMs !== undefined && !(event.patch.durationMs > 0)) {
+        throw new Error(`台词时长必须大于 0：${event.patch.durationMs}`);
+      }
+      const dialogue = current.dialogue.map((item) =>
+        item.id === event.lineId ? { ...item, ...event.patch } : item,
+      );
+      return { ...current, dialogue };
     }
 
     case "take.updated": {

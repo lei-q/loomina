@@ -401,6 +401,8 @@ export type ScriptShot = {
   dur: number;
   size: string;
   angle: string;
+  /** 锁定的镜头不能改台词（ADR-0041 / 0044） */
+  locked: boolean;
   lines: ScriptLine[];
 };
 
@@ -430,7 +432,8 @@ export type ScriptView = {
 /**
  * 剧本页的读模型：按场次、场内镜序排，把每镜的动作与台词摊平。
  *
- * 只读：这一页回答"这条片子写了什么"，不提供编辑（A5 台词编辑另做）。
+ * 只读投影：这一页回答"这条片子写了什么"。台词的改写走 store 的
+ * `editDialogue`（ADR-0044），读模型只负责把改完的结果摊平。
  */
 export function toScriptView(project: Project, options: { budgetCny?: number } = {}): ScriptView {
   const stage = toStageView(project, {});
@@ -465,6 +468,7 @@ export function toScriptView(project: Project, options: { budgetCny?: number } =
             dur: shot.durationMs / 1000,
             size: view?.size ?? "",
             angle: view?.angle ?? "",
+            locked: shot.locked,
             lines,
           };
         });

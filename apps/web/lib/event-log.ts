@@ -35,15 +35,22 @@ export type EventLog = {
   replace(events: ProjectEvent[]): Promise<void>;
 };
 
-const EVENT_TYPES = new Set([
-  "project.created",
-  "project.updated",
-  "shot.updated",
-  "take.added",
-  "approval.updated",
-  "take.updated",
-  "asset.updated",
-]);
+/**
+ * 认得的事件类型。
+ *
+ * 写成 record 而不是 Set：事件联合类型多一种，这里少一行就编译不过——
+ * 2026-11-10 就是漏了 `dialogue.updated`，读回来整份日志判废、被示例项目覆盖。
+ */
+const EVENT_TYPES: Record<ProjectEvent["type"], true> = {
+  "project.created": true,
+  "project.updated": true,
+  "shot.updated": true,
+  "dialogue.updated": true,
+  "take.added": true,
+  "approval.updated": true,
+  "take.updated": true,
+  "asset.updated": true,
+};
 
 /**
  * 把读回来的东西变成可信的事件日志；有任何一条不像话就整份丢掉。
@@ -58,7 +65,7 @@ export function parseEvents(raw: unknown): ProjectEvent[] | null {
   for (const item of raw) {
     if (!item || typeof item !== "object") return null;
     const event = item as { type?: unknown; at?: unknown };
-    if (typeof event.type !== "string" || !EVENT_TYPES.has(event.type)) return null;
+    if (typeof event.type !== "string" || !Object.hasOwn(EVENT_TYPES, event.type)) return null;
     if (typeof event.at !== "string") return null;
     events.push(item as ProjectEvent);
   }

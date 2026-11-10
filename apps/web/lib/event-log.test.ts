@@ -55,6 +55,22 @@ describe("parseEvents", () => {
     expect(parseEvents([created(), { type: "shot.deleted", at: AT }])).toBeNull();
   });
 
+  it("台词改写认得出来（漏登记过一次，整份日志被示例项目覆盖）", () => {
+    const events = parseEvents([
+      created(),
+      {
+        type: "dialogue.updated",
+        at: AT,
+        lineId: "d-01",
+        patch: { text: "你早就知道了。", durationMs: 2100 },
+      },
+    ]);
+    expect(events?.map((event) => event.type)).toEqual([
+      "project.created",
+      "dialogue.updated",
+    ]);
+  });
+
   it("项目快照坏了就不硬跑", () => {
     expect(parseEvents([{ type: "project.created", at: AT, project: { title: "" } }])).toBeNull();
   });

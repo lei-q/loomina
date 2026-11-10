@@ -788,3 +788,62 @@ describe("单写者（ADR-0034）", () => {
     resetPersistenceForTests();
   });
 });
+
+describe("台词改写（ADR-0044）", () => {
+  beforeEach(() => {
+    // 上一个用例可能把标签页设成了只读，这里回到可写
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("改台词写两条事件：台词与所属镜头的时长一起挪，可回放", () => {
+    const before = state().project.shots.find((item) => item.id === "s-01")!;
+    const ok = state().editDialogue("d-01", "你早就知道了。");
+
+    expect(ok).toBe(true);
+    expect(state().project.dialogue.find((line) => line.id === "d-01")?.text).toBe(
+      "你早就知道了。",
+    );
+    // 7 字 → 2100ms，比原来的 2600ms 少 500，镜头跟着少 500
+    const after = state().project.shots.find((item) => item.id === "s-01")!;
+    expect(after.durationMs).toBe(before.durationMs - 500);
+
+    const tail = state().events.slice(-2);
+    expect(tail[0]).toMatchObject({
+      type: "dialogue.updated",
+      lineId: "d-01",
+      patch: { text: "你早就知道了。", durationMs: 2100 },
+    });
+    expect(tail[1]).toMatchObject({
+      type: "shot.updated",
+      shotId: "s-01",
+      patch: { durationMs: before.durationMs - 500 },
+    });
+
+    const replay = rebuild(state().events);
+    expect(replay.dialogue.find((line) => line.id === "d-01")?.text).toBe("你早就知道了。");
+    expect(replay.shots.find((item) => item.id === "s-01")?.durationMs).toBe(
+      before.durationMs - 500,
+    );
+  });
+
+  it("锁定的镜头不让改台词", () => {
+    const snapshot = state().events.length;
+    const ok = state().editDialogue("d-04", "换一句试试。"); // d-04 属于锁定的 s-08
+
+    expect(ok).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+    expect(state().castError).toContain("锁定");
+  });
+
+  it("空台词与没改动的台词都不写事件", () => {
+    const before = state().project.dialogue.find((line) => line.id === "d-01")!;
+    const snapshot = state().events.length;
+
+    expect(state().editDialogue("d-01", "   ")).toBe(false);
+    expect(state().castError).toContain("不能是空");
+    expect(state().editDialogue("d-01", before.text)).toBe(false);
+    expect(state().castError).toContain("没改");
+    expect(state().events).toHaveLength(snapshot);
+  });
+});
