@@ -595,6 +595,55 @@ describe("新建场次与镜头（ADR-0064）", () => {
   });
 });
 
+describe("删一场、删一镜（ADR-0067）", () => {
+  it("删一镜：台词、take、时间线项一起走，镜号往前补", () => {
+    const project = load();
+    const removed: ProjectEvent = { type: "shot.removed", at: AT, shotId: "sh-1" };
+    const after = applyEvent(project, removed);
+
+    expect(after.shots.map((item) => item.id)).toEqual(["sh-2"]);
+    expect(after.shots[0]?.index).toBe(0);
+    expect(after.scenes[0]?.shotIds).toEqual(["sh-2"]);
+    // 只带走这一镜自己的东西
+    expect(after.dialogue.map((item) => item.id)).toEqual(["dl-2"]);
+    expect(after.takes.map((item) => item.id)).toEqual(["take-2"]);
+    expect(after.timeline.items.map((item) => item.id)).toEqual(["ti-2"]);
+    expect(rebuild([created(project), removed])).toEqual(after);
+    expect(validateProject(after)).toEqual([]);
+  });
+
+  it("删一场：还有镜头时拒绝；镜头删空后删掉，场号重排，可回放", () => {
+    const project = load();
+    expect(() =>
+      applyEvent(project, { type: "scene.removed", at: AT, sceneId: "sc-1" }),
+    ).toThrow(/还有 2 镜/);
+
+    const events: ProjectEvent[] = [
+      { type: "shot.removed", at: AT, shotId: "sh-1" },
+      { type: "shot.removed", at: AT, shotId: "sh-2" },
+      { type: "scene.removed", at: AT, sceneId: "sc-1" },
+    ];
+    const after = rebuild([created(project), ...events]);
+
+    expect(after.scenes).toEqual([]);
+    expect(after.shots).toEqual([]);
+    expect(after.dialogue).toEqual([]);
+    expect(after.takes).toEqual([]);
+    expect(after.timeline.items).toEqual([]);
+    expect(validateProject(after)).toEqual([]);
+  });
+
+  it("陌生场次 / 镜头都拒绝", () => {
+    const project = load();
+    expect(() =>
+      applyEvent(project, { type: "scene.removed", at: AT, sceneId: "sc-404" }),
+    ).toThrow(/不存在/);
+    expect(() =>
+      applyEvent(project, { type: "shot.removed", at: AT, shotId: "sh-404" }),
+    ).toThrow(/不存在/);
+  });
+});
+
 describe("删地点（ADR-0061）", () => {
   it("删掉没被场次占用的地点，重放后一致", () => {
     const project = load();

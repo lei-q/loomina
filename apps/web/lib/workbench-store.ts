@@ -127,6 +127,10 @@ type WorkbenchState = {
   addScene: (locationId?: string) => string | undefined;
   /** 新建镜头：一条 `shot.added`，加在这一场的末尾（ADR-0064） */
   addShot: (sceneId: string) => string | undefined;
+  /** 删一镜：一条 `shot.removed`，台词 / take / 时间线项一并摘掉（ADR-0067） */
+  removeShot: (shotId: string) => boolean;
+  /** 删一场：先逐条删掉它的镜头，再一条 `scene.removed`（ADR-0067） */
+  removeScene: (sceneId: string) => boolean;
   /** 调整场序：写一条 `scene.moved`，场号与镜号跟着重排（ADR-0060） */
   moveScene: (sceneId: string, direction: "up" | "down") => boolean;
   /** 把一场直接挪到第 N 位（从 0 数）：长距离换位不用连点（ADR-0060 附记） */
@@ -1158,6 +1162,80 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       castError: undefined,
     });
     return id;
+  },
+
+  removeShot: (shotId) => {
+    if (get().readOnly) return false;
+    const { project, events, currentShotId } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) {
+      set({ castError: "找不到这一镜。" });
+      return false;
+    }
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定：先解锁再删。" });
+      return false;
+    }
+
+    // 删掉当前这一镜时，选中挪到下一格；没有下一格就退回上一格
+    const ordered = toStageView(project).shots;
+    const at = ordered.findIndex((item) => item.id === shotId);
+    const neighbour = at >= 0 ? (ordered[at + 1] ?? ordered[at - 1])?.id : undefined;
+    const event: ProjectEvent = {
+      type: "shot.removed",
+      at: new Date().toISOString(),
+      shotId,
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      currentShotId: currentShotId === shotId ? (neighbour ?? "") : currentShotId,
+      castError: undefined,
+    });
+    return true;
+  },
+
+  removeScene: (sceneId) => {
+    if (get().readOnly) return false;
+    const { project, events, currentShotId } = get();
+    const scene = project.scenes.find((item) => item.id === sceneId);
+    if (!scene) {
+      set({ castError: "找不到这一场。" });
+      return false;
+    }
+    const shots = scene.shotIds
+      .map((id) => project.shots.find((item) => item.id === id))
+      .filter((item): item is Shot => Boolean(item));
+    const locked = shots.find((item) => item.locked);
+    if (locked) {
+      const no = toStageView(project).shots.find((item) => item.id === locked.id)?.no ?? 0;
+      set({
+        castError: `这一场里的第 ${no} 镜（${shotLabel(no)}）已锁定：先解锁再删这一场。`,
+      });
+      return false;
+    }
+
+    // 先逐镜删、再删场：回放到任一前缀都不会留下挂在不存在的场上的镜头
+    const at = new Date().toISOString();
+    const written: ProjectEvent[] = [
+      ...shots.map(
+        (item): ProjectEvent => ({ type: "shot.removed", at, shotId: item.id }),
+      ),
+      { type: "scene.removed", at, sceneId },
+    ];
+    const next = written.reduce(applyEvent, project);
+    const remains = next.shots.map((item) => item.id);
+    const currentRemoved = !remains.includes(currentShotId);
+    const fallback = currentRemoved
+      ? (toStageView(next).shots.find((item) => item.state === "open")?.id ?? remains[0] ?? "")
+      : currentShotId;
+    set({
+      project: next,
+      events: [...events, ...written],
+      currentShotId: fallback,
+      castError: undefined,
+    });
+    return true;
   },
 
   moveScene: (sceneId, direction) => {

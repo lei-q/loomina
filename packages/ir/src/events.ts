@@ -69,6 +69,25 @@ export type ProjectEvent =
       toIndex: number;
     }
   | {
+      /**
+       * 删一场（ADR-0067）：只能删空场。
+       * 还有镜头时先逐条写 `shot.removed`——回放到任一前缀都不会有悬挂引用，
+       * 也让日志里"这一场原来有几镜"看得见。
+       */
+      type: "scene.removed";
+      at: string;
+      sceneId: Id;
+    }
+  | {
+      /**
+       * 删一镜（ADR-0067）：镜头自己的台词、take 与时间线项一并摘掉。
+       * 这些都是镜头的从属物，没有各自独立的界面；资产留着不删（孤儿资产另行回收）。
+       */
+      type: "shot.removed";
+      at: string;
+      shotId: Id;
+    }
+  | {
       /** 加一个地点（ADR-0059）：先有地点，场次才挂得上去 */
       type: "location.added";
       at: string;
@@ -240,6 +259,68 @@ export function applyEvent(
       ordered.splice(event.toIndex, 0, moved!);
       const scenes = ordered.map((scene, index) => ({ ...scene, index }));
       return { ...current, scenes };
+    }
+
+    case "scene.removed": {
+      if (!current) throw new Error("scene.removed 之前必须有 project.created");
+      const scene = current.scenes.find((item) => item.id === event.sceneId);
+      if (!scene) {
+        throw new Error(`scene.removed 指向不存在的场次: ${event.sceneId}`);
+      }
+      // 先删镜头、再删场：这样回放到任一前缀都不会有镜头挂在不存在的场次上
+      if (scene.shotIds.length > 0) {
+        throw new Error(
+          `scene.removed 还有 ${scene.shotIds.length} 镜在这场: ${event.sceneId}`,
+        );
+      }
+      const scenes = current.scenes
+        .filter((item) => item.id !== event.sceneId)
+        .sort((a, b) => a.index - b.index)
+        .map((item, index) => ({ ...item, index }));
+      return { ...current, scenes };
+    }
+
+    case "shot.removed": {
+      if (!current) throw new Error("shot.removed 之前必须有 project.created");
+      const shot = current.shots.find((item) => item.id === event.shotId);
+      if (!shot) {
+        throw new Error(`shot.removed 指向不存在的镜头: ${event.shotId}`);
+      }
+      const scene = current.scenes.find((item) => item.id === shot.sceneId);
+      if (!scene) {
+        throw new Error(`shot.removed 的镜头挂在不存在的场次: ${shot.sceneId}`);
+      }
+      const dialogueIds = new Set(shot.dialogueIds);
+      const takeIds = new Set(shot.takeIds);
+      return {
+        ...current,
+        // 台词、take、时间线项都是镜头的从属物：镜头没了，它们也没有地方挂
+        dialogue: current.dialogue.filter((line) => !dialogueIds.has(line.id)),
+        takes: current.takes.filter((take) => take.shotId !== event.shotId),
+        timeline: {
+          items: current.timeline.items.filter(
+            (item) => item.shotId !== event.shotId && !takeIds.has(item.takeId),
+          ),
+        },
+        shots: current.shots
+          .filter((item) => item.id !== event.shotId)
+          .map((item) =>
+            item.sceneId !== shot.sceneId
+              ? item
+              : {
+                  ...item,
+                  // 这一场里后面的镜号往前补，保持连续
+                  index: scene.shotIds
+                    .filter((id) => id !== event.shotId)
+                    .indexOf(item.id),
+                },
+          ),
+        scenes: current.scenes.map((item) =>
+          item.id === shot.sceneId
+            ? { ...item, shotIds: item.shotIds.filter((id) => id !== event.shotId) }
+            : item,
+        ),
+      };
     }
 
     case "location.added": {

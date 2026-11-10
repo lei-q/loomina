@@ -1288,6 +1288,67 @@ describe("新建场次与镜头（ADR-0064）", () => {  beforeEach(() => {
   });
 });
 
+describe("删一场、删一镜（ADR-0067）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("删一镜：台词、take、时间线项一起走，后面的镜号往前补", () => {
+    const snapshot = state().events.length;
+
+    expect(state().removeShot("s-01")).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "shot.removed", shotId: "s-01" });
+
+    const project = state().project;
+    expect(project.shots.some((shot) => shot.id === "s-01")).toBe(false);
+    expect(project.dialogue.some((line) => line.id === "d-01")).toBe(false);
+    expect(project.takes.some((take) => take.id === "t-01")).toBe(false);
+    expect(project.timeline.items.map((item) => item.id)).toEqual(["tl-02"]);
+    expect(project.scenes.find((scene) => scene.id === "sc-1")?.shotIds).toEqual(["s-02", "s-03"]);
+    expect(project.shots.find((shot) => shot.id === "s-02")?.index).toBe(0);
+
+    const view = toScriptView(state().project);
+    expect(view.shotCount).toBe(11);
+    expect(view.scenes[0]?.shots.map((shot) => shot.no)).toEqual([1, 2]);
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("删一场：先逐镜删、再删场，场号重排", () => {
+    const snapshot = state().events.length;
+
+    expect(state().removeScene("sc-3")).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 2);
+    expect(state().events.at(-2)).toMatchObject({ type: "shot.removed", shotId: "s-06" });
+    expect(state().events.at(-1)).toMatchObject({ type: "scene.removed", sceneId: "sc-3" });
+
+    const view = toScriptView(state().project);
+    expect(view.scenes).toHaveLength(4);
+    expect(view.scenes.map((scene) => scene.no)).toEqual([1, 2, 3, 4]);
+    expect(view.shotCount).toBe(11);
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("锁定的镜头 / 场次、陌生场次 / 镜头、只读都不写事件", () => {
+    const snapshot = state().events.length;
+
+    expect(state().removeShot("s-08")).toBe(false);
+    expect(state().castError).toContain("锁定");
+    expect(state().removeScene("sc-4")).toBe(false);
+    expect(state().castError).toContain("锁定");
+    expect(state().removeShot("s-404")).toBe(false);
+    expect(state().castError).toContain("找不到");
+    expect(state().removeScene("sc-404")).toBe(false);
+    expect(state().castError).toContain("找不到");
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().removeShot("s-01")).toBe(false);
+    expect(state().removeScene("sc-3")).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+  });
+});
+
 describe("调整场序（ADR-0060）", () => {
   beforeEach(() => {
     state().reset();

@@ -46,6 +46,8 @@ export function ScriptScreen() {
   const moveSceneTo = useWorkbench((state) => state.moveSceneTo);
   const addScene = useWorkbench((state) => state.addScene);
   const addShot = useWorkbench((state) => state.addShot);
+  const removeShot = useWorkbench((state) => state.removeShot);
+  const removeScene = useWorkbench((state) => state.removeScene);
   const setDialogueOrder = useWorkbench((state) => state.setDialogueOrder);
   const moveDialogueTo = useWorkbench((state) => state.moveDialogueTo);
   const restoreLine = useWorkbench((state) => state.restoreLine);
@@ -57,6 +59,10 @@ export function ScriptScreen() {
   const [actionDraft, setActionDraft] = useState("");
   const [editingScene, setEditingScene] = useState<string | null>(null);
   const [movingScene, setMovingScene] = useState<string | null>(null);
+  const [deletingScene, setDeletingScene] = useState<string | null>(null);
+  const [deletingShot, setDeletingShot] = useState<string | null>(null);
+  /** 删除被拒的原因：贴在被删的那一场 / 那一镜下面，不塞进别的编辑器（ADR-0067） */
+  const [deleteNote, setDeleteNote] = useState<{ id: string; text: string } | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [swapping, setSwapping] = useState<string | null>(null);
   const [moving, setMoving] = useState<string | null>(null);
@@ -414,9 +420,54 @@ export function ScriptScreen() {
                           挪
                         </button>
                       )}
+                      {/* 删一场（ADR-0067）：先删它的镜头，再删场；两步确认 */}
+                      {deletingScene === scene.id ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const ok = removeScene(scene.id);
+                              setDeleteNote(
+                                ok ? null : { id: scene.id, text: useWorkbench.getState().castError ?? "删不掉这一场。" },
+                              );
+                              if (ok) setDeletingScene(null);
+                            }}
+                            title="删掉这一场：这一场的镜头会一起删，台词与 take 也跟着走"
+                            className="tnum rounded-token border border-pick/70 px-1 py-px text-[9px] text-pick transition-colors duration-[var(--dur)] hover:bg-pick hover:text-bg"
+                          >
+                            {scene.shots.length > 0 ? `确认删 ${scene.shots.length} 镜` : "确认删"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeletingScene(null)}
+                            className="tnum rounded-token border border-line px-1 py-px text-[9px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                          >
+                            取消
+                          </button>                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDeletingScene(scene.id);
+                            setDeleteNote(null);
+                          }}
+                          title={
+                            scene.shots.length > 0
+                              ? `删掉这一场：连这一场的 ${scene.shots.length} 镜一起删`
+                              : "删掉这个空场"
+                          }
+                          className="tnum rounded-token border border-line px-1 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-pick enabled:hover:text-pick"
+                        >
+                          删
+                        </button>
+                      )}
                     </span>
                   )}
                 </div>
+
+                {deleteNote?.id === scene.id && (
+                  <p className="mt-1.5 text-[9.5px] leading-[1.7] text-pick">{deleteNote.text}</p>
+                )}
 
                 {/* 场头改过几次（ADR-0058）：一场一件事，折叠在标题下面，不占正文 */}
                 {(() => {
@@ -1091,6 +1142,52 @@ export function ScriptScreen() {
                           {shot.size} · {shot.angle} · {shot.dur.toFixed(1)}s
                           {shot.locked && <span className="ml-2 text-muted-2">· 已锁定</span>}
                         </p>
+
+                        {/* 删一镜（ADR-0067）：台词、take、时间线项一起走；两步确认 */}
+                        {!readOnly &&
+                          (deletingShot === shot.id ? (
+                            <span className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[9px]">
+                              <span className="text-muted-2">删这一镜，台词与 take 一起删</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const ok = removeShot(shot.id);
+                                  setDeleteNote(
+                                    ok ? null : { id: shot.id, text: useWorkbench.getState().castError ?? "删不掉这一镜。" },
+                                  );
+                                  if (ok) setDeletingShot(null);
+                                }}
+                                className="rounded-token border border-pick/70 px-1.5 py-px text-pick transition-colors duration-[var(--dur)] hover:bg-pick hover:text-bg"
+                              >
+                                确认删
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setDeletingShot(null)}
+                                className="rounded-token border border-line px-1.5 py-px text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                              >
+                                取消
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={shot.locked}
+                              onClick={() => {
+                                setDeletingShot(shot.id);
+                                setDeleteNote(null);
+                              }}
+                              title={
+                                shot.locked ? "这一镜已锁定，先解锁才能删" : "删掉这一镜"
+                              }
+                              className="tnum mt-1.5 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-pick enabled:hover:text-pick disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              删这一镜
+                            </button>
+                          ))}
+                        {deleteNote?.id === shot.id && (
+                          <p className="mt-1 text-[9.5px] leading-[1.7] text-pick">{deleteNote.text}</p>
+                        )}
                       </div>
                     </li>
                   ))}
@@ -1111,6 +1208,12 @@ export function ScriptScreen() {
                 )}
               </section>
             ))}
+
+            {view.scenes.length === 0 && (
+              <p className="rounded-token border border-dashed border-line px-3 py-6 text-center text-[10.5px] leading-[1.8] text-muted-2">
+                还没有场次。下面加一场，从场头与第一镜开始写。
+              </p>
+            )}
 
             {!readOnly && (
               <button

@@ -90,32 +90,41 @@ export function Workbench() {
       {castError && (
         <p className="shrink-0 px-6 pb-1 text-[10.5px] leading-[1.6] text-pick">{castError}</p>
       )}
-      <Stage
-        view={view}
-        generating={
-          jobs[`${view.shots[view.current]!.id}:last`]?.kind === "keyframe"
-            ? "last"
-            : jobs[`${view.shots[view.current]!.id}:first`]?.kind === "keyframe"
-              ? "first"
-              : null
-        }
-        quoteCny={imageCny}
-        readOnly={readOnly ?? false}
-        onGenerateKeyframe={(frame) => void generateKeyframe(view.shots[view.current]!.id, frame)}
-        onRemoveNote={(note) => removeNote(view.shots[view.current]!.id, note)}
-        onToggleCharacter={(characterId) =>
-          toggleShotCharacter(view.shots[view.current]!.id, characterId)
-        }
-        onToggleProp={(propId) => toggleShotProp(view.shots[view.current]!.id, propId)}
-      />
-      <ReelBar
-        view={view}
-        onSelect={select}
-        onDecide={decide}
-        onInstruct={instruct}
-        onSetLock={(locked) => setShotLock(view.shots[view.current]!.id, locked)}
-        onApproveAndLock={() => approveAndLock(view.shots[view.current]!.id)}
-      />
+      {view.shots.length === 0 ? (
+        // 删光了也不崩：留一句去哪继续（ADR-0067）
+        <main className="flex min-h-0 flex-1 items-center justify-center px-6 text-[11px] leading-[1.8] text-muted-2">
+          还没有镜头。去「剧本」页加一场，再回来点名出场、生成关键帧。
+        </main>
+      ) : (
+        <>
+          <Stage
+            view={view}
+            generating={
+              jobs[`${view.shots[view.current]!.id}:last`]?.kind === "keyframe"
+                ? "last"
+                : jobs[`${view.shots[view.current]!.id}:first`]?.kind === "keyframe"
+                  ? "first"
+                  : null
+            }
+            quoteCny={imageCny}
+            readOnly={readOnly ?? false}
+            onGenerateKeyframe={(frame) => void generateKeyframe(view.shots[view.current]!.id, frame)}
+            onRemoveNote={(note) => removeNote(view.shots[view.current]!.id, note)}
+            onToggleCharacter={(characterId) =>
+              toggleShotCharacter(view.shots[view.current]!.id, characterId)
+            }
+            onToggleProp={(propId) => toggleShotProp(view.shots[view.current]!.id, propId)}
+          />
+          <ReelBar
+            view={view}
+            onSelect={select}
+            onDecide={decide}
+            onInstruct={instruct}
+            onSetLock={(locked) => setShotLock(view.shots[view.current]!.id, locked)}
+            onApproveAndLock={() => approveAndLock(view.shots[view.current]!.id)}
+          />
+        </>
+      )}
     </div>
   );
 }

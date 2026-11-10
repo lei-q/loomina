@@ -49,6 +49,8 @@ const EVENT_TYPES: Record<ProjectEvent["type"], true> = {
   "scene.added": true,
   "shot.added": true,
   "scene.moved": true,
+  "scene.removed": true,
+  "shot.removed": true,
   "location.added": true,
   "location.updated": true,
   "location.removed": true,
