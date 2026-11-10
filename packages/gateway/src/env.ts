@@ -41,6 +41,10 @@ export interface TreecloudEnv {
   videoResolution?: string;
   imageSize?: string;
   videoApi?: "treecloud" | "litellm";
+  /** TTS 模型（ADR-0085）：没配就不出声，界面如实说 */
+  ttsModel?: string;
+  /** 默认音色；角色没单独指定时用它 */
+  ttsVoice?: string;
 }
 
 export class ConfigError extends Error {}
@@ -68,6 +72,8 @@ export function treecloudEnvFrom(env: EnvMap): TreecloudEnv {
     videoResolution: env.VIDEO_RESOLUTION || undefined,
     imageSize: env.IMAGE_SIZE || undefined,
     videoApi,
+    ttsModel: env.TTS_MODEL || undefined,
+    ttsVoice: env.TTS_VOICE || undefined,
   };
   return config;
 }
@@ -82,5 +88,6 @@ export function describeEnv(config: TreecloudEnv): string {
     `videoApi=${config.videoApi ?? "(自动)"}`,
     `videoResolution=${config.videoResolution ?? "(默认)"}`,
     `imageSize=${config.imageSize ?? "(默认)"}`,
+    `ttsModel=${config.ttsModel ?? "(没配)"}`,
   ].join(" ");
 }

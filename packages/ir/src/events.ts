@@ -21,6 +21,9 @@ export const MUST_NOT_CHANGE_COUNT_MAX = 20;
 /** 参考图上限：人物 / 道具各 8 张，再多进提示词与锚点就没有意义了（ADR-0079） */
 export const REFERENCE_IMAGES_MAX = 8;
 
+/** 音色标识上限：供应商的音色名通常很短，留点余量（ADR-0085） */
+export const VOICE_PROFILE_MAX = 40;
+
 /**
  * 事件日志（ADR-0011）。
  *
@@ -132,7 +135,15 @@ export type ProjectEvent =
       at: string;
       characterId: Id;
       patch: Partial<
-        Pick<Character, "name" | "appearance" | "mustNotChange" | "referenceImages">
+        Pick<
+          Character,
+          | "name"
+          | "appearance"
+          | "mustNotChange"
+          | "referenceImages"
+          /** 音色（ADR-0085）：空串表示用回默认音色 */
+          | "voiceProfileId"
+        >
       >;
     }
   | {
@@ -509,9 +520,21 @@ export function applyEvent(
       if (event.patch.referenceImages !== undefined) {
         checkReferenceImages(event.patch.referenceImages, current.assets, "character.updated");
       }
-      const characters = current.characters.map((character) =>
-        character.id === event.characterId ? { ...character, ...event.patch } : character,
-      );
+      if (
+        event.patch.voiceProfileId !== undefined &&
+        event.patch.voiceProfileId.trim().length > VOICE_PROFILE_MAX
+      ) {
+        throw new Error(
+          `character.updated 的 voiceProfileId 超过 ${VOICE_PROFILE_MAX} 字`,
+        );
+      }
+      const characters = current.characters.map((character) => {
+        if (character.id !== event.characterId) return character;
+        const merged = { ...character, ...event.patch };
+        // 空串表示「用回默认音色」：删掉这个键，而不是留一个空音色
+        if (event.patch.voiceProfileId === "") delete merged.voiceProfileId;
+        return merged;
+      });
       return { ...current, characters };
     }
 
@@ -594,6 +617,15 @@ export function applyEvent(
       }
       if (event.patch.durationMs !== undefined && !(event.patch.durationMs > 0)) {
         throw new Error(`台词时长必须大于 0：${event.patch.durationMs}`);
+      }
+      if (event.patch.audioAssetId !== undefined) {
+        const asset = current.assets.find((item) => item.id === event.patch.audioAssetId);
+        if (!asset) {
+          throw new Error(`dialogue.updated 指向不存在的配音资产: ${event.patch.audioAssetId}`);
+        }
+        if (asset.kind !== "audio") {
+          throw new Error(`dialogue.updated 的配音资产不是音频: ${asset.id}`);
+        }
       }
       const dialogue = current.dialogue.map((item) =>
         item.id === event.lineId ? { ...item, ...event.patch } : item,

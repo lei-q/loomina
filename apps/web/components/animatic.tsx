@@ -23,8 +23,11 @@ export function AnimaticOverlay({
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(true);
   const [ended, setEnded] = useState(false);
+  const [clip, setClip] = useState(0);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const segment = view.segments[index];
+  const clips = segment?.clips ?? [];
 
   const jump = useCallback(
     (next: number) => {
@@ -55,6 +58,26 @@ export function AnimaticOverlay({
     setEnded(false);
     setPlaying(true);
   };
+
+  // 换镜 → 从这一镜的第一句念起
+  useEffect(() => {
+    setClip(0);
+  }, [index]);
+
+  // 音轨跟着播放状态走：暂停时真停，接着播从原处续上（ADR-0085）
+  useEffect(() => {
+    const element = audioRef.current;
+    if (!element) return;
+    const current = clips[clip];
+    if (!playing || !current) {
+      element.pause();
+      return;
+    }
+    if (element.src !== current.uri) element.src = current.uri;
+    void element.play().catch(() => {
+      // 浏览器不给自动播放时，字幕照走；用户点一下「暂停 / 播放」即可
+    });
+  }, [playing, index, clip, clips]);
 
   // 空格暂停 / 继续，左右切镜，Esc 关掉
   useEffect(() => {
@@ -150,6 +173,14 @@ export function AnimaticOverlay({
               </button>
             </div>
           )}
+
+          <audio
+            ref={audioRef}
+            onEnded={() => {
+              if (clip + 1 < clips.length) setClip(clip + 1);
+            }}
+            className="hidden"
+          />
         </div>
 
         <div className="flex w-[220px] shrink-0 flex-col gap-3">
@@ -160,7 +191,13 @@ export function AnimaticOverlay({
             <li>全长 {view.totalSec.toFixed(1)} 秒 · {view.segments.length} 镜</li>
             <li>有片子的镜头 {view.withVideo} 个</li>
             <li>还没有画面 {view.missing} 个（占位色块）</li>
-            <li>还没有配音：这一版是默片预演</li>
+            <li>
+              {view.withVoice === 0
+                ? "还没有配音：这一版是默片预演"
+                : `有配音的镜头 ${view.withVoice} 个${
+                    view.withVoice < view.segments.length ? "（其余是默片）" : ""
+                  }`}
+            </li>
           </ul>
           <div className="flex items-center gap-1.5">
             <button

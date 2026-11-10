@@ -2615,3 +2615,35 @@ ADR-0009 把 animatic 定为视频生成前的闸门，但眼下没有任何地�
 - 播放依赖浏览器解码：无头 Chrome 里 data URI 视频都停在 `readyState 0`，所以自动化验收只验到元素与状态，真实播放要人在真浏览器里看。
 - 镜头之间硬切，没有转场、没有推拉摇移的轻微动效。
 - 时长直接取 IR 的 `durationMs`，没有按配音量过。
+
+## 第八十九次 · 2026-11-11 · 配音（N2 下半 · C1）
+
+**背景**
+预演已经能连着看，但是默片。ADR-0003 把配音定为音频先行：对白的节奏与停顿决定这条片子成不成立。供应商这边列得出 `qwen-audio-3.0-tts-*`，但 `POST /v1/audio/speech` 实测 403 `No authorized bound group supports this request`——链路可以写，现在很可能念不出声。无头 Chrome 也解不开音频，自动化验收只能验到元素与状态。
+
+**结论**
+- 数据模型：`DialogueLine.audioAssetId?: ID`（ADR-0085），指向 `kind: "audio"` 的资产；资产 id 固定 `a-voice-<lineId>`，一句一个资产位，重配覆盖旧音轨，不进 `takes`。`Character.voiceProfileId` 可改（`character.updated` 的 patch 增加该字段，空串表示用回默认音色）。
+- 网关：`TreecloudClient.requestBytes` 收二进制响应；`TreecloudSpeechAdapter.speak` 调 `POST /v1/audio/speech {model, input, voice, response_format}`。模型读 `TTS_MODEL`、默认音色读 `TTS_VOICE`；没配模型直接报 `tts_not_configured`，**不发请求**。
+- 服务端：`GET /api/voice` 只回 `{ model?, voice? }`（不触发生成）；`POST /api/voice` 一句一次请求，回 data URI；文字 ≤ 300 字、音色 ≤ 40 字；没配模型回 500（配置问题，不是 502 供应商错误）。
+- 时长以音轨为准（P5）：网关不猜时长，浏览器读 `loadedmetadata` 后由 `fitLineToAudio` 写 `dialogue.updated { durationMs }` + `shot.updated { durationMs }`（按差值挪镜头）+ `asset.updated` 补记 `durationMs`；差值 < 40ms 不写。
+- 界面：新增 `/voice` 声音页（顶栏「声音」可达）。角色音色输入、按镜头顺序列每一句、已配的带播放器；每句 `出声 / 重配` 与 `贴音轨`（`http(s)://` 或 `data:audio/`，≤ 8 MB）两条入口；没配模型时「出声」禁用并说明原因。锁定的镜头不出声、不贴。
+- 预演：`toAnimaticView` 每段多 `clips`（这一镜已配好的音轨，按台词顺序），覆盖层按顺序播放；暂停时音轨真停，切镜从新一镜的第一句念起；右栏改成「有配音的镜头 n 个（其余是默片）」，一句都没配时仍是「还没有配音：这一版是默片预演」。
+- 失败说人话：store 把供应商原因截到 240 字，前置「「SH-01 · 周」这句没出声：…。可以先「贴一条音轨」顶上，或稍后再试。」
+- ADR-0085；`FEATURES.md` C1 / E10、`UX.md` 5.10 附记与 5.11、`DATA-MODEL.md` 同步。
+
+**验证**
+- 测试：IR 103（新增 3：挂配音资产、非法资产、音色设置）、web 242（新增 7：读模型 2、store 5）、gateway 20（新增 3：二进制出声、未配置、403 人话）、pipeline 23，合计 388；`pnpm typecheck`、`pnpm test`、`pnpm --filter web build` 通过。
+- 真实链路（浏览器，1440×900，`/voice`）：页头写「还没配配音模型：服务端加上 TTS_MODEL 后才能出声，现在可以先贴自己的音轨」；两个角色各带默认音色（`voice-lin` / `voice-zhou`）；4 句台词按 SH-01 / SH-03 / SH-04 / SH-08 排开，每句「出声」禁用且悬停说明原因。
+- 贴音轨：在 SH-01 的「贴音轨」里贴 `data:audio/mpeg;base64,SUQz` 后，该行立刻变 `有声`、出现 `<audio controls src=…>`、按钮变「重配」；事件日志按序多出 `asset.updated` + `dialogue.updated`。
+- 改音色：林 的音色改成 `Cherry` 并失焦，日志多一条 `character.updated { voiceProfileId: "Cherry" }`；刷新后输入框仍是 `Cherry`。
+- 预演：回分镜页点 `▶ 预演`，右栏显示「有配音的镜头 1 个（其余是默片）」，覆盖层里的 `<audio>` 带着那条 data URI，`SH-01` 字幕照常。
+- 接口：`GET /api/voice` 回 `{}`（200）；`POST` 念一句回 500「没有配配音模型：在 secrity.env 里加上 TTS_MODEL（例如 qwen-audio-3.0-tts-flash）之后才能出声」；空文本回 400。
+- 验收完清掉测试数据：IndexedDB 重置后回到只有 `project.created` 的初始示例。
+
+**诚实地说**
+- **没能真的出声**：没有 `TTS_MODEL`；之前带 qwen TTS 模型探针时供应商回 403（分组未授权）。所以「出声」只验到未配置与失败提示，端到端念一句没有验过。
+- **听不到**：无头 Chrome 连 PCM WAV 都停在 `readyState 0`，播放与 `loadedmetadata` 量时长都无法自动验收；「量时长 → 校正镜头」只有单测覆盖，真实时长校正要人在浏览器里挂一条真音轨看。
+- 音轨存成本地 data URI（一句上限 8 MB），长片段的音频会顶满本地配额；对象存储（H3）接上后要改成地址。
+- 重配是覆盖：旧音轨取不回来，日志里只留事件。
+- 没有混音、没有多角色同时说话、没有音量平衡与响度（C12）；一人一句顺序播。
+- 没配模型时「出声」整列禁用，但「贴音轨」仍可用；这是有意为之，不是半成品。

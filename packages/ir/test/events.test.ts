@@ -253,6 +253,91 @@ describe("dialogue.updated（ADR-0044）", () => {
   });
 });
 
+describe("配音（ADR-0085）", () => {
+  const audioAsset = {
+    id: "a-voice-dl-1",
+    kind: "audio" as const,
+    source: "generated" as const,
+    uri: "data:audio/mpeg;base64,SUQz",
+    mime: "audio/mpeg",
+    durationMs: 1400,
+    createdAt: AT,
+  };
+
+  it("挂上配音资产：重放后台词指向它，时长仍在", () => {
+    const project = load();
+    const event: ProjectEvent = {
+      type: "dialogue.updated",
+      at: AT,
+      lineId: "dl-1",
+      patch: { audioAssetId: audioAsset.id },
+    };
+    const after = rebuild([
+      created(project),
+      { type: "asset.updated", at: AT, asset: audioAsset },
+      event,
+    ]);
+
+    expect(after.dialogue.find((line) => line.id === "dl-1")).toMatchObject({
+      audioAssetId: "a-voice-dl-1",
+      durationMs: 2000,
+    });
+  });
+
+  it("挂一个不存在或不是音频的资产都拒绝", () => {
+    const project = load();
+    expect(() =>
+      applyEvent(project, {
+        type: "dialogue.updated",
+        at: AT,
+        lineId: "dl-1",
+        patch: { audioAssetId: "a-nope" },
+      }),
+    ).toThrow(/不存在的配音资产/);
+
+    // 现有的第一张图不是音频
+    const imageId = project.assets[0]?.id;
+    expect(imageId).toBeTruthy();
+    expect(() =>
+      applyEvent(project, {
+        type: "dialogue.updated",
+        at: AT,
+        lineId: "dl-1",
+        patch: { audioAssetId: imageId },
+      }),
+    ).toThrow(/不是音频/);
+  });
+
+  it("给人物指定音色；空串表示用回默认音色", () => {
+    const project = load();
+    const picked = applyEvent(project, {
+      type: "character.updated",
+      at: AT,
+      characterId: "c-zhou",
+      patch: { voiceProfileId: "Cherry" },
+    });
+    expect(picked.characters.find((item) => item.id === "c-zhou")?.voiceProfileId).toBe(
+      "Cherry",
+    );
+
+    const cleared = applyEvent(picked, {
+      type: "character.updated",
+      at: AT,
+      characterId: "c-lin",
+      patch: { voiceProfileId: "" },
+    });
+    expect(cleared.characters.find((item) => item.id === "c-lin")).not.toHaveProperty(
+      "voiceProfileId",
+    );
+    expect(rebuild([created(project), {
+      type: "character.updated",
+      at: AT,
+      characterId: "c-zhou",
+      patch: { voiceProfileId: "Cherry" },
+    }])).toEqual(picked);
+  });
+});
+
 describe("台词增删（ADR-0045）", () => {
   it("dialogue.added 同时挂到镜头的 dialogueIds，可回放", () => {
     const project = load();

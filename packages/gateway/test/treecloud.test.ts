@@ -4,6 +4,7 @@ import {
   TreecloudClient,
   TreecloudError,
   TreecloudImageAdapter,
+  TreecloudSpeechAdapter,
   TreecloudVideoAdapter,
   imageUriOf,
   mapVideoStatus,
@@ -239,6 +240,69 @@ describe("视频适配器", () => {
     ).rejects.toMatchObject({ status: 429 });
 
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe("配音适配器", () => {
+  it("按 OpenAI 兼容格式发请求，按二进制收回音频", async () => {
+    const audio = new Uint8Array([0x49, 0x44, 0x33, 0x04]);
+    const { client, calls } = clientWith(
+      [
+        () =>
+          new Response(audio, {
+            status: 200,
+            headers: { "content-type": "audio/mpeg; charset=binary" },
+          }),
+      ],
+      { ttsModel: "qwen-audio-3.0-tts-flash", ttsVoice: "Cherry" },
+    );
+
+    const adapter = new TreecloudSpeechAdapter(client);
+    const output = await adapter.speak({ text: "你终于来了。" });
+
+    expect(adapter.configured).toBe(true);
+    expect(calls[0]?.url).toBe("https://relay.test/v1/audio/speech");
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.body).toEqual({
+      model: "qwen-audio-3.0-tts-flash",
+      input: "你终于来了。",
+      response_format: "mp3",
+      voice: "Cherry",
+    });
+    expect(Array.from(output.bytes)).toEqual(Array.from(audio));
+    expect(output.mime).toBe("audio/mpeg");
+    expect(output.provenance.modelId).toBe("qwen-audio-3.0-tts-flash");
+  });
+
+  it("没配 TTS_MODEL 时不发请求，直接说没配", async () => {
+    const { client, calls } = clientWith([() => jsonResponse({})]);
+    const adapter = new TreecloudSpeechAdapter(client);
+
+    expect(adapter.configured).toBe(false);
+    await expect(adapter.speak({ text: "喂" })).rejects.toMatchObject({
+      code: "tts_not_configured",
+      status: 500,
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("失败的 JSON 错误体仍然被读成人话", async () => {
+    const { client } = clientWith(
+      [
+        () =>
+          jsonResponse(
+            { error: { code: "invalid_request", message: "No authorized bound group supports this request" } },
+            403,
+          ),
+      ],
+      { ttsModel: "qwen-audio-3.0-tts-flash" },
+    );
+
+    const adapter = new TreecloudSpeechAdapter(client);
+    await expect(adapter.speak({ text: "喂" })).rejects.toMatchObject({
+      status: 403,
+      message: "No authorized bound group supports this request",
+    });
   });
 });
 

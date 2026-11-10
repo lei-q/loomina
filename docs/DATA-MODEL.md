@@ -221,6 +221,8 @@ interface Keyframes {
 
 > **落地情况（ADR-0044 / 0045 / 0046 / 0047，2026-11-10）**：台词没有按上面的草图挂在 `Shot.dialogue` 上，而是**项目级一张表**：`Project.dialogue: DialogueLine[]` 存本体，`Shot.dialogueIds: ID[]` 存这一镜说哪几句、顺序就是数组顺序。剧本页先读表、再按 `dialogueIds` 取，回放时两处一起动。台词相关事件四种：`dialogue.updated`（只改文本与时长）、`dialogue.speaker.updated`（只换 `characterId`）、`dialogue.added`（整句进来并挂到镜头）、`dialogue.removed`（整句摘掉并清理所有引用）；加删句同时写一条 `shot.updated { durationMs }`，镜头时长跟着加减（准则 P5）。时长目前按 0.3 秒 / 字估（ADR-0044），接 TTS 后换成真实音频时长。
 
+> **落地情况（ADR-0085，2026-11-11）**：`DialogueLine.audioAssetId?: ID` 已进 IR，指向 `kind: "audio"` 的 Asset；`dialogue.updated` 的 patch 可带它，回放时校验资产存在且是音频。音轨资产 id 固定为 `a-voice-<lineId>`（一句一个资产位，重配就换掉旧的，不累积成 take）。`Asset.durationMs` 记音轨真实时长：网关不猜，交给浏览器 `loadedmetadata` 量，量到之后由 `fitLineToAudio` 写一条 `dialogue.updated { durationMs }` + 一条 `shot.updated { durationMs }`（按差值挪镜头，P5）+ 一条 `asset.updated` 补记时长。`Character.voiceProfileId` 现在可改（`character.updated` 的 patch 增加这个字段，空串表示用回默认音色）。供应商 TTS 走 `POST /v1/audio/speech`，需要 `TTS_MODEL`；没配时不出声，界面如实说，可以「贴音轨」导入。
+
 ```ts
 interface CameraSpec {
   shotSize:

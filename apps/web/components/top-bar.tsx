@@ -13,7 +13,7 @@ const stages = [
   { name: "定妆", href: "/cast" },
   { name: "分镜", href: "/" },
   { name: "关键帧", href: "/keyframes" },
-  { name: "声音", href: null },
+  { name: "声音", href: "/voice" },
   { name: "成片", href: null },
 ] as const;
 

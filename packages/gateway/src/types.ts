@@ -37,6 +37,24 @@ export interface VideoOutput {
   costCny?: number;
 }
 
+export interface SpeechInput {
+  /** 要念的这一句（不含角色名与括号说明） */
+  text: string;
+  /** 音色标识，例如 "Cherry"；不填用适配器默认值 */
+  voice?: string;
+  /** 覆盖默认 TTS 模型 */
+  model?: string;
+}
+
+export interface SpeechOutput {
+  assetId: Id;
+  /** 音频字节。时长不由网关猜：交给浏览器读完再写回（ADR-0085） */
+  bytes: Uint8Array;
+  mime: string;
+  provenance: Provenance;
+  costCny?: number;
+}
+
 export type VideoJobStatus = "queued" | "running" | "succeeded" | "failed";
 
 /** 视频接口路由家族。不同中转站路由不同，见 docs/MODEL-GATEWAY.md。 */
@@ -63,4 +81,8 @@ export interface VideoAdapter {
   submit(input: VideoInput): Promise<{ jobId: string }>;
   poll(jobId: string): Promise<VideoJob>;
   fetch(jobId: string): Promise<VideoOutput>;
+}
+
+export interface SpeechAdapter {
+  speak(input: SpeechInput): Promise<SpeechOutput>;
 }

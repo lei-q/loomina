@@ -3,6 +3,9 @@ import type {
   ImageAdapter,
   ImageInput,
   ImageOutput,
+  SpeechAdapter,
+  SpeechInput,
+  SpeechOutput,
   VideoAdapter,
   VideoApiName,
   VideoInput,
@@ -22,6 +25,10 @@ export interface TreecloudConfig {
   imageSize?: string;
   /** 视频接口路由；不填按 treecloud，遇到 404/405 自动换另一条。 */
   videoApi?: VideoApiName;
+  /** TTS 模型（ADR-0085）；没配就不出声，界面如实说 */
+  ttsModel?: string;
+  /** 默认音色；角色没单独指定时用它 */
+  ttsVoice?: string;
   fetcher?: typeof fetch;
   now?: () => string;
   sleep?: (ms: number) => Promise<void>;
@@ -101,44 +108,10 @@ export class TreecloudClient {
     path: string,
     init: { method?: string; body?: unknown } = {},
   ): Promise<Json> {
-    const url = this.config.baseUrl + path;
     const maxRetries = this.config.maxRetriesOn429 ?? 2;
-    const timeoutMs = this.config.timeoutMs ?? 120_000;
 
     for (let attempt = 0; ; attempt += 1) {
-      const method = init.method ?? "GET";
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-      let response: Response;
-      try {
-        response = await this.fetcher(url, {
-          method,
-          headers: {
-            Authorization: `Bearer ${this.config.apiKey}`,
-            ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
-          },
-          body: init.body === undefined ? undefined : JSON.stringify(init.body),
-          signal: controller.signal,
-        });
-      } catch (error) {
-        if (controller.signal.aborted) {
-          throw new TreecloudError(
-            408,
-            "client_timeout",
-            `${method} ${path} 超过 ${timeoutMs}ms 未返回，已中止`,
-          );
-        }
-        throw new TreecloudError(
-          0,
-          "network_error",
-          error instanceof Error ? error.message.slice(0, 300) : String(error),
-        );
-      } finally {
-        clearTimeout(timer);
-      }
-      this.config.onAttempt?.(`${method} ${path} -> ${response.status}`);
-
+      const response = await this.send(path, init);
       const text = await response.text();
       if (response.ok) {
         if (!text.trim()) return {};
@@ -161,6 +134,75 @@ export class TreecloudClient {
 
       throw parseError(response.status, text, requestIdOf(response), this.config.apiKey);
     }
+  }
+
+  /**
+   * 二进制响应（TTS 直接回音频字节，ADR-0085）。
+   *
+   * 成功时不解析 JSON；失败时把错误体当文本读，错误信息仍然只报状态与原因。
+   */
+  async requestBytes(
+    path: string,
+    init: { method?: string; body?: unknown } = {},
+  ): Promise<{ bytes: Uint8Array; mime: string }> {
+    const maxRetries = this.config.maxRetriesOn429 ?? 2;
+
+    for (let attempt = 0; ; attempt += 1) {
+      const response = await this.send(path, init);
+      if (response.ok) {
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        return { bytes, mime: mimeOf(response) };
+      }
+
+      const text = await response.text();
+      if (response.status === 429 && attempt < maxRetries && !isQuotaExceeded(text)) {
+        await this.sleep(retryAfterMs(response) ?? 1000 * (attempt + 1));
+        continue;
+      }
+      throw parseError(response.status, text, requestIdOf(response), this.config.apiKey);
+    }
+  }
+
+  /** 一次 HTTP 调用：管超时、网络错误与进度回调，不判状态码。 */
+  private async send(
+    path: string,
+    init: { method?: string; body?: unknown } = {},
+  ): Promise<Response> {
+    const url = this.config.baseUrl + path;
+    const timeoutMs = this.config.timeoutMs ?? 120_000;
+    const method = init.method ?? "GET";
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    let response: Response;
+    try {
+      response = await this.fetcher(url, {
+        method,
+        headers: {
+          Authorization: `Bearer ${this.config.apiKey}`,
+          ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
+        },
+        body: init.body === undefined ? undefined : JSON.stringify(init.body),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new TreecloudError(
+          408,
+          "client_timeout",
+          `${method} ${path} 超过 ${timeoutMs}ms 未返回，已中止`,
+        );
+      }
+      throw new TreecloudError(
+        0,
+        "network_error",
+        error instanceof Error ? error.message.slice(0, 300) : String(error),
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+    this.config.onAttempt?.(`${method} ${path} -> ${response.status}`);
+    return response;
   }
 }
 
@@ -211,6 +253,83 @@ export class TreecloudImageAdapter implements ImageAdapter {
         modelId: model,
         prompt: input.prompt,
         referenceAssetIds: input.referenceAssetIds ?? [],
+        createdAt: this.now(),
+      },
+    };
+  }
+}
+
+export interface TreecloudSpeechOptions {
+  /** 覆盖 env 里的 TTS_MODEL */
+  model?: string;
+  /** 默认音色；ENV 的 TTS_VOICE 也走这里 */
+  voice?: string;
+  /** 请求供应商回什么格式；mp3 最通用 */
+  format?: "mp3" | "wav" | "opus" | "aac" | "flac";
+}
+
+/**
+ * 配音适配器（ADR-0085）。
+ *
+ * 契约按 OpenAI 兼容写法实测（docs/MODEL-GATEWAY.md）：
+ *   POST /v1/audio/speech  {model, input, voice, response_format} → 二进制音频
+ *
+ * 没有配 TTS_MODEL 时直接报 tts_not_configured：这不是网络错误，
+ * 重试几次也不会好，界面应该据此说「还没配配音模型」而不是「生成失败」。
+ */
+export class TreecloudSpeechAdapter implements SpeechAdapter {
+  private readonly now: () => string;
+  private counter = 0;
+
+  constructor(
+    private readonly client: TreecloudClient,
+    private readonly options: TreecloudSpeechOptions = {},
+  ) {
+    this.now = client.config.now ?? (() => new Date().toISOString());
+  }
+
+  /** 现在有没有可用的 TTS 模型；界面据此决定要不要露「出声」按钮。 */
+  get configured(): boolean {
+    return Boolean(this.options.model ?? this.client.config.ttsModel);
+  }
+
+  async speak(input: SpeechInput): Promise<SpeechOutput> {
+    const model = input.model ?? this.options.model ?? this.client.config.ttsModel;
+    if (!model) {
+      throw new TreecloudError(
+        500,
+        "tts_not_configured",
+        "没有配配音模型：在 secrity.env 里加上 TTS_MODEL（例如 qwen-audio-3.0-tts-flash）之后才能出声",
+      );
+    }
+    const voice = input.voice ?? this.options.voice ?? this.client.config.ttsVoice;
+    const text = input.text.trim();
+    if (!text) {
+      throw new TreecloudError(400, "tts_empty_text", "这一句是空的，没有可念的内容");
+    }
+
+    const { bytes, mime } = await this.client.requestBytes("/v1/audio/speech", {
+      method: "POST",
+      body: {
+        model,
+        input: text,
+        response_format: this.options.format ?? "mp3",
+        ...(voice ? { voice } : {}),
+      },
+    });
+    if (bytes.length === 0) {
+      throw new TreecloudError(502, "speech_empty", "语音接口返回了空音频");
+    }
+
+    this.counter += 1;
+    return {
+      assetId: `tc-tts-${this.counter}` as Id,
+      bytes,
+      mime,
+      provenance: {
+        modelId: model,
+        prompt: text,
+        referenceAssetIds: [],
         createdAt: this.now(),
       },
     };
@@ -516,6 +635,16 @@ function requestIdOf(response: Response): string | undefined {
     response.headers.get("X-Request-ID") ??
     undefined
   ) ?? undefined;
+}
+
+/** 二进制响应的类型：去掉 charset 之类的参数，只留 MIME 本体。 */
+function mimeOf(response: Response): string {
+  const raw = response.headers.get("content-type") ?? "";
+  const mime = raw.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (mime.startsWith("audio/")) return mime;
+  // 有的中转站会把音频当 octet-stream 回；按 mp3 收，浏览器多半能放
+  if (mime === "application/octet-stream" || mime === "") return "audio/mpeg";
+  return mime;
 }
 
 function retryAfterMs(response: Response): number | undefined {

@@ -112,6 +112,8 @@ export const DialogueLineSchema = z.object({
   text: z.string().min(1),
   /** TTS 音频时长；镜头时长服从它（准则 P5）。 */
   durationMs: z.number().int().positive(),
+  /** 这一句的配音资产（ADR-0085）；没有就是还没配。 */
+  audioAssetId: Id.optional(),
 });
 export type DialogueLine = z.infer<typeof DialogueLineSchema>;
 

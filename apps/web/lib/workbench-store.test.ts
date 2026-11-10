@@ -2630,3 +2630,77 @@ describe("参考图多张与手动挂（ADR-0079）", () => {
     expect(rebuild(state().events)).toEqual(state().project);
   });
 });
+
+describe("配音（ADR-0085）", () => {
+  beforeEach(() => {
+    state().reset();
+  });
+
+  it("贴一条音轨：落一条音频资产，再把这句挂在它上面", () => {
+    const before = state().events.length;
+    expect(state().attachVoice("d-01", "data:audio/mpeg;base64,SUQz")).toBe(true);
+
+    expect(state().events.slice(before).map((event) => event.type)).toEqual([
+      "asset.updated",
+      "dialogue.updated",
+    ]);
+    const asset = state().project.assets.find((item) => item.id === "a-voice-d-01");
+    expect(asset).toMatchObject({ kind: "audio", source: "upload", uri: "data:audio/mpeg;base64,SUQz" });
+    expect(state().project.dialogue.find((line) => line.id === "d-01")?.audioAssetId).toBe(
+      "a-voice-d-01",
+    );
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("只收 http(s) / data:audio，锁定的镜头不给配", () => {
+    expect(state().attachVoice("d-01", "ftp://nope")).toBe(false);
+    expect(state().attachVoice("d-01", "https://cdn.example.com/x.mp3")).toBe(true);
+    expect(state().attachVoice("d-99", "https://cdn.example.com/x.mp3")).toBe(false);
+
+    // d-04 在锁定的 s-08 里
+    expect(state().attachVoice("d-04", "https://cdn.example.com/x.mp3")).toBe(false);
+    expect(state().castError).toContain("已锁定");
+  });
+
+  it("量出音轨时长之后，台词与镜头一起挪（准则 P5）", () => {
+    state().attachVoice("d-01", "https://cdn.example.com/x.mp3");
+    const before = state().events.length;
+
+    expect(state().fitLineToAudio("d-01", 3000)).toBe(true);
+    expect(state().events.slice(before).map((event) => event.type)).toEqual([
+      "dialogue.updated",
+      "shot.updated",
+      "asset.updated",
+    ]);
+    expect(state().project.dialogue.find((line) => line.id === "d-01")?.durationMs).toBe(3000);
+    expect(state().project.shots.find((shot) => shot.id === "s-01")?.durationMs).toBe(3500);
+    expect(
+      state().project.assets.find((item) => item.id === "a-voice-d-01")?.durationMs,
+    ).toBe(3000);
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("时长差得小就不写事件：不让重放产生无意义的抖动", () => {
+    state().attachVoice("d-01", "https://cdn.example.com/x.mp3");
+    const before = state().events.length;
+    expect(state().fitLineToAudio("d-01", 2610)).toBe(false);
+    expect(state().events).toHaveLength(before);
+  });
+
+  it("给角色指定音色，空串表示用回默认", () => {
+    expect(state().setCharacterVoice("c-zhou", "Cherry")).toBe(true);
+    expect(
+      state().project.characters.find((item) => item.id === "c-zhou")?.voiceProfileId,
+    ).toBe("Cherry");
+    expect(state().events.at(-1)).toMatchObject({
+      type: "character.updated",
+      patch: { voiceProfileId: "Cherry" },
+    });
+
+    expect(state().setCharacterVoice("c-zhou", "  ")).toBe(true);
+    expect(
+      state().project.characters.find((item) => item.id === "c-zhou"),
+    ).not.toHaveProperty("voiceProfileId");
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+});

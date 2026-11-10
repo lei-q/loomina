@@ -7,6 +7,7 @@ import {
   REFERENCE_IMAGES_MAX,
   SHEET_ANGLES,
   shotAnchors,
+  VOICE_PROFILE_MAX,
   type ApprovalTargetType,
   type Asset,
   type Character,
@@ -41,7 +42,8 @@ export type GenerateJob =
   | { kind: "master" }
   | { kind: "prop" }
   | { kind: "keyframe"; frame: Frame }
-  | { kind: "video" };
+  | { kind: "video" }
+  | { kind: "voice" };
 
 /**
  * 审片台的本地状态（ADR-0027）。
@@ -78,6 +80,13 @@ type WorkbenchState = {
   imageCny?: number;
   /** 当前出视频模型的单价（元 / 秒）。同上：不知道就不拦（ADR-0083） */
   videoCnyPerSecond?: number;
+  /**
+   * 配音模型（ADR-0085）：服务端配了 TTS_MODEL 才给 model；
+   * 没配时这里就是空对象，界面如实说「还没配配音模型」。
+   */
+  voiceInfo?: { model?: string; voice?: string };
+  /** 登记配音模型：声音页进页面时问一次服务端 */
+  setVoiceInfo: (info: { model?: string; voice?: string }) => void;
   /** 登记价目：定妆台进页面时问一次服务端 */
   setImagePrice: (price: { model: string; cny?: number }) => void;
   setVideoPrice: (price: { model: string; cnyPerSecond?: number }) => void;
@@ -126,6 +135,23 @@ type WorkbenchState = {
    * 也让已经有片子的人能把 take 流程走完。收 http(s):// 或 data:video/。
    */
   attachVideo: (shotId: string, uri: string) => boolean;
+  /**
+   * 给一句台词出声（ADR-0085）：落一条 `asset.updated` + 一条 `dialogue.updated`。
+   * 没配配音模型时服务端会明说；界面还有「贴一条音轨」兜底。
+   */
+  generateVoice: (lineId: string) => Promise<boolean>;
+  /**
+   * 贴一条音轨当这一句的配音（ADR-0085）：收 http(s):// 或 data:audio/。
+   * 供应商配额不通、或已经用自己的录音时，都走这条路。
+   */
+  attachVoice: (lineId: string, uri: string) => boolean;
+  /**
+   * 量出音轨真实时长后校正台词与镜头（准则 P5）：一条 `dialogue.updated`
+   * + 一条 `shot.updated`，音轨资产上补记 `durationMs`。
+   */
+  fitLineToAudio: (lineId: string, durationMs: number) => boolean;
+  /** 给一个角色指定音色：一条 `character.updated`；空串表示用回默认音色（ADR-0085） */
+  setCharacterVoice: (characterId: string, voice: string) => boolean;
   /** 批量补缺：按镜号顺序一帧一帧生成，跳过锁定，失败即停（ADR-0042 附记） */
   generateMissingFrames: (frame?: Frame) => Promise<void>;
   /** 批量补帧的进度；`stop` 置上后当前这一张结束就停 */
@@ -257,6 +283,9 @@ const REFERENCE_URI_MAX = 400_000;
 
 /** 手贴视频地址的上限：data:video 可能很长，留到 12 MB（ADR-0083） */
 const VIDEO_URI_MAX = 12_000_000;
+
+/** 手贴音轨的上限：一句台词撑不到这么大，8 MB 已经很多（ADR-0085） */
+const VOICE_URI_MAX = 8_000_000;
 
 /**
  * 手挂的参考图：现在没有上传通道，先收一个图床 / data URI 地址（ADR-0079）。
@@ -1272,6 +1301,238 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     set({
       project: written.reduce(applyEvent, project),
       events: [...events, ...written],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  setVoiceInfo: (info) => {
+    set({ voiceInfo: info });
+  },
+
+  generateVoice: async (lineId) => {
+    if (get().readOnly) return false;
+    const { project } = get();
+    const line = project.dialogue.find((item) => item.id === lineId);
+    if (!line) return false;
+    const shot = project.shots.find((item) => item.dialogueIds.includes(lineId));
+    if (shot?.locked) {
+      set({ castError: "这一镜已锁定：要配音先解锁。" });
+      return false;
+    }
+    const character = project.characters.find((item) => item.id === line.characterId);
+    const no = shot
+      ? toStageView(project).shots.find((item) => item.id === shot.id)?.no
+      : undefined;
+    const label = `${no === undefined ? "这一句" : shotLabel(no)}${character ? ` · ${character.name}` : ""}`;
+
+    const jobKey = `${lineId}:voice`;
+    const setJob = (value: GenerateJob | undefined) =>
+      set({ jobs: { ...get().jobs, [jobKey]: value } });
+
+    set({ castError: undefined });
+    setJob({ kind: "voice" });
+    try {
+      const response = await fetch("/api/voice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: line.text,
+          ...(character?.voiceProfileId ? { voice: character.voiceProfileId } : {}),
+        }),
+      });
+      const payload = (await response.json()) as {
+        uri?: string;
+        mime?: string;
+        model?: string;
+        error?: string;
+      };
+      if (!response.ok || !payload.uri) {
+        throw new Error(payload.error ?? `出声失败（${response.status}）`);
+      }
+
+      // 一句台词一个资产位：重配就换掉这一句的旧音轨，不累积成 take
+      const assetId = `a-voice-${lineId}`;
+      const at = new Date().toISOString();
+      const mime = /^data:(audio\/[a-z0-9.+-]+)[;,]/i.exec(payload.uri)?.[1];
+      const written: ProjectEvent[] = [
+        {
+          type: "asset.updated",
+          at,
+          asset: {
+            id: assetId,
+            kind: "audio",
+            source: "generated",
+            uri: payload.uri,
+            ...(payload.mime || mime ? { mime: payload.mime ?? mime } : {}),
+            provenance: {
+              modelId: payload.model ?? "unknown",
+              prompt: line.text,
+              referenceAssetIds: [],
+              createdAt: at,
+            },
+            createdAt: at,
+          },
+        },
+        {
+          type: "dialogue.updated",
+          at,
+          lineId,
+          patch: { audioAssetId: assetId },
+        },
+      ];
+      set({
+        project: written.reduce(applyEvent, project),
+        events: [...get().events, ...written],
+        castError: undefined,
+      });
+      setJob(undefined);
+      return true;
+    } catch (error) {
+      setJob(undefined);
+      const reason = error instanceof Error ? error.message : "原因没说";
+      const clipped = reason.length > 240 ? `${reason.slice(0, 240)}…` : reason;
+      set({
+        castError: `「${label}」这句没出声：${clipped}。可以先「贴一条音轨」顶上，或稍后再试。`,
+      });
+      return false;
+    }
+  },
+
+  attachVoice: (lineId, rawUri) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const line = project.dialogue.find((item) => item.id === lineId);
+    if (!line) {
+      set({ castError: "找不到这句台词。" });
+      return false;
+    }
+    const shot = project.shots.find((item) => item.dialogueIds.includes(lineId));
+    if (shot?.locked) {
+      set({ castError: "这一镜已锁定：要配音先解锁。" });
+      return false;
+    }
+
+    const uri = rawUri.trim();
+    if (!uri) {
+      set({ castError: "先贴一条音轨地址。" });
+      return false;
+    }
+    if (!/^(https?:\/\/|data:audio\/)/i.test(uri)) {
+      set({ castError: "音轨要先有地址：http(s):// 或 data:audio/ 开头。" });
+      return false;
+    }
+    if (uri.length > VOICE_URI_MAX) {
+      set({ castError: "地址太长了：8 MB 以内。" });
+      return false;
+    }
+
+    const assetId = `a-voice-${lineId}`;
+    const at = new Date().toISOString();
+    const mime = /^data:(audio\/[a-z0-9.+-]+)[;,]/i.exec(uri)?.[1];
+    const written: ProjectEvent[] = [
+      {
+        type: "asset.updated",
+        at,
+        asset: {
+          id: assetId,
+          kind: "audio",
+          source: "upload",
+          uri,
+          ...(mime ? { mime } : {}),
+          provenance: {
+            modelId: "import",
+            referenceAssetIds: [],
+            createdAt: at,
+          },
+          createdAt: at,
+        },
+      },
+      {
+        type: "dialogue.updated",
+        at,
+        lineId,
+        patch: { audioAssetId: assetId },
+      },
+    ];
+    set({
+      project: written.reduce(applyEvent, project),
+      events: [...events, ...written],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  fitLineToAudio: (lineId, rawDurationMs) => {
+    if (get().readOnly) return false;
+    const { project } = get();
+    const line = project.dialogue.find((item) => item.id === lineId);
+    if (!line) return false;
+    const shot = project.shots.find((item) => item.dialogueIds.includes(lineId));
+    if (shot?.locked) return false;
+
+    // 量错的时长不要写进 IR：几百毫秒的音轨不合常理，一分钟的台词也不合
+    if (!Number.isFinite(rawDurationMs)) return false;
+    const durationMs = Math.round(Math.min(60_000, Math.max(300, rawDurationMs)));
+    const delta = durationMs - line.durationMs;
+    // 差得太小就不折腾：每次挂音轨都写两条事件，日志会被无意义的抖动塞满
+    if (Math.abs(delta) < 40) return false;
+
+    const at = new Date().toISOString();
+    const written: ProjectEvent[] = [
+      { type: "dialogue.updated", at, lineId, patch: { durationMs } },
+    ];
+    if (shot) {
+      written.push({
+        type: "shot.updated",
+        at,
+        shotId: shot.id,
+        patch: { durationMs: Math.max(500, shot.durationMs + delta) },
+      });
+    }
+    const asset = line.audioAssetId
+      ? project.assets.find((item) => item.id === line.audioAssetId)
+      : undefined;
+    if (asset) {
+      written.push({
+        type: "asset.updated",
+        at,
+        asset: { ...asset, durationMs },
+      });
+    }
+
+    set({
+      project: written.reduce(applyEvent, project),
+      events: [...get().events, ...written],
+    });
+    return true;
+  },
+
+  setCharacterVoice: (characterId, rawVoice) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const character = project.characters.find((item) => item.id === characterId);
+    if (!character) {
+      set({ castError: "找不到这个人物。" });
+      return false;
+    }
+    const voice = rawVoice.trim();
+    if (voice.length > VOICE_PROFILE_MAX) {
+      set({ castError: `音色名太长了：${VOICE_PROFILE_MAX} 字以内。` });
+      return false;
+    }
+    if ((character.voiceProfileId ?? "") === voice) return false;
+
+    const at = new Date().toISOString();
+    const event: ProjectEvent = {
+      type: "character.updated",
+      at,
+      characterId,
+      patch: { voiceProfileId: voice },
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
       castError: undefined,
     });
     return true;

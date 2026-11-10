@@ -21,6 +21,7 @@ import {
   toKeyframeView,
   toScriptView,
   toStageView,
+  toVoiceView,
   undoableRemoval,
 } from "./read-model";
 import { sampleProject } from "./sample-project";
@@ -250,6 +251,80 @@ describe("toStageView", () => {
     });
     const animatic = toAnimaticView(project);
     expect(animatic.segments[0]?.subtitle).toBe("你早就知道，对吧。 灯是我关的。");
+  });
+
+  it("挂上音轨的镜头带着 clips 进预演，没配的镜头是空的（ADR-0085）", () => {
+    const project = ProjectSchema.parse({
+      ...sampleProject,
+      dialogue: sampleProject.dialogue.map((line) =>
+        line.id === "d-01" ? { ...line, audioAssetId: "a-voice-d-01" } : line,
+      ),
+      assets: [
+        ...sampleProject.assets,
+        {
+          id: "a-voice-d-01",
+          kind: "audio",
+          source: "upload",
+          uri: "data:audio/mpeg;base64,SUQz",
+          durationMs: 2600,
+          createdAt: "2026-11-11T09:00:00Z",
+        },
+      ],
+    });
+
+    const animatic = toAnimaticView(project);
+    expect(animatic.segments[0]?.clips).toEqual([
+      { id: "d-01", text: "你早就知道，对吧。", uri: "data:audio/mpeg;base64,SUQz" },
+    ]);
+    expect(animatic.segments[1]?.clips).toEqual([]);
+    expect(animatic.withVoice).toBe(1);
+  });
+
+  it("配音页按镜头顺序铺开台词，角色与已配时长对得上（ADR-0085）", () => {
+    const project = ProjectSchema.parse({
+      ...sampleProject,
+      dialogue: sampleProject.dialogue.map((line) =>
+        line.id === "d-02" ? { ...line, audioAssetId: "a-voice-d-02" } : line,
+      ),
+      assets: [
+        ...sampleProject.assets,
+        {
+          id: "a-voice-d-02",
+          kind: "audio",
+          source: "generated",
+          uri: "data:audio/mpeg;base64,SUQz",
+          durationMs: 1900,
+          createdAt: "2026-11-11T09:00:00Z",
+        },
+      ],
+    });
+
+    const view = toVoiceView(project);
+    expect(view.lines.map((line) => line.id)).toEqual(["d-01", "d-02", "d-03", "d-04"]);
+    expect(view.lines[0]).toMatchObject({
+      no: 1,
+      sceneNo: 1,
+      characterName: "周",
+      dur: 2.6,
+      state: "missing",
+    });
+    expect(view.lines[1]).toMatchObject({
+      no: 3,
+      characterName: "林",
+      dur: 2.1,
+      audioDur: 1.9,
+      state: "voiced",
+    });
+    expect(view.total).toBe(4);
+    expect(view.voiced).toBe(1);
+    // 已配时长按音轨量出来的算，没配的只数不进 voicedSec
+    expect(view.totalSec).toBeCloseTo(8.8, 1);
+    expect(view.voicedSec).toBeCloseTo(1.9, 1);
+
+    const lin = view.roles.find((role) => role.id === "c-lin");
+    expect(lin).toMatchObject({ voice: "voice-lin", lines: 2, voiced: 1 });
+    const zhou = view.roles.find((role) => role.id === "c-zhou");
+    expect(zhou).toMatchObject({ lines: 2, voiced: 0 });
   });
 
   it("定妆台：两个角色四格齐全，三个场景各一主镜，两个道具各一张参考", () => {

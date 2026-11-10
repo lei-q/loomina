@@ -336,6 +336,13 @@ export function shotLabel(no: number): string {
 
 // ── 预演（ADR-0084）─────────────────────────────────────────────
 
+export type AnimaticClip = {
+  id: string;
+  text: string;
+  /** 这一句的音轨（data URI 或 http(s)） */
+  uri: string;
+};
+
 export type AnimaticSegment = {
   id: string;
   no: number;
@@ -347,6 +354,8 @@ export type AnimaticSegment = {
   videoUri?: string;
   /** 字幕：这一镜所有台词拼起来 */
   subtitle: string;
+  /** 这一镜已配好的音轨，按台词顺序播（ADR-0085） */
+  clips: AnimaticClip[];
   /** 有没有画可看：没有的话预演里只出占位色块 */
   hasPicture: boolean;
 };
@@ -360,6 +369,8 @@ export type AnimaticView = {
   missing: number;
   /** 有片子的镜头数 */
   withVideo: number;
+  /** 已经配了音的镜头数 */
+  withVoice: number;
 };
 
 /**
@@ -370,8 +381,20 @@ export type AnimaticView = {
  */
 export function toAnimaticView(project: Project): AnimaticView {
   const view = toStageView(project);
+  const dialogueById = new Map(project.dialogue.map((line) => [line.id, line]));
+  const assetById = new Map(project.assets.map((asset) => [asset.id, asset]));
+  const irShotById = new Map(project.shots.map((shot) => [shot.id, shot]));
+
   const segments: AnimaticSegment[] = view.shots.map((shot) => {
     const imageUri = shot.keyframeUri ?? shot.lastKeyframeUri;
+    const clips: AnimaticClip[] = [];
+    for (const lineId of irShotById.get(shot.id)?.dialogueIds ?? []) {
+      const line = dialogueById.get(lineId);
+      const asset = line?.audioAssetId ? assetById.get(line.audioAssetId) : undefined;
+      if (line && asset?.uri) {
+        clips.push({ id: line.id, text: line.text, uri: asset.uri });
+      }
+    }
     return {
       id: shot.id,
       no: shot.no,
@@ -380,6 +403,7 @@ export function toAnimaticView(project: Project): AnimaticView {
       imageUri,
       videoUri: shot.videoUri,
       subtitle: shot.subtitle,
+      clips,
       hasPicture: Boolean(shot.videoUri ?? imageUri),
     };
   });
@@ -390,6 +414,125 @@ export function toAnimaticView(project: Project): AnimaticView {
     totalSec: Math.round(totalSec * 10) / 10,
     missing: segments.filter((item) => !item.hasPicture).length,
     withVideo: segments.filter((item) => Boolean(item.videoUri)).length,
+    withVoice: segments.filter((item) => item.clips.length > 0).length,
+  };
+}
+
+// ── 配音页（ADR-0085）──────────────────────────────────────────
+
+export type VoiceLine = {
+  id: string;
+  /** 所属镜号 */
+  no: number;
+  sceneNo: number;
+  characterId: string;
+  characterName: string;
+  text: string;
+  /** 这一句在 IR 里占的时长，秒 */
+  dur: number;
+  /** 量出来的音轨时长，秒；还没量过就是空 */
+  audioDur?: number;
+  audioUri?: string;
+  state: "missing" | "voiced";
+};
+
+export type VoiceRole = {
+  id: string;
+  name: string;
+  /** 音色标识；空表示用默认音色 */
+  voice?: string;
+  lines: number;
+  voiced: number;
+};
+
+export type VoiceView = {
+  title: string;
+  version: number;
+  lines: VoiceLine[];
+  roles: VoiceRole[];
+  total: number;
+  voiced: number;
+  /** 台词总长，秒 */
+  totalSec: number;
+  /** 已配好的音轨总长，秒；没量过的按 IR 时长算 */
+  voicedSec: number;
+  spent: number;
+  budget: number;
+  spend: Spend;
+  unpriced: number;
+};
+
+/**
+ * 配音页的读模型：按镜头顺序铺开每一句台词。
+ *
+ * 时长以 IR 为准（P5）：字幕、预演、时间线都读同一个数；
+ * 音轨量出来之后由 `fitLineToAudio` 把 IR 改成真实时长，而不是各读各的。
+ */
+export function toVoiceView(project: Project): VoiceView {
+  const view = toStageView(project);
+  const dialogueById = new Map(project.dialogue.map((line) => [line.id, line]));
+  const assetById = new Map(project.assets.map((asset) => [asset.id, asset]));
+  const characterById = new Map(project.characters.map((item) => [item.id, item]));
+  const shotById = new Map(project.shots.map((shot) => [shot.id, shot]));
+  const sceneById = new Map(project.scenes.map((scene) => [scene.id, scene]));
+
+  const lines: VoiceLine[] = [];
+  for (const stageShot of view.shots) {
+    const shot = shotById.get(stageShot.id);
+    if (!shot) continue;
+    const sceneNo = (sceneById.get(shot.sceneId)?.index ?? 0) + 1;
+    for (const lineId of shot.dialogueIds) {
+      const line = dialogueById.get(lineId);
+      if (!line) continue;
+      const asset = line.audioAssetId ? assetById.get(line.audioAssetId) : undefined;
+      const character = characterById.get(line.characterId);
+      lines.push({
+        id: line.id,
+        no: stageShot.no,
+        sceneNo,
+        characterId: line.characterId,
+        characterName: character?.name ?? line.characterId,
+        text: line.text,
+        dur: Math.round((line.durationMs / 1000) * 10) / 10,
+        ...(asset?.durationMs
+          ? { audioDur: Math.round((asset.durationMs / 1000) * 10) / 10 }
+          : {}),
+        ...(asset?.uri ? { audioUri: asset.uri } : {}),
+        state: asset?.uri ? "voiced" : "missing",
+      });
+    }
+  }
+
+  const roles: VoiceRole[] = project.characters.map((character) => {
+    const own = lines.filter((line) => line.characterId === character.id);
+    return {
+      id: character.id,
+      name: character.name,
+      ...(character.voiceProfileId ? { voice: character.voiceProfileId } : {}),
+      lines: own.length,
+      voiced: own.filter((line) => line.state === "voiced").length,
+    };
+  });
+
+  const totalSec = lines.reduce((sum, line) => sum + line.dur, 0);
+  const voicedSec = lines
+    .filter((line) => line.state === "voiced")
+    .reduce((sum, line) => sum + (line.audioDur ?? line.dur), 0);
+  const spend = spendOf(project);
+
+  return {
+    title: view.title,
+    version: view.version,
+    lines,
+    roles,
+    total: lines.length,
+    voiced: lines.filter((line) => line.state === "voiced").length,
+    totalSec: Math.round(totalSec * 10) / 10,
+    voicedSec: Math.round(voicedSec * 10) / 10,
+    spent: spend.spent,
+    budget: project.budgetCny,
+    spend,
+    unpriced: spend.unpriced,
   };
 }
 
