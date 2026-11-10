@@ -99,6 +99,8 @@ type WorkbenchState = {
   editAction: (shotId: string, text: string) => boolean;
   /** 改场头：写一条 `scene.updated`，只收内 / 外景与日夜（ADR-0050） */
   editScene: (sceneId: string, patch: Partial<Pick<Scene, "space" | "timeOfDay">>) => boolean;
+  /** 把台词顺序整组写回：一条 `shot.updated { dialogueIds }`（ADR-0053） */
+  setDialogueOrder: (shotId: string, lineIds: string[]) => boolean;
   /** 划掉一条补充要求：同样写一条 shot.updated（ADR-0039 附记） */
   removeNote: (shotId: string, note: string) => void;
   reset: () => void;
@@ -707,6 +709,39 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     return true;
   },
 
+
+  setDialogueOrder: (shotId, lineIds) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) return false;
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定：要调台词顺序先解锁。" });
+      return false;
+    }
+    if (lineIds.length !== shot.dialogueIds.length) {
+      set({ castError: "这一版顺序里有之后被删掉的台词，恢复不了。" });
+      return false;
+    }
+    if (!lineIds.every((id) => shot.dialogueIds.includes(id))) {
+      set({ castError: "这一版顺序和现在的台词对不上。" });
+      return false;
+    }
+    if (lineIds.every((id, i) => id === shot.dialogueIds[i])) {
+      set({ castError: "顺序没改。" });
+      return false;
+    }
+    const at = new Date().toISOString();
+    const written: ProjectEvent[] = [
+      { type: "shot.updated", at, shotId, patch: { dialogueIds: [...lineIds] } },
+    ];
+    set({
+      project: written.reduce(applyEvent, project),
+      events: [...events, ...written],
+      castError: undefined,
+    });
+    return true;
+  },
 
   editScene: (sceneId, patch) => {
     if (get().readOnly) return false;

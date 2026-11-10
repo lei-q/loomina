@@ -756,6 +756,28 @@ export function previousDialogueText(history: DialogueHistory): string | undefin
   return history.edits[history.edits.length - 2]?.text ?? history.original?.text;
 }
 
+export type OrderRevision = { at: string; lineIds: string[] };
+
+/**
+ * 这一镜的台词顺序被改过几次（ADR-0053）。
+ *
+ * 只收显式换了 `dialogueIds` 的 `shot.updated`：排序是一次镜头级改写；
+ * 加句 / 删句走的是 `dialogue.added` / `dialogue.removed`，不算在这里。
+ */
+export function dialogueOrderHistory(
+  events: ProjectEvent[],
+  shotId: string,
+): OrderRevision[] {
+  const revisions: OrderRevision[] = [];
+  for (const event of events) {
+    if (event.type !== "shot.updated" || event.shotId !== shotId) continue;
+    const lineIds = event.patch.dialogueIds;
+    if (lineIds === undefined) continue;
+    revisions.push({ at: event.at, lineIds: [...lineIds] });
+  }
+  return revisions;
+}
+
 export type ActionRevision = { at: string; text: string };
 
 export type ActionHistory = {

@@ -3,6 +3,7 @@ import { ProjectSchema, type ProjectInput } from "@loomina/ir";
 import {
   actionHistory,
   dialogueHistory,
+  dialogueOrderHistory,
   filterKeyframeCells,
   keyframeTally,
   previousActionText,
@@ -552,5 +553,31 @@ describe("台词历史里的换人（ADR-0052）", () => {
     expect(dialogueHistory(events, "d-02").speakers).toHaveLength(1);
     expect(dialogueHistory(events, "d-03").speakers).toEqual([]);
     expect(dialogueHistory(events.slice(0, 2), "d-01").speakers).toHaveLength(1);
+  });
+});
+
+describe("台词顺序的变更记录（ADR-0053）", () => {
+  const at = (h: number) => `2026-11-10T${String(h).padStart(2, "0")}:00:00+08:00`;
+  const events = [
+    { type: "project.created" as const, at: at(0), project: sampleProject },
+    { type: "shot.updated" as const, at: at(9), shotId: "s-02", patch: { dialogueIds: ["d-03", "d-01"] } },
+    { type: "shot.updated" as const, at: at(10), shotId: "s-02", patch: { dialogueIds: ["d-01", "d-03"] } },
+    { type: "shot.updated" as const, at: at(11), shotId: "s-02", patch: { description: "换了动作" } },
+    { type: "shot.updated" as const, at: at(12), shotId: "s-03", patch: { dialogueIds: ["d-02"] } },
+  ];
+
+  it("只收显式换了 dialogueIds 的镜头改写，按先后排", () => {
+    const revisions = dialogueOrderHistory(events, "s-02");
+    expect(revisions.map((rev) => rev.lineIds)).toEqual([
+      ["d-03", "d-01"],
+      ["d-01", "d-03"],
+    ]);
+    expect(revisions[0]?.at).toBe(at(9));
+  });
+
+  it("别的镜头、改动作的 shot.updated 都不算", () => {
+    expect(dialogueOrderHistory(events, "s-03")).toHaveLength(1);
+    expect(dialogueOrderHistory(events, "s-04")).toEqual([]);
+    expect(dialogueOrderHistory(events.slice(0, 1), "s-02")).toEqual([]);
   });
 });

@@ -5,6 +5,7 @@ import { TopBar } from "@/components/top-bar";
 import {
   actionHistory,
   dialogueHistory,
+  dialogueOrderHistory,
   previousActionText,
   previousDialogueText,
   sceneHead,
@@ -37,6 +38,7 @@ export function ScriptScreen() {
   const moveDialogue = useWorkbench((state) => state.moveDialogue);
   const editAction = useWorkbench((state) => state.editAction);
   const editScene = useWorkbench((state) => state.editScene);
+  const setDialogueOrder = useWorkbench((state) => state.setDialogueOrder);
   const events = useWorkbench((state) => state.events);
 
   const [editing, setEditing] = useState<string | null>(null);
@@ -108,6 +110,11 @@ export function ScriptScreen() {
 
   const revertSpeaker = (lineId: string, characterId: string) => {
     if (changeSpeaker(lineId, characterId)) setNote(undefined);
+    else setNote(useWorkbench.getState().castError);
+  };
+
+  const restoreOrder = (shotId: string, lineIds: string[]) => {
+    if (setDialogueOrder(shotId, lineIds)) setNote(undefined);
     else setNote(useWorkbench.getState().castError);
   };
 
@@ -688,6 +695,57 @@ export function ScriptScreen() {
                             )}
                           </div>
                         )}
+
+                        {(() => {
+                          const revisions = dialogueOrderHistory(events, shot.id);
+                          if (revisions.length === 0) return null;
+                          const textOf = (id: string) => {
+                            const line = shot.lines.find((item) => item.id === id);
+                            if (!line) return "（已删）";
+                            return line.text.length > 12 ? `${line.text.slice(0, 12)}…` : line.text;
+                          };
+                          const sameAsNow = (ids: string[]) =>
+                            ids.length === shot.lines.length &&
+                            ids.every((id, i) => id === shot.lines[i]?.id);
+                          return (
+                            <details className="mt-1">
+                              <summary className="tnum cursor-pointer list-none text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-muted [&::-webkit-details-marker]:hidden">
+                                这一镜的顺序改过 {revisions.length} 次
+                              </summary>
+                              <ul className="mt-1 space-y-0.5 text-[9.5px] leading-[1.7]">
+                                {[...revisions].reverse().map((rev, i) => (
+                                  <li
+                                    key={`ord-${rev.at}-${i}`}
+                                    className="flex items-baseline gap-2"
+                                  >
+                                    <span className="tnum shrink-0 text-muted-2">
+                                      {clock(rev.at)}
+                                    </span>
+                                    <span className="text-muted">
+                                      {rev.lineIds.map(textOf).join(" / ")}
+                                    </span>
+                                    {!readOnly && (
+                                      <button
+                                        type="button"
+                                        disabled={shot.locked || sameAsNow(rev.lineIds)}
+                                        onClick={() => restoreOrder(shot.id, rev.lineIds)}
+                                        title={
+                                          shot.locked
+                                            ? "这一镜已锁定，先解锁才能调顺序"
+                                            : "用回这一版的顺序"
+                                        }
+                                        className="shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                                      >
+                                        用这版
+                                      </button>
+                                    )}
+                                  </li>
+                                ))}
+                              </ul>
+                              {note && <p className="mt-1 text-[9.5px] text-pick">{note}</p>}
+                            </details>
+                          );
+                        })()}
 
                         {!readOnly &&
                           (adding === shot.id ? (

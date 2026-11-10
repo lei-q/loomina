@@ -1094,3 +1094,56 @@ describe("场头改写（ADR-0050）", () => {
     expect(state().events).toHaveLength(snapshot);
   });
 });
+
+describe("台词顺序整组写回（ADR-0053）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("把顺序写回去：一条 shot.updated，可回放", () => {
+    const before = state().project.shots.find((item) => item.id === "s-02")!;
+    expect(before.dialogueIds).toHaveLength(0);
+
+    expect(state().addDialogue("s-02", "c-lin", "谁在那儿？")).toBe(true);
+    expect(state().addDialogue("s-02", "c-lin", "门开着呢。")).toBe(true);
+    const shot = state().project.shots.find((item) => item.id === "s-02")!;
+    const [first, second] = shot.dialogueIds;
+
+    const snapshot = state().events.length;
+    expect(state().setDialogueOrder("s-02", [second!, first!])).toBe(true);
+    expect(
+      state().project.shots.find((item) => item.id === "s-02")?.dialogueIds,
+    ).toEqual([second, first]);
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.updated",
+      shotId: "s-02",
+      patch: { dialogueIds: [second, first] },
+    });
+    expect(rebuild(state().events).shots.find((item) => item.id === "s-02")?.dialogueIds).toEqual([
+      second,
+      first,
+    ]);
+  });
+
+  it("顺序没变、对不上、锁定与只读都不写事件", () => {
+    expect(state().addDialogue("s-02", "c-lin", "谁在那儿？")).toBe(true);
+    const shot = state().project.shots.find((item) => item.id === "s-02")!;
+    const snapshot = state().events.length;
+
+    expect(state().setDialogueOrder("s-02", [...shot.dialogueIds])).toBe(false);
+    expect(state().castError).toContain("没改");
+    expect(state().setDialogueOrder("s-02", ["d-01", "d-02"])).toBe(false);
+    expect(state().castError).toContain("删掉");
+    expect(state().setDialogueOrder("s-02", ["d-02"])).toBe(false);
+    expect(state().castError).toContain("对不上");
+
+    expect(state().setDialogueOrder("s-08", ["d-04"])).toBe(false);
+    expect(state().castError).toContain("锁定");
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().setDialogueOrder("s-02", ["x"])).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+  });
+});
