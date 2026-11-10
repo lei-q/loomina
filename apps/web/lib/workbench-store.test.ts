@@ -1392,6 +1392,75 @@ describe("新场沿用前一场的地点与日夜（ADR-0069）", () => {
   });
 });
 
+describe("人物库：新建与改名（ADR-0071）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("新建人物：一条 character.added，名字与外形去掉首尾空白", () => {
+    const snapshot = state().events.length;
+
+    const id = state().addCharacter(" 阿棠 ", " 齐耳短发，灰毛衣 ");
+    expect(id).toBeTruthy();
+
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "character.added" });
+    const character = state().project.characters.find((item) => item.id === id);
+    expect(character).toMatchObject({
+      name: "阿棠",
+      appearance: "齐耳短发，灰毛衣",
+      sheet: {},
+      referenceImages: [],
+      mustNotChange: [],
+    });
+    expect(rebuild(state().events)).toEqual(state().project);
+
+    // 新建的人立刻能出现在剧本页的换人下拉里
+    const view = toScriptView(state().project);
+    expect(view.characters.map((item) => item.name)).toContain("阿棠");
+  });
+
+  it("重名、空名字、超长外形都拒绝，不写事件", () => {
+    const snapshot = state().events.length;
+
+    expect(state().addCharacter("林")).toBeUndefined();
+    expect(state().castError).toContain("已经有一个叫「林」的人物");
+
+    expect(state().addCharacter("   ")).toBeUndefined();
+    expect(state().castError).toContain("总得有个名字");
+
+    expect(state().addCharacter("阿棠", "长".repeat(201))).toBeUndefined();
+    expect(state().castError).toContain("外形描述太长");
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().addCharacter("阿棠")).toBeUndefined();
+
+    expect(state().events).toHaveLength(snapshot);
+  });
+
+  it("改名与外形描述：一条 character.updated，读模型跟着变", () => {
+    const snapshot = state().events.length;
+
+    expect(state().editCharacter("c-lin", { name: "小林", appearance: "短发，深色风衣" })).toBe(true);
+
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "character.updated",
+      characterId: "c-lin",
+      patch: { name: "小林", appearance: "短发，深色风衣" },
+    });
+    const character = state().project.characters.find((item) => item.id === "c-lin");
+    expect(character).toMatchObject({ name: "小林", appearance: "短发，深色风衣" });
+
+    // 改成和另一个人重名要拒绝；没改也要拒绝
+    expect(state().editCharacter("c-lin", { name: "周" })).toBe(false);
+    expect(state().castError).toContain("已经有一个叫「周」的人物");
+    expect(state().editCharacter("c-lin", { name: "小林" })).toBe(false);
+    expect(state().castError).toContain("人物没改");
+  });
+});
+
 describe("这一镜里换人（ADR-0070）", () => {
   beforeEach(() => {
     state().reset();

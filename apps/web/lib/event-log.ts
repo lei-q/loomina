@@ -54,6 +54,8 @@ const EVENT_TYPES: Record<ProjectEvent["type"], true> = {
   "location.added": true,
   "location.updated": true,
   "location.removed": true,
+  "character.added": true,
+  "character.updated": true,
   "dialogue.updated": true,
   "dialogue.speaker.updated": true,
   "dialogue.added": true,

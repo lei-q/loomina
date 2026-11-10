@@ -7,6 +7,7 @@ import {
   SHEET_ANGLES,
   shotAnchors,
   type ApprovalTargetType,
+  type Character,
   type Location,
   type Project,
   type ProjectEvent,
@@ -128,6 +129,13 @@ type WorkbenchState = {
     locationId: string,
     patch: Partial<Pick<Location, "name" | "templateId" | "description">>,
   ) => boolean;
+  /** 加一个人物：一条 `character.added`（ADR-0071） */
+  addCharacter: (name: string, appearance?: string) => string | undefined;
+  /** 改人物名字 / 外形描述：一条 `character.updated`（ADR-0071） */
+  editCharacter: (
+    characterId: string,
+    patch: Partial<Pick<Character, "name" | "appearance">>,
+  ) => boolean;
   /** 新建场次：一条 `scene.added`，加在末尾或指定场之后，沿用前一场的地点与日夜（ADR-0064 / 0068 / 0069） */
   addScene: (locationId?: string, afterSceneId?: string) => string | undefined;
   /** 新建镜头：一条 `shot.added`，加在这一场末尾或指定镜之后（ADR-0064 / ADR-0068） */
@@ -162,6 +170,9 @@ const NEW_SHOT_DURATION_MS = 3000;
 
 /** 场景描述的上限：这句会整句进主镜提示词，长了会把画面指令挤掉（ADR-0063） */
 const LOCATION_DESCRIPTION_MAX = 200;
+
+/** 外形描述的上限：同样会整句进提示词（ADR-0071） */
+const CHARACTER_APPEARANCE_MAX = 200;
 
 const initialEvents = bootstrap(sampleProject);
 const initialView = toStageView(sampleProject);
@@ -1133,6 +1144,95 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       type: "location.updated",
       at: new Date().toISOString(),
       locationId,
+      patch: next,
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  addCharacter: (name, appearance) => {
+    if (get().readOnly) return undefined;
+    const { project, events } = get();
+    const trimmed = name.trim();
+    if (!trimmed) {
+      set({ castError: "人物总得有个名字。" });
+      return undefined;
+    }
+    if (project.characters.some((item) => item.name === trimmed)) {
+      set({ castError: `已经有一个叫「${trimmed}」的人物了。` });
+      return undefined;
+    }
+    const trimmedAppearance = (appearance ?? "").trim();
+    if (trimmedAppearance.length > CHARACTER_APPEARANCE_MAX) {
+      set({ castError: `外形描述太长了：${CHARACTER_APPEARANCE_MAX} 字以内。` });
+      return undefined;
+    }
+    let id = `c-${Date.now().toString(36)}`;
+    while (project.characters.some((item) => item.id === id)) id += "x";
+    const character: Character = {
+      id,
+      name: trimmed,
+      appearance: trimmedAppearance,
+      sheet: {},
+      referenceImages: [],
+      mustNotChange: [],
+    };
+    const event: ProjectEvent = {
+      type: "character.added",
+      at: new Date().toISOString(),
+      character,
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return id;
+  },
+
+  editCharacter: (characterId, patch) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const character = project.characters.find((item) => item.id === characterId);
+    if (!character) {
+      set({ castError: "找不到这个人物。" });
+      return false;
+    }
+    const next: Partial<Pick<Character, "name" | "appearance">> = {};
+    if (patch.name !== undefined) {
+      const trimmed = patch.name.trim();
+      if (!trimmed) {
+        set({ castError: "人物总得有个名字。" });
+        return false;
+      }
+      if (trimmed !== character.name) {
+        if (project.characters.some((item) => item.id !== characterId && item.name === trimmed)) {
+          set({ castError: `已经有一个叫「${trimmed}」的人物了。` });
+          return false;
+        }
+        next.name = trimmed;
+      }
+    }
+    if (patch.appearance !== undefined) {
+      const trimmed = patch.appearance.trim();
+      if (trimmed.length > CHARACTER_APPEARANCE_MAX) {
+        set({ castError: `外形描述太长了：${CHARACTER_APPEARANCE_MAX} 字以内。` });
+        return false;
+      }
+      if (trimmed !== character.appearance) next.appearance = trimmed;
+    }
+    if (Object.keys(next).length === 0) {
+      set({ castError: "人物没改。" });
+      return false;
+    }
+    const event: ProjectEvent = {
+      type: "character.updated",
+      at: new Date().toISOString(),
+      characterId,
       patch: next,
     };
     set({

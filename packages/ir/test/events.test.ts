@@ -772,6 +772,79 @@ describe("删地点（ADR-0061）", () => {
   });
 });
 
+describe("character.added / character.updated（ADR-0071）", () => {
+  it("加一个人物，重放后一致", () => {
+    const project = load();
+    const event: ProjectEvent = {
+      type: "character.added",
+      at: AT,
+      character: {
+        id: "cha-tang",
+        name: "阿棠",
+        appearance: "齐耳短发，灰毛衣",
+        sheet: {},
+        referenceImages: [],
+        mustNotChange: [],
+      },
+    };
+    const after = applyEvent(project, event);
+    expect(after.characters.at(-1)).toMatchObject({ id: "cha-tang", name: "阿棠" });
+    expect(rebuild([created(project), event])).toEqual(after);
+    expect(validateProject(after)).toEqual([]);
+  });
+
+  it("改名与外形描述：只动 patch 里的字段，重放后一致", () => {
+    const project = load();
+    const before = project.characters[0]!;
+    const edited: ProjectEvent = {
+      type: "character.updated",
+      at: AT,
+      characterId: before.id,
+      patch: { name: "小林", appearance: "短发，深色风衣" },
+    };
+    const after = rebuild([created(project), edited]);
+    expect(after.characters[0]).toMatchObject({
+      id: before.id,
+      name: "小林",
+      appearance: "短发，深色风衣",
+      mustNotChange: before.mustNotChange,
+    });
+  });
+
+  it("重名、空名字、指向不存在的人物都拒绝", () => {
+    const project = load();
+    expect(() =>
+      applyEvent(project, {
+        type: "character.added",
+        at: AT,
+        character: {
+          id: "cha-blank",
+          name: " ",
+          appearance: "",
+          sheet: {},
+          referenceImages: [],
+          mustNotChange: [],
+        },
+      }),
+    ).toThrow(/总得有个名字/);
+    expect(() =>
+      applyEvent(project, {
+        type: "character.added",
+        at: AT,
+        character: project.characters[0]!,
+      }),
+    ).toThrow(/重复的人物/);
+    expect(() =>
+      applyEvent(project, {
+        type: "character.updated",
+        at: AT,
+        characterId: "cha-nobody",
+        patch: { name: "谁" },
+      }),
+    ).toThrow(/不存在的人物/);
+  });
+});
+
 describe("location.added / location.updated（ADR-0059）", () => {
   it("加一个地点，重放后一致", () => {
     const project = load();

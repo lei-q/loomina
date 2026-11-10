@@ -63,13 +63,16 @@ function StatusChip({
 
 function CharacterRow({
   character,
+  readOnly,
   generating,
   quoteCny,
   onGenerate,
   onLock,
   onUnlock,
+  onEdit,
 }: {
   character: CastCharacterView;
+  readOnly: boolean;
   /** 正在生成的那一格 */
   generating?: SheetView;
   /** 这一次生成要花多少（元）；价目不知道就不给 */
@@ -77,18 +80,94 @@ function CharacterRow({
   onGenerate: () => void;
   onLock: () => void;
   onUnlock: () => void;
+  /** 改名字 / 外形描述：成功返回 true，表单据此收起（ADR-0071） */
+  onEdit: (name: string, appearance: string) => boolean;
 }) {
   const missing = character.panels.filter((panel) => !panel.assetId).length;
+  const [editing, setEditing] = useState(false);
+  const [draftName, setDraftName] = useState("");
+  const [draftAppearance, setDraftAppearance] = useState("");
+
+  const beginEdit = () => {
+    setDraftName(character.name);
+    setDraftAppearance(character.appearance);
+    setEditing(true);
+  };
 
   return (
     <section className="border-t border-line py-5">
       <div className="flex flex-wrap items-start gap-6">
         <div className="w-[168px] shrink-0">
-          <div className="flex items-baseline gap-2.5">
-            <h2 className="text-[17px] leading-none text-text">{character.name}</h2>
-            <StatusChip status={character.status} missing={missing} />
-          </div>
-          <p className="mt-2 text-[11.5px] leading-[1.5] text-muted">{character.appearance}</p>
+          {editing ? (
+            <form
+              className="flex flex-col gap-1.5"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (onEdit(draftName, draftAppearance)) setEditing(false);
+              }}
+            >
+              <input
+                type="text"
+                value={draftName}
+                onChange={(event) => setDraftName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setEditing(false);
+                }}
+                autoFocus
+                aria-label="人物名字"
+                className="w-full rounded-token border border-line-2 bg-surface px-2 py-1.5 text-[13px] text-text focus:border-pick focus:outline-none"
+              />
+              <textarea
+                value={draftAppearance}
+                onChange={(event) => setDraftAppearance(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setEditing(false);
+                }}
+                rows={3}
+                aria-label="外形描述"
+                placeholder="外形：短发、深色外套、左眼下一颗痣"
+                className="w-full resize-none rounded-token border border-line bg-surface px-2 py-1.5 text-[11.5px] leading-[1.6] text-text placeholder:text-muted-2 focus:border-pick focus:outline-none"
+              />
+              <p className="text-[9px] leading-[1.5] text-muted-2">
+                外形整句进提示词，200 字以内；三视图与参考图不跟着变。
+              </p>
+              <div className="flex gap-1.5">
+                <button
+                  type="submit"
+                  className="rounded-token border border-line-2 px-2 py-0.5 text-[10.5px] text-text transition-colors duration-[var(--dur)] hover:border-pick hover:text-pick"
+                >
+                  保存
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditing(false)}
+                  className="rounded-token border border-line px-2 py-0.5 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                >
+                  取消
+                </button>
+              </div>
+            </form>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-baseline gap-2.5">
+                <h2 className="text-[17px] leading-none text-text">{character.name}</h2>
+                <StatusChip status={character.status} missing={missing} />
+                {!readOnly && (
+                  <button
+                    type="button"
+                    onClick={beginEdit}
+                    title="改名字或外形描述"
+                    className="text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
+                  >
+                    改
+                  </button>
+                )}
+              </div>
+              <p className="mt-2 text-[11.5px] leading-[1.5] text-muted">
+                {character.appearance || "还没写外形描述。"}
+              </p>
+            </>
+          )}
           <p className="tnum mt-4 text-[8.5px] tracking-[.12em] text-muted-2">不许变</p>
           <ul className="mt-1.5 space-y-1">
             {character.mustNotChange.map((item) => (
@@ -628,11 +707,22 @@ export function CastScreen() {
   const addLocation = useWorkbench((state) => state.addLocation);
   const editLocation = useWorkbench((state) => state.editLocation);
   const removeLocation = useWorkbench((state) => state.removeLocation);
+  const addCharacter = useWorkbench((state) => state.addCharacter);
+  const editCharacter = useWorkbench((state) => state.editCharacter);
 
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [newTemplate, setNewTemplate] = useState<string>("doorway");
   const [newDescription, setNewDescription] = useState("");
+  const [creatingCharacter, setCreatingCharacter] = useState(false);
+  const [newCharacterName, setNewCharacterName] = useState("");
+  const [newCharacterAppearance, setNewCharacterAppearance] = useState("");
+
+  const closeCreateCharacter = () => {
+    setCreatingCharacter(false);
+    setNewCharacterName("");
+    setNewCharacterAppearance("");
+  };
 
   const closeCreate = () => {
     setCreating(false);
@@ -696,13 +786,76 @@ export function CastScreen() {
           </header>
 
           <section className="mt-7">
-            <h2 className="tnum text-[9px] tracking-[.14em] text-muted-2">人物 · 三视图</h2>
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="tnum text-[9px] tracking-[.14em] text-muted-2">人物 · 三视图</h2>
+              {!readOnly && !creatingCharacter && (
+                <button
+                  type="button"
+                  onClick={() => setCreatingCharacter(true)}
+                  className="rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                >
+                  新建人物
+                </button>
+              )}
+            </div>
+
+            {creatingCharacter && (
+              <form
+                className="mt-3 flex flex-wrap items-center gap-2 rounded-token border border-dashed border-line-2 px-3 py-2.5"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (addCharacter(newCharacterName, newCharacterAppearance)) closeCreateCharacter();
+                }}
+              >
+                <input
+                  type="text"
+                  value={newCharacterName}
+                  onChange={(event) => setNewCharacterName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") closeCreateCharacter();
+                  }}
+                  autoFocus
+                  aria-label="新人物名字"
+                  placeholder="人物名字：林 · 周 · 阿棠"
+                  className="min-w-[220px] flex-1 bg-transparent text-[12.5px] text-text placeholder:text-muted-2 focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  className="rounded-token border border-line-2 px-2.5 py-1 text-[10.5px] text-text transition-colors duration-[var(--dur)] hover:border-pick hover:text-pick"
+                >
+                  创建
+                </button>
+                <button
+                  type="button"
+                  onClick={closeCreateCharacter}
+                  className="rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                >
+                  取消
+                </button>
+                <textarea
+                  value={newCharacterAppearance}
+                  onChange={(event) => setNewCharacterAppearance(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") closeCreateCharacter();
+                  }}
+                  rows={2}
+                  aria-label="新人物外形"
+                  placeholder="外形：短发、深色外套、左眼下一颗痣（选填，会进提示词）"
+                  className="w-full resize-none rounded-token border border-line bg-surface px-2 py-1.5 text-[11.5px] leading-[1.6] text-text placeholder:text-muted-2 focus:border-pick focus:outline-none"
+                />
+                <span className="w-full text-[10px] text-muted-2">
+                  三视图随后一张张生成；外形描述 200 字以内。
+                </span>
+              </form>
+            )}
+
             {cast.characters.map((character) => {
               const job = jobs[character.id];
               return (
                 <CharacterRow
                   key={character.id}
                   character={character}
+                  readOnly={readOnly ?? false}
                   generating={job?.kind === "sheet" ? job.angle : undefined}
                   quoteCny={
                     imageCny === undefined
@@ -712,6 +865,9 @@ export function CastScreen() {
                   onGenerate={() => void generateSheet(character.id)}
                   onLock={() => lockCast("character", character.id)}
                   onUnlock={() => unlockCast("character", character.id)}
+                  onEdit={(name, appearance) =>
+                    editCharacter(character.id, { name, appearance })
+                  }
                 />
               );
             })}

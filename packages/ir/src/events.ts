@@ -2,6 +2,7 @@ import { clone } from "./clone";
 import type {
   Approval,
   Asset,
+  Character,
   DialogueLine,
   Id,
   Location,
@@ -92,7 +93,8 @@ export type ProjectEvent =
       type: "location.added";
       at: string;
       location: Location;
-    }  | {
+    }
+  | {
       /** 改地点（ADR-0059 / ADR-0063）：名字、模板与场景描述；主镜与参考图走资产那条路 */
       type: "location.updated";
       at: string;
@@ -104,6 +106,19 @@ export type ProjectEvent =
       type: "location.removed";
       at: string;
       locationId: Id;
+    }
+  | {
+      /** 加一个人物（ADR-0071）：先有人物，分镜页与剧本页才点得出这个名字 */
+      type: "character.added";
+      at: string;
+      character: Character;
+    }
+  | {
+      /** 改人物（ADR-0071）：名字与外形描述；三视图、参考图走资产那条路 */
+      type: "character.updated";
+      at: string;
+      characterId: Id;
+      patch: Partial<Pick<Character, "name" | "appearance">>;
     }
   | {
       /**
@@ -383,6 +398,32 @@ export function applyEvent(
         ...current,
         locations: current.locations.filter((location) => location.id !== event.locationId),
       };
+    }
+
+    case "character.added": {
+      if (!current) throw new Error("character.added 之前必须有 project.created");
+      if (event.character.name.trim().length === 0) throw new Error("人物总得有个名字");
+      if (current.characters.some((character) => character.id === event.character.id)) {
+        throw new Error(`character.added 重复的人物: ${event.character.id}`);
+      }
+      return { ...current, characters: [...current.characters, event.character] };
+    }
+
+    case "character.updated": {
+      if (!current) throw new Error("character.updated 之前必须有 project.created");
+      if (!current.characters.some((character) => character.id === event.characterId)) {
+        throw new Error(`character.updated 指向不存在的人物: ${event.characterId}`);
+      }
+      if (Object.keys(event.patch).length === 0) {
+        throw new Error("character.updated 的 patch 是空的");
+      }
+      if (event.patch.name !== undefined && event.patch.name.trim().length === 0) {
+        throw new Error("人物总得有个名字");
+      }
+      const characters = current.characters.map((character) =>
+        character.id === event.characterId ? { ...character, ...event.patch } : character,
+      );
+      return { ...current, characters };
     }
 
     case "dialogue.updated": {
