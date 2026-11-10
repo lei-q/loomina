@@ -85,9 +85,15 @@ export function Workbench() {
       )}
       <Stage
         view={view}
-        generating={jobs[view.shots[view.current]!.id]?.kind === "keyframe"}
+        generating={
+          jobs[`${view.shots[view.current]!.id}:last`]?.kind === "keyframe"
+            ? "last"
+            : jobs[`${view.shots[view.current]!.id}:first`]?.kind === "keyframe"
+              ? "first"
+              : null
+        }
         quoteCny={imageCny}
-        onGenerateKeyframe={() => void generateKeyframe(view.shots[view.current]!.id)}
+        onGenerateKeyframe={(frame) => void generateKeyframe(view.shots[view.current]!.id, frame)}
       />
       <ReelBar view={view} onSelect={select} onDecide={decide} />
     </div>

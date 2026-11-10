@@ -50,7 +50,7 @@ export type CastImageRequest =
     }
   | { kind: "master"; location: Pick<Location, "name"> }
   | { kind: "prop"; prop: Pick<Prop, "name" | "description"> }
-  | { kind: "keyframe"; shot: ShotPromptMaterial };
+  | { kind: "keyframe"; shot: ShotPromptMaterial; frame?: "first" | "last" };
 
 export type GeneratedImage = {
   uri: string;
@@ -80,10 +80,11 @@ function plan(request: CastImageRequest): { prompt: string; label: string } {
       label: `prop-${request.prop.name}`,
     };
   }
-  // 关键帧是某一镜的静帧：用描述当标签，方便在溯源里认出是哪一格
+  // 关键帧是某一镜的静帧：用描述当标签，方便在溯源里认出是哪一格（ADR-0038 起分首尾）
+  const frame = request.frame ?? "first";
   return {
-    prompt: buildKeyframePrompt(request.shot),
-    label: `keyframe-${request.shot.description.slice(0, 16) || "shot"}`,
+    prompt: buildKeyframePrompt(request.shot, frame),
+    label: `${frame === "last" ? "lastframe" : "keyframe"}-${request.shot.description.slice(0, 16) || "shot"}`,
   };
 }
 
@@ -106,7 +107,9 @@ export async function generateCastImage(
   request: CastImageRequest,
 ): Promise<GeneratedImage> {
   const config = treecloudEnvFrom(loadEnvFile(envPath()));
-  const client = new TreecloudClient({ ...config, timeoutMs: 120_000 });
+  // 路由的 maxDuration 是 180 秒：客户端超时留在它之内，别让上游把路由先掐掉。
+  // 出图实测 48 秒到 2 分钟不等，120 秒会误杀慢样本（2026-11-10）。
+  const client = new TreecloudClient({ ...config, timeoutMs: 170_000 });
   const adapter = new TreecloudImageAdapter(client);
 
   const { prompt, label } = plan(request);

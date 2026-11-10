@@ -11,7 +11,7 @@ import {
   type ProjectEvent,
   type SheetView,
 } from "@loomina/ir";
-import { shotMaterial } from "@loomina/pipeline";
+import { shotMaterial, type Frame } from "@loomina/pipeline";
 import { create } from "zustand";
 import { diffEvents, getEventLog, migrateLog } from "@/lib/event-log";
 import { claimWriter } from "@/lib/writer-lock";
@@ -25,7 +25,7 @@ export type GenerateJob =
   | { kind: "sheet"; angle: SheetView }
   | { kind: "master" }
   | { kind: "prop" }
-  | { kind: "keyframe" };
+  | { kind: "keyframe"; frame: Frame };
 
 /**
  * 审片台的本地状态（ADR-0027）。
@@ -64,8 +64,8 @@ type WorkbenchState = {
   generateMaster: (locationId: string) => Promise<void>;
   /** 生成道具参考图 */
   generateProp: (propId: string) => Promise<void>;
-  /** 给当前镜生成首帧；落一张图 + 一条 shot.updated（ADR-0037） */
-  generateKeyframe: (shotId: string) => Promise<void>;
+  /** 给当前镜生成首帧或尾帧；落一张图 + 一条 shot.updated（ADR-0037 / 0038） */
+  generateKeyframe: (shotId: string, frame?: Frame) => Promise<void>;
   reset: () => void;
 };
 
@@ -428,7 +428,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     );
   },
 
-  generateKeyframe: async (shotId) => {
+  generateKeyframe: async (shotId, frame = "first") => {
     if (get().readOnly) return;
     const { project } = get();
     const shot = project.shots.find((item) => item.id === shotId);
@@ -436,22 +436,29 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     // 锁定的镜头只读：要重做先解锁
     if (shot.locked) return;
 
-    const assetId = `a-keyframe-${shot.id}`;
+    // 首尾两帧各占一个资产位，重生成按 id 覆盖（ADR-0038）
+    const assetId = frame === "last" ? `a-lastframe-${shot.id}` : `a-keyframe-${shot.id}`;
     set({ castError: undefined });
     await generateOne(
       { get, set },
       {
-        key: shot.id,
+        // 进度分帧记：首帧还在跑时点尾帧，不能把首帧的进度盖掉
+        key: `${shot.id}:${frame}`,
         label: `SH-${String(shot.index + 1).padStart(2, "0")}`,
         assetId,
-        job: { kind: "keyframe" },
-        body: { kind: "keyframe", shot: shotMaterial(project, shot) },
+        job: { kind: "keyframe", frame },
+        body: { kind: "keyframe", frame, shot: shotMaterial(project, shot) },
         referenceAssetIds: shotAnchors(project, shot).refs.map((ref) => ref.assetId),
         after: (id, at) => ({
           type: "shot.updated",
           at,
           shotId: shot.id,
-          patch: { keyframes: { ...shot.keyframes, firstAssetId: id } },
+          patch: {
+            keyframes:
+              frame === "last"
+                ? { ...shot.keyframes, lastAssetId: id }
+                : { ...shot.keyframes, firstAssetId: id },
+          },
         }),
       },
     );

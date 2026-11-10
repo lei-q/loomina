@@ -294,6 +294,71 @@ describe("首帧（ADR-0037）", () => {
   });
 });
 
+describe("尾帧（ADR-0038）", () => {
+  beforeEach(() => {
+    state().reset();
+    state().setImagePrice({ model: "gpt-image-2-c", cny: 0.12 });
+  });
+
+  const stub = () => {
+    const frames: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        frames.push(JSON.parse(String(init?.body)).frame);
+        return new Response(
+          JSON.stringify({ uri: "data:image/png;base64,RkFLRQ==", model: "gpt-image-2-c", cny: 0.12 }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+    return frames;
+  };
+
+  it("尾帧落到 lastAssetId，首帧不被抹掉", async () => {
+    const frames = stub();
+    await state().generateKeyframe("s-03");
+    await state().generateKeyframe("s-03", "last");
+
+    expect(frames).toEqual(["first", "last"]);
+    const shot = state().project.shots.find((item) => item.id === "s-03");
+    expect(shot?.keyframes.firstAssetId).toBe("a-keyframe-s-03");
+    expect(shot?.keyframes.lastAssetId).toBe("a-lastframe-s-03");
+    expect(state().project.assets.find((item) => item.id === "a-lastframe-s-03")?.costCny).toBe(0.12);
+    vi.unstubAllGlobals();
+  });
+
+  it("两帧进度分开记：首帧还在跑时点尾帧，首帧的进度不被盖掉", async () => {
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as { frame: string };
+        // 尾帧立刻回来，首帧挂着——模拟一次慢请求
+        if (body.frame === "first") await pending;
+        return new Response(
+          JSON.stringify({ uri: "data:image/png;base64,RkFLRQ==", model: "gpt-image-2-c", cny: 0.12 }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+
+    const first = state().generateKeyframe("s-03");
+    expect(state().jobs["s-03:first"]).toEqual({ kind: "keyframe", frame: "first" });
+    await state().generateKeyframe("s-03", "last");
+    expect(state().jobs["s-03:first"]).toEqual({ kind: "keyframe", frame: "first" });
+    expect(state().jobs["s-03:last"]).toBeUndefined();
+
+    release();
+    await first;
+    expect(state().jobs["s-03:first"]).toBeUndefined();
+    vi.unstubAllGlobals();
+  });
+});
+
 describe("预算（ADR-0035）", () => {
   beforeEach(() => {
     state().reset();

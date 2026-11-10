@@ -1,3 +1,5 @@
+import { useState } from "react";
+import type { Frame } from "@loomina/pipeline";
 import { Scene } from "@/components/scene";
 import { shotLabel, type StageShot, type StageView } from "@/lib/read-model";
 import { cn } from "@/lib/utils";
@@ -19,6 +21,8 @@ function Neighbour({ shot }: { shot: StageShot }) {
   );
 }
 
+const FRAME_LABEL: Record<Frame, string> = { first: "首帧", last: "尾帧" };
+
 function Current({
   shot,
   subtitle,
@@ -28,12 +32,21 @@ function Current({
 }: {
   shot: StageShot;
   subtitle: string;
-  /** 这一镜的首帧正在生成 */
-  generating: boolean;
-  /** 生成一张首帧要多少钱；价目不知道就不给（ADR-0035） */
+  /** 这一镜哪一帧正在生成（两帧可以同时跑，ADR-0038） */
+  generating: Frame | null;
+  /** 生成一张要多少钱；价目不知道就不给（ADR-0035） */
   quoteCny?: number;
-  onGenerate: () => void;
+  onGenerate: (frame: Frame) => void;
 }) {
+  // 正在看哪一帧：首帧是视频的起点，尾帧是落点（ADR-0038）
+  const [shown, setShown] = useState<Frame>("first");
+  const frames: Array<{ key: Frame; uri?: string; has: boolean }> = [
+    { key: "first", uri: shot.keyframeUri, has: shot.hasKeyframe },
+    { key: "last", uri: shot.lastKeyframeUri, has: shot.hasLastFrame },
+  ];
+  const shownUri = shown === "first" ? shot.keyframeUri : shot.lastKeyframeUri;
+  const shownHas = shown === "first" ? shot.hasKeyframe : shot.hasLastFrame;
+
   return (
     <figure className="flex shrink-0 flex-col items-center gap-2">
       <figcaption className="tnum flex items-baseline gap-2 text-[9px] text-muted">
@@ -43,13 +56,17 @@ function Current({
       </figcaption>
 
       <div className={cn(FRAME, "relative overflow-hidden rounded-token border border-white/[.075] bg-surface")}>
-        {shot.keyframeUri ? (
-          <img src={shot.keyframeUri} alt={`${shotLabel(shot.no)} 首帧`} className="h-full w-full object-cover" />
+        {shownUri ? (
+          <img
+            src={shownUri}
+            alt={`${shotLabel(shot.no)} ${FRAME_LABEL[shown]}`}
+            className="h-full w-full object-cover"
+          />
         ) : (
           <Scene kind={shot.art} className="h-full w-full" />
         )}
 
-        {generating && (
+        {generating === shown && (
           <span className="absolute inset-0 grid place-items-center bg-bg/75 text-[11px] text-text">
             生成中…
           </span>
@@ -61,19 +78,62 @@ function Current({
         </p>
       </div>
 
-      {/* 首帧：视频的起点（ADR-0037）。有了图就先看它，再做后续生成 */}
+      {/* 首尾两帧并排选：点哪格，大画面就看哪一帧（ADR-0038） */}
       <div className="flex items-center gap-2">
-        {generating ? (
-          <span className="tnum text-[10px] text-muted">生成中 · 首帧</span>
+        <div role="group" aria-label="关键帧" className="flex items-end gap-1.5">
+          {frames.map((frame) => (
+            <button
+              key={frame.key}
+              type="button"
+              aria-pressed={shown === frame.key}
+              onClick={() => setShown(frame.key)}
+              className="group flex flex-col items-center gap-1"
+            >
+              <span
+                className={cn(
+                  "relative block h-14 aspect-[9/16] overflow-hidden rounded-[2px] border bg-surface transition-colors duration-[var(--dur)]",
+                  shown === frame.key
+                    ? "border-line-2"
+                    : "border-line opacity-60 group-hover:opacity-90",
+                )}
+              >
+                {frame.uri ? (
+                  <img src={frame.uri} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  <Scene kind={shot.art} className="h-full w-full" />
+                )}
+                {generating === frame.key && (
+                  <span className="absolute inset-0 grid place-items-center bg-bg/75 text-[8px] text-text">
+                    ……
+                  </span>
+                )}
+              </span>
+              <span
+                className={cn(
+                  "text-[9px]",
+                  shown === frame.key ? "text-text" : "text-muted-2",
+                )}
+              >
+                {FRAME_LABEL[frame.key]}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        <span className="h-8 w-px bg-line" />
+
+        {generating === shown ? (
+          <span className="tnum text-[10px] text-muted">生成中 · {FRAME_LABEL[shown]}</span>
         ) : shot.locked ? (
           <span className="tnum text-[10px] text-muted-2">镜头已锁定 · 只读</span>
         ) : (
           <button
             type="button"
-            onClick={onGenerate}
+            onClick={() => onGenerate(shown)}
             className="tnum flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
           >
-            {shot.hasKeyframe ? "重生成首帧" : "生成首帧"}
+            {shownHas ? "重生成" : "生成"}
+            {FRAME_LABEL[shown]}
             {quoteCny !== undefined && (
               <span className="text-[9px] text-muted-2">¥{quoteCny.toFixed(2)}</span>
             )}
@@ -106,11 +166,11 @@ function Current({
 
 export type StageProps = {
   view: StageView;
-  /** 当前镜的首帧是否在生成 */
-  generating: boolean;
-  /** 生成一张首帧要多少钱；价目不知道就不给 */
+  /** 当前镜哪一帧在生成 */
+  generating: Frame | null;
+  /** 生成一张要多少钱；价目不知道就不给 */
   quoteCny?: number;
-  onGenerateKeyframe: () => void;
+  onGenerateKeyframe: (frame: Frame) => void;
 };
 
 export function Stage({ view, generating, quoteCny, onGenerateKeyframe }: StageProps) {
@@ -126,7 +186,7 @@ export function Stage({ view, generating, quoteCny, onGenerateKeyframe }: StageP
         subtitle={view.subtitle}
         generating={generating}
         quoteCny={quoteCny}
-        onGenerate={() => onGenerateKeyframe()}
+        onGenerate={onGenerateKeyframe}
       />
       {next && <Neighbour shot={next} />}
     </main>

@@ -286,14 +286,26 @@ export function buildShotPrompt(project: Project, shot: Shot): string {
   return parts.join("。");
 }
 
+/** 关键帧是这一镜的起点还是落点（ADR-0037 / ADR-0038）。 */
+export type Frame = "first" | "last";
+
+const FRAME_LINE: Record<Frame, string> = {
+  first: "首帧画面，动作起势，无字幕，无文字，无水印",
+  last: "尾帧画面，动作收势，无字幕，无文字，无水印",
+};
+
 /**
- * 首帧提示词（ADR-0037）：同一镜的提示词，但明确"这是一张定住这一刻的静帧"。
+ * 关键帧提示词（ADR-0037 / ADR-0038）：同一镜的提示词，但明确"这是一张定住这一刻的静帧"。
  *
- * 关键帧是视频的起点：动作还没展开，画面要能当封面看，不要字幕与水印。
+ * 首尾两帧只差收势那句：起势是视频的起点，收势是落点。不要字幕与水印——
+ * 关键帧要能当封面看。
  */
-export function buildKeyframePrompt(material: ShotPromptMaterial): string {
+export function buildKeyframePrompt(
+  material: ShotPromptMaterial,
+  frame: Frame = "first",
+): string {
   const parts = shotParts(material);
-  parts.push("首帧画面，动作起势，无字幕，无文字，无水印");
+  parts.push(FRAME_LINE[frame]);
   parts.push(LOOK);
   return parts.join("。");
 }

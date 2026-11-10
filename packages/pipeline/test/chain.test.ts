@@ -157,6 +157,19 @@ describe("首帧提示词（ADR-0037）", () => {
     expect(prompt).toContain("mm");
   });
 
+  it("尾帧（ADR-0038）与首帧同源，只把起势换成收势", () => {
+    const project = load();
+    const material = shotMaterial(project, project.shots[0]!);
+    const first = buildKeyframePrompt(material, "first");
+    const last = buildKeyframePrompt(material, "last");
+
+    expect(first).toContain("动作起势");
+    expect(last).toContain("动作收势");
+    expect(last).not.toContain("动作起势");
+    expect(last).toContain(project.shots[0]!.description);
+    expect(last).not.toContain("c-");
+  });
+
   it("人物锚点照旧原样带上，不含 id", () => {
     const project = load();
     const shot = project.shots.find((item) => item.characterIds.length > 0) ?? project.shots[0]!;

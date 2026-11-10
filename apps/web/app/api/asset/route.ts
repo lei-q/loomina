@@ -16,6 +16,7 @@ type Body = {
   kind?: unknown;
   character?: { name?: unknown; appearance?: unknown; mustNotChange?: unknown };
   angle?: unknown;
+  frame?: unknown;
   location?: { name?: unknown };
   prop?: { name?: unknown; description?: unknown };
   shot?: {
@@ -83,6 +84,8 @@ function parse(body: Body | null): CastImageRequest | string {
   if (body.kind === "keyframe") {
     const shot = body.shot;
     if (!shot) return "缺少镜头";
+    const frame = body.frame ?? "first";
+    if (frame !== "first" && frame !== "last") return "关键帧不认识";
     const size = ShotSchema.shape.shotSize.safeParse(shot.shotSize);
     if (!size.success) return "景别不认识";
     const camera = CameraSchema.safeParse(shot.camera);
@@ -119,6 +122,7 @@ function parse(body: Body | null): CastImageRequest | string {
     const where = name(shot.location?.name);
     return {
       kind: "keyframe",
+      frame,
       shot: {
         description: text(shot.description, 400),
         shotSize: size.data,

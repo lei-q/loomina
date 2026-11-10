@@ -206,7 +206,7 @@ interface Keyframes {
 }
 ```
 
-> **落地情况（ADR-0037，2026-11-10）**：`Shot.keyframes` 已进 IR（zod 默认 `{}`，老日志靠默认值补齐，`LOG_VERSION` 仍为 1）。首帧由分镜页生成：资产 id 固定为 `a-keyframe-<shotId>`，一条 `asset.updated` 加一条 `shot.updated { keyframes: { firstAssetId } }`；重生成按 id 覆盖。**尾帧 `lastAssetId` 只有字段，没有界面入口。**
+> **落地情况（ADR-0037 / ADR-0038，2026-11-10）**：`Shot.keyframes` 已进 IR（zod 默认 `{}`，老日志靠默认值补齐，`LOG_VERSION` 仍为 1）。分镜页可生成首尾两帧：首帧资产 id 固定 `a-keyframe-<shotId>`，写 `firstAssetId`；尾帧固定 `a-lastframe-<shotId>`，写 `lastAssetId`。每帧一条 `asset.updated` 加一条 `shot.updated`，patch 里的 `keyframes` 是完整对象（生成尾帧不抹掉首帧）；重生成按 id 覆盖。两帧都不参与 take。
 
 ```ts
 interface CameraSpec {

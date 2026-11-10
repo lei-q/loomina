@@ -33,6 +33,9 @@ export type StageShot = {
   keyframeUri?: string;
   /** 首帧这张资产是否存在（有没有生成过） */
   hasKeyframe: boolean;
+  /** 尾帧的真图（data URI，ADR-0038）；没生成过就为空 */
+  lastKeyframeUri?: string;
+  hasLastFrame: boolean;
 };
 
 export type Spend = {
@@ -182,6 +185,9 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
     const keyframe = shot.keyframes.firstAssetId
       ? assetById.get(shot.keyframes.firstAssetId)
       : undefined;
+    const lastFrame = shot.keyframes.lastAssetId
+      ? assetById.get(shot.keyframes.lastAssetId)
+      : undefined;
     return {
       no: i + 1,
       id: shot.id,
@@ -197,6 +203,8 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
       },
       keyframeUri: keyframe?.uri,
       hasKeyframe: Boolean(keyframe),
+      lastKeyframeUri: lastFrame?.uri,
+      hasLastFrame: Boolean(lastFrame),
     };
   });
 
