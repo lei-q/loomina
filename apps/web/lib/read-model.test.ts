@@ -14,6 +14,7 @@ import {
   sceneHeadHistory,
   scriptToText,
   staleFrames,
+  staleMasters,
   toCastView,
   toKeyframeView,
   toScriptView,
@@ -791,5 +792,93 @@ describe("出图后改了画面：帧过期（ADR-0057）", () => {
     expect(stage.shots.find((shot) => shot.id === "s-02")?.staleFirst).toBeUndefined();
     // 不给日志就不算
     expect(toStageView(withFrames).shots.find((shot) => shot.id === "s-01")?.staleFirst).toBeUndefined();
+  });
+});
+
+describe("改过场景描述：主镜过期（ADR-0075）", () => {
+  const at = (h: number) => `2026-11-10T${String(h).padStart(2, "0")}:00:00+08:00`;
+  const masterAt = "2026-11-09T21:00:00+08:00";
+  const withMaster = ProjectSchema.parse({
+    ...sampleProject,
+    assets: [
+      ...sampleProject.assets,
+      { id: "a-corridor", kind: "image", source: "generated", createdAt: masterAt },
+      { id: "a-door", kind: "image", source: "generated", createdAt: masterAt },
+    ],
+    locations: sampleProject.locations.map((location, index) =>
+      index < 2 ? { ...location, masterShotId: `a-${["corridor", "door"][index]}` } : location,
+    ),
+  });
+  const base = [{ type: "project.created" as const, at: at(0), project: withMaster }];
+
+  it("改了描述：只标这一张主镜过期", () => {
+    const events = [
+      ...base,
+      {
+        type: "location.updated" as const,
+        at: at(9),
+        locationId: "loc-corridor",
+        patch: { description: "走廊尽头多了一扇窗" },
+      },
+    ];
+    const stale = staleMasters(events, withMaster);
+    expect(stale.get("loc-corridor")).toEqual({ at: at(9), reasons: ["场景描述"] });
+    expect(stale.has("loc-door")).toBe(false);
+  });
+
+  it("改名字、改模板不算过期：它们不进主镜提示词", () => {
+    const events = [
+      ...base,
+      { type: "location.updated" as const, at: at(9), locationId: "loc-corridor", patch: { name: "长走廊" } },
+      {
+        type: "location.updated" as const,
+        at: at(10),
+        locationId: "loc-door",
+        patch: { templateId: "doorway" },
+      },
+    ];
+    expect(staleMasters(events, withMaster).size).toBe(0);
+  });
+
+  it("主镜是在改动之后出的：不再过期", () => {
+    const events = [
+      ...base,
+      {
+        type: "location.updated" as const,
+        at: at(9),
+        locationId: "loc-corridor",
+        patch: { description: "走廊尽头多了一扇窗" },
+      },
+      {
+        type: "asset.updated" as const,
+        at: at(11),
+        asset: {
+          id: "a-corridor",
+          kind: "image" as const,
+          source: "generated" as const,
+          createdAt: at(11),
+        },
+      },
+    ];
+    // 重生成之后，资产的时间晚于改动：不再过期
+    expect(staleMasters(events, rebuild(events)).has("loc-corridor")).toBe(false);
+  });
+
+  it("toCastView 带上日志时，卡片拿到过期标记", () => {
+    const events = [
+      ...base,
+      {
+        type: "location.updated" as const,
+        at: at(9),
+        locationId: "loc-corridor",
+        patch: { description: "走廊尽头多了一扇窗" },
+      },
+    ];
+    const view = toCastView(withMaster, events);
+    expect(view.locations.find((item) => item.id === "loc-corridor")?.masterStale).toEqual({
+      at: at(9),
+      reasons: ["场景描述"],
+    });
+    expect(toCastView(withMaster).locations.find((item) => item.id === "loc-corridor")?.masterStale).toBeUndefined();
   });
 });

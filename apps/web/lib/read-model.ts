@@ -376,6 +376,47 @@ export function staleFrames(events: ProjectEvent[], project: Project): Map<strin
   return stale;
 }
 
+/**
+ * 主镜过期（ADR-0075）：场景描述改了之后，已经出的主镜对不上新描述。
+ *
+ * 只认 `location.updated { description }`：主镜提示词里只有名字与描述
+ * （模板只决定界面剪影，不改提示词）。与关键帧同一套判定——比时间，不比内容。
+ */
+export function staleMasters(
+  events: ProjectEvent[],
+  project: Project,
+): Map<string, StaleMark> {
+  const edits = new Map<string, Array<{ at: string; reason: string }>>();
+  for (const event of events) {
+    if (event.type !== "location.updated") continue;
+    if (event.patch.description === undefined) continue;
+    const list = edits.get(event.locationId);
+    if (list) list.push({ at: event.at, reason: "场景描述" });
+    else edits.set(event.locationId, [{ at: event.at, reason: "场景描述" }]);
+  }
+
+  const stale = new Map<string, StaleMark>();
+  for (const location of project.locations) {
+    const locationEdits = edits.get(location.id);
+    if (!locationEdits || !location.masterShotId) continue;
+    const asset = project.assets.find((item) => item.id === location.masterShotId);
+    if (!asset) continue;
+    const after = locationEdits.filter(
+      (edit) => Date.parse(edit.at) > Date.parse(asset.createdAt),
+    );
+    if (after.length === 0) continue;
+    const at = after.reduce(
+      (latest, edit) => (Date.parse(edit.at) > Date.parse(latest) ? edit.at : latest),
+      after[0]!.at,
+    );
+    stale.set(location.id, {
+      at,
+      reasons: [...new Set(after.map((edit) => edit.reason))],
+    });
+  }
+  return stale;
+}
+
 export type KeyframeView = {
   title: string;
   version: number;
@@ -669,6 +710,8 @@ export type CastLocationView = {
   masterAssetId?: string;
   /** 主镜的真图（data URI）；示例素材为空，界面画剪影 */
   masterUri?: string;
+  /** 出图之后改过场景描述（ADR-0075），界面挂「过期」小签 */
+  masterStale?: StaleMark;
   lockedAt?: string;
 };
 
@@ -699,9 +742,13 @@ export type CastView = {
   spend: Spend;
 };
 
-/** Project IR → 定妆台读模型：只给画面与状态，不给锁的规则（规则在 `@loomina/ir`）。 */
-export function toCastView(project: Project): CastView {
+/**
+ * Project IR → 定妆台读模型：只给画面与状态，不给锁的规则（规则在 `@loomina/ir`）。
+ * 给了日志就算出主镜的过期标记（ADR-0075）。
+ */
+export function toCastView(project: Project, events?: ProjectEvent[]): CastView {
   const readiness = castReadiness(project);
+  const staleMaster = events ? staleMasters(events, project) : new Map<string, StaleMark>();
   const characterById = new Map(project.characters.map((item) => [item.id, item]));
   const locationById = new Map(project.locations.map((item) => [item.id, item]));
 
@@ -746,6 +793,7 @@ export function toCastView(project: Project): CastView {
         required: item.required,
         masterAssetId: location.masterShotId,
         masterUri: assetById.get(location.masterShotId ?? "")?.uri,
+        masterStale: staleMaster.get(location.id),
         lockedAt:
           item.approval?.status === "approved" ? item.approval.approvedAt : undefined,
       },

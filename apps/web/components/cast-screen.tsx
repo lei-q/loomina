@@ -588,6 +588,14 @@ function LocationRow({
                 待生成
               </span>
             )}
+            {location.masterStale && location.masterAssetId && !generating && (
+              <span
+                title={`主镜出图之后改过：${location.masterStale.reasons.join("、")}（${clock(location.masterStale.at)}），建议重生成`}
+                className="absolute bottom-1.5 left-1.5 rounded-[1px] bg-pick/85 px-1 text-[8.5px] leading-[1.5] text-white"
+              >
+                过期
+              </span>
+            )}
             {generating && (
               <span className="absolute inset-0 grid place-items-center bg-bg/75 text-[9px] text-text">
                 生成中…
@@ -995,7 +1003,8 @@ export function CastScreen() {
     });
   }, [hydrate, setImagePrice]);
 
-  const cast = useMemo(() => toCastView(project), [project]);
+  const events = useWorkbench((state) => state.events);
+  const cast = useMemo(() => toCastView(project, events), [project, events]);
   const done = cast.lockedCount === cast.totalRequired;
   const progress = cast.totalRequired === 0 ? 0 : (cast.lockedCount / cast.totalRequired) * 100;
 
