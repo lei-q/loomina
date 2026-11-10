@@ -873,3 +873,59 @@ describe("台词改写（ADR-0044）", () => {
     expect(state().events).toHaveLength(snapshot);
   });
 });
+
+describe("台词增删（ADR-0045）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("加一句：写 dialogue.added + shot.updated，镜头变长，可回放", () => {
+    const before = state().project.shots.find((item) => item.id === "s-01")!;
+    const ok = state().addDialogue("s-01", "c-zhou", "又是我。");
+
+    expect(ok).toBe(true);
+    const lines = state().project.shots.find((item) => item.id === "s-01")!.dialogueIds;
+    expect(lines).toHaveLength(2);
+    const added = state().project.dialogue.at(-1)!;
+    expect(added).toMatchObject({ characterId: "c-zhou", text: "又是我。", durationMs: 1200 });
+    expect(state().project.shots.find((item) => item.id === "s-01")?.durationMs).toBe(
+      before.durationMs + 1200,
+    );
+
+    const tail = state().events.slice(-2);
+    expect(tail[0]).toMatchObject({ type: "dialogue.added", shotId: "s-01" });
+    expect(tail[1]).toMatchObject({
+      type: "shot.updated",
+      shotId: "s-01",
+      patch: { durationMs: before.durationMs + 1200 },
+    });
+    expect(rebuild(state().events).dialogue.at(-1)?.text).toBe("又是我。");
+  });
+
+  it("删一句：写 dialogue.removed + shot.updated，镜头变短，可回放", () => {
+    const before = state().project.shots.find((item) => item.id === "s-04")!;
+    const ok = state().removeDialogue("d-03");
+
+    expect(ok).toBe(true);
+    expect(state().project.shots.find((item) => item.id === "s-04")?.dialogueIds).toEqual([]);
+    expect(state().project.shots.find((item) => item.id === "s-04")?.durationMs).toBe(
+      before.durationMs - 1800,
+    );
+    expect(state().project.dialogue.some((line) => line.id === "d-03")).toBe(false);
+    expect(state().events.at(-2)).toMatchObject({ type: "dialogue.removed", lineId: "d-03" });
+    expect(rebuild(state().events).dialogue.some((line) => line.id === "d-03")).toBe(false);
+  });
+
+  it("锁定镜头加不了也删不了，空台词与陌生说话人都拒", () => {
+    const snapshot = state().events.length;
+    expect(state().addDialogue("s-08", "c-lin", "试试。")).toBe(false);
+    expect(state().castError).toContain("锁定");
+    expect(state().removeDialogue("d-04")).toBe(false);
+    expect(state().addDialogue("s-01", "c-zhou", "  ")).toBe(false);
+    expect(state().castError).toContain("不能是空");
+    expect(state().addDialogue("s-01", "c-404", "试试。")).toBe(false);
+    expect(state().castError).toContain("说话人");
+    expect(state().events).toHaveLength(snapshot);
+  });
+});

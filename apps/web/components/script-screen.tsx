@@ -20,10 +20,16 @@ export function ScriptScreen() {
   const setBudget = useWorkbench((state) => state.setBudget);
   const editDialogue = useWorkbench((state) => state.editDialogue);
   const restoreDialogue = useWorkbench((state) => state.restoreDialogue);
+  const addDialogue = useWorkbench((state) => state.addDialogue);
+  const removeDialogue = useWorkbench((state) => state.removeDialogue);
   const events = useWorkbench((state) => state.events);
 
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [adding, setAdding] = useState<string | null>(null);
+  const [addSpeaker, setAddSpeaker] = useState("");
+  const [addText, setAddText] = useState("");
   const [note, setNote] = useState<string | undefined>();
 
   useEffect(() => {
@@ -41,6 +47,33 @@ export function ScriptScreen() {
   const save = (lineId: string) => {
     if (editDialogue(lineId, draft)) {
       setEditing(null);
+      setNote(undefined);
+    } else {
+      setNote(useWorkbench.getState().castError);
+    }
+  };
+
+  const startAdd = (shotId: string, characterIds: string[]) => {
+    setAdding(shotId);
+    setAddSpeaker(characterIds[0] ?? view.characters[0]?.id ?? "");
+    setAddText("");
+    setDeleting(null);
+    setNote(undefined);
+  };
+
+  const saveAdd = (shotId: string) => {
+    if (addDialogue(shotId, addSpeaker, addText)) {
+      setAdding(null);
+      setAddText("");
+      setNote(undefined);
+    } else {
+      setNote(useWorkbench.getState().castError);
+    }
+  };
+
+  const remove = (lineId: string) => {
+    if (removeDialogue(lineId)) {
+      setDeleting(null);
       setNote(undefined);
     } else {
       setNote(useWorkbench.getState().castError);
@@ -173,17 +206,49 @@ export function ScriptScreen() {
                                     <p className="tnum text-[9px] tracking-[.12em] text-muted-2">
                                       {line.character} · {line.dur.toFixed(1)}s
                                     </p>
-                                    {!readOnly && (
-                                      <button
-                                        type="button"
-                                        disabled={shot.locked}
-                                        onClick={() => startEdit(line.id, line.text)}
-                                        title={shot.locked ? "这一镜已锁定，先解锁才能改台词" : "改写这句台词"}
-                                        className="shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
-                                      >
-                                        改
-                                      </button>
-                                    )}
+                                    {!readOnly &&
+                                      (deleting === line.id ? (
+                                        <span className="flex items-baseline gap-1">
+                                          <button
+                                            type="button"
+                                            onClick={() => remove(line.id)}
+                                            className="shrink-0 rounded-token border border-pick/70 px-1.5 py-px text-[9px] text-pick transition-colors duration-[var(--dur)] hover:border-pick"
+                                          >
+                                            确认删
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => setDeleting(null)}
+                                            className="shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                                          >
+                                            取消
+                                          </button>
+                                        </span>
+                                      ) : (
+                                        <span className="flex items-baseline gap-1">
+                                          <button
+                                            type="button"
+                                            disabled={shot.locked}
+                                            onClick={() => startEdit(line.id, line.text)}
+                                            title={shot.locked ? "这一镜已锁定，先解锁才能改台词" : "改写这句台词"}
+                                            className="shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+                                          >
+                                            改
+                                          </button>
+                                          <button
+                                            type="button"
+                                            disabled={shot.locked}
+                                            onClick={() => {
+                                              setDeleting(line.id);
+                                              setNote(undefined);
+                                            }}
+                                            title={shot.locked ? "这一镜已锁定，先解锁才能删台词" : "删掉这句台词"}
+                                            className="shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+                                          >
+                                            删
+                                          </button>
+                                        </span>
+                                      ))}
                                   </div>
                                   <p className="mt-0.5 text-[12.5px] leading-[1.8] text-text">
                                     {line.text}
@@ -261,6 +326,71 @@ export function ScriptScreen() {
                             )}
                           </div>
                         )}
+
+                        {!readOnly &&
+                          (adding === shot.id ? (
+                            <div className="mt-2 border-l border-pick/70 pl-3">
+                              <div className="flex items-center gap-2">
+                                <select
+                                  value={addSpeaker}
+                                  onChange={(event) => setAddSpeaker(event.target.value)}
+                                  aria-label="说话人"
+                                  className="rounded-token border border-line-2 bg-surface px-1.5 py-0.5 text-[10px] text-text focus:border-pick focus:outline-none"
+                                >
+                                  {view.characters.map((character) => (
+                                    <option key={character.id} value={character.id}>
+                                      {character.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                <span className="text-[9px] tracking-[.12em] text-muted-2">
+                                  加一句台词
+                                </span>
+                              </div>
+                              <textarea
+                                autoFocus
+                                value={addText}
+                                rows={2}
+                                onChange={(event) => setAddText(event.target.value)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                                    saveAdd(shot.id);
+                                  }
+                                  if (event.key === "Escape") setAdding(null);
+                                }}
+                                placeholder="写一句台词"
+                                className="mt-1 w-full resize-none rounded-token border border-line-2 bg-surface px-2 py-1.5 text-[12.5px] leading-[1.8] text-text placeholder:text-muted-2 focus:border-pick focus:outline-none"
+                              />
+                              <div className="mt-1 flex flex-wrap items-center gap-2 text-[9.5px]">
+                                <button
+                                  type="button"
+                                  onClick={() => saveAdd(shot.id)}
+                                  className="rounded-token border border-line-2 px-2 py-0.5 text-text transition-colors duration-[var(--dur)] hover:border-pick hover:text-pick"
+                                >
+                                  保存
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setAdding(null)}
+                                  className="rounded-token border border-line px-2 py-0.5 text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                                >
+                                  取消
+                                </button>
+                                <span className="text-muted-2">时长按 0.3 秒 / 字估，镜头跟着加</span>
+                                {note && <span className="text-pick">{note}</span>}
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => startAdd(shot.id, shot.characterIds)}
+                              disabled={shot.locked}
+                              title={shot.locked ? "这一镜已锁定，先解锁才能加台词" : "给这一镜加一句台词"}
+                              className="mt-2 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              + 加一句
+                            </button>
+                          ))}
 
                         <p className="tnum mt-2 text-[8.5px] text-muted-2">
                           {shot.size} · {shot.angle} · {shot.dur.toFixed(1)}s

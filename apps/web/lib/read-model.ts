@@ -404,6 +404,8 @@ export type ScriptShot = {
   angle: string;
   /** 锁定的镜头不能改台词（ADR-0041 / 0044） */
   locked: boolean;
+  /** 这一镜里有谁，加台词时默认第一个 */
+  characterIds: string[];
   lines: ScriptLine[];
 };
 
@@ -419,6 +421,8 @@ export type ScriptScene = {
 export type ScriptView = {
   title: string;
   version: number;
+  /** 说话人候选：加台词时挑一个 */
+  characters: { id: string; name: string }[];
   scenes: ScriptScene[];
   shotCount: number;
   dialogueCount: number;
@@ -470,6 +474,7 @@ export function toScriptView(project: Project, options: { budgetCny?: number } =
             size: view?.size ?? "",
             angle: view?.angle ?? "",
             locked: shot.locked,
+            characterIds: shot.characterIds,
             lines,
           };
         });
@@ -486,6 +491,7 @@ export function toScriptView(project: Project, options: { budgetCny?: number } =
   return {
     title: stage.title,
     version: stage.version,
+    characters: project.characters.map((item) => ({ id: item.id, name: item.name })),
     scenes,
     shotCount: scenes.reduce((sum, scene) => sum + scene.shots.length, 0),
     dialogueCount: scenes.reduce(

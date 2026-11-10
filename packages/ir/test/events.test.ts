@@ -251,3 +251,57 @@ describe("dialogue.updated（ADR-0044）", () => {
     ).toThrow(/不存在/);
   });
 });
+
+describe("台词增删（ADR-0045）", () => {
+  it("dialogue.added 同时挂到镜头的 dialogueIds，可回放", () => {
+    const project = load();
+    const line = {
+      id: "dl-3",
+      characterId: "c-lin",
+      text: "又是我。",
+      durationMs: 1200,
+    };
+    const event: ProjectEvent = { type: "dialogue.added", at: AT, shotId: "sh-1", line };
+    const after = applyEvent(project, event);
+
+    expect(after.dialogue.some((item) => item.id === "dl-3")).toBe(true);
+    expect(after.shots.find((shot) => shot.id === "sh-1")?.dialogueIds).toContain("dl-3");
+    expect(rebuild([created(project), event])).toEqual(after);
+  });
+
+  it("dialogue.removed 从项目与所属镜头上一起摘掉", () => {
+    const project = load();
+    const after = applyEvent(project, { type: "dialogue.removed", at: AT, lineId: "dl-1" });
+
+    expect(after.dialogue.some((line) => line.id === "dl-1")).toBe(false);
+    expect(after.shots.find((shot) => shot.id === "sh-1")?.dialogueIds).toEqual([]);
+  });
+
+  it("重复 id、不存在的镜头、不存在的台词、空台词都拒绝", () => {
+    const project = load();
+    const line = { id: "dl-1", characterId: "c-lin", text: "又是我。", durationMs: 1200 };
+
+    expect(() =>
+      applyEvent(project, { type: "dialogue.added", at: AT, shotId: "sh-1", line }),
+    ).toThrow(/已存在/);
+    expect(() =>
+      applyEvent(project, {
+        type: "dialogue.added",
+        at: AT,
+        shotId: "sh-404",
+        line: { ...line, id: "dl-9" },
+      }),
+    ).toThrow(/不存在的镜头/);
+    expect(() =>
+      applyEvent(project, {
+        type: "dialogue.added",
+        at: AT,
+        shotId: "sh-1",
+        line: { ...line, id: "dl-9", text: "  " },
+      }),
+    ).toThrow(/正时长且非空/);
+    expect(() =>
+      applyEvent(project, { type: "dialogue.removed", at: AT, lineId: "dl-404" }),
+    ).toThrow(/不存在/);
+  });
+});

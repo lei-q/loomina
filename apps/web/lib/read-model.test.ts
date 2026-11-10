@@ -455,3 +455,16 @@ describe("台词版本（ADR-0044 附记）", () => {
     expect(dialogueHistory(events, "d-01").edits).toHaveLength(2);
   });
 });
+
+describe("剧本页的说话人与选角（ADR-0045）", () => {
+  it("带出说话人候选，以及每镜里有谁", () => {
+    const view = toScriptView(sampleProject);
+    expect(view.characters.map((item) => item.name)).toEqual(["林", "周"]);
+
+    const s04 = view.scenes[1]!.shots.find((shot) => shot.id === "s-04")!;
+    expect(s04.characterIds).toEqual(["c-lin", "c-zhou"]);
+    expect(s04.locked).toBe(false);
+    const s08 = view.scenes.flatMap((scene) => scene.shots).find((shot) => shot.id === "s-08")!;
+    expect(s08.locked).toBe(true);
+  });
+});

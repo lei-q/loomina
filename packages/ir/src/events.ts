@@ -37,6 +37,19 @@ export type ProjectEvent =
       lineId: Id;
       patch: Partial<Omit<DialogueLine, "id" | "characterId">>;
     }
+  | {
+      /** 加一句台词（ADR-0045）：同时挂到镜头的 dialogueIds 上 */
+      type: "dialogue.added";
+      at: string;
+      shotId: Id;
+      line: DialogueLine;
+    }
+  | {
+      /** 删一句台词（ADR-0045）：整句从项目与所属镜头上摘掉 */
+      type: "dialogue.removed";
+      at: string;
+      lineId: Id;
+    }
   | { type: "take.added"; at: string; take: Take }
   | {
       /** 闸门：定妆锁定 / 解锁。同一目标只保留一条，按 (targetType, targetId) 覆盖。 */
@@ -98,6 +111,45 @@ export function applyEvent(
         item.id === event.lineId ? { ...item, ...event.patch } : item,
       );
       return { ...current, dialogue };
+    }
+
+    case "dialogue.added": {
+      if (!current) throw new Error("dialogue.added 之前必须有 project.created");
+      if (current.dialogue.some((item) => item.id === event.line.id)) {
+        throw new Error(`dialogue.added 的台词 id 已存在: ${event.line.id}`);
+      }
+      const shot = current.shots.find((item) => item.id === event.shotId);
+      if (!shot) {
+        throw new Error(`dialogue.added 指向不存在的镜头: ${event.shotId}`);
+      }
+      if (event.line.text.trim().length === 0 || !(event.line.durationMs > 0)) {
+        throw new Error("dialogue.added 的台词必须是正时长且非空");
+      }
+      return {
+        ...current,
+        dialogue: [...current.dialogue, event.line],
+        shots: current.shots.map((item) =>
+          item.id === event.shotId
+            ? { ...item, dialogueIds: [...item.dialogueIds, event.line.id] }
+            : item,
+        ),
+      };
+    }
+
+    case "dialogue.removed": {
+      if (!current) throw new Error("dialogue.removed 之前必须有 project.created");
+      if (!current.dialogue.some((item) => item.id === event.lineId)) {
+        throw new Error(`dialogue.removed 指向不存在的台词: ${event.lineId}`);
+      }
+      return {
+        ...current,
+        dialogue: current.dialogue.filter((item) => item.id !== event.lineId),
+        shots: current.shots.map((item) =>
+          item.dialogueIds.includes(event.lineId)
+            ? { ...item, dialogueIds: item.dialogueIds.filter((id) => id !== event.lineId) }
+            : item,
+        ),
+      };
     }
 
     case "take.updated": {

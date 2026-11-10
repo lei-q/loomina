@@ -86,6 +86,10 @@ type WorkbenchState = {
   editDialogue: (lineId: string, text: string) => boolean;
   /** 用回某一版：文本与该版当时的时长一起写回，仍是一次改写（ADR-0044 附记） */
   restoreDialogue: (lineId: string, text: string, durationMs: number) => boolean;
+  /** 加一句台词：写一条 `dialogue.added`，镜头时长加这一句（ADR-0045） */
+  addDialogue: (shotId: string, characterId: string, text: string) => boolean;
+  /** 删一句台词：写一条 `dialogue.removed`，镜头时长减这一句（ADR-0045） */
+  removeDialogue: (lineId: string) => boolean;
   /** 划掉一条补充要求：同样写一条 shot.updated（ADR-0039 附记） */
   removeNote: (shotId: string, note: string) => void;
   reset: () => void;
@@ -664,6 +668,78 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       { get, set },
       { lineId, text, durationMs, unchanged: "这句已经是这一版了。" },
     ),
+
+  addDialogue: (shotId, characterId, rawText) => {
+    if (get().readOnly) return false;
+    const text = rawText.replace(/\s+$/, "");
+    if (text.length === 0) {
+      set({ castError: "台词不能是空的。" });
+      return false;
+    }
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) return false;
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定：要加台词先解锁。" });
+      return false;
+    }
+    if (!project.characters.some((item) => item.id === characterId)) {
+      set({ castError: "找不到这个说话人。" });
+      return false;
+    }
+
+    const at = new Date().toISOString();
+    const line = {
+      id: `d-${shotId}-${crypto.randomUUID().slice(0, 8)}`,
+      characterId,
+      text,
+      durationMs: estimateDialogueMs(text),
+    };
+    const next: ProjectEvent[] = [
+      { type: "dialogue.added", at, shotId, line },
+      {
+        type: "shot.updated",
+        at,
+        shotId,
+        patch: { durationMs: shot.durationMs + line.durationMs },
+      },
+    ];
+    set({
+      project: next.reduce(applyEvent, project),
+      events: [...events, ...next],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  removeDialogue: (lineId) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const line = project.dialogue.find((item) => item.id === lineId);
+    if (!line) return false;
+    const shot = project.shots.find((item) => item.dialogueIds.includes(lineId));
+    if (shot?.locked) {
+      set({ castError: "这一镜已锁定：要删台词先解锁。" });
+      return false;
+    }
+
+    const at = new Date().toISOString();
+    const next: ProjectEvent[] = [{ type: "dialogue.removed", at, lineId }];
+    if (shot) {
+      next.push({
+        type: "shot.updated",
+        at,
+        shotId: shot.id,
+        patch: { durationMs: Math.max(500, shot.durationMs - line.durationMs) },
+      });
+    }
+    set({
+      project: next.reduce(applyEvent, project),
+      events: [...events, ...next],
+      castError: undefined,
+    });
+    return true;
+  },
 
   instruct: (text) => {
     if (get().readOnly) return false;
