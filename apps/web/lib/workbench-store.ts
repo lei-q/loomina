@@ -126,6 +126,11 @@ type WorkbenchState = {
     sceneId: string,
     patch: Partial<Pick<Scene, "space" | "timeOfDay" | "locationId">>,
   ) => boolean;
+  /**
+   * 改场号：写一条 `scene.updated { code }`，1–4 位字母数字，
+   * 空串表示回到按顺序编号；重复的场号拒绝（ADR-0080）
+   */
+  editSceneCode: (sceneId: string, rawCode: string) => boolean;
   /** 把台词顺序整组写回：一条 `shot.updated { dialogueIds }`（ADR-0053） */
   setDialogueOrder: (shotId: string, lineIds: string[]) => boolean;  /** 把一句台词挪到另一镜：两条 `shot.updated`，两镜时长各加减这一句（ADR-0054） */
   moveDialogueTo: (lineId: string, targetShotId: string) => boolean;
@@ -1204,6 +1209,39 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     return true;
   },
 
+  editSceneCode: (sceneId, rawCode) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const scene = project.scenes.find((item) => item.id === sceneId);
+    if (!scene) return false;
+    const code = rawCode.trim();
+    if (code !== "" && !/^[0-9A-Za-z]{1,4}$/.test(code)) {
+      set({ castError: "场号只能是 1–4 位字母数字，比如 2A。" });
+      return false;
+    }
+    if (code === scene.code) {
+      set({ castError: "场号没改。" });
+      return false;
+    }
+    if (
+      code !== "" &&
+      project.scenes.some((item) => item.id !== sceneId && item.code === code)
+    ) {
+      set({ castError: `已经有「${code}」这一场了。` });
+      return false;
+    }
+    const at = new Date().toISOString();
+    const written: ProjectEvent[] = [
+      { type: "scene.updated", at, sceneId, patch: { code } },
+    ];
+    set({
+      project: written.reduce(applyEvent, project),
+      events: [...events, ...written],
+      castError: undefined,
+    });
+    return true;
+  },
+
   addLocation: (name, templateId, description) => {
     if (get().readOnly) return undefined;
     const { project, events } = get();
@@ -1744,6 +1782,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     const scene: Scene = {
       id,
       index,
+      code: "",
       locationId: target,
       space: previous?.space ?? "int",
       timeOfDay: previous?.timeOfDay ?? "day",

@@ -430,8 +430,8 @@ describe("调整场序（ADR-0060）", () => {
       ...base,
       scenes: [
         base.scenes[0]!,
-        { id: "sc-b", index: 1, locationId: "loc-living", space: "int", timeOfDay: "day", shotIds: [] },
-        { id: "sc-c", index: 2, locationId: "loc-living", space: "int", timeOfDay: "night", shotIds: [] },
+        { id: "sc-b", index: 1, locationId: "loc-living", space: "int", timeOfDay: "day", shotIds: [], code: "" },
+        { id: "sc-c", index: 2, locationId: "loc-living", space: "int", timeOfDay: "night", shotIds: [], code: "" },
       ],
     };
   };
@@ -467,6 +467,80 @@ describe("调整场序（ADR-0060）", () => {
   });
 });
 
+describe("显式场号（ADR-0080）", () => {
+  const twoScenes = (): Project => {
+    const base = load();
+    return {
+      ...base,
+      scenes: [
+        base.scenes[0]!,
+        {
+          id: "sc-b",
+          index: 1,
+          locationId: "loc-living",
+          space: "int",
+          timeOfDay: "day",
+          shotIds: [],
+          code: "",
+        },
+      ],
+    };
+  };
+
+  it("写一个显式场号：重放后一致；空串表示回到顺序号", () => {
+    const project = twoScenes();
+    const set: ProjectEvent = {
+      type: "scene.updated",
+      at: AT,
+      sceneId: "sc-1",
+      patch: { code: "2A" },
+    };
+    const after = applyEvent(project, set);
+    expect(after.scenes[0]?.code).toBe("2A");
+    expect(rebuild([created(project), set])).toEqual(after);
+
+    const cleared = applyEvent(after, {
+      type: "scene.updated",
+      at: AT,
+      sceneId: "sc-1",
+      patch: { code: "" },
+    });
+    expect(cleared.scenes[0]?.code).toBe("");
+  });
+
+  it("不合法的场号、重复的场号都拒绝", () => {
+    const project = applyEvent(twoScenes(), {
+      type: "scene.updated",
+      at: AT,
+      sceneId: "sc-b",
+      patch: { code: "3" },
+    });
+    for (const code of ["2A场", "ABCDE", "2 A", "-1"]) {
+      expect(() =>
+        applyEvent(project, {
+          type: "scene.updated",
+          at: AT,
+          sceneId: "sc-1",
+          patch: { code },
+        }),
+      ).toThrow(/场号/);
+    }
+    expect(() =>
+      applyEvent(project, {
+        type: "scene.updated",
+        at: AT,
+        sceneId: "sc-1",
+        patch: { code: "3" },
+      }),
+    ).toThrow(/重复/);
+  });
+
+  it("旧项目没有 code：回放补成空串", () => {
+    const project = load();
+    expect(project.scenes[0]?.code).toBe("");
+  });
+});
+
 describe("新建场次与镜头（ADR-0064）", () => {
   it("加一场：只能加在末尾，新场没有镜头，可回放", () => {
     const project = load();
@@ -480,6 +554,7 @@ describe("新建场次与镜头（ADR-0064）", () => {
         space: "int",
         timeOfDay: "day",
         shotIds: [],
+        code: "",
       },
     };
     const after = applyEvent(project, scene);
@@ -529,6 +604,7 @@ describe("新建场次与镜头（ADR-0064）", () => {
       space: "int" as const,
       timeOfDay: "day" as const,
       shotIds: [],
+      code: "",
     };
 
     expect(() =>
@@ -608,6 +684,7 @@ describe("中间插入场次与镜头（ADR-0068）", () => {
         space: "ext",
         timeOfDay: "night",
         shotIds: [],
+        code: "",
       },
     };
     const after = applyEvent(project, scene);
@@ -666,6 +743,7 @@ describe("中间插入场次与镜头（ADR-0068）", () => {
       space: "int" as const,
       timeOfDay: "day" as const,
       shotIds: [],
+      code: "",
     };
     expect(() =>
       applyEvent(project, { type: "scene.added", at: AT, scene }),

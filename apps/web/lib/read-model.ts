@@ -364,7 +364,7 @@ export function undoableRemoval(
       label = no >= 0 ? shotLabel(no + 1) : label;
     } else {
       const scene = before.scenes.find((item) => item.id === target.id);
-      label = scene ? `第 ${scene.index + 1} 场` : label;
+      label = scene ? `第 ${scene.code || scene.index + 1} 场` : label;
     }
     return { index, kind: target.kind, id: target.id, label, at: event.at };
   }
@@ -641,6 +641,10 @@ export type ScriptScene = {
   id: string;
   /** 场号，从 1 开始 */
   no: number;
+  /** 显式场号（ADR-0080）：`2A`；空串表示按顺序 */
+  code: string;
+  /** 界面上写的场号：有显式场号用它，否则用顺序号 */
+  label: string;
   locationId: string;
   place: string;
   space: "int" | "ext";
@@ -731,6 +735,8 @@ export function toScriptView(project: Project, options: { budgetCny?: number } =
       return {
         id: scene.id,
         no: at + 1,
+        code: scene.code,
+        label: scene.code || String(at + 1),
         locationId: scene.locationId,
         place: locationById.get(scene.locationId)?.name ?? "未命名场景",
         space: scene.space,
@@ -1231,7 +1237,7 @@ export function scriptToText(view: ScriptView): string {
   for (const scene of view.scenes) {
     lines.push("");
     lines.push(
-      `第 ${scene.no} 场 · ${sceneHead(scene)} · ${scene.place}（${scene.dur.toFixed(1)}s · ${scene.shots.length} 镜）`,
+      `第 ${scene.label} 场 · ${sceneHead(scene)} · ${scene.place}（${scene.dur.toFixed(1)}s · ${scene.shots.length} 镜）`,
     );
     for (const shot of scene.shots) {
       lines.push("");

@@ -47,7 +47,7 @@ export type ProjectEvent =
       type: "scene.updated";
       at: string;
       sceneId: Id;
-      patch: Partial<Pick<Scene, "space" | "timeOfDay" | "locationId">>;
+      patch: Partial<Pick<Scene, "space" | "timeOfDay" | "locationId" | "code">>;
     }
   | {
       /**
@@ -265,6 +265,18 @@ export function applyEvent(
         !current.locations.some((location) => location.id === event.patch.locationId)
       ) {
         throw new Error(`scene.updated 指向不存在的地点: ${event.patch.locationId}`);
+      }
+      if (event.patch.code !== undefined) {
+        const code = event.patch.code;
+        if (code !== "" && !/^[0-9A-Za-z]{1,4}$/.test(code)) {
+          throw new Error(`scene.updated 的场号只能是 1–4 位字母数字: ${code}`);
+        }
+        if (
+          code !== "" &&
+          current.scenes.some((scene) => scene.id !== event.sceneId && scene.code === code)
+        ) {
+          throw new Error(`scene.updated 的场号重复: ${code}`);
+        }
       }
       const scenes = current.scenes.map((scene) =>
         scene.id === event.sceneId ? { ...scene, ...event.patch } : scene,

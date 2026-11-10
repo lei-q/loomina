@@ -1123,6 +1123,49 @@ describe("场头改写（ADR-0050）", () => {
   });
 });
 
+describe("显式场号（ADR-0080）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("改场号写一条 scene.updated；空串回到顺序号", () => {
+    const snapshot = state().events.length;
+    expect(state().editSceneCode("sc-1", "2A")).toBe(true);
+
+    expect(state().project.scenes.find((item) => item.id === "sc-1")?.code).toBe("2A");
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "scene.updated",
+      sceneId: "sc-1",
+      patch: { code: "2A" },
+    });
+    expect(rebuild(state().events).scenes.find((item) => item.id === "sc-1")?.code).toBe("2A");
+
+    expect(state().editSceneCode("sc-1", "  ")).toBe(true);
+    expect(state().project.scenes.find((item) => item.id === "sc-1")?.code).toBe("");
+  });
+
+  it("非法、重复、没改、只读都不写事件", () => {
+    expect(state().editSceneCode("sc-1", "2A场")).toBe(false);
+    expect(state().castError).toContain("1–4 位");
+    expect(state().editSceneCode("sc-1", "ABCDE")).toBe(false);
+
+    expect(state().editSceneCode("sc-2", "2A")).toBe(true);
+    const snapshot = state().events.length;
+    expect(state().editSceneCode("sc-1", "2A")).toBe(false);
+    expect(state().castError).toContain("已经有「2A」");
+    expect(state().editSceneCode("sc-2", "2A")).toBe(false);
+    expect(state().castError).toContain("没改");
+    expect(state().editSceneCode("sc-404", "3")).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().editSceneCode("sc-1", "3")).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+  });
+});
+
 describe("这一镜里谁出场（ADR-0065）", () => {
   beforeEach(() => {
     state().reset();

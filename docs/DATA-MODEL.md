@@ -139,6 +139,7 @@ interface Scene {
   id: ID;
   index: number;
   locationId: ID;
+  code: string;             // 显式场号：`2A`、跳号；空串按顺序编号（ADR-0080）
   space: "int" | "ext";     // 内 / 外景（ADR-0050）
   timeOfDay: "day" | "night" | "dawn" | "dusk";  // 日夜（ADR-0050）
   mood: string;
@@ -215,6 +216,8 @@ interface Keyframes {
 > **落地情况（ADR-0037 / ADR-0038，2026-11-10）**：`Shot.keyframes` 已进 IR（zod 默认 `{}`，老日志靠默认值补齐，`LOG_VERSION` 仍为 1）。分镜页可生成首尾两帧：首帧资产 id 固定 `a-keyframe-<shotId>`，写 `firstAssetId`；尾帧固定 `a-lastframe-<shotId>`，写 `lastAssetId`。每帧一条 `asset.updated` 加一条 `shot.updated`，patch 里的 `keyframes` 是完整对象（生成尾帧不抹掉首帧）；重生成按 id 覆盖。两帧都不参与 take。
 
 > **落地情况（ADR-0050，2026-11-10）**：`Scene.space`（`int` / `ext`，默认 `int`）与 `Scene.timeOfDay`（`day` / `night` / `dawn` / `dusk`，默认 `day`）已进 IR；老日志靠默认值补齐，`LOG_VERSION` 仍为 1。改场头写 `scene.updated { sceneId, patch }`，patch 只收这两个字段；地点与场号属于结构，不在这一刀里改。
+
+> **落地情况（ADR-0080，2026-11-11）**：`Scene.code: string`（zod 默认 `""`）是**显式场号**，`2A`、跳号都行，1–4 位字母数字；空串表示按 `index` 顺序显示「第 N 场」。它只是**显示用的名字**：场次挪位后 `index` 重排，`code` 跟着这一场走（`2A` 挪到第二位还是 `2A`）；同一项目内不允许重复（空串除外）。改动写 `scene.updated { code }`，与内 / 外景同一条事件。
 
 > **落地情况（ADR-0044 / 0045 / 0046 / 0047，2026-11-10）**：台词没有按上面的草图挂在 `Shot.dialogue` 上，而是**项目级一张表**：`Project.dialogue: DialogueLine[]` 存本体，`Shot.dialogueIds: ID[]` 存这一镜说哪几句、顺序就是数组顺序。剧本页先读表、再按 `dialogueIds` 取，回放时两处一起动。台词相关事件四种：`dialogue.updated`（只改文本与时长）、`dialogue.speaker.updated`（只换 `characterId`）、`dialogue.added`（整句进来并挂到镜头）、`dialogue.removed`（整句摘掉并清理所有引用）；加删句同时写一条 `shot.updated { durationMs }`，镜头时长跟着加减（准则 P5）。时长目前按 0.3 秒 / 字估（ADR-0044），接 TTS 后换成真实音频时长。
 

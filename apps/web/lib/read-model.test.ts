@@ -436,6 +436,29 @@ describe("剧本页读模型（只读）", () => {
   });
 });
 
+describe("显式场号进剧本页（ADR-0080）", () => {
+  const coded = {
+    ...sampleProject,
+    scenes: sampleProject.scenes.map((scene) =>
+      scene.id === "sc-2" ? { ...scene, code: "2A" } : scene,
+    ),
+  };
+
+  it("有场号写场号，没有按顺序编号；顺序号不变", () => {
+    const view = toScriptView(coded);
+    expect(view.scenes.map((scene) => scene.label)).toEqual(["1", "2A", "3", "4", "5"]);
+    expect(view.scenes.map((scene) => scene.no)).toEqual([1, 2, 3, 4, 5]);
+    expect(view.scenes[1]?.code).toBe("2A");
+  });
+
+  it("导出跟着换：第 2A 场，后面没有第 2 场", () => {
+    const text = scriptToText(toScriptView(coded));
+    expect(text).toContain("第 2A 场");
+    expect(text).toContain("第 3 场");
+    expect(text).not.toContain("第 2 场");
+  });
+});
+
 describe("台词版本（ADR-0044 附记）", () => {
   const at = (h: number) => `2026-11-10T${String(h).padStart(2, "0")}:00:00+08:00`;
   const events = [

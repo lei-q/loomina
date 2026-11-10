@@ -44,6 +44,7 @@ export function ScriptScreen() {
   const moveDialogue = useWorkbench((state) => state.moveDialogue);
   const editAction = useWorkbench((state) => state.editAction);
   const editScene = useWorkbench((state) => state.editScene);
+  const editSceneCode = useWorkbench((state) => state.editSceneCode);
   const undoLastRemoval = useWorkbench((state) => state.undoLastRemoval);
   const moveScene = useWorkbench((state) => state.moveScene);
   const moveSceneTo = useWorkbench((state) => state.moveSceneTo);
@@ -61,6 +62,12 @@ export function ScriptScreen() {
   const [editingAction, setEditingAction] = useState<string | null>(null);
   const [actionDraft, setActionDraft] = useState("");
   const [editingScene, setEditingScene] = useState<string | null>(null);
+  /** 改场号（ADR-0080）：点「第 N 场」就地改，空着回到顺序号 */
+  const [editingCode, setEditingCode] = useState<string | null>(null);
+  const [codeDraft, setCodeDraft] = useState("");
+  /** 场次拖动（ADR-0080）：从哪一场拖起、落在哪一场上（高亮用） */
+  const [draggingScene, setDraggingScene] = useState<string | null>(null);
+  const [dropScene, setDropScene] = useState<string | null>(null);
   const [movingScene, setMovingScene] = useState<string | null>(null);
   const [deletingScene, setDeletingScene] = useState<string | null>(null);
   const [deletingShot, setDeletingShot] = useState<string | null>(null);
@@ -93,6 +100,17 @@ export function ScriptScreen() {
     document.addEventListener("pointerdown", close);
     return () => document.removeEventListener("pointerdown", close);
   }, [editingScene]);
+  // 场号编辑器同样点外面就收起：只做「存」不收起会让两个输入同时挂着。
+  useEffect(() => {
+    if (!editingCode) return;
+    const close = (event: PointerEvent) => {
+      const target = event.target as Element | null;
+      if (target?.closest(`[data-scene-code-editor="${editingCode}"]`)) return;
+      setEditingCode(null);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [editingCode]);
 
   const view = useMemo(() => toScriptView(project), [project]);
   const removal = useMemo(() => undoableRemoval(events, project), [events, project]);
@@ -104,8 +122,30 @@ export function ScriptScreen() {
     view.characters.find((item) => item.id === characterId)?.name ?? characterId;
 
   const shotChoices = view.scenes.flatMap((scene) =>
-    scene.shots.map((shot) => ({ id: shot.id, label: `${shotLabel(shot.no)} · 第 ${scene.no} 场` })),
+    scene.shots.map((shot) => ({ id: shot.id, label: `${shotLabel(shot.no)} · 第 ${scene.label} 场` })),
   );
+
+  /** 存场号：空串 = 回到顺序号；非法 / 重复由 store 拦，原因写到页头。 */
+  const saveCode = (sceneId: string) => {
+    if (editSceneCode(sceneId, codeDraft)) {
+      setEditingCode(null);
+      setNote(undefined);
+    } else {
+      setNote(useWorkbench.getState().castError);
+    }
+  };
+
+  /** 松手落到某一场上：挪到它的位置（拖到自己身上什么都不做）。 */
+  const dropSceneOn = (targetId: string) => {
+    const from = view.scenes.findIndex((item) => item.id === draggingScene);
+    const to = view.scenes.findIndex((item) => item.id === targetId);
+    setDraggingScene(null);
+    setDropScene(null);
+    if (draggingScene && draggingScene !== targetId && from !== -1 && to !== -1) {
+      if (!moveSceneTo(draggingScene, to)) setNote(useWorkbench.getState().castError);
+      else setNote(undefined);
+    }
+  };
 
   const startEdit = (lineId: string, text: string) => {
     setEditing(lineId);
@@ -311,11 +351,105 @@ export function ScriptScreen() {
 
           <div className="mt-8 space-y-10">
             {view.scenes.map((scene, at) => (
-              <section key={scene.id}>
+              <section
+                key={scene.id}
+                onDragOver={(event) => {
+                  if (!draggingScene || draggingScene === scene.id) return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                  if (dropScene !== scene.id) setDropScene(scene.id);
+                }}
+                onDragLeave={(event) => {
+                  const next = event.relatedTarget as Node | null;
+                  if (next && event.currentTarget.contains(next)) return;
+                  setDropScene((current) => (current === scene.id ? null : current));
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  dropSceneOn(scene.id);
+                }}
+                className={
+                  dropScene === scene.id
+                    ? "rounded-token outline outline-1 outline-pick/60 outline-offset-4"
+                    : draggingScene === scene.id
+                      ? "opacity-50"
+                      : undefined
+                }
+              >
                 <div className="flex items-baseline gap-3 border-b border-line pb-2">
-                  <span className="tnum shrink-0 text-[9.5px] tracking-[.14em] text-muted-2">
-                    第 {scene.no} 场
-                  </span>
+                  {/* 拖动换位（ADR-0080）：按住手柄拖到别的一场上 */}
+                  {!readOnly && view.scenes.length > 1 && (
+                    <span
+                      draggable
+                      onDragStart={(event) => {
+                        setDraggingScene(scene.id);
+                        event.dataTransfer.effectAllowed = "move";
+                        event.dataTransfer.setData("text/plain", scene.id);
+                      }}
+                      onDragEnd={() => {
+                        setDraggingScene(null);
+                        setDropScene(null);
+                      }}
+                      title="按住拖动：把这一场挪到别的位置"
+                      aria-label="拖动这一场换位"
+                      className="shrink-0 cursor-grab select-none text-[10px] leading-none text-muted-2 active:cursor-grabbing"
+                    >
+                      ⠿
+                    </span>
+                  )}
+                  {editingCode === scene.id ? (
+                    <span
+                      data-scene-code-editor={scene.id}
+                      className="flex shrink-0 items-baseline gap-1"
+                    >
+                      <input
+                        autoFocus
+                        value={codeDraft}
+                        onChange={(event) => setCodeDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") saveCode(scene.id);
+                          if (event.key === "Escape") setEditingCode(null);
+                        }}
+                        aria-label="场号"
+                        placeholder="2A"
+                        title="1–4 位字母数字；空着按顺序编号"
+                        className="tnum w-10 rounded-token border border-pick/70 bg-surface px-1 py-0 text-[9.5px] tracking-[.14em] text-text focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => saveCode(scene.id)}
+                        className="tnum rounded-token border border-line px-1 py-px text-[9px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                      >
+                        存
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingCode(null)}
+                        className="tnum rounded-token border border-line px-1 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                      >
+                        取消
+                      </button>
+                      {note && <span className="text-[9.5px] text-pick">{note}</span>}
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={readOnly}
+                      onClick={() => {
+                        setEditingCode(scene.id);
+                        setCodeDraft(scene.code);
+                        setNote(undefined);
+                      }}
+                      title={
+                        readOnly
+                          ? "只读标签页不能改场号"
+                          : "改场号：1–4 位字母数字，空着按顺序编号"
+                      }
+                      className="tnum shrink-0 rounded-token border border-transparent px-1 py-px text-[9.5px] tracking-[.14em] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line enabled:hover:text-text disabled:cursor-default"
+                    >
+                      第 {scene.label} 场
+                    </button>
+                  )}
                   {editingScene === scene.id ? (
                     <span
                       data-scene-editor={scene.id}
@@ -434,7 +568,7 @@ export function ScriptScreen() {
                           {view.scenes.map((item, i) =>
                             i === at ? null : (
                               <option key={item.id} value={i}>
-                                第 {i + 1} 场
+                                第 {item.label} 场
                               </option>
                             ),
                           )}

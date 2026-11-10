@@ -153,6 +153,8 @@ export type Shot = z.infer<typeof ShotSchema>;
 export const SceneSchema = z.object({
   id: Id,
   index: z.number().int().nonnegative(),
+  /** 显式场号（ADR-0080）：`2A`、跳号都行；空着按顺序显示「第 N 场」 */
+  code: z.string().max(4).default(""),
   locationId: Id,
   /** 内 / 外景（ADR-0050）：场头第一眼要能看出来 */
   space: z.enum(["int", "ext"]).default("int"),
