@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ProjectSchema, type ProjectInput } from "@loomina/ir";
-import { toCastView, toKeyframeView, toStageView } from "./read-model";
+import { filterKeyframeCells, keyframeTally, toCastView, toKeyframeView, toStageView } from "./read-model";
 import { sampleProject } from "./sample-project";
 
 describe("toStageView", () => {
@@ -367,5 +367,18 @@ describe("关键帧页读模型（ADR-0042）", () => {
 
     expect(view.keyframeSpend).toBe(0);
     expect(view.keyframeUnpriced).toBe(1);
+  });
+
+  it("筛子按缺哪一帧分，计数与格子一致", () => {
+    const cells = toKeyframeView(sampleProject).cells;
+    // 示例项目里没有生成的帧，十二镜都缺
+    expect(keyframeTally(cells)).toEqual({
+      all: 12,
+      "missing-first": 12,
+      "missing-last": 12,
+      complete: 0,
+    });
+    expect(filterKeyframeCells(cells, "complete")).toHaveLength(0);
+    expect(filterKeyframeCells(cells, "missing-first")).toHaveLength(12);
   });
 });

@@ -287,6 +287,8 @@ export type KeyframeView = {
   /** 有多少镜已经有首帧 / 尾帧 */
   firstCount: number;
   lastCount: number;
+  /** 有多少镜两帧都齐了 */
+  completeCount: number;
   /** 关键帧这一类资产花掉的钱（按 id 前缀认） */
   keyframeSpend: number;
   /** 生成了但价目表里没有模型的关键帧张数 */
@@ -303,6 +305,38 @@ export type KeyframeView = {
  * 关键帧的钱单独算：它们混在 `assets` 里，但这一页要回答的是
  * "为了这两帧花了多少"，不是整片花了多少。
  */
+/**
+ * 关键帧页的筛子：只想看还缺哪一帧的时候，十二格一起看反而看不清。
+ * 只筛读模型的投影，不碰 IR。
+ */
+export type KeyframeFilter = "all" | "missing-first" | "missing-last" | "complete";
+
+export function filterKeyframeCells(
+  cells: KeyframeCell[],
+  filter: KeyframeFilter,
+): KeyframeCell[] {
+  switch (filter) {
+    case "missing-first":
+      return cells.filter((cell) => !cell.hasFirst);
+    case "missing-last":
+      return cells.filter((cell) => !cell.hasLast);
+    case "complete":
+      return cells.filter((cell) => cell.hasFirst && cell.hasLast);
+    default:
+      return cells;
+  }
+}
+
+/** 十二镜各自缺哪几帧：页头的筛子与计数都从这里来。 */
+export function keyframeTally(cells: KeyframeCell[]): Record<KeyframeFilter, number> {
+  return {
+    all: cells.length,
+    "missing-first": cells.filter((cell) => !cell.hasFirst).length,
+    "missing-last": cells.filter((cell) => !cell.hasLast).length,
+    complete: cells.filter((cell) => cell.hasFirst && cell.hasLast).length,
+  };
+}
+
 export function toKeyframeView(project: Project, options: { budgetCny?: number } = {}): KeyframeView {
   const view = toStageView(project, {});
   const cells: KeyframeCell[] = view.shots.map((shot) => ({
@@ -337,6 +371,7 @@ export function toKeyframeView(project: Project, options: { budgetCny?: number }
     cells,
     firstCount: cells.filter((cell) => cell.hasFirst).length,
     lastCount: cells.filter((cell) => cell.hasLast).length,
+    completeCount: cells.filter((cell) => cell.hasFirst && cell.hasLast).length,
     keyframeSpend: Math.round(keyframeSpend * 100) / 100,
     keyframeUnpriced,
     spent: view.spent,

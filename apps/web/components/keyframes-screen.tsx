@@ -5,11 +5,18 @@ import { Scene } from "@/components/scene";
 import { LockIcon } from "@/components/icons";
 import { TopBar } from "@/components/top-bar";
 import { fetchImagePrice } from "@/lib/image-price";
-import { shotLabel, toKeyframeView, type KeyframeCell } from "@/lib/read-model";
+import { shotLabel, toKeyframeView, filterKeyframeCells, keyframeTally, type KeyframeCell, type KeyframeFilter } from "@/lib/read-model";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
 
 const PREVIEW = "aspect-[9/16] w-full";
+
+const FILTERS: { key: KeyframeFilter; label: string }[] = [
+  { key: "all", label: "全部" },
+  { key: "missing-first", label: "缺首帧" },
+  { key: "missing-last", label: "缺尾帧" },
+  { key: "complete", label: "两帧齐" },
+];
 
 function Cell({
   cell,
@@ -118,6 +125,10 @@ export function KeyframesScreen() {
   }, [hydrate, setImagePrice]);
 
   const view = useMemo(() => toKeyframeView(project), [project]);
+  // 只想补缺的时候，十二格一起看反而找不到要补的那几格
+  const [filter, setFilter] = useState<KeyframeFilter>("all");
+  const tally = useMemo(() => keyframeTally(view.cells), [view.cells]);
+  const cells = useMemo(() => filterKeyframeCells(view.cells, filter), [view.cells, filter]);
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg text-text">
@@ -173,8 +184,28 @@ export function KeyframesScreen() {
             </dl>
           </div>
 
-          <div className="mt-5 grid grid-cols-2 gap-x-3 gap-y-5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
-            {view.cells.map((cell) => {
+          <div className="mt-4 flex flex-wrap items-center gap-1.5" role="group" aria-label="按缺帧筛选">
+            {FILTERS.map(({ key, label }) => (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={filter === key}
+                onClick={() => setFilter(key)}
+                className={cn(
+                  "tnum flex items-baseline gap-1.5 rounded-token border px-2.5 py-1 text-[10.5px] transition-colors duration-[var(--dur)]",
+                  filter === key
+                    ? "border-line-2 bg-surface text-text"
+                    : "border-line text-muted hover:border-line-2 hover:text-text",
+                )}
+              >
+                <span>{label}</span>
+                <span className="text-[9px] text-muted-2">{tally[key]}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-x-3 gap-y-5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+            {cells.map((cell) => {
               const busy =
                 jobs[`${cell.id}:last`]?.kind === "keyframe"
                   ? "last"
@@ -192,6 +223,14 @@ export function KeyframesScreen() {
               );
             })}
           </div>
+
+          {cells.length === 0 && (
+            <p className="mt-10 text-center text-[11px] text-muted-2">
+              {filter === "complete"
+                ? "还没有两帧都齐的镜头。"
+                : "这一档没有镜头：想看的帧都已经有了。"}
+            </p>
+          )}
 
           {readOnly && (
             <p className="mt-6 text-[10px] text-muted-2">另一个标签页在编辑：这一页只读，刷新后才能接管。</p>
