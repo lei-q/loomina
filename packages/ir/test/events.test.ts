@@ -95,3 +95,34 @@ describe("take.updated", () => {
     ).toThrow(/take-missing/);
   });
 });
+
+describe("approval.updated", () => {
+  const lock: ProjectEvent = {
+    type: "approval.updated",
+    at: AT,
+    approval: {
+      id: "ap-character-c-lin",
+      targetType: "character",
+      targetId: "c-lin",
+      status: "approved",
+      approvedAt: AT,
+      lockedAssetIds: [],
+    },
+  };
+
+  it("第一次锁定追加一条闸门记录", () => {
+    const project = applyEvent(load(), lock);
+    expect(project.approvals).toHaveLength(1);
+    expect(project.approvals[0]!.status).toBe("approved");
+  });
+
+  it("同一目标再次写入是覆盖，不是追加", () => {
+    const locked = applyEvent(load(), lock);
+    const unlocked = applyEvent(locked, {
+      ...lock,
+      approval: { ...lock.approval, status: "pending", approvedAt: undefined },
+    });
+    expect(unlocked.approvals).toHaveLength(1);
+    expect(unlocked.approvals[0]!.status).toBe("pending");
+  });
+});

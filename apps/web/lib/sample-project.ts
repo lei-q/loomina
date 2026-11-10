@@ -15,15 +15,51 @@ const raw: ProjectInput = {
   version: 3,
 
   locations: [
-    { id: "loc-corridor", name: "走廊", templateId: "corridor" },
-    { id: "loc-door", name: "门口", templateId: "doorway" },
-    { id: "loc-table", name: "桌边", templateId: "table" },
+    { id: "loc-corridor", name: "走廊", templateId: "corridor", masterShotId: "a-corridor" },
+    { id: "loc-door", name: "门口", templateId: "doorway", masterShotId: "a-door" },
+    { id: "loc-table", name: "桌边", templateId: "table", masterShotId: "a-table" },
   ],
 
   characters: [
-    { id: "c-lin", name: "林", appearance: "短发，深色外套", voiceProfileId: "voice-lin" },
-    { id: "c-zhou", name: "周", appearance: "高个，衬衫袖口卷起", voiceProfileId: "voice-zhou" },
+    {
+      id: "c-lin", name: "林", appearance: "短发，深色外套", voiceProfileId: "voice-lin",
+      sheet: {
+        front: "a-lin-front", threeQuarter: "a-lin-34",
+        side: "a-lin-side", back: "a-lin-back",
+      },
+      referenceImages: ["a-lin-expr"],
+      mustNotChange: ["左眼下的痣", "齐肩黑发，中分", "米色风衣"],
+    },
+    {
+      id: "c-zhou", name: "周", appearance: "高个，衬衫袖口卷起", voiceProfileId: "voice-zhou",
+      sheet: {
+        front: "a-zhou-front", threeQuarter: "a-zhou-34",
+        side: "a-zhou-side", back: "a-zhou-back",
+      },
+      referenceImages: [],
+      mustNotChange: ["右眉尾的疤", "袖口永远卷到手肘", "不戴眼镜"],
+    },
   ],
+
+  props: [],
+
+  // 定妆资产：示例里没有真图，界面用占位剪影渲染；uri 留空。
+  assets: [
+    { id: "a-lin-front", kind: "image", source: "generated", createdAt: "2026-11-09T20:10:00+08:00" },
+    { id: "a-lin-34", kind: "image", source: "generated", createdAt: "2026-11-09T20:11:00+08:00" },
+    { id: "a-lin-side", kind: "image", source: "generated", createdAt: "2026-11-09T20:12:00+08:00" },
+    { id: "a-lin-back", kind: "image", source: "generated", createdAt: "2026-11-09T20:13:00+08:00" },
+    { id: "a-lin-expr", kind: "image", source: "generated", createdAt: "2026-11-09T20:14:00+08:00" },
+    { id: "a-zhou-front", kind: "image", source: "generated", createdAt: "2026-11-09T20:20:00+08:00" },
+    { id: "a-zhou-34", kind: "image", source: "generated", createdAt: "2026-11-09T20:21:00+08:00" },
+    { id: "a-zhou-side", kind: "image", source: "generated", createdAt: "2026-11-09T20:22:00+08:00" },
+    { id: "a-zhou-back", kind: "image", source: "generated", createdAt: "2026-11-09T20:23:00+08:00" },
+    { id: "a-corridor", kind: "image", source: "generated", createdAt: "2026-11-09T20:30:00+08:00" },
+    { id: "a-door", kind: "image", source: "generated", createdAt: "2026-11-09T20:31:00+08:00" },
+    { id: "a-table", kind: "image", source: "generated", createdAt: "2026-11-09T20:32:00+08:00" },
+  ],
+
+  approvals: [],
 
   scenes: [
     { id: "sc-1", index: 0, locationId: "loc-corridor", shotIds: ["s-01", "s-02", "s-03"] },

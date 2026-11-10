@@ -1,5 +1,5 @@
 import { clone } from "./clone";
-import type { Id, Project, Shot, Take } from "./schema";
+import type { Approval, Id, Project, Shot, Take } from "./schema";
 
 /**
  * 事件日志（ADR-0011）。
@@ -14,6 +14,12 @@ export type ProjectEvent =
   | { type: "project.created"; at: string; project: Project }
   | { type: "shot.updated"; at: string; shotId: Id; patch: Partial<Shot> }
   | { type: "take.added"; at: string; take: Take }
+  | {
+      /** 闸门：定妆锁定 / 解锁。同一目标只保留一条，按 (targetType, targetId) 覆盖。 */
+      type: "approval.updated";
+      at: string;
+      approval: Approval;
+    }
   | {
       type: "take.updated";
       at: string;
@@ -47,6 +53,26 @@ export function applyEvent(
         take.id === event.takeId ? { ...take, ...event.patch } : take,
       );
       return { ...current, takes };
+    }
+
+    case "approval.updated": {
+      if (!current) throw new Error("approval.updated 之前必须有 project.created");
+      const exists = current.approvals.some(
+        (item) =>
+          item.id === event.approval.id ||
+          (item.targetType === event.approval.targetType &&
+            item.targetId === event.approval.targetId),
+      );
+      const approvals = exists
+        ? current.approvals.map((item) =>
+            item.id === event.approval.id ||
+            (item.targetType === event.approval.targetType &&
+              item.targetId === event.approval.targetId)
+              ? event.approval
+              : item,
+          )
+        : [...current.approvals, event.approval];
+      return { ...current, approvals };
     }
 
     case "take.added": {

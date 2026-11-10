@@ -674,3 +674,49 @@
 **下一步**
 1. 一句话指令：解析"太暗了""换个角度"，报价直接用这次的 `requote`。
 2. 报价进顶带：已花旁边显示"按当前算，全部重做一遍要多少"，让预算有前瞻，不只有回溯。
+
+### 第十七次讨论：一致性的前提是资产层，定妆独立成阶段（2026-11-10）
+
+**起因：两个必须先回答的问题**
+1. 是不是还少一个人物三视图、场景三视图？
+2. 跨镜头一致性到底如何保证？
+
+要求先弄清楚这两个问题再继续。
+
+**先把"锚"讲清楚**
+
+- **人物三视图**解决的是"同一个身体的任意角度"：正面 / 3-4 / 侧面 / 背面各一张，锁定后下游只能引用。
+- **场景不做三视图**。场景的变量不是朝向，是**机位**；一张主镜 + 机位参数（日后接灰盒）已经编码了布局、家具、窗外与光位。再画几张场景图，只会给模型更多想象空间。
+- **一致性不能被"保证"，只能分层防 + 独立验收**：资产锚定（最强、最便宜）→ 结构锚定（3D + 关键帧）→ 生成约束（seed、固定描述、模型路由、负向提示）→ 量化验收（`ConsistencyReport`，验收者必须独立于生成者）→ 后期统一（LUT）。产品上给分维度诊断，不给一个"一致性"滑块。
+- 代码现状对不上：IR 里没有 `Asset`、没有 `Approval`；`packages/pipeline` 直接把 `characterIds` 当参考图传下去。**第一层防线在代码里根本不存在**，三视图只写在文档里。
+- 上游硬阻塞：图片接口未通，三视图生不出来；这一轮能落的是语义与闸门，不是像素。
+
+**用户拍板的三件事**
+1. 定妆放哪：**新增独立阶段**（剧本之后、分镜之前），不塞进分镜做弹窗。
+2. 这一轮先落哪块：**IR 资产层 + 定妆闸门**。
+3. 三视图是否必经：**每个有近景 / 特写的角色必经**，其余不强制。
+
+**实现**
+- `packages/ir/src/schema.ts`：`Asset`、`Approval`、`Prop`；`Character.sheet` 四槽 + `referenceImages` + `mustNotChange`；`Location.masterShotId`；`Project` 增加 `props / assets / approvals`。
+- `packages/ir/src/cast.ts`：`SHEET_ANGLES`、`requiresSheet`（按近景 / 特写判定）、`missingSheetAngles`、`targetAssetIds`、`castReadiness`。
+- `invariants.ts`：`REF_ASSET`、`APPROVAL_TARGET`、`APPROVAL_LOCKED_ASSET` 三个码。
+- `events.ts`：`approval.updated`，按 `(targetType, targetId)` upsert，解锁不产生第二条记录。
+- `apps/web`：`toCastView` 读模型、`lockCast / unlockCast`（`incomplete` 直接返回）、`/cast` 定妆页、`TopBar` 支持多页、`Bust` 占位剪影。
+- 示例「夜班」补齐 12 个资产、2 个角色四格、3 个场景主镜，共 5 个待锁目标。
+
+**验证**
+- 测试：ir 31 / gateway 17 / pipeline 3 / web 27，共 **78 条通过**；`pnpm typecheck`、`pnpm build` 通过。
+- 用 CDP 驱动无头 Chrome：初始 `0 / 5` 且没有"进分镜"入口 → 锁 3 个后 `3 / 5` 仍没有 → 锁满 5 个后出现 `5 / 5 锚点锁住了，可以进分镜`，"进分镜"跳到 `/`，Zustand 的 store 跨路由保留。
+- 截图两轮：第一版剪影在近黑底上几乎看不见，加了顶部光束渐变与地平线；行距收紧，人物四格 96px、场景主镜 120px。
+
+**取舍**
+- 场景用主镜不用三视图，理由写进 ADR-0028 的替代方案。
+- 定妆页不做"去生成"按钮：图片接口没通，做一个假的排队过程不诚实；缺格只写"待生成"。
+- 只验"四格都填了"，没验"四张像同一个人"；intra-sheet 检查留到图片接口接通后，写进 ADR 的负面后果。
+- 示例 `Asset.uri` 为空，界面画占位剪影，不伪造真图。
+
+**下一步**
+1. 接通图片接口，生成三视图 + intra-sheet 检查，再允许锁定。
+2. 分镜接资产锚点：每镜的参考图改为 `sheet` 四格与 `masterShotId`，替掉 `pipeline` 里的 `characterIds`。
+3. 道具闸门界面（schema 与 `castReadiness` 已算 props）。
+4. 一句话指令与"全部重做一遍多少钱"。

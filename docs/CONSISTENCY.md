@@ -151,11 +151,19 @@ QA 失败时，先判断是哪个维度，再走对应修复，而不是盲目�
 
 | 概念 | IR 字段 |
 | --- | --- |
-| 角色定妆图 | `Character.referenceImages` |
+| 角色定妆三视图 | `Character.sheet`（front / threeQuarter / side / back，各指一张 `Asset`） |
+| 表情 / 服装参考 | `Character.referenceImages` |
 | 不可变特征 | `Character.mustNotChange` |
-| 场景主镜 | `Location.referenceImages[0]` |
+| 场景主镜 | `Location.masterShotId` |
+| 其他机位 / 细节图 | `Location.referenceImages` |
+| 道具参考 | `Prop.referenceImages` |
 | 场景空间 | `SceneState` / `Blocking` |
 | 每镜参考图 | `Shot.referenceAssetIds` |
 | 生成溯源 | `Take.model / seed / prompt / referenceAssetIds` |
 | 验收结果 | `Take.qa` / `ConsistencyReport` |
 | 锁定资产 | `Approval.lockedAssetIds` |
+
+**两条与本文前面口径不同的地方，按 ADR-0028 执行：**
+
+1. **场景不做三视图，做主镜。** 场景的一致性是"布局、家具、窗外、光位不变"；一个固定机位的主镜已经编码了这些，三视图反而给出模型没见过的视角。机位变化靠 `CameraPlacement` / 灰盒，不靠多画几张场景图。
+2. **三视图本身也是要验的资产。** 四格生成后应先做 intra-sheet 检查（同一角色任意两格的脸 embedding 相似度、服装主色一致性），过了才允许定妆锁定。现在只校验"四格都填了"；这一步在图片接口接通后补上，否则"四张不像同一个人的定妆照"会把错误一路带到每个镜头。

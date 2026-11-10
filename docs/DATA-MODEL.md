@@ -20,6 +20,7 @@ interface Project {
   bible: StoryBible;        // 故事圣经：全剧共享
   episodes: Episode[];      // 分集
   assets: Asset[];          // 全项目资产（图/视频/音频/字体）
+  approvals: Approval[];    // 阶段闸门：定妆 / 道具确认（ADR-0028）
   publishPackages: PublishPackage[];
 
   settings: ProjectSettings;
@@ -57,9 +58,24 @@ interface Character {
   voice: VoiceProfile;      // → TTS 音色
   personality: string;
   arc: string;
-  referenceImages: ID[];    // → Asset（多角度/表情）
+  sheet: CharacterSheet;    // 定妆三视图 → Asset（ADR-0028）
+  referenceImages: ID[];    // → Asset（表情表、服装变体，无角度语义）
   mustNotChange: string[];  // 监工重点：痣、疤、发型、配饰
 }
+
+/**
+ * 三视图四格。槽位有角度语义，不用数组：
+ * 插一张表情图不会让"侧面"变成"正面"。
+ */
+interface CharacterSheet {
+  front?: ID;
+  threeQuarter?: ID;
+  side?: ID;
+  back?: ID;
+}
+
+// 是否"必须"四格齐全由镜头决定：有近景 / 特写的角色才强制。
+// 判定与定妆闸门的规则见 §5.1。
 
 interface Appearance {
   ageRange: string;
@@ -76,7 +92,8 @@ interface Location {
   id: ID;
   name: string;
   description: string;
-  referenceImages: ID[];
+  masterShotId?: ID;        // 主镜：本场所有镜头共用的空间与光线基准
+  referenceImages: ID[];    // 其他机位 / 细节图
   lightingDefaults: LightingSpec;
 }
 
@@ -497,6 +514,48 @@ interface AudioTrack {
 }
 ```
 
+### 5.1 资产层与定妆闸门（ADR-0028）
+
+`packages/ir` 先落了资产层的一个窄实现：`Asset` 目前只有 `image / video / audio` 三类，`uri` 可为空（示例素材没有真图，界面用占位剪影），溯源字段是 `Provenance` 而不是整个 `Take`。
+
+```ts
+interface Asset {
+  id: ID;
+  kind: "image" | "video" | "audio";
+  uri?: string;             // 对象存储地址；示例数据为空
+  source: AssetSource;
+  mime?: string;
+  width?: number;
+  height?: number;
+  durationMs?: number;
+  provenance?: Provenance;  // 哪个模型、什么时候、什么参数
+  createdAt: ISODate;
+}
+
+interface Approval {
+  id: ID;
+  targetType: "character" | "location" | "prop";
+  targetId: ID;
+  status: "pending" | "approved" | "rejected";
+  approvedAt?: ISODate;
+  lockedAssetIds: ID[];     // 确认那一刻锁住的资产；之后新增的不在锁内
+  note?: string;
+}
+```
+
+**闸门规则**（`packages/ir/src/cast.ts`）：
+
+| 目标 | 何时算"必须齐" | 齐的定义 |
+| --- | --- | --- |
+| 角色 | 该角色出现在任何 `close` / `extreme-close` 镜头 | `sheet` 四格（正面 / 3-4 / 侧面 / 背面）都有资产 |
+| 场景 | 总是 | `masterShotId` 指向存在的资产 |
+| 道具 | 总是 | `referenceImages` 非空 |
+
+- 缺格 / 缺主镜的目标状态是 `incomplete`，不能锁定：界面禁用按钮，`lockCast` 也直接返回（双保险）。
+- 锁定写一条 `approval.updated`，按 `(targetType, targetId)` upsert，不产生并列的两条；解锁把同一条改回 `pending` 并清空 `lockedAssetIds`。
+- "进分镜"只在 `lockedCount === totalRequired` 时出现；这是数据推出的事实，不是界面的开关。
+- 三视图内部是否像同一个人（intra-sheet 一致性）还没有验收，当前只保证"四格都填了"。
+
 ## 6. 风格 / 发布
 
 ```ts
@@ -553,6 +612,10 @@ interface AILabel {
 15. **Take 进入 approved 前必须有 `ConsistencyReport`**，且 verdict 不为 fail。
 16. `Blocking.axis` 变更必须触发同场所有机位的重新校验。
 17. **审片台上的 take 决议只能通过 `take.updated` 写入**；切换当前镜、展开画面等浏览动作不得产生事件（ADR-0027）。
+18. **`Character.sheet` / `referenceImages` / `Location.masterShotId` / `referenceImages` 引用的资产必须存在**（`REF_ASSET`）。
+19. **`Approval` 的 `targetType + targetId` 必须指向存在的角色 / 场景 / 道具**（`APPROVAL_TARGET`）。
+20. **`Approval.lockedAssetIds` 里的每个 id 必须是存在的资产**（`APPROVAL_LOCKED_ASSET`）。
+21. **定妆闸门**：有近景 / 特写镜头的角色，三视图四格未齐不得锁定；场景无主镜不得锁定（`cast.ts` 判定，`lockCast` 与界面各守一道，ADR-0028）。
 
 ## 8. 与 OTIO 的映射
 

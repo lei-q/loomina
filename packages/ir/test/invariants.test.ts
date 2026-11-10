@@ -65,6 +65,36 @@ describe("validateProject", () => {
     expect(codes(project)).toContain("TIMELINE_OVERLAP");
   });
 
+  it("定妆引用了不存在的资产", () => {
+    const project = load();
+    project.characters[0]!.sheet.front = "a-ghost";
+    expect(codes(project)).toContain("REF_ASSET");
+  });
+
+  it("闸门指向不存在的目标", () => {
+    const project = load();
+    project.approvals.push({
+      id: "ap-ghost",
+      targetType: "character",
+      targetId: "c-ghost",
+      status: "approved",
+      lockedAssetIds: [],
+    });
+    expect(codes(project)).toContain("APPROVAL_TARGET");
+  });
+
+  it("闸门锁住了不存在的资产", () => {
+    const project = load();
+    project.approvals.push({
+      id: "ap-lin",
+      targetType: "character",
+      targetId: project.characters[0]!.id,
+      status: "approved",
+      lockedAssetIds: ["a-ghost"],
+    });
+    expect(codes(project)).toContain("APPROVAL_LOCKED_ASSET");
+  });
+
   it("发布包缺少隐式 AI 标识", () => {
     const project = load();
     project.publishPackages[0]!.aiLabel = {

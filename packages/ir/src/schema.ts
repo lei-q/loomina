@@ -19,16 +19,85 @@ export const LocationSchema = z.object({
   id: Id,
   name: z.string().min(1),
   templateId: Id.optional(),
+  /** 场景主镜：本场所有镜头共用的空间与光线锚点（CONSISTENCY.md 第一层） */
+  masterShotId: Id.optional(),
+  /** 其他机位/细节参考图 */
+  referenceImages: z.array(Id).default([]),
 });
 export type Location = z.infer<typeof LocationSchema>;
+
+export const SheetView = z.enum(["front", "threeQuarter", "side", "back"]);
+export type SheetView = z.infer<typeof SheetView>;
+
+/** 定妆三视图：四格各自指向一张 Asset（正面 / 3-4 / 侧面 / 背面）。 */
+export const CharacterSheetSchema = z.object({
+  front: Id.optional(),
+  threeQuarter: Id.optional(),
+  side: Id.optional(),
+  back: Id.optional(),
+});
+export type CharacterSheet = z.infer<typeof CharacterSheetSchema>;
 
 export const CharacterSchema = z.object({
   id: Id,
   name: z.string().min(1),
   appearance: z.string().default(""),
   voiceProfileId: Id.optional(),
+  /** 定妆三视图；有近景的角色必须四格齐全（cast.ts） */
+  sheet: CharacterSheetSchema.default({}),
+  /** 不带角度语义的参考图：表情表、服装变体、道具持握等 */
+  referenceImages: z.array(Id).default([]),
+  /** 监工重点：痣、疤、发型分缝、耳饰、纹身；编译提示词时必须原样带上 */
+  mustNotChange: z.array(z.string()).default([]),
 });
 export type Character = z.infer<typeof CharacterSchema>;
+
+export const PropSchema = z.object({
+  id: Id,
+  name: z.string().min(1),
+  description: z.string().default(""),
+  referenceImages: z.array(Id).default([]),
+});
+export type Prop = z.infer<typeof PropSchema>;
+
+export const AssetKindSchema = z.enum(["image", "video", "audio"]);
+export type AssetKind = z.infer<typeof AssetKindSchema>;
+
+/**
+ * 资产：一切被生成或上传的东西。
+ * 语义（"这是三视图的侧面"）不在资产上，而在引用它的一侧——
+ * 同一张图可能既是某人的侧面，又是某场戏的参考。
+ */
+export const AssetSchema = z.object({
+  id: Id,
+  kind: AssetKindSchema,
+  /** 对象存储地址；示例素材没有 uri，界面用占位图渲染 */
+  uri: z.string().optional(),
+  source: z.enum(["upload", "generated", "library", "imported"]),
+  mime: z.string().optional(),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
+  durationMs: z.number().int().positive().optional(),
+  provenance: ProvenanceSchema.optional(),
+  createdAt: z.string().min(1),
+});
+export type Asset = z.infer<typeof AssetSchema>;
+
+export const ApprovalTargetType = z.enum(["character", "location", "prop"]);
+export type ApprovalTargetType = z.infer<typeof ApprovalTargetType>;
+
+/** 阶段闸门：确认即锁定，锁定的资产不得被流程悄悄覆盖（准则 P14）。 */
+export const ApprovalSchema = z.object({
+  id: Id,
+  targetType: ApprovalTargetType,
+  targetId: Id,
+  status: z.enum(["pending", "approved", "rejected"]).default("pending"),
+  approvedAt: z.string().optional(),
+  /** 确认那一刻锁住的资产；之后新增的资产不在锁内 */
+  lockedAssetIds: z.array(Id).default([]),
+  note: z.string().optional(),
+});
+export type Approval = z.infer<typeof ApprovalSchema>;
 
 export const DialogueLineSchema = z.object({
   id: Id,
@@ -115,10 +184,13 @@ export const ProjectSchema = z.object({
   version: z.number().int().nonnegative(),
   locations: z.array(LocationSchema).default([]),
   characters: z.array(CharacterSchema).default([]),
+  props: z.array(PropSchema).default([]),
   scenes: z.array(SceneSchema).default([]),
   shots: z.array(ShotSchema).default([]),
   dialogue: z.array(DialogueLineSchema).default([]),
   takes: z.array(TakeSchema).default([]),
+  assets: z.array(AssetSchema).default([]),
+  approvals: z.array(ApprovalSchema).default([]),
   timeline: TimelineSchema.default({ items: [] }),
   publishPackages: z.array(PublishPackageSchema).default([]),
 });

@@ -70,6 +70,32 @@ describe("审片台 store", () => {
     expect(state().events).toHaveLength(1);
   });
 
+  it("锁定定妆写一条闸门事件，锁住四格与参考图", () => {
+    state().lockCast("character", "c-lin");
+
+    const approval = state().project.approvals[0];
+    expect(approval?.status).toBe("approved");
+    expect(approval?.lockedAssetIds).toEqual([
+      "a-lin-front", "a-lin-34", "a-lin-side", "a-lin-back", "a-lin-expr",
+    ]);
+    expect(state().events.at(-1)?.type).toBe("approval.updated");
+  });
+
+  it("解锁把闸门改回待定，不留两条记录", () => {
+    state().lockCast("location", "loc-corridor");
+    state().unlockCast("location", "loc-corridor");
+
+    expect(state().project.approvals).toHaveLength(1);
+    expect(state().project.approvals[0]?.status).toBe("pending");
+    expect(state().project.approvals[0]?.lockedAssetIds).toEqual([]);
+  });
+
+  it("锁不存在或没资产的目标不写事件", () => {
+    state().lockCast("character", "c-ghost");
+    expect(state().project.approvals).toHaveLength(0);
+    expect(state().events).toHaveLength(1);
+  });
+
   it("事件日志能重放出当前项目", () => {
     state().select("s-03");
     state().decide("approved");

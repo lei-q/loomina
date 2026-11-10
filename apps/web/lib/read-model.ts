@@ -1,4 +1,13 @@
-import type { Project, Shot, Take } from "@loomina/ir";
+import {
+  castReadiness,
+  SHEET_ANGLES,
+  SHEET_LABELS,
+  type CastStatus,
+  type Project,
+  type SheetView,
+  type Shot,
+  type Take,
+} from "@loomina/ir";
 import { requoteShot, type Requote } from "./pricing";
 
 export type SceneKind = "door" | "two" | "table" | "corridor";
@@ -156,4 +165,98 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
 
 export function shotLabel(no: number): string {
   return `SH-${String(no).padStart(2, "0")}`;
+}
+
+// ── 定妆（ADR-0028）───────────────────────────────────────────────
+
+export type CastPanel = {
+  angle: SheetView;
+  label: string;
+  /** 没有资产时这一格还没生成 */
+  assetId?: string;
+};
+
+export type CastCharacterView = {
+  id: string;
+  name: string;
+  appearance: string;
+  mustNotChange: string[];
+  panels: CastPanel[];
+  status: CastStatus;
+  /** 有近景的角色必须四格齐全才能锁 */
+  required: boolean;
+  lockedAt?: string;
+};
+
+export type CastLocationView = {
+  id: string;
+  name: string;
+  art: SceneKind;
+  status: CastStatus;
+  required: boolean;
+  masterAssetId?: string;
+  lockedAt?: string;
+};
+
+export type CastView = {
+  characters: CastCharacterView[];
+  locations: CastLocationView[];
+  complete: boolean;
+  lockedCount: number;
+  totalRequired: number;
+};
+
+/** Project IR → 定妆台读模型：只给画面与状态，不给锁的规则（规则在 `@loomina/ir`）。 */
+export function toCastView(project: Project): CastView {
+  const readiness = castReadiness(project);
+  const characterById = new Map(project.characters.map((item) => [item.id, item]));
+  const locationById = new Map(project.locations.map((item) => [item.id, item]));
+
+  const characters: CastCharacterView[] = readiness.characters.flatMap((item) => {
+    const character = characterById.get(item.targetId);
+    if (!character) return [];
+    return [
+      {
+        id: character.id,
+        name: character.name,
+        appearance: character.appearance,
+        mustNotChange: character.mustNotChange,
+        panels: SHEET_ANGLES.map((angle) => ({
+          angle,
+          label: SHEET_LABELS[angle],
+          assetId: character.sheet[angle],
+        })),
+        status: item.status,
+        required: item.required,
+        lockedAt:
+          item.approval?.status === "approved" ? item.approval.approvedAt : undefined,
+      },
+    ];
+  });
+
+  const locations: CastLocationView[] = readiness.locations.flatMap((item) => {
+    const location = locationById.get(item.targetId);
+    if (!location) return [];
+    const template = location.templateId;
+    return [
+      {
+        id: location.id,
+        name: location.name,
+        art: (template && artByTemplate[template]) || "door",
+        status: item.status,
+        required: item.required,
+        masterAssetId: location.masterShotId,
+        lockedAt:
+          item.approval?.status === "approved" ? item.approval.approvedAt : undefined,
+      },
+    ];
+  });
+
+  return {
+    characters,
+    locations,
+    complete: readiness.complete,
+    lockedCount: readiness.lockedCount,
+    totalRequired: readiness.totalRequired,
+  };
 }

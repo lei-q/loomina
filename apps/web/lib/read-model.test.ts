@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ProjectSchema, type ProjectInput } from "@loomina/ir";
-import { toStageView } from "./read-model";
+import { toCastView, toStageView } from "./read-model";
 import { sampleProject } from "./sample-project";
 
 describe("toStageView", () => {
@@ -93,6 +93,24 @@ describe("toStageView", () => {
     const view = toStageView(ProjectSchema.parse(input));
     expect(view.shots[0]?.state).toBe("open"); // 最新一版是 draft
     expect(view.shots[0]?.take).toBe(2);
+  });
+
+  it("定妆台：两个角色四格齐全，三个场景各一张主镜", () => {
+    const cast = toCastView(sampleProject);
+    expect(cast.characters).toHaveLength(2);
+    expect(cast.locations).toHaveLength(3);
+    expect(cast.totalRequired).toBe(5);
+    expect(cast.lockedCount).toBe(0);
+    expect(cast.complete).toBe(false);
+
+    const lin = cast.characters.find((item) => item.id === "c-lin")!;
+    expect(lin.panels.map((panel) => panel.label)).toEqual([
+      "正面", "3/4", "侧面", "背面",
+    ]);
+    expect(lin.panels.every((panel) => panel.assetId)).toBe(true);
+    expect(lin.status).toBe("ready");
+    expect(lin.required).toBe(true);
+    expect(cast.locations.every((item) => item.masterAssetId)).toBe(true);
   });
 
   it("两个及以上角色用双人剪影，否则按场景模板", () => {

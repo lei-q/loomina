@@ -14,7 +14,10 @@ export type InvariantCode =
   | "SHOT_DURATION_VS_DIALOGUE"
   | "TIMELINE_TAKE_OWNERSHIP"
   | "TIMELINE_OVERLAP"
-  | "PUBLISH_AI_LABEL";
+  | "PUBLISH_AI_LABEL"
+  | "REF_ASSET"
+  | "APPROVAL_TARGET"
+  | "APPROVAL_LOCKED_ASSET";
 
 export interface Violation {
   code: InvariantCode;
@@ -47,6 +50,37 @@ export function validateProject(
   const shotById = new Map(project.shots.map((s) => [s.id, s]));
   const dialogueById = new Map(project.dialogue.map((d) => [d.id, d]));
   const takeById = new Map(project.takes.map((t) => [t.id, t]));
+  const assetIds = new Set(project.assets.map((a) => a.id));
+
+  // 0. 一切参考图都必须指向存在的资产（ADR-0028）
+  const requireAsset = (id: string | undefined, path: string) => {
+    if (id && !assetIds.has(id)) {
+      violations.push({
+        code: "REF_ASSET",
+        path,
+        message: `${path} 引用了不存在的资产 ${id}`,
+      });
+    }
+  };
+  for (const character of project.characters) {
+    for (const [angle, id] of Object.entries(character.sheet)) {
+      requireAsset(id, `characters.${character.id}.sheet.${angle}`);
+    }
+    for (const id of character.referenceImages) {
+      requireAsset(id, `characters.${character.id}.referenceImages`);
+    }
+  }
+  for (const location of project.locations) {
+    requireAsset(location.masterShotId, `locations.${location.id}.masterShotId`);
+    for (const id of location.referenceImages) {
+      requireAsset(id, `locations.${location.id}.referenceImages`);
+    }
+  }
+  for (const prop of project.props) {
+    for (const id of prop.referenceImages) {
+      requireAsset(id, `props.${prop.id}.referenceImages`);
+    }
+  }
 
   // 1. 台词角色必须存在
   for (const line of project.dialogue) {
@@ -206,6 +240,32 @@ export function validateProject(
         path: `publishPackages.${pack.id}.aiLabel`,
         message: `发布包 ${pack.id} 缺少显式/隐式 AI 标识`,
       });
+    }
+  }
+
+  // 11. 闸门只能指向存在的目标；锁定的资产必须存在（ADR-0028）
+  for (const approval of project.approvals) {
+    const exists =
+      approval.targetType === "character"
+        ? characterIds.has(approval.targetId)
+        : approval.targetType === "location"
+          ? locationIds.has(approval.targetId)
+          : project.props.some((p) => p.id === approval.targetId);
+    if (!exists) {
+      violations.push({
+        code: "APPROVAL_TARGET",
+        path: `approvals.${approval.id}.targetId`,
+        message: `闸门 ${approval.id} 指向不存在的 ${approval.targetType} ${approval.targetId}`,
+      });
+    }
+    for (const id of approval.lockedAssetIds) {
+      if (!assetIds.has(id)) {
+        violations.push({
+          code: "APPROVAL_LOCKED_ASSET",
+          path: `approvals.${approval.id}.lockedAssetIds`,
+          message: `闸门 ${approval.id} 锁住了不存在的资产 ${id}`,
+        });
+      }
     }
   }
 

@@ -1,6 +1,12 @@
 "use client";
 
-import { applyEvent, type Project, type ProjectEvent } from "@loomina/ir";
+import {
+  applyEvent,
+  castReadiness,
+  type ApprovalTargetType,
+  type Project,
+  type ProjectEvent,
+} from "@loomina/ir";
 import { create } from "zustand";
 import { latestTake, toStageView } from "@/lib/read-model";
 import { sampleProject } from "@/lib/sample-project";
@@ -20,6 +26,9 @@ type WorkbenchState = {
   currentShotId: string;
   select: (shotId: string) => void;
   decide: (status: Decision) => void;
+  /** 定妆闸门：锁定 / 解锁一个角色、场景或道具 */
+  lockCast: (targetType: ApprovalTargetType, targetId: string) => void;
+  unlockCast: (targetType: ApprovalTargetType, targetId: string) => void;
   reset: () => void;
 };
 
@@ -79,6 +88,57 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       events: [...events, event],
       currentShotId: nextOpenShotId(next, currentShotId),
     });
+  },
+
+  lockCast: (targetType, targetId) => {
+    const { project, events } = get();
+    const readiness = castReadiness(project);
+    const item = [
+      ...readiness.characters,
+      ...readiness.locations,
+      ...readiness.props,
+    ].find(
+      (entry) => entry.targetType === targetType && entry.targetId === targetId,
+    );
+    // 缺资产、缺角度的不许锁：闸门的意义就在这里
+    if (!item || item.status === "incomplete") return;
+
+    const at = new Date().toISOString();
+    const event: ProjectEvent = {
+      type: "approval.updated",
+      at,
+      approval: {
+        id: `ap-${targetType}-${targetId}`,
+        targetType,
+        targetId,
+        status: "approved",
+        approvedAt: at,
+        lockedAssetIds: item.assetIds,
+      },
+    };
+    set({ project: applyEvent(project, event), events: [...events, event] });
+  },
+
+  unlockCast: (targetType, targetId) => {
+    const { project, events } = get();
+    const existing = project.approvals.find(
+      (item) => item.targetType === targetType && item.targetId === targetId,
+    );
+    if (!existing) return;
+
+    const event: ProjectEvent = {
+      type: "approval.updated",
+      at: new Date().toISOString(),
+      approval: {
+        id: existing.id,
+        targetType,
+        targetId,
+        status: "pending",
+        lockedAssetIds: [],
+        note: existing.note,
+      },
+    };
+    set({ project: applyEvent(project, event), events: [...events, event] });
   },
 
   reset: () => {

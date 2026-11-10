@@ -49,7 +49,13 @@ export function Workbench() {
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg text-text">
-      <TopBar view={view} />
+      <TopBar
+        title={view.title}
+        version={view.version}
+        stage="分镜"
+        spentCny={view.spent}
+        budgetCny={view.budget}
+      />
       <Stage view={view} />
       <ReelBar view={view} onSelect={select} onDecide={decide} />
     </div>
