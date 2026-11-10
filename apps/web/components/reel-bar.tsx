@@ -38,6 +38,14 @@ function Cell({
 
       {shot.state === "pick" && <span className="absolute inset-x-0 bottom-0 h-[2px] bg-pick" />}
       {shot.state === "reject" && <span className="absolute inset-x-0 bottom-0 h-[2px] bg-reject" />}
+      {shot.locked && (
+        <span
+          title="这一镜已锁定"
+          className="absolute right-0.5 top-0.5 grid h-[13px] w-[13px] place-items-center rounded-[1px] bg-black/55"
+        >
+          <LockIcon className="h-[8px] w-[8px] text-white/75" />
+        </span>
+      )}
       {current && <span className="absolute inset-0 outline outline-1 -outline-offset-1 outline-text" />}
     </button>
   );
