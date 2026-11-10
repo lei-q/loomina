@@ -73,6 +73,9 @@ type WorkbenchState = {
   toggleShotCharacter: (shotId: string, characterId: string) => boolean;
   /** 道具出场：点一下把这件道具加进或移出这一镜（ADR-0066） */
   toggleShotProp: (shotId: string, propId: string) => boolean;
+  /** 挪出场顺序：-1 往前、1 往后；顺序就是提示词里的顺序（ADR-0077） */
+  moveShotCharacter: (shotId: string, characterId: string, delta: -1 | 1) => boolean;
+  moveShotProp: (shotId: string, propId: string, delta: -1 | 1) => boolean;
   /**
    * 这一镜里换人：同一条动作里把他从出场里换成另一个人，
    * 这一镜里他说的台词一起换过去（ADR-0070）
@@ -650,6 +653,70 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     const propIds = present
       ? shot.propIds.filter((id) => id !== propId)
       : [...shot.propIds, propId];
+    const event: ProjectEvent = {
+      type: "shot.updated",
+      at: new Date().toISOString(),
+      shotId,
+      patch: { propIds },
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  moveShotCharacter: (shotId, characterId, delta) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) {
+      set({ castError: "找不到这一镜。" });
+      return false;
+    }
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定，先解锁再改出场顺序。" });
+      return false;
+    }
+    const at = shot.characterIds.indexOf(characterId);
+    const to = at + delta;
+    if (at < 0 || to < 0 || to >= shot.characterIds.length) return false;
+
+    const characterIds = [...shot.characterIds];
+    [characterIds[at], characterIds[to]] = [characterIds[to]!, characterIds[at]!];
+    const event: ProjectEvent = {
+      type: "shot.updated",
+      at: new Date().toISOString(),
+      shotId,
+      patch: { characterIds },
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  moveShotProp: (shotId, propId, delta) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) {
+      set({ castError: "找不到这一镜。" });
+      return false;
+    }
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定，先解锁再改道具顺序。" });
+      return false;
+    }
+    const at = shot.propIds.indexOf(propId);
+    const to = at + delta;
+    if (at < 0 || to < 0 || to >= shot.propIds.length) return false;
+
+    const propIds = [...shot.propIds];
+    [propIds[at], propIds[to]] = [propIds[to]!, propIds[at]!];
     const event: ProjectEvent = {
       type: "shot.updated",
       at: new Date().toISOString(),

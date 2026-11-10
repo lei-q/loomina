@@ -35,6 +35,8 @@ function Current({
   onRemoveNote,
   onToggleCharacter,
   onToggleProp,
+  onMoveCharacter,
+  onMoveProp,
 }: {
   shot: StageShot;
   subtitle: string;
@@ -51,7 +53,18 @@ function Current({
   onRemoveNote: (note: string) => void;
   onToggleCharacter: (characterId: string) => void;
   onToggleProp: (propId: string) => void;
+  onMoveCharacter: (characterId: string, delta: -1 | 1) => void;
+  onMoveProp: (propId: string, delta: -1 | 1) => void;
 }) {
+  // 出场的人按点名顺序排在前面：顺序就是提示词里的顺序（ADR-0077）
+  const ordered = [
+    ...shot.characterIds.flatMap((id) => characters.filter((character) => character.id === id)),
+    ...characters.filter((character) => !shot.characterIds.includes(character.id)),
+  ];
+  const orderedProps = [
+    ...shot.propIds.flatMap((id) => props.filter((prop) => prop.id === id)),
+    ...props.filter((prop) => !shot.propIds.includes(prop.id)),
+  ];
   // 正在看哪一帧：首帧是视频的起点，尾帧是落点（ADR-0038）
   const [shown, setShown] = useState<Frame>("first");
   const frames: Array<{ key: Frame; uri?: string; has: boolean }> = [
@@ -210,70 +223,135 @@ function Current({
       )}
 
       {/* 这一镜里有谁：点名即出场，锚点与提示词立刻跟上（ADR-0065） */}
-      <div className="flex max-w-[340px] flex-wrap items-center justify-center gap-x-2 gap-y-1">
+      {/* 已经出场的人按出场顺序排在前面——顺序就是提示词里的顺序（ADR-0077） */}
+      <div className="flex max-w-[360px] flex-wrap items-center justify-center gap-x-2 gap-y-1">
         <span className="tnum text-[9px] tracking-[.14em] text-muted-2">出场</span>
-        {characters.map((character) => {
+        {ordered.map((character) => {
           const present = shot.characterIds.includes(character.id);
           const disabled = readOnly || shot.locked;
+          const at = shot.characterIds.indexOf(character.id);
           return (
-            <button
+            <span
               key={character.id}
-              type="button"
-              aria-pressed={present}
-              disabled={disabled}
-              onClick={() => onToggleCharacter(character.id)}
-              title={
-                shot.locked
-                  ? "这一镜已锁定，先解锁再改出场人物"
-                  : present
-                    ? `把${character.name}从这一镜里拿掉`
-                    : `让${character.name}出现在这一镜里`
-              }
               className={cn(
-                "rounded-token border px-2 py-[1px] text-[10px] transition-colors duration-[var(--dur)]",
+                "flex items-center rounded-token border text-[10px] transition-colors duration-[var(--dur)]",
                 present
                   ? "border-line-2 bg-surface text-text"
                   : "border-line text-muted-2 hover:border-line-2 hover:text-text",
-                "disabled:cursor-default disabled:opacity-40 disabled:hover:border-line disabled:hover:text-muted-2",
               )}
             >
-              {character.name}
-            </button>
+              <button
+                type="button"
+                aria-pressed={present}
+                disabled={disabled}
+                onClick={() => onToggleCharacter(character.id)}
+                title={
+                  shot.locked
+                    ? "这一镜已锁定，先解锁再改出场人物"
+                    : present
+                      ? `把${character.name}从这一镜里拿掉`
+                      : `让${character.name}出现在这一镜里`
+                }
+                className={cn(
+                  "rounded-token py-[1px] pl-2 text-[10px] transition-colors duration-[var(--dur)]",
+                  present && !disabled && shot.characterIds.length > 1 ? "pr-1" : "pr-2",
+                  "disabled:cursor-default disabled:opacity-40",
+                )}
+              >
+                {character.name}
+              </button>
+              {present && !disabled && shot.characterIds.length > 1 && (
+                <span className="flex items-center gap-px border-l border-line pl-0.5 pr-0.5">
+                  <button
+                    type="button"
+                    aria-label={`把${character.name}往前挪`}
+                    disabled={at === 0}
+                    onClick={() => onMoveCharacter(character.id, -1)}
+                    title="往前挪一位：他在提示词里排得更前"
+                    className="px-0.5 text-[10px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:text-text disabled:opacity-25"
+                  >
+                    ‹
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`把${character.name}往后挪`}
+                    disabled={at === shot.characterIds.length - 1}
+                    onClick={() => onMoveCharacter(character.id, 1)}
+                    title="往后挪一位：他在提示词里排得更后"
+                    className="px-0.5 text-[10px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:text-text disabled:opacity-25"
+                  >
+                    ›
+                  </button>
+                </span>
+              )}
+            </span>
           );
         })}
         {characters.length === 0 && <span className="text-[10px] text-muted-2">还没有人物</span>}
       </div>
 
       {/* 这一镜里有哪些道具：与人物同一套点签，锚点会带上道具参考（ADR-0066） */}
-      <div className="flex max-w-[340px] flex-wrap items-center justify-center gap-x-2 gap-y-1">
+      <div className="flex max-w-[360px] flex-wrap items-center justify-center gap-x-2 gap-y-1">
         <span className="tnum text-[9px] tracking-[.14em] text-muted-2">道具</span>
-        {props.map((prop) => {
+        {orderedProps.map((prop) => {
           const present = shot.propIds.includes(prop.id);
           const disabled = readOnly || shot.locked;
+          const at = shot.propIds.indexOf(prop.id);
           return (
-            <button
+            <span
               key={prop.id}
-              type="button"
-              aria-pressed={present}
-              disabled={disabled}
-              onClick={() => onToggleProp(prop.id)}
-              title={
-                shot.locked
-                  ? "这一镜已锁定，先解锁再改出场道具"
-                  : present
-                    ? `把${prop.name}从这一镜里拿掉`
-                    : `让${prop.name}出现在这一镜里`
-              }
               className={cn(
-                "rounded-token border px-2 py-[1px] text-[10px] transition-colors duration-[var(--dur)]",
+                "flex items-center rounded-token border text-[10px] transition-colors duration-[var(--dur)]",
                 present
                   ? "border-line-2 bg-surface text-text"
                   : "border-line text-muted-2 hover:border-line-2 hover:text-text",
-                "disabled:cursor-default disabled:opacity-40 disabled:hover:border-line disabled:hover:text-muted-2",
               )}
             >
-              {prop.name}
-            </button>
+              <button
+                type="button"
+                aria-pressed={present}
+                disabled={disabled}
+                onClick={() => onToggleProp(prop.id)}
+                title={
+                  shot.locked
+                    ? "这一镜已锁定，先解锁再改出场道具"
+                    : present
+                      ? `把${prop.name}从这一镜里拿掉`
+                      : `让${prop.name}出现在这一镜里`
+                }
+                className={cn(
+                  "rounded-token py-[1px] pl-2 text-[10px] transition-colors duration-[var(--dur)]",
+                  present && !disabled && shot.propIds.length > 1 ? "pr-1" : "pr-2",
+                  "disabled:cursor-default disabled:opacity-40",
+                )}
+              >
+                {prop.name}
+              </button>
+              {present && !disabled && shot.propIds.length > 1 && (
+                <span className="flex items-center gap-px border-l border-line pl-0.5 pr-0.5">
+                  <button
+                    type="button"
+                    aria-label={`把${prop.name}往前挪`}
+                    disabled={at === 0}
+                    onClick={() => onMoveProp(prop.id, -1)}
+                    title="往前挪一位：它在提示词里排得更前"
+                    className="px-0.5 text-[10px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:text-text disabled:opacity-25"
+                  >
+                    ‹
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`把${prop.name}往后挪`}
+                    disabled={at === shot.propIds.length - 1}
+                    onClick={() => onMoveProp(prop.id, 1)}
+                    title="往后挪一位：它在提示词里排得更后"
+                    className="px-0.5 text-[10px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:text-text disabled:opacity-25"
+                  >
+                    ›
+                  </button>
+                </span>
+              )}
+            </span>
           );
         })}
         {props.length === 0 && <span className="text-[10px] text-muted-2">还没有道具</span>}
@@ -313,6 +391,8 @@ export type StageProps = {
   onRemoveNote: (note: string) => void;
   onToggleCharacter: (characterId: string) => void;
   onToggleProp: (propId: string) => void;
+  onMoveCharacter: (characterId: string, delta: -1 | 1) => void;
+  onMoveProp: (propId: string, delta: -1 | 1) => void;
 };
 
 export function Stage({
@@ -324,6 +404,8 @@ export function Stage({
   onRemoveNote,
   onToggleCharacter,
   onToggleProp,
+  onMoveCharacter,
+  onMoveProp,
 }: StageProps) {
   const current = view.shots[view.current]!;
   const prev = view.shots[view.current - 1];
@@ -346,6 +428,8 @@ export function Stage({
           onRemoveNote={onRemoveNote}
           onToggleCharacter={onToggleCharacter}
           onToggleProp={onToggleProp}
+          onMoveCharacter={onMoveCharacter}
+          onMoveProp={onMoveProp}
         />
         {next && <Neighbour shot={next} />}
       </div>

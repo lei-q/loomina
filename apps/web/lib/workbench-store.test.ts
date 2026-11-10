@@ -2252,3 +2252,50 @@ describe("撤销删除（ADR-0076）", () => {
     expect(state().undoLastRemoval()).toBe(true);
   });
 });
+
+describe("出场顺序（ADR-0077）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  const shot = (id: string) => state().project.shots.find((item) => item.id === id)!;
+
+  it("人物：往前挪一位，两人互换，写一条 shot.updated", () => {
+    expect(shot("s-04").characterIds).toEqual(["c-lin", "c-zhou"]);
+    const before = state().events.length;
+
+    expect(state().moveShotCharacter("s-04", "c-zhou", -1)).toBe(true);
+    expect(shot("s-04").characterIds).toEqual(["c-zhou", "c-lin"]);
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.updated",
+      shotId: "s-04",
+      patch: { characterIds: ["c-zhou", "c-lin"] },
+    });
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("到头、不在出场里、锁定的镜头都不写事件", () => {
+    const before = state().events.length;
+    expect(state().moveShotCharacter("s-04", "c-lin", -1)).toBe(false);
+    expect(state().moveShotCharacter("s-04", "c-zhou", 1)).toBe(false);
+    expect(state().moveShotCharacter("s-04", "c-tang", -1)).toBe(false);
+    expect(state().moveShotCharacter("s-08", "c-lin", 1)).toBe(false);
+    expect(state().castError).toContain("已锁定");
+    expect(state().events).toHaveLength(before);
+  });
+
+  it("道具同一套：点进出场再挪到前面", () => {
+    expect(state().toggleShotProp("s-05", "p-cup")).toBe(true);
+    expect(shot("s-05").propIds).toEqual(["p-lamp", "p-cup"]);
+
+    expect(state().moveShotProp("s-05", "p-cup", -1)).toBe(true);
+    expect(shot("s-05").propIds).toEqual(["p-cup", "p-lamp"]);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.updated",
+      patch: { propIds: ["p-cup", "p-lamp"] },
+    });
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+});
