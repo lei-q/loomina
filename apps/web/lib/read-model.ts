@@ -1,5 +1,6 @@
 import {
   castReadiness,
+  shotAnchors,
   SHEET_ANGLES,
   SHEET_LABELS,
   type CastStatus,
@@ -26,6 +27,8 @@ export type StageShot = {
   take?: number;
   /** 锁定的镜头在审片台里只读 */
   locked: boolean;
+  /** 这一镜带进生成的参考图（ADR-0029）；缺锚点时生成会被拒绝 */
+  anchors: { labels: string[]; missing: string[] };
 };
 
 export type StageView = {
@@ -124,6 +127,7 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
 
   const shots: StageShot[] = ordered.map((shot, i) => {
     const take = latestTake(shot, takesById);
+    const anchors = shotAnchors(project, shot);
     return {
       no: i + 1,
       id: shot.id,
@@ -133,6 +137,10 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
       state: shotState(shot, take),
       take: take ? shot.takeIds.indexOf(take.id) + 1 : undefined,
       locked: shot.locked ?? false,
+      anchors: {
+        labels: anchors.refs.map((ref) => ref.label),
+        missing: anchors.missing,
+      },
     };
   });
 

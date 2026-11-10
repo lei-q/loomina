@@ -113,6 +113,16 @@ describe("toStageView", () => {
     expect(cast.locations.every((item) => item.masterAssetId)).toBe(true);
   });
 
+  it("每个镜头带出参考锚点：人物按景别取格，再加场景主镜", () => {
+    const view = toStageView(sampleProject);
+    const close = view.shots.find((shot) => shot.id === "s-03")!;
+    expect(close.anchors.missing).toEqual([]);
+    expect(close.anchors.labels).toEqual(["林 · 正面", "林 · 3/4", "走廊 · 主镜"]);
+
+    const two = view.shots.find((shot) => shot.id === "s-04")!;
+    expect(two.anchors.labels).toEqual(["林 · 正面", "周 · 正面", "桌边 · 主镜"]);
+  });
+
   it("两个及以上角色用双人剪影，否则按场景模板", () => {
     const view = toStageView(sampleProject);
     const artById = new Map(view.shots.map((shot) => [shot.id, shot.art]));

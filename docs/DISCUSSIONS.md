@@ -720,3 +720,31 @@
 2. 分镜接资产锚点：每镜的参考图改为 `sheet` 四格与 `masterShotId`，替掉 `pipeline` 里的 `characterIds`。
 3. 道具闸门界面（schema 与 `castReadiness` 已算 props）。
 4. 一句话指令与"全部重做一遍多少钱"。
+
+### 第十八次讨论：生成链路接资产锚点（2026-11-10）
+
+上一轮把资产层建好了，但生成链路还在 `referenceAssetIds: shot.characterIds`——传过去的是"人"，不是图。这一轮把它接上。决策见 [ADR-0029](adr/0029-anchored-generation.md)。
+
+**改了什么**
+- `packages/ir/src/anchors.ts`：`shotAnchors(project, shot)` 现算这一镜的参考图。单人近景取正面 + 3/4，多人同框每人只取正面，场景主镜始终占一个名额，总数上限 4；超了先丢人物、不丢空间。
+- 锁定优先：目标有已通过的 `Approval` 时只用 `lockedAssetIds`；锁后新增的图不算数，并按缺失上报。
+- `runShot(project, shot, options)`：缺锚点抛 `AnchorError`，在任何模型调用之前。`ShotRunResult.anchorAssetIds` 供核对。
+- `buildShotPrompt(project, shot)`：人物名、`appearance`、`mustNotChange` 与场景名用固定串编译进提示词，不再只写机位参数。
+- 审片台当前画面下方显示锚点（`锚点 林 · 正面 林 · 3/4 走廊 · 主镜`）；缺锚点时显示虚线标签。
+- `examples/minimal.json` 补了 9 个占位资产与 3 条已通过的闸门，示例从此走"锁定后的锚点"；S1 探针也给自己的人物配了占位三视图。
+
+**验证**
+- 测试：ir 38 / gateway 17 / pipeline 5 / web 28，共 **88 条通过**；`pnpm typecheck`、`pnpm build` 通过。
+- 新增 7 条锚点测试：单人两格 + 主镜、多人每人一张、四人上限保场景、缺格、缺主镜、闸门只认锁定资产、非必经角色退回普通参考图。
+- 新增 2 条链路测试：参考图等于定妆资产而不是 characterIds、提示词带 mustNotChange；缺锚点时模型一次都不会被调用。
+- CDP 截图：SH-03 显示 `林 · 正面 / 林 · 3/4 / 走廊 · 主镜`；切到双人 SH-04 变成 `林 · 正面 / 周 · 正面 / 桌边 · 主镜`。
+
+**诚实地说**
+- 图片接口还是不通，锚点目前只影响提示词与溯源，**还影响不到像素**。`referenceAssetIds` 不塞进没实测过的请求字段——中转站契约靠实测，不靠猜。这一点写进了 MODEL-GATEWAY.md。
+- 选格策略（几张、上限 4）是启发式，没有在真实样片标定；接口通了以后按通过率调。
+- `AnchorError` 让整条批处理停下，没有"跳过这一镜继续"；需要时再加。
+
+**下一步**
+1. 找到能收参考图的图片接口（images/edits 或主体参考），把锚点真正送进生成。
+2. 定妆页补"去生成三视图"入口，生成后先过 intra-sheet 检查再允许锁定。
+3. 道具闸门界面，以及分镜里的道具引用。

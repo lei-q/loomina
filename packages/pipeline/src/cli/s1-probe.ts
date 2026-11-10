@@ -182,14 +182,43 @@ function buildProject(count: number): Project {
     return { ...template, id: `probe-sh-${index + 1}`, sceneId: "probe-sc-1", index };
   });
 
+  // 测绘也要走锚点：探针人物配一套占位三视图，免得链路因为"缺锚点"拒绝。
+  const asset = (id: string) => ({
+    id,
+    kind: "image" as const,
+    source: "generated" as const,
+    createdAt: "2026-11-09T10:00:00Z",
+  });
+  const sheets = (prefix: string) => ({
+    front: `probe-a-${prefix}-front`,
+    threeQuarter: `probe-a-${prefix}-34`,
+    side: `probe-a-${prefix}-side`,
+    back: `probe-a-${prefix}-back`,
+  });
+
   return ProjectSchema.parse({
     id: "proj-s1-probe",
     title: "S1 能力测绘",
     version: 1,
-    locations: [{ id: "probe-loc-1", name: "都市内景" }],
+    locations: [{ id: "probe-loc-1", name: "都市内景", masterShotId: "probe-a-loc-master" }],
     characters: [
-      { id: "c-lin", name: "林晚", appearance: "三十岁，短发，米色风衣" },
-      { id: "c-zhou", name: "周野", appearance: "三十五岁，深色大衣" },
+      {
+        id: "c-lin",
+        name: "林晚",
+        appearance: "三十岁，短发，米色风衣",
+        sheet: sheets("lin"),
+      },
+      {
+        id: "c-zhou",
+        name: "周野",
+        appearance: "三十五岁，深色大衣",
+        sheet: sheets("zhou"),
+      },
+    ],
+    assets: [
+      ...Object.values(sheets("lin")).map(asset),
+      ...Object.values(sheets("zhou")).map(asset),
+      asset("probe-a-loc-master"),
     ],
     scenes: [{ id: "probe-sc-1", index: 0, locationId: "probe-loc-1", shotIds: shots.map((s) => s.id) }],
     shots,
@@ -289,7 +318,7 @@ async function main(): Promise<void> {
 
     const started = Date.now();
     try {
-      const result = await runShot(shot, {
+      const result = await runShot(project, shot, {
         image,
         video,
         textOnly: args.textOnly,

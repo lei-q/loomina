@@ -158,7 +158,7 @@ QA 失败时，先判断是哪个维度，再走对应修复，而不是盲目�
 | 其他机位 / 细节图 | `Location.referenceImages` |
 | 道具参考 | `Prop.referenceImages` |
 | 场景空间 | `SceneState` / `Blocking` |
-| 每镜参考图 | `Shot.referenceAssetIds` |
+| 每镜参考图 | `shotAnchors(project, shot)` 生成前现算（ADR-0029），不落库 |
 | 生成溯源 | `Take.model / seed / prompt / referenceAssetIds` |
 | 验收结果 | `Take.qa` / `ConsistencyReport` |
 | 锁定资产 | `Approval.lockedAssetIds` |

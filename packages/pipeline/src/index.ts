@@ -1,5 +1,7 @@
 import {
   assertValidProject,
+  shotAnchors,
+  type Character,
   type Id,
   type Project,
   type Shot,
@@ -50,6 +52,19 @@ export interface ShotRunResult {
   costCny: number;
   imageUri?: string;
   videoUri: string;
+  /** 这一镜带进生成的参考图（ADR-0029） */
+  anchorAssetIds: Id[];
+}
+
+/** 锚点不齐就不生成：宁可不拍，也不拍一张"另一个人"的图（ADR-0029）。 */
+export class AnchorError extends Error {
+  constructor(
+    readonly shotId: Id,
+    readonly missing: string[],
+  ) {
+    super(`镜头 ${shotId} 的资产锚点不齐：${missing.join("；")}`);
+    this.name = "AnchorError";
+  }
 }
 
 /**
@@ -66,7 +81,7 @@ export async function runMinimalChain(
   const ledger: LedgerEntry[] = [];
 
   for (const shot of project.shots) {
-    const result = await runShot(shot, options);
+    const result = await runShot(project, shot, options);
     newTakes.push(result.take);
     ledger.push(...result.ledger);
   }
@@ -100,18 +115,22 @@ export async function runMinimalChain(
  * 而链路函数应该“一失败就停”。两种语义不该混在一个函数里。
  */
 export async function runShot(
+  project: Project,
   shot: Shot,
   options: RunOptions,
 ): Promise<ShotRunResult> {
   const prices = options.prices ?? DEFAULT_PRICES;
-  const prompt = buildShotPrompt(shot);
+  const anchors = shotAnchors(project, shot);
+  if (anchors.missing.length) throw new AnchorError(shot.id, anchors.missing);
+
+  const prompt = buildShotPrompt(project, shot);
 
   const frame = options.textOnly
     ? undefined
     : await options.image.generate({
         shotId: shot.id,
         prompt,
-        referenceAssetIds: shot.characterIds,
+        referenceAssetIds: anchors.assetIds,
         ...(options.imageSize ? { size: options.imageSize } : {}),
       });
 
@@ -155,6 +174,7 @@ export async function runShot(
     costCny: take.costCny ?? 0,
     ...(frame ? { imageUri: frame.uri } : {}),
     videoUri: video.uri,
+    anchorAssetIds: anchors.assetIds,
   };
 }
 
@@ -182,12 +202,32 @@ const MOVE_CN: Record<Shot["camera"]["movement"], string> = {
 };
 
 /**
- * 镜头提示词：先写“看到什么”，再写技术参数。
- * 技术参数放前面会让模型先学会“这是一个镜头任务”，画面就死了。
+ * 镜头提示词：先写“看到什么”，再写人物锚点与技术参数。
+ *
+ * 人物的描述与 `mustNotChange` 用固定串原样带上——每次改写描述，
+ * 模型就会把它当成另一个人（CONSISTENCY.md 第三层）。
  */
-export function buildShotPrompt(shot: Shot): string {
+export function buildShotPrompt(project: Project, shot: Shot): string {
   const parts: string[] = [];
   if (shot.description) parts.push(shot.description);
+
+  const people = shot.characterIds
+    .map((id) => project.characters.find((character) => character.id === id))
+    .filter((character): character is Character => Boolean(character))
+    .map((character) => {
+      const look = character.appearance ? `，${character.appearance}` : "";
+      const keep = character.mustNotChange.length
+        ? `；不许变：${character.mustNotChange.join("、")}`
+        : "";
+      return `${character.name}${look}${keep}`;
+    });
+  if (people.length) parts.push(`人物：${people.join("；")}`);
+
+  const scene = project.scenes.find((item) => item.id === shot.sceneId);
+  const location = scene
+    ? project.locations.find((item) => item.id === scene.locationId)
+    : undefined;
+  if (location) parts.push(`场景：${location.name}`);
 
   const { shotSize, camera } = shot;
   parts.push(

@@ -41,6 +41,7 @@ POST /v1/images/generations
 - OpenAI 兼容。`model`、`prompt` 必填（缺了返回 400，`param` 指明是哪个）。
 - 返回 `data[0].url` 或 `data[0].b64_json`。
 - **慢**：实测一次请求挂到 300s 才被上游判 `deadline_exceeded`。必须自己设超时（默认 120s）。
+- **不接受参考图**：请求体只有 `model / prompt / size / n`，没有实测过可用的 `images/edits` 或主体参考字段。`ImageInput.referenceAssetIds` 只进契约与溯源，**不要塞进没验证过的字段**（ADR-0029）。图片接口接通前，资产锚点只作用于提示词与验收基线，不作用于像素。
 - 见过 `503 image_response_invalid`——上游返回体无法解析，不是我们的参数错。
 
 ### 视频

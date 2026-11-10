@@ -97,6 +97,9 @@ describe("take.updated", () => {
 });
 
 describe("approval.updated", () => {
+  // 示例项目自带三条已通过的闸门，这几条测试从"还没锁"开始。
+  const unlockedProject = (): Project => ({ ...load(), approvals: [] });
+
   const lock: ProjectEvent = {
     type: "approval.updated",
     at: AT,
@@ -111,13 +114,13 @@ describe("approval.updated", () => {
   };
 
   it("第一次锁定追加一条闸门记录", () => {
-    const project = applyEvent(load(), lock);
+    const project = applyEvent(unlockedProject(), lock);
     expect(project.approvals).toHaveLength(1);
     expect(project.approvals[0]!.status).toBe("approved");
   });
 
   it("同一目标再次写入是覆盖，不是追加", () => {
-    const locked = applyEvent(load(), lock);
+    const locked = applyEvent(unlockedProject(), lock);
     const unlocked = applyEvent(locked, {
       ...lock,
       approval: { ...lock.approval, status: "pending", approvedAt: undefined },

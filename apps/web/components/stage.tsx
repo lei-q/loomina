@@ -32,6 +32,26 @@ function Current({ shot, subtitle }: { shot: StageShot; subtitle: string }) {
           {subtitle}
         </p>
       </div>
+
+      {/* 这一镜带进生成的参考图：审片时就知道生成靠什么钉住（ADR-0029） */}
+      {(shot.anchors.labels.length > 0 || shot.anchors.missing.length > 0) && (
+        <div className="flex max-w-[340px] flex-wrap items-center justify-center gap-x-2.5 gap-y-1">
+          <span className="tnum text-[9px] tracking-[.14em] text-muted-2">锚点</span>
+          {shot.anchors.labels.map((label) => (
+            <span key={label} className="text-[10px] text-muted">
+              {label}
+            </span>
+          ))}
+          {shot.anchors.missing.map((item) => (
+            <span
+              key={item}
+              className="rounded-[1px] border border-dashed border-line-2 px-1.5 py-[1px] text-[9.5px] text-muted-2"
+            >
+              缺 {item}
+            </span>
+          ))}
+        </div>
+      )}
     </figure>
   );
 }

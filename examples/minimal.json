@@ -6,7 +6,8 @@
     {
       "id": "loc-living",
       "name": "公寓客厅",
-      "templateId": "apartment-living"
+      "templateId": "apartment-living",
+      "masterShotId": "a-living-master"
     }
   ],
   "characters": [
@@ -14,12 +15,26 @@
       "id": "c-lin",
       "name": "林晚",
       "appearance": "三十岁，短发，米色风衣",
-      "voiceProfileId": "voice-lin"
+      "voiceProfileId": "voice-lin",
+      "sheet": {
+        "front": "a-lin-front",
+        "threeQuarter": "a-lin-34",
+        "side": "a-lin-side",
+        "back": "a-lin-back"
+      },
+      "mustNotChange": ["左眼下的痣", "齐肩黑发，中分", "米色风衣"]
     },
     {
       "id": "c-zhou",
       "name": "周野",
-      "appearance": "三十五岁，深色大衣，右手有旧疤"
+      "appearance": "三十五岁，深色大衣，右手有旧疤",
+      "sheet": {
+        "front": "a-zhou-front",
+        "threeQuarter": "a-zhou-34",
+        "side": "a-zhou-side",
+        "back": "a-zhou-back"
+      },
+      "mustNotChange": ["右手的旧疤", "不戴眼镜"]
     }
   ],
   "scenes": [
@@ -98,6 +113,43 @@
       },
       "status": "approved",
       "costCny": 5.4
+    }
+  ],
+  "assets": [
+    { "id": "a-lin-front", "kind": "image", "source": "generated", "createdAt": "2026-11-09T09:00:00Z" },
+    { "id": "a-lin-34", "kind": "image", "source": "generated", "createdAt": "2026-11-09T09:01:00Z" },
+    { "id": "a-lin-side", "kind": "image", "source": "generated", "createdAt": "2026-11-09T09:02:00Z" },
+    { "id": "a-lin-back", "kind": "image", "source": "generated", "createdAt": "2026-11-09T09:03:00Z" },
+    { "id": "a-zhou-front", "kind": "image", "source": "generated", "createdAt": "2026-11-09T09:04:00Z" },
+    { "id": "a-zhou-34", "kind": "image", "source": "generated", "createdAt": "2026-11-09T09:05:00Z" },
+    { "id": "a-zhou-side", "kind": "image", "source": "generated", "createdAt": "2026-11-09T09:06:00Z" },
+    { "id": "a-zhou-back", "kind": "image", "source": "generated", "createdAt": "2026-11-09T09:07:00Z" },
+    { "id": "a-living-master", "kind": "image", "source": "generated", "createdAt": "2026-11-09T09:08:00Z" }
+  ],
+  "approvals": [
+    {
+      "id": "ap-character-c-lin",
+      "targetType": "character",
+      "targetId": "c-lin",
+      "status": "approved",
+      "approvedAt": "2026-11-09T09:30:00Z",
+      "lockedAssetIds": ["a-lin-front", "a-lin-34", "a-lin-side", "a-lin-back"]
+    },
+    {
+      "id": "ap-character-c-zhou",
+      "targetType": "character",
+      "targetId": "c-zhou",
+      "status": "approved",
+      "approvedAt": "2026-11-09T09:31:00Z",
+      "lockedAssetIds": ["a-zhou-front", "a-zhou-34", "a-zhou-side", "a-zhou-back"]
+    },
+    {
+      "id": "ap-location-loc-living",
+      "targetType": "location",
+      "targetId": "loc-living",
+      "status": "approved",
+      "approvedAt": "2026-11-09T09:32:00Z",
+      "lockedAssetIds": ["a-living-master"]
     }
   ],
   "timeline": {

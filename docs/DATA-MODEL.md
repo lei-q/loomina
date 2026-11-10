@@ -556,6 +556,8 @@ interface Approval {
 - "进分镜"只在 `lockedCount === totalRequired` 时出现；这是数据推出的事实，不是界面的开关。
 - 三视图内部是否像同一个人（intra-sheet 一致性）还没有验收，当前只保证"四格都填了"。
 
+**每镜参考图不落库。** 生成前由 `shotAnchors(project, shot)` 现算（ADR-0029）：人物按景别取格（单人选正面 + 3/4，多人每人正面），场景带主镜，总数不超过 4 张；有已通过的 `Approval` 时只用 `lockedAssetIds`。缺锚点时链路拒绝生成，`ShotRunResult.anchorAssetIds` 只用于核对，不写回 IR。
+
 ## 6. 风格 / 发布
 
 ```ts
@@ -616,6 +618,7 @@ interface AILabel {
 19. **`Approval` 的 `targetType + targetId` 必须指向存在的角色 / 场景 / 道具**（`APPROVAL_TARGET`）。
 20. **`Approval.lockedAssetIds` 里的每个 id 必须是存在的资产**（`APPROVAL_LOCKED_ASSET`）。
 21. **定妆闸门**：有近景 / 特写镜头的角色，三视图四格未齐不得锁定；场景无主镜不得锁定（`cast.ts` 判定，`lockCast` 与界面各守一道，ADR-0028）。
+22. **锚点不齐不得生成**：`shotAnchors().missing` 非空时，必须在调用任何模型之前失败（ADR-0029）。
 
 ## 8. 与 OTIO 的映射
 
