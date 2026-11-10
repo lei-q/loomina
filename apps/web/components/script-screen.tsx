@@ -69,6 +69,9 @@ export function ScriptScreen() {
 
   const view = useMemo(() => toScriptView(project), [project]);
 
+  const nameOf = (characterId: string) =>
+    view.characters.find((item) => item.id === characterId)?.name ?? characterId;
+
   const startEdit = (lineId: string, text: string) => {
     setEditing(lineId);
     setDraft(text);
@@ -100,6 +103,11 @@ export function ScriptScreen() {
 
   const restoreAction = (shotId: string, text: string) => {
     if (editAction(shotId, text)) setNote(undefined);
+    else setNote(useWorkbench.getState().castError);
+  };
+
+  const revertSpeaker = (lineId: string, characterId: string) => {
+    if (changeSpeaker(lineId, characterId)) setNote(undefined);
     else setNote(useWorkbench.getState().castError);
   };
 
@@ -564,12 +572,19 @@ export function ScriptScreen() {
                                   </p>
                                   {(() => {
                                     const history = dialogueHistory(events, line.id);
-                                    if (history.edits.length === 0) return null;
+                                    if (history.edits.length === 0 && history.speakers.length === 0) {
+                                      return null;
+                                    }
                                     const prev = previousDialogueText(history);
                                     return (
                                       <details className="mt-1">
                                         <summary className="tnum cursor-pointer list-none text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-muted [&::-webkit-details-marker]:hidden">
-                                          改过 {history.edits.length} 次
+                                          {history.edits.length > 0
+                                            ? `改过 ${history.edits.length} 次`
+                                            : ""}
+                                          {history.speakers.length > 0
+                                            ? `${history.edits.length > 0 ? " · " : ""}换过 ${history.speakers.length} 次人`
+                                            : ""}
                                           {prev ? ` · 上一版「${prev}」` : ""}
                                         </summary>
                                         <ul className="mt-1 space-y-0.5 text-[9.5px] leading-[1.7]">
@@ -597,6 +612,44 @@ export function ScriptScreen() {
                                               )}
                                             </li>
                                           ))}
+                                          {history.speakers.length > 0 && (
+                                            <>
+                                              <li className="pt-1 text-[9px] text-muted-2">
+                                                换人
+                                              </li>
+                                              {[...history.speakers].reverse().map((rev, i) => (
+                                                <li
+                                                  key={`sp-${rev.at}-${i}`}
+                                                  className="flex items-baseline gap-2"
+                                                >
+                                                  <span className="tnum shrink-0 text-muted-2">
+                                                    {clock(rev.at)}
+                                                  </span>
+                                                  <span className="text-muted">
+                                                    {nameOf(rev.from)} → {nameOf(rev.to)}
+                                                  </span>
+                                                  {!readOnly && (
+                                                    <button
+                                                      type="button"
+                                                      disabled={
+                                                        shot.locked ||
+                                                        rev.from === line.characterId
+                                                      }
+                                                      onClick={() => revertSpeaker(line.id, rev.from)}
+                                                      title={
+                                                        shot.locked
+                                                          ? "这一镜已锁定，先解锁才能换人"
+                                                          : `换回${nameOf(rev.from)}`
+                                                      }
+                                                      className="shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                                                    >
+                                                      换回
+                                                    </button>
+                                                  )}
+                                                </li>
+                                              ))}
+                                            </>
+                                          )}
                                           {history.original && (
                                             <li className="flex items-baseline gap-2">
                                               <span className="shrink-0 text-muted-2">最初</span>

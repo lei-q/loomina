@@ -686,11 +686,21 @@ export type DialogueRevision = {
   dur: number;
 };
 
+export type SpeakerRevision = {
+  at: string;
+  /** 换之前的角色 id */
+  from: string;
+  /** 换之后的角色 id */
+  to: string;
+};
+
 export type DialogueHistory = {
-  /** 引导事件里最初的那句（含当时的时长）；日志里没有就省掉 */
-  original?: { text: string; dur: number };
+  /** 引导事件里最初的那句（含当时的时长与说话人）；日志里没有就省掉 */
+  original?: { text: string; dur: number; characterId: string };
   /** 从旧到新，一次改写一条 */
   edits: DialogueRevision[];
+  /** 从旧到新，一次换人一条（ADR-0052） */
+  speakers: SpeakerRevision[];
 };
 
 /**
@@ -707,7 +717,9 @@ export function dialogueHistory(
   const first = events[0];
   if (first?.type === "project.created") {
     const line = first.project.dialogue.find((item) => item.id === lineId);
-    if (line) original = { text: line.text, dur: line.durationMs / 1000 };
+    if (line) {
+      original = { text: line.text, dur: line.durationMs / 1000, characterId: line.characterId };
+    }
   }
 
   const edits: DialogueRevision[] = [];
@@ -723,7 +735,19 @@ export function dialogueHistory(
     });
   }
 
-  return { original, edits };
+  // 换人不改文本，单独收：从快照里的说话人开始，一条一条接着换
+  const speakers: SpeakerRevision[] = [];
+  let speaker = original?.characterId;
+  for (const event of events) {
+    if (event.type !== "dialogue.speaker.updated") continue;
+    if (event.lineId !== lineId) continue;
+    if (speaker !== undefined && speaker !== event.characterId) {
+      speakers.push({ at: event.at, from: speaker, to: event.characterId });
+    }
+    speaker = event.characterId;
+  }
+
+  return { original, edits, speakers };
 }
 
 /** 上一版的文本：改过一次就是最初那版，改过多次就是倒数第二版的文本。 */

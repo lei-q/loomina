@@ -528,3 +528,29 @@ describe("动作版本（ADR-0051）", () => {
     expect(actionHistory(events, "s-01").edits).toHaveLength(2);
   });
 });
+
+describe("台词历史里的换人（ADR-0052）", () => {
+  const at = (h: number) => `2026-11-10T${String(h).padStart(2, "0")}:00:00+08:00`;
+  const events = [
+    { type: "project.created" as const, at: at(0), project: sampleProject },
+    { type: "dialogue.speaker.updated" as const, at: at(12), lineId: "d-01", characterId: "c-lin" },
+    { type: "dialogue.speaker.updated" as const, at: at(13), lineId: "d-01", characterId: "c-zhou" },
+    { type: "dialogue.speaker.updated" as const, at: at(14), lineId: "d-02", characterId: "c-zhou" },
+  ];
+
+  it("从最初那位开始，一条换人接着一条记，文本版本不受影响", () => {
+    const history = dialogueHistory(events, "d-01");
+    expect(history.original?.characterId).toBe("c-zhou");
+    expect(history.speakers.map((rev) => [rev.from, rev.to])).toEqual([
+      ["c-zhou", "c-lin"],
+      ["c-lin", "c-zhou"],
+    ]);
+    expect(history.edits).toEqual([]);
+  });
+
+  it("别的台词的换人不算进来", () => {
+    expect(dialogueHistory(events, "d-02").speakers).toHaveLength(1);
+    expect(dialogueHistory(events, "d-03").speakers).toEqual([]);
+    expect(dialogueHistory(events.slice(0, 2), "d-01").speakers).toHaveLength(1);
+  });
+});
