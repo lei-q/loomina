@@ -379,7 +379,7 @@ describe("scene.updated（ADR-0050）", () => {
     // 最小示例只有一个地点，补一个再改过去
     const project: Project = { ...load(), locations: [
       ...load().locations,
-      { id: "loc-hall", name: "门厅", referenceImages: [], templateId: "doorway" },
+      { id: "loc-hall", name: "门厅", referenceImages: [], description: "", templateId: "doorway" },
     ] };
     const target = project.locations.find((item) => item.id === "loc-hall")!;
     const event: ProjectEvent = {
@@ -472,7 +472,7 @@ describe("删地点（ADR-0061）", () => {
     const added: ProjectEvent = {
       type: "location.added",
       at: AT,
-      location: { id: "loc-balcony", name: "阳台", templateId: "corridor", referenceImages: [] },
+      location: { id: "loc-balcony", name: "阳台", templateId: "corridor", referenceImages: [], description: "" },
     };
     const removed: ProjectEvent = { type: "location.removed", at: AT, locationId: "loc-balcony" };
     const after = rebuild([created(project), added, removed]);
@@ -499,7 +499,7 @@ describe("location.added / location.updated（ADR-0059）", () => {
     const event: ProjectEvent = {
       type: "location.added",
       at: AT,
-      location: { id: "loc-balcony", name: "阳台", templateId: "corridor", referenceImages: [] },
+      location: { id: "loc-balcony", name: "阳台", templateId: "corridor", referenceImages: [], description: "" },
     };
     const after = applyEvent(project, event);
     expect(after.locations.at(-1)).toMatchObject({ id: "loc-balcony", name: "阳台" });
@@ -511,7 +511,7 @@ describe("location.added / location.updated（ADR-0059）", () => {
     const added: ProjectEvent = {
       type: "location.added",
       at: AT,
-      location: { id: "loc-balcony", name: "阳台", templateId: "corridor", referenceImages: [] },
+      location: { id: "loc-balcony", name: "阳台", templateId: "corridor", referenceImages: [], description: "" },
     };
     const renamed: ProjectEvent = {
       type: "location.updated",
@@ -527,6 +527,28 @@ describe("location.added / location.updated（ADR-0059）", () => {
     });
   });
 
+  it("写场景描述：只动 description，重放后一致（ADR-0063）", () => {
+    const project = load();
+    const before = project.locations[0]!;
+    const described: ProjectEvent = {
+      type: "location.updated",
+      at: AT,
+      locationId: before.id,
+      patch: { description: "老楼走廊，声控灯，墙皮起了卷" },
+    };
+    const after = rebuild([created(project), described]);
+    const location = after.locations.find((item) => item.id === before.id)!;
+
+    expect(location.description).toBe("老楼走廊，声控灯，墙皮起了卷");
+    expect(location.name).toBe(before.name);
+    expect(location.templateId).toBe(before.templateId);
+  });
+
+  it("旧项目没有 description，解析时补空串", () => {
+    // minimal.json 写在这个字段之前：回放不该因为缺字段炸掉
+    expect(load().locations[0]!.description).toBe("");
+  });
+
   it("重复的 id、空名字、不存在的地点、空 patch 都拒绝", () => {
     const project = load();
     const existing = project.locations[0]!;
@@ -534,14 +556,14 @@ describe("location.added / location.updated（ADR-0059）", () => {
       applyEvent(project, {
         type: "location.added",
         at: AT,
-        location: { id: existing.id, name: "又一个", referenceImages: [] },
+        location: { id: existing.id, name: "又一个", referenceImages: [], description: "" },
       }),
     ).toThrow(/重复/);
     expect(() =>
       applyEvent(project, {
         type: "location.added",
         at: AT,
-        location: { id: "loc-blank", name: "  ", referenceImages: [] },
+        location: { id: "loc-blank", name: "  ", referenceImages: [], description: "" },
       }),
     ).toThrow(/名字/);
     expect(() =>

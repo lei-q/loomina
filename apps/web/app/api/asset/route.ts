@@ -17,7 +17,8 @@ type Body = {
   character?: { name?: unknown; appearance?: unknown; mustNotChange?: unknown };
   angle?: unknown;
   frame?: unknown;
-  location?: { name?: unknown };
+  /** 主镜请求：`description` 是场景描述，会整句进提示词（ADR-0063） */
+  location?: { name?: unknown; description?: unknown };
   prop?: { name?: unknown; description?: unknown };
   shot?: {
     description?: unknown;
@@ -69,7 +70,10 @@ function parse(body: Body | null): CastImageRequest | string {
   if (body.kind === "master") {
     const where = name(body.location?.name);
     if (!where) return "缺少场景名";
-    return { kind: "master", location: { name: where } };
+    return {
+      kind: "master",
+      location: { name: where, description: text(body.location?.description, 200) },
+    };
   }
 
   if (body.kind === "prop") {

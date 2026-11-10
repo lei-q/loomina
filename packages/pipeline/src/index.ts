@@ -418,8 +418,11 @@ export function buildSheetPrompt(
 }
 
 /** 场景主镜：空镜，只交代空间与光线。同一场所有镜头都引这一张。 */
-export function buildMasterPrompt(location: Pick<Location, "name">): string {
+export function buildMasterPrompt(
+  location: Pick<Location, "name" | "description">,
+): string {
   const parts = [`场景主镜，空镜：${location.name}`];
+  if (location.description) parts.push(location.description);
   parts.push("无人入画，广角，交代空间结构、陈设与光源方向");
   parts.push("竖屏 9:16，实拍电影质感，自然光，轻微胶片颗粒");
   return parts.join("。");

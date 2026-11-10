@@ -56,11 +56,11 @@ export type ProjectEvent =
       at: string;
       location: Location;
     }  | {
-      /** 改地点（ADR-0059）：名字与模板；主镜与参考图走资产那条路 */
+      /** 改地点（ADR-0059 / ADR-0063）：名字、模板与场景描述；主镜与参考图走资产那条路 */
       type: "location.updated";
       at: string;
       locationId: Id;
-      patch: Partial<Pick<Location, "name" | "templateId">>;
+      patch: Partial<Pick<Location, "name" | "templateId" | "description">>;
     }
   | {
       /** 删地点（ADR-0061）：还有场次指向它时拒绝，不留悬挂引用 */

@@ -190,6 +190,7 @@ function LocationRow({
   onLock,
   onUnlock,
   onRename,
+  onDescribe,
   onRemove,
   otherLocations,
 }: {
@@ -204,6 +205,8 @@ function LocationRow({
   onUnlock: () => void;
   /** 改名 / 换模板：成功返回 true，表单据此收起 */
   onRename: (name: string, templateId: string) => boolean;
+  /** 改场景描述：成功返回 true，表单据此收起（ADR-0063） */
+  onDescribe: (description: string) => boolean;
   /** 删掉这个地点：成功返回 true（ADR-0061 / ADR-0062） */
   onRemove: (moveToId?: string) => boolean;
   /** 还有哪些地点可以搬：这一行自己不在里面 */
@@ -214,6 +217,13 @@ function LocationRow({
   const [moveTarget, setMoveTarget] = useState(otherLocations[0]?.id ?? "");
   const [draftName, setDraftName] = useState("");
   const [draftTemplate, setDraftTemplate] = useState(location.templateId ?? "doorway");
+  const [describing, setDescribing] = useState(false);
+  const [draftDescription, setDraftDescription] = useState("");
+
+  const beginDescribe = () => {
+    setDraftDescription(location.description);
+    setDescribing(true);
+  };
 
   const beginEdit = () => {
     setDraftName(location.name);
@@ -385,10 +395,71 @@ function LocationRow({
           <figcaption className="tnum mt-1.5 text-[9px] text-muted-2">master</figcaption>
         </figure>
 
-        <div className="max-w-[38ch] self-center">
-          <p className="text-[11px] leading-[1.6] text-muted-2">
-            同一场的所有镜头都带这张图进生成，房间不许每镜重新想象。
-          </p>
+        <div className="flex max-w-[38ch] flex-col gap-1.5 self-center">
+          {describing ? (
+            <form
+              className="flex flex-col gap-1.5"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (onDescribe(draftDescription)) setDescribing(false);
+              }}
+            >
+              <textarea
+                value={draftDescription}
+                onChange={(event) => setDraftDescription(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setDescribing(false);
+                }}
+                autoFocus
+                rows={3}
+                aria-label="场景描述"
+                placeholder="老楼走廊，声控灯，墙皮起了卷"
+                className="w-full resize-none rounded-token border border-line-2 bg-surface px-2 py-1.5 text-[11.5px] leading-[1.6] text-text placeholder:text-muted-2 focus:border-pick focus:outline-none"
+              />
+              <p className="text-[9px] leading-[1.5] text-muted-2">
+                整句进主镜提示词：空间、陈设、光线，200 字以内。
+              </p>
+              <div className="flex gap-1.5">
+                <button
+                  type="submit"
+                  className="rounded-token border border-line-2 px-2 py-0.5 text-[10.5px] text-text transition-colors duration-[var(--dur)] hover:border-pick hover:text-pick"
+                >
+                  保存
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDescribing(false)}
+                  className="rounded-token border border-line px-2 py-0.5 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                >
+                  取消
+                </button>
+              </div>
+            </form>
+          ) : (
+            <>
+              {readOnly ? (
+                <p className="text-[11.5px] leading-[1.6] text-text">
+                  {location.description || "这个地点还没写场景描述。"}
+                </p>
+              ) : (
+                <button
+                  type="button"
+                  onClick={beginDescribe}
+                  title="写一句这地方长什么样：会整句进主镜提示词"
+                  className="text-left transition-colors duration-[var(--dur)]"
+                >
+                  {location.description ? (
+                    <span className="text-[11.5px] leading-[1.6] text-text">{location.description}</span>
+                  ) : (
+                    <span className="text-[11px] leading-[1.6] text-muted-2">＋ 写一句这地方长什么样</span>
+                  )}
+                </button>
+              )}
+              <p className="text-[9px] leading-[1.6] text-muted-2">
+                同一场的所有镜头都带这张图进生成，房间不许每镜重新想象。
+              </p>
+            </>
+          )}
         </div>
 
         <div className="ml-auto flex w-[120px] shrink-0 flex-col items-end gap-2">
@@ -561,11 +632,13 @@ export function CastScreen() {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [newTemplate, setNewTemplate] = useState<string>("doorway");
+  const [newDescription, setNewDescription] = useState("");
 
   const closeCreate = () => {
     setCreating(false);
     setNewName("");
     setNewTemplate("doorway");
+    setNewDescription("");
   };
 
   useEffect(() => {
@@ -663,7 +736,7 @@ export function CastScreen() {
                 className="mt-3 flex flex-wrap items-center gap-2 rounded-token border border-dashed border-line-2 px-3 py-2.5"
                 onSubmit={(event) => {
                   event.preventDefault();
-                  if (addLocation(newName, newTemplate)) closeCreate();
+                  if (addLocation(newName, newTemplate, newDescription)) closeCreate();
                 }}
               >
                 <input
@@ -703,6 +776,17 @@ export function CastScreen() {
                 >
                   取消
                 </button>
+                <textarea
+                  value={newDescription}
+                  onChange={(event) => setNewDescription(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") closeCreate();
+                  }}
+                  rows={2}
+                  aria-label="新地点描述"
+                  placeholder="这地方长什么样：空间、陈设、光线（选填，会进主镜提示词）"
+                  className="w-full resize-none rounded-token border border-line bg-surface px-2 py-1.5 text-[11.5px] leading-[1.6] text-text placeholder:text-muted-2 focus:border-pick focus:outline-none"
+                />
                 <span className="w-full text-[10px] text-muted-2">
                   建好后到剧本页把它挂到场上，场次才有地方发生。
                 </span>
@@ -720,6 +804,7 @@ export function CastScreen() {
                 onLock={() => lockCast("location", location.id)}
                 onUnlock={() => unlockCast("location", location.id)}
                 onRename={(name, templateId) => editLocation(location.id, { name, templateId })}
+                onDescribe={(description) => editLocation(location.id, { description })}
                 onRemove={(moveToId) => removeLocation(location.id, moveToId)}
                 otherLocations={cast.locations
                   .filter((item) => item.id !== location.id)

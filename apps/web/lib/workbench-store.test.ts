@@ -1268,6 +1268,39 @@ describe("新建 / 编辑地点（ADR-0059）", () => {
     expect(state().events).toHaveLength(snapshot);
   });
 
+  it("写场景描述：一条 location.updated { description }，能回放（ADR-0063）", () => {
+    const snapshot = state().events.length;
+
+    expect(state().editLocation("loc-table", { description: " 餐桌靠窗，吊灯昏黄 " })).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "location.updated",
+      locationId: "loc-table",
+      patch: { description: "餐桌靠窗，吊灯昏黄" },
+    });
+    expect(state().project.locations.find((item) => item.id === "loc-table")?.description).toBe(
+      "餐桌靠窗，吊灯昏黄",
+    );
+    expect(rebuild(state().events).locations.find((item) => item.id === "loc-table")?.description).toBe(
+      "餐桌靠窗，吊灯昏黄",
+    );
+  });
+
+  it("场景描述超过 200 字不写事件；新建时也可以带描述", () => {
+    const snapshot = state().events.length;
+
+    expect(state().editLocation("loc-table", { description: "长".repeat(201) })).toBe(false);
+    expect(state().castError).toContain("200");
+    expect(state().addLocation("楼梯间", "corridor", "长".repeat(201))).toBeUndefined();
+    expect(state().castError).toContain("200");
+    expect(state().events).toHaveLength(snapshot);
+
+    const id = state().addLocation("楼梯间", "corridor", " 水泥台阶，声控灯 ");
+    expect(state().project.locations.find((item) => item.id === id)?.description).toBe(
+      "水泥台阶，声控灯",
+    );
+  });
+
   it("删一个没被场次占用的地点：一条 location.removed，可回放", () => {
     const id = state().addLocation("阳台", "corridor")!;
     const snapshot = state().events.length;

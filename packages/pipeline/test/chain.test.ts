@@ -201,11 +201,20 @@ describe("三视图提示词", () => {
 
 describe("主镜与道具提示词", () => {
   it("主镜是空镜，只交代空间与光线", () => {
-    const prompt = buildMasterPrompt({ name: "走廊" });
+    const prompt = buildMasterPrompt({ name: "走廊", description: "" });
 
     expect(prompt).toContain("空镜");
     expect(prompt).toContain("走廊");
     expect(prompt).toContain("无人入画");
+  });
+
+  it("地点有描述时，描述进主镜提示词（ADR-0063）", () => {
+    const prompt = buildMasterPrompt({
+      name: "走廊",
+      description: "老楼走廊，声控灯，墙皮起了卷",
+    });
+
+    expect(prompt).toContain("墙皮起了卷");
   });
 
   it("道具带上名称与描述，单人静物", () => {

@@ -48,7 +48,7 @@ export type CastImageRequest =
       character: Pick<Character, "name" | "appearance" | "mustNotChange">;
       angle: SheetView;
     }
-  | { kind: "master"; location: Pick<Location, "name"> }
+  | { kind: "master"; location: Pick<Location, "name" | "description"> }
   | { kind: "prop"; prop: Pick<Prop, "name" | "description"> }
   | { kind: "keyframe"; shot: ShotPromptMaterial; frame?: "first" | "last" };
 

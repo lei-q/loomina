@@ -108,12 +108,16 @@ type WorkbenchState = {
   moveDialogueTo: (lineId: string, targetShotId: string) => boolean;
   /** 把一句删掉的台词放回它原来的镜头：`dialogue.added` + 镜头时长加回（ADR-0055） */
   restoreLine: (lineId: string) => boolean;
-  /** 新建地点：一条 `location.added`（ADR-0059） */
-  addLocation: (name: string, templateId?: string) => string | undefined;
-  /** 改地点名字 / 模板：一条 `location.updated`（ADR-0059） */
+  /** 新建地点：一条 `location.added`（ADR-0059）；描述进主镜提示词（ADR-0063） */
+  addLocation: (
+    name: string,
+    templateId?: string,
+    description?: string,
+  ) => string | undefined;
+  /** 改地点名字 / 模板 / 描述：一条 `location.updated`（ADR-0059 / ADR-0063） */
   editLocation: (
     locationId: string,
-    patch: Partial<Pick<Location, "name" | "templateId">>,
+    patch: Partial<Pick<Location, "name" | "templateId" | "description">>,
   ) => boolean;
   /** 调整场序：写一条 `scene.moved`，场号与镜号跟着重排（ADR-0060） */
   moveScene: (sceneId: string, direction: "up" | "down") => boolean;
@@ -135,6 +139,9 @@ function bootstrap(project: Project): ProjectEvent[] {
     },
   ];
 }
+
+/** 场景描述的上限：这句会整句进主镜提示词，长了会把画面指令挤掉（ADR-0063） */
+const LOCATION_DESCRIPTION_MAX = 200;
 
 const initialEvents = bootstrap(sampleProject);
 const initialView = toStageView(sampleProject);
@@ -609,7 +616,10 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         label: location.name,
         assetId: location.masterShotId,
         job: { kind: "master" },
-        body: { kind: "master", location: { name: location.name } },
+        body: {
+          kind: "master",
+          location: { name: location.name, description: location.description },
+        },
       },
     );
   },
@@ -890,7 +900,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     return true;
   },
 
-  addLocation: (name, templateId) => {
+  addLocation: (name, templateId, description) => {
     if (get().readOnly) return undefined;
     const { project, events } = get();
     const trimmed = name.trim();
@@ -902,11 +912,17 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       set({ castError: `已经有一个叫「${trimmed}」的地点了。` });
       return undefined;
     }
+    const trimmedDescription = (description ?? "").trim();
+    if (trimmedDescription.length > LOCATION_DESCRIPTION_MAX) {
+      set({ castError: `场景描述太长了：${LOCATION_DESCRIPTION_MAX} 字以内。` });
+      return undefined;
+    }
     let id = `loc-${Date.now().toString(36)}`;
     while (project.locations.some((item) => item.id === id)) id += "x";
     const location: Location = {
       id,
       name: trimmed,
+      description: trimmedDescription,
       referenceImages: [],
       ...(templateId ? { templateId } : {}),
     };
@@ -931,7 +947,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       set({ castError: "找不到这个地点。" });
       return false;
     }
-    const next: Partial<Pick<Location, "name" | "templateId">> = {};
+    const next: Partial<Pick<Location, "name" | "templateId" | "description">> = {};
     if (patch.name !== undefined) {
       const trimmed = patch.name.trim();
       if (!trimmed) {
@@ -948,6 +964,14 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     }
     if (patch.templateId !== undefined && patch.templateId !== location.templateId) {
       next.templateId = patch.templateId;
+    }
+    if (patch.description !== undefined) {
+      const trimmedDescription = patch.description.trim();
+      if (trimmedDescription.length > LOCATION_DESCRIPTION_MAX) {
+        set({ castError: `场景描述太长了：${LOCATION_DESCRIPTION_MAX} 字以内。` });
+        return false;
+      }
+      if (trimmedDescription !== location.description) next.description = trimmedDescription;
     }
     if (Object.keys(next).length === 0) {
       set({ castError: "地点没改。" });

@@ -92,11 +92,14 @@ interface Appearance {
 interface Location {
   id: ID;
   name: string;
-  description: string;
+  templateId?: string;      // 走廊 / 门口 / 桌边 / 门厅：决定主镜剪影（ADR-0059）
+  description: string;      // 这地方长什么样，整句进主镜提示词，≤200 字（ADR-0063）
   masterShotId?: ID;        // 主镜：本场所有镜头共用的空间与光线基准
   referenceImages: ID[];    // 其他机位 / 细节图
   lightingDefaults: LightingSpec;
 }
+
+> **落地情况（ADR-0063，2026-11-10）**：`Location.description`（默认 `""`）已进 IR，旧日志靠默认值补齐；改描述写 `location.updated { locationId, patch: { description } }`，`location.added` 也带这一格。上限 200 字。`Location.templateId` 由 ADR-0059 落地。`lightingDefaults` 仍只在文档里。
 
 interface Prop {
   id: ID;

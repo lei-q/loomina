@@ -159,6 +159,8 @@ describe("toStageView", () => {
     expect(cast.locations.every((item) => item.masterAssetId)).toBe(true);
     // 模板带进读模型：改名表单要回填它（ADR-0059）
     expect(cast.locations.find((item) => item.id === "loc-corridor")?.templateId).toBe("corridor");
+    // 示例项目没有场景描述：读模型给空串，不塞占位文案（ADR-0063）
+    expect(cast.locations.find((item) => item.id === "loc-corridor")?.description).toBe("");
 
     const cup = cast.props.find((item) => item.id === "p-cup")!;
     expect(cup.art).toBe("cup");

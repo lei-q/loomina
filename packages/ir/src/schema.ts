@@ -19,6 +19,8 @@ export const LocationSchema = z.object({
   id: Id,
   name: z.string().min(1),
   templateId: Id.optional(),
+  /** 场景描述：这地方长什么样——空间、陈设、光线；进主镜提示词（ADR-0063） */
+  description: z.string().default(""),
   /** 场景主镜：本场所有镜头共用的空间与光线锚点（CONSISTENCY.md 第一层） */
   masterShotId: Id.optional(),
   /** 其他机位/细节参考图 */
