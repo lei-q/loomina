@@ -364,6 +364,134 @@ describe("尾帧（ADR-0038）", () => {
   });
 });
 
+describe("视频与多 take（ADR-0083）", () => {
+  beforeEach(() => {
+    state().reset();
+    state().setImagePrice({ model: "gpt-image-2-c", cny: 0.12 });
+    state().setVideoPrice({ model: "seedance", cnyPerSecond: 0.6 });
+  });
+
+  /** 一个假网关：出图与出视频按 URL 分开回。 */
+  const stub = () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        calls.push(String(url));
+        const body = String(url).endsWith("/api/video")
+          ? {
+              uri: "data:video/mp4;base64,QUJD",
+              model: "seedance",
+              prompt: "从首帧起势",
+              durationMs: 3000,
+              cny: 1.8,
+            }
+          : { uri: "data:image/png;base64,RkFLRQ==", model: "gpt-image-2-c", cny: 0.12 };
+        return new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }),
+    );
+    return calls;
+  };
+
+  it("贴一条视频地址就当一拍 take：资产是 upload，不花钱", () => {
+    const before = state().project.takes.length;
+    const ok = state().attachVideo("s-03", "https://cdn.example.com/take.mp4");
+
+    expect(ok).toBe(true);
+    expect(state().project.takes).toHaveLength(before + 1);
+    const types = state().events.map((event) => event.type);
+    expect(types.slice(-2)).toEqual(["asset.updated", "take.added"]);
+
+    const shot = state().project.shots.find((item) => item.id === "s-03")!;
+    const take = state().project.takes.find((item) => item.id === shot.takeIds.at(-1))!;
+    expect(take.status).toBe("draft");
+    expect(take.costCny).toBe(0);
+    expect(take.provenance.modelId).toBe("import");
+
+    const asset = state().project.assets.find((item) => item.id === take.assetId)!;
+    expect(asset.kind).toBe("video");
+    expect(asset.source).toBe("upload");
+    expect(asset.uri).toBe("https://cdn.example.com/take.mp4");
+
+    const view = toStageView(state().project);
+    expect(view.shots.find((item) => item.id === "s-03")?.hasVideo).toBe(true);
+  });
+
+  it("同一条地址不重复贴，认不出的地址不收", () => {
+    state().attachVideo("s-03", "https://cdn.example.com/take.mp4");
+    expect(state().attachVideo("s-03", "https://cdn.example.com/take.mp4")).toBe(false);
+    expect(state().castError).toContain("已经贴过");
+
+    expect(state().attachVideo("s-03", "ftp://nope")).toBe(false);
+    expect(state().castError).toContain("http(s)://");
+  });
+
+  it("没有首帧就不出视频，一次请求都不发", async () => {
+    const calls = stub();
+    const ok = await state().generateVideo("s-03");
+
+    expect(ok).toBe(false);
+    expect(calls).toHaveLength(0);
+    expect(state().castError).toContain("首帧");
+    vi.unstubAllGlobals();
+  });
+
+  it("首帧在就出一拍：资产 video，take 追加，旧 take 不覆盖", async () => {
+    const calls = stub();
+    await state().generateKeyframe("s-03");
+    const before = state().project.shots.find((item) => item.id === "s-03")!.takeIds.length;
+
+    const ok = await state().generateVideo("s-03");
+
+    expect(ok).toBe(true);
+    expect(calls.filter((url) => url.endsWith("/api/video"))).toHaveLength(1);
+    const shot = state().project.shots.find((item) => item.id === "s-03")!;
+    expect(shot.takeIds).toHaveLength(before + 1);
+    expect(state().jobs["s-03:video"]).toBeUndefined();
+
+    const take = state().project.takes.find((item) => item.id === shot.takeIds.at(-1))!;
+    expect(take.status).toBe("draft");
+    expect(take.costCny).toBe(1.8);
+    const asset = state().project.assets.find((item) => item.id === take.assetId)!;
+    expect(asset.kind).toBe("video");
+    expect(asset.uri).toBe("data:video/mp4;base64,QUJD");
+    expect(asset.provenance?.referenceAssetIds).toEqual(["a-keyframe-s-03"]);
+
+    const view = toStageView(state().project);
+    const shown = view.shots.find((item) => item.id === "s-03")!;
+    expect(shown.takes.at(-1)?.uri).toBe("data:video/mp4;base64,QUJD");
+    expect(shown.videoUri).toBe("data:video/mp4;base64,QUJD");
+    vi.unstubAllGlobals();
+  });
+
+  it("超预算的镜头不出视频，说清是哪一镜", async () => {
+    const calls = stub();
+    await state().generateKeyframe("s-03");
+    state().setBudget(19);
+    const before = calls.length;
+
+    const ok = await state().generateVideo("s-03");
+
+    expect(ok).toBe(false);
+    expect(calls).toHaveLength(before);
+    expect(state().castError).toContain("SH-03");
+    expect(state().castError).toContain("预算");
+    vi.unstubAllGlobals();
+  });
+
+  it("锁定的镜头不出视频，也不收地址", async () => {
+    const calls = stub();
+    expect(await state().generateVideo("s-08")).toBe(false);
+    expect(state().castError).toContain("锁定");
+    expect(state().attachVideo("s-08", "https://cdn.example.com/x.mp4")).toBe(false);
+    expect(calls).toHaveLength(0);
+    vi.unstubAllGlobals();
+  });
+});
+
 describe("一句话指令（ADR-0039）", () => {
   beforeEach(() => {
     state().reset();

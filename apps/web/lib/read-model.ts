@@ -13,6 +13,7 @@ import {
 } from "@loomina/ir";
 import {
   buildKeyframePrompt,
+  buildVideoPrompt,
   SHOT_ANGLE_CN,
   SHOT_SIZE_CN,
   shotMaterial,
@@ -21,6 +22,17 @@ import { requoteProject, requoteShot, type ProjectRequote, type Requote } from "
 
 export type SceneKind = "door" | "two" | "table" | "corridor";
 export type ShotState = "open" | "pick" | "reject";
+
+export type StageTake = {
+  id: string;
+  /** 第几版，从 1 开始（按拍摄顺序，不按状态） */
+  no: number;
+  status: Take["status"];
+  /** 视频地址（data URI 或 http(s)）；资产缺失或还没有 uri 时为空 */
+  uri?: string;
+  createdAt: string;
+  costCny: number;
+};
 
 export type StageShot = {
   /** 镜号，从 1 开始；IR 里的 index 从 0 开始 */
@@ -33,6 +45,12 @@ export type StageShot = {
   state: ShotState;
   /** 当前用的是第几版 take，没有 take 时为空 */
   take?: number;
+  /** 这一镜的全部 take，按拍摄顺序（ADR-0083） */
+  takes: StageTake[];
+  /** 当前 take 的视频地址；没有能播的视频时为空 */
+  videoUri?: string;
+  /** 当前 take 有没有能播的视频：轨道条与关键帧页据此计数 */
+  hasVideo: boolean;
   /** 锁定的镜头在审片台里只读 */
   locked: boolean;
   /** 这一镜里谁出场：分镜页据此点亮人物签（ADR-0065） */
@@ -46,8 +64,8 @@ export type StageShot = {
   angle: string;
   /** 一句话指令落下的补充要求（ADR-0039） */
   notes: string[];
-  /** 首尾两帧真正会送出的提示词：说了什么、改了什么，在这里对得上（ADR-0040） */
-  prompts: { first: string; last: string };
+  /** 首尾两帧与视频真正会送出的提示词：说了什么、改了什么，在这里对得上（ADR-0040 / ADR-0083） */
+  prompts: { first: string; last: string; video: string };
   /** 这一镜带进生成的参考图（ADR-0029）；缺锚点时生成会被拒绝 */
   anchors: { labels: string[]; missing: string[] };
   /** 首帧的真图（data URI，ADR-0037）；没生成过就为空 */
@@ -220,6 +238,21 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
       ? assetById.get(shot.keyframes.lastAssetId)
       : undefined;
     const material = shotMaterial(project, shot);
+    const takes: StageTake[] = shot.takeIds.flatMap((id, i) => {
+      const item = takesById.get(id);
+      if (!item) return [];
+      return [
+        {
+          id: item.id,
+          no: i + 1,
+          status: item.status,
+          uri: assetById.get(item.assetId)?.uri,
+          createdAt: item.provenance.createdAt,
+          costCny: item.costCny,
+        },
+      ];
+    });
+    const videoUri = take ? assetById.get(take.assetId)?.uri : undefined;
     return {
       no: i + 1,
       id: shot.id,
@@ -228,6 +261,9 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
       dur: shot.durationMs / 1000,
       state: shotState(shot, take),
       take: take ? shot.takeIds.indexOf(take.id) + 1 : undefined,
+      takes,
+      videoUri,
+      hasVideo: Boolean(videoUri),
       locked: shot.locked ?? false,
       characterIds: shot.characterIds,
       propIds: shot.propIds,
@@ -238,6 +274,7 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
       prompts: {
         first: buildKeyframePrompt(material, "first"),
         last: buildKeyframePrompt(material, "last"),
+        video: buildVideoPrompt(material),
       },
       anchors: {
         labels: anchors.refs.map((ref) => ref.label),
@@ -380,11 +417,16 @@ export type KeyframeCell = {
   action: string;
   size: string;
   angle: string;
+  /** 秒：出视频的报价按它算 */
+  dur: number;
   locked: boolean;
   firstUri?: string;
   lastUri?: string;
   hasFirst: boolean;
   hasLast: boolean;
+  /** 这一镜已经有能播的 take 视频（ADR-0083） */
+  videoUri?: string;
+  hasVideo: boolean;
   /** 出图之后这一镜的画面输入改过（ADR-0057）：时间是最后一次改动，另带改过哪几项 */
   staleFirst?: StaleMark;
   staleLast?: StaleMark;
@@ -510,6 +552,8 @@ export type KeyframeView = {
   lastCount: number;
   /** 有多少镜两帧都齐了 */
   completeCount: number;
+  /** 有多少镜已经有能播的视频（ADR-0083） */
+  videoCount: number;
   /** 关键帧这一类资产花掉的钱（按 id 前缀认） */
   keyframeSpend: number;
   /** 生成了但价目表里没有模型的关键帧张数 */
@@ -571,11 +615,14 @@ export function toKeyframeView(
     action: shot.action,
     size: shot.size,
     angle: shot.angle,
+    dur: shot.dur,
     locked: shot.locked,
     firstUri: shot.keyframeUri,
     lastUri: shot.lastKeyframeUri,
     hasFirst: shot.hasKeyframe,
     hasLast: shot.hasLastFrame,
+    videoUri: shot.videoUri,
+    hasVideo: shot.hasVideo,
     staleFirst: stale.get(shot.id)?.first,
     staleLast: stale.get(shot.id)?.last,
   }));
@@ -599,6 +646,7 @@ export function toKeyframeView(
     firstCount: cells.filter((cell) => cell.hasFirst).length,
     lastCount: cells.filter((cell) => cell.hasLast).length,
     completeCount: cells.filter((cell) => cell.hasFirst && cell.hasLast).length,
+    videoCount: cells.filter((cell) => cell.hasVideo).length,
     keyframeSpend: Math.round(keyframeSpend * 100) / 100,
     keyframeUnpriced,
     spent: view.spent,

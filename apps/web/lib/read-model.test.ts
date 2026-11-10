@@ -143,6 +143,55 @@ describe("toStageView", () => {
     expect(view.shots[0]?.take).toBe(2);
   });
 
+  it("每拍 take 都读出来，最近一拍有片就是当前视频（ADR-0083）", () => {
+    const project = ProjectSchema.parse({
+      ...sampleProject,
+      assets: [
+        ...sampleProject.assets,
+        {
+          id: "a-02-new",
+          kind: "video",
+          source: "generated",
+          uri: "data:video/mp4;base64,AAAA",
+          mime: "video/mp4",
+          durationMs: 2400,
+          provenance: { modelId: "seedance", createdAt: "2026-11-10T10:00:00+08:00" },
+          createdAt: "2026-11-10T10:00:00+08:00",
+        },
+      ],
+      shots: sampleProject.shots.map((shot) =>
+        shot.id === "s-02" ? { ...shot, takeIds: [...shot.takeIds, "t-02b"] } : shot,
+      ),
+      takes: [
+        ...sampleProject.takes,
+        {
+          id: "t-02b",
+          shotId: "s-02",
+          assetId: "a-02-new",
+          status: "draft",
+          costCny: 1.2,
+          provenance: { modelId: "seedance", createdAt: "2026-11-10T10:00:00+08:00" },
+        },
+      ],
+    });
+
+    const view = toStageView(project);
+    const shot = view.shots.find((item) => item.id === "s-02")!;
+    // 旧的 t-02 样例资产没有 uri：它在，但不算"有片"
+    expect(shot.takes.map((take) => [take.no, take.status, Boolean(take.uri)])).toEqual([
+      [1, "approved", false],
+      [2, "draft", true],
+    ]);
+    expect(shot.videoUri).toBe("data:video/mp4;base64,AAAA");
+    expect(shot.hasVideo).toBe(true);
+    expect(shot.state).toBe("open"); // 最近一拍还是待定
+
+    const frames = toKeyframeView(project);
+    expect(frames.videoCount).toBe(1);
+    expect(frames.cells.find((cell) => cell.id === "s-02")?.hasVideo).toBe(true);
+    expect(frames.cells.find((cell) => cell.id === "s-02")?.dur).toBe(shot.dur);
+  });
+
   it("定妆台：两个角色四格齐全，三个场景各一主镜，两个道具各一张参考", () => {
     const cast = toCastView(sampleProject);
     expect(cast.characters).toHaveLength(2);

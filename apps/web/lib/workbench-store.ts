@@ -35,12 +35,13 @@ import { sampleProject } from "@/lib/sample-project";
 
 export type Decision = "approved" | "rejected";
 
-/** 正在生成哪一张：定妆台的三类资产共用一条进度记录。 */
+/** 正在生成哪一张：定妆台的三类资产共用一条进度记录（视频按 `${shotId}:video` 记）。 */
 export type GenerateJob =
   | { kind: "sheet"; angle: SheetView }
   | { kind: "master" }
   | { kind: "prop" }
-  | { kind: "keyframe"; frame: Frame };
+  | { kind: "keyframe"; frame: Frame }
+  | { kind: "video" };
 
 /**
  * 审片台的本地状态（ADR-0027）。
@@ -75,8 +76,11 @@ type WorkbenchState = {
   };
   /** 当前出图模型的单价（元 / 张）。由服务端价目接口给，不知道就不拦（ADR-0035） */
   imageCny?: number;
+  /** 当前出视频模型的单价（元 / 秒）。同上：不知道就不拦（ADR-0083） */
+  videoCnyPerSecond?: number;
   /** 登记价目：定妆台进页面时问一次服务端 */
   setImagePrice: (price: { model: string; cny?: number }) => void;
+  setVideoPrice: (price: { model: string; cnyPerSecond?: number }) => void;
   /** 改预算上限：写一条 `project.updated`，预算改了要留痕 */
   setBudget: (cny: number) => void;
   /** 从本地日志恢复；已经恢复过就什么都不做 */
@@ -112,6 +116,16 @@ type WorkbenchState = {
   generateProp: (propId: string) => Promise<void>;
   /** 给当前镜生成首帧或尾帧；落一张图 + 一条 shot.updated（ADR-0037 / 0038） */
   generateKeyframe: (shotId: string, frame?: Frame) => Promise<boolean>;
+  /**
+   * 首帧 → 视频：提交、等出片，落一条 `asset.updated` + 一条 `take.added`（ADR-0083）。
+   * 失败如实写进 `castError`，界面还有「贴视频地址导入」兜底。
+   */
+  generateVideo: (shotId: string) => Promise<boolean>;
+  /**
+   * 贴一条视频地址当 take（ADR-0083）：供应商配额不通时的兜底，
+   * 也让已经有片子的人能把 take 流程走完。收 http(s):// 或 data:video/。
+   */
+  attachVideo: (shotId: string, uri: string) => boolean;
   /** 批量补缺：按镜号顺序一帧一帧生成，跳过锁定，失败即停（ADR-0042 附记） */
   generateMissingFrames: (frame?: Frame) => Promise<void>;
   /** 批量补帧的进度；`stop` 置上后当前这一张结束就停 */
@@ -240,6 +254,9 @@ const MUST_NOT_CHANGE_COUNT_MAX = 20;
 
 /** 手挂参考图的地址上限：data URI 可能很长，留到 400 KB（ADR-0079） */
 const REFERENCE_URI_MAX = 400_000;
+
+/** 手贴视频地址的上限：data:video 可能很长，留到 12 MB（ADR-0083） */
+const VIDEO_URI_MAX = 12_000_000;
 
 /**
  * 手挂的参考图：现在没有上传通道，先收一个图床 / data URI 地址（ADR-0079）。
@@ -522,6 +539,10 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   setImagePrice: ({ cny }) => {
     set({ imageCny: cny });
+  },
+
+  setVideoPrice: ({ cnyPerSecond }) => {
+    set({ videoCnyPerSecond: cnyPerSecond });
   },
 
   setBudget: (cny) => {
@@ -1043,7 +1064,221 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     );
   },
 
+  generateVideo: async (shotId) => {
+    if (get().readOnly) return false;
+    const { project } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) return false;
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定：要重拍先解锁。" });
+      return false;
+    }
+
+    // 首帧先行：没有起点的画面，视频只会被模型当成要重画一镜（ADR-0083）
+    const firstId = shot.keyframes.firstAssetId;
+    const firstFrame = firstId
+      ? project.assets.find((asset) => asset.id === firstId)
+      : undefined;
+    if (!firstFrame?.uri) {
+      set({ castError: "这一镜还没有首帧：先去关键帧页出一张，再让它动起来。" });
+      return false;
+    }
+
+    // 提交前拦超预算：按秒报价 × 这一镜的时长；不知道单价就不拦
+    const perSecond = get().videoCnyPerSecond;
+    const no = toStageView(project).shots.find((item) => item.id === shot.id)?.no;
+    const label = no === undefined ? shot.id : shotLabel(no);
+    if (perSecond !== undefined) {
+      const unit = Math.round((shot.durationMs / 1000) * perSecond * 100) / 100;
+      const { spent } = spendOf(project);
+      if (spent + unit > project.budgetCny) {
+        set({
+          castError: `「${label}」出视频要 ¥${unit.toFixed(2)}，已花 ¥${spent.toFixed(2)} / 预算 ¥${project.budgetCny.toFixed(2)}。先提高预算再生成。`,
+        });
+        return false;
+      }
+    }
+
+    const jobKey = `${shot.id}:video`;
+    const setJob = (value: GenerateJob | undefined) =>
+      set({ jobs: { ...get().jobs, [jobKey]: value } });
+
+    set({ castError: undefined });
+    setJob({ kind: "video" });
+    try {
+      const response = await fetch("/api/video", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shot: shotMaterial(project, shot),
+          firstFrame: firstFrame.uri,
+          durationMs: shot.durationMs,
+        }),
+      });
+      const payload = (await response.json()) as {
+        uri?: string;
+        model?: string;
+        prompt?: string;
+        durationMs?: number;
+        cny?: number;
+        error?: string;
+      };
+      if (!response.ok || !payload.uri) {
+        throw new Error(payload.error ?? `生成失败（${response.status}）`);
+      }
+
+      // 每拍一条就新占一个资产位，不覆盖旧 take：多 Take 的意义就是能比
+      let n = shot.takeIds.length + 1;
+      let assetId = `a-video-${shot.id}-${n}`;
+      while (project.assets.some((asset) => asset.id === assetId)) {
+        n += 1;
+        assetId = `a-video-${shot.id}-${n}`;
+      }
+      const at = new Date().toISOString();
+      const mime = /^data:(video\/[a-z0-9.+-]+)[;,]/i.exec(payload.uri)?.[1];
+      const provenance = {
+        modelId: payload.model ?? "unknown",
+        prompt: payload.prompt,
+        referenceAssetIds: firstId ? [firstId] : [],
+        createdAt: at,
+      };
+      const written: ProjectEvent[] = [
+        {
+          type: "asset.updated",
+          at,
+          asset: {
+            id: assetId,
+            kind: "video",
+            source: "generated",
+            uri: payload.uri,
+            ...(mime ? { mime } : {}),
+            durationMs: payload.durationMs ?? shot.durationMs,
+            costCny: typeof payload.cny === "number" ? payload.cny : undefined,
+            provenance,
+            createdAt: at,
+          },
+        },
+        {
+          type: "take.added",
+          at,
+          take: {
+            id: `take-${shot.id}-${n}`,
+            shotId: shot.id,
+            assetId,
+            provenance,
+            status: "draft",
+            costCny: typeof payload.cny === "number" ? payload.cny : 0,
+          },
+        },
+      ];
+      set({
+        project: written.reduce(applyEvent, project),
+        events: [...get().events, ...written],
+        castError: undefined,
+      });
+      setJob(undefined);
+      return true;
+    } catch (error) {
+      setJob(undefined);
+      const reason =
+        error instanceof Error ? error.message : "原因没说";
+      // 供应商原文可能很长：截断保留可判断的部分，前面补一句人话（ADR-0083）
+      const clipped = reason.length > 240 ? `${reason.slice(0, 240)}…` : reason;
+      set({
+        castError: `「${label}」没出片：${clipped}。可以先「贴视频地址导入」顶上，或稍后再试。`,
+      });
+      return false;
+    }
+  },
+
+  attachVideo: (shotId, rawUri) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) {
+      set({ castError: "找不到这一镜。" });
+      return false;
+    }
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定：要贴视频先解锁。" });
+      return false;
+    }
+
+    const uri = rawUri.trim();
+    if (!uri) {
+      set({ castError: "先贴一条视频地址。" });
+      return false;
+    }
+    if (!/^(https?:\/\/|data:video\/)/i.test(uri)) {
+      set({ castError: "视频要先有地址：http(s):// 或 data:video/ 开头。" });
+      return false;
+    }
+    if (uri.length > VIDEO_URI_MAX) {
+      set({ castError: "地址太长了：12 MB 以内。" });
+      return false;
+    }
+    const already = shot.takeIds.some(
+      (id) =>
+        project.assets.find(
+          (asset) => asset.id === project.takes.find((take) => take.id === id)?.assetId,
+        )?.uri === uri,
+    );
+    if (already) {
+      set({ castError: "这条视频已经贴过了。" });
+      return false;
+    }
+
+    let n = shot.takeIds.length + 1;
+    let assetId = `a-video-${shot.id}-${n}`;
+    while (project.assets.some((asset) => asset.id === assetId)) {
+      n += 1;
+      assetId = `a-video-${shot.id}-${n}`;
+    }
+    const at = new Date().toISOString();
+    const mime = /^data:(video\/[a-z0-9.+-]+)[;,]/i.exec(uri)?.[1];
+    const provenance = {
+      modelId: "import",
+      referenceAssetIds: [],
+      createdAt: at,
+    };
+    const written: ProjectEvent[] = [
+      {
+        type: "asset.updated",
+        at,
+        asset: {
+          id: assetId,
+          kind: "video",
+          source: "upload",
+          uri,
+          ...(mime ? { mime } : {}),
+          durationMs: shot.durationMs,
+          provenance,
+          createdAt: at,
+        },
+      },
+      {
+        type: "take.added",
+        at,
+        take: {
+          id: `take-${shot.id}-${n}`,
+          shotId: shot.id,
+          assetId,
+          provenance,
+          status: "draft",
+          costCny: 0,
+        },
+      },
+    ];
+    set({
+      project: written.reduce(applyEvent, project),
+      events: [...events, ...written],
+      castError: undefined,
+    });
+    return true;
+  },
+
   generateMissingFrames: async (frame = "first") => {
+
     if (get().readOnly || get().batch) return;
     const { shots } = toStageView(get().project);
     const missing = shots

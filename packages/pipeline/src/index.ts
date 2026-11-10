@@ -293,7 +293,22 @@ export function buildShotPrompt(project: Project, shot: Shot): string {
   return parts.join("。");
 }
 
-/** 关键帧是这一镜的起点还是落点（ADR-0037 / ADR-0038）。 */
+/**
+ * 视频提示词（ADR-0083）：同一镜的提示词，加上"让它动起来"的一句。
+ *
+ * 首帧已经定住画面，这里只补运动与连贯，不重新描述人物——
+ * 重复描述会被模型当成要重画一张，反而丢一致性。
+ */
+export function buildVideoPrompt(material: ShotPromptMaterial): string {
+  const parts = shotParts(material);
+  parts.push("从首帧起势，动作连贯，镜头平稳，保持人物一致");
+  parts.push(LOOK);
+  return parts.join("。");
+}
+
+/**
+ * 关键帧是这一镜的起点还是落点（ADR-0037 / ADR-0038）。
+ */
 export type Frame = "first" | "last";
 
 const FRAME_LINE: Record<Frame, string> = {

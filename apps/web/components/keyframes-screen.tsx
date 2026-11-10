@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Scene } from "@/components/scene";
 import { LockIcon } from "@/components/icons";
 import { TopBar } from "@/components/top-bar";
-import { fetchImagePrice } from "@/lib/image-price";
+import { fetchPrice } from "@/lib/image-price";
 import { shotLabel, toKeyframeView, filterKeyframeCells, keyframeTally, type KeyframeCell, type KeyframeFilter } from "@/lib/read-model";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
@@ -28,20 +28,28 @@ const FILTERS: { key: KeyframeFilter; label: string }[] = [
 function Cell({
   cell,
   busy,
+  videoBusy,
   batchRunning,
   readOnly,
   quoteCny,
+  videoCnyPerSecond,
   onGenerate,
+  onGenerateVideo,
 }: {
   cell: KeyframeCell;
   /** 正在生成哪一帧 */
   busy: "first" | "last" | null;
+  /** 这一镜正在出视频（ADR-0083） */
+  videoBusy: boolean;
   /** 批量补帧进行中：别的格子也不要插队 */
   batchRunning: boolean;
   /** 另一个标签页在编辑：这一页只读 */
   readOnly: boolean;
   quoteCny?: number;
+  /** 出一秒视频多少钱；不知道就不给 */
+  videoCnyPerSecond?: number;
   onGenerate: (frame: "first" | "last") => void;
+  onGenerateVideo: () => void;
 }) {
   // 两帧都有时，点画面切换看哪一帧；生成动作始终在下面两个按钮上
   const [shown, setShown] = useState<"first" | "last">("first");
@@ -51,6 +59,7 @@ function Cell({
   const uri = frame === "first" ? cell.firstUri : cell.lastUri;
   // 出图之后画面输入又改过：这一帧已经对不上这一镜了
   const staleAt = frame === "first" ? cell.staleFirst : cell.staleLast;
+  const videoQuote = videoCnyPerSecond === undefined ? undefined : cell.dur * videoCnyPerSecond;
 
   return (
     <figure className="flex flex-col gap-1.5">
@@ -81,6 +90,14 @@ function Cell({
           </span>
         )}
         <span className="absolute right-1.5 top-1 flex items-center gap-1">
+          {cell.hasVideo && (
+            <span
+              title={`这一镜已经有片子 · ${shotLabel(cell.no)}`}
+              className="tnum rounded-[1px] bg-black/45 px-1 text-[8.5px] text-white/80"
+            >
+              ▶
+            </span>
+          )}
           {cell.locked && <LockIcon className="h-3 w-3 text-white/70" />}
           {uri && (
             <span className="tnum rounded-[1px] bg-black/45 px-1 text-[8.5px] text-white/80">
@@ -130,9 +147,39 @@ function Cell({
         })}
       </div>
 
+      {/* 首帧在，就能让它动起来：出一拍视频，不覆盖旧的（ADR-0083） */}
+      <button
+        type="button"
+        onClick={onGenerateVideo}
+        disabled={cell.locked || readOnly || !cell.hasFirst || videoBusy || busy !== null || batchRunning}
+        title={
+          !cell.hasFirst
+            ? "先有首帧，才能出视频"
+            : cell.locked
+              ? "这一镜已锁定"
+              : cell.hasVideo
+                ? "从首帧重拍一条：多一拍 take，不覆盖旧的"
+                : "从首帧出视频：提交后要等一两分钟"
+        }
+        className={cn(
+          "flex items-baseline justify-center gap-1.5 rounded-token border border-line px-1 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)]",
+          "hover:border-line-2 hover:text-text disabled:pointer-events-none disabled:opacity-40",
+        )}
+      >
+        <span>{videoBusy ? "出片中…" : cell.hasVideo ? "重拍视频" : "出视频"}</span>
+        <span className="tnum text-[8.5px] text-muted-2">
+          {!cell.hasFirst
+            ? "先出首帧"
+            : videoQuote === undefined
+              ? "价目未知"
+              : `¥${videoQuote.toFixed(2)}`}
+        </span>
+      </button>
+
       {/* 有没有图，靠一行小字说清，别让人猜 */}
       <figcaption className="tnum text-[8.5px] text-muted-2">
-        {cell.size} · {cell.angle} · 首{cell.hasFirst ? "✓" : "—"} · 尾{cell.hasLast ? "✓" : "—"}
+        {cell.size} · {cell.angle} · 首{cell.hasFirst ? "✓" : "—"} · 尾{cell.hasLast ? "✓" : "—"} · 视频
+        {cell.hasVideo ? "✓" : "—"}
       </figcaption>
     </figure>
   );
@@ -148,18 +195,23 @@ export function KeyframesScreen() {
   const castError = useWorkbench((state) => state.castError);
   const imageCny = useWorkbench((state) => state.imageCny);
   const setImagePrice = useWorkbench((state) => state.setImagePrice);
+  const videoCnyPerSecond = useWorkbench((state) => state.videoCnyPerSecond);
+  const setVideoPrice = useWorkbench((state) => state.setVideoPrice);
   const setBudget = useWorkbench((state) => state.setBudget);
   const generateKeyframe = useWorkbench((state) => state.generateKeyframe);
+  const generateVideo = useWorkbench((state) => state.generateVideo);
   const generateMissingFrames = useWorkbench((state) => state.generateMissingFrames);
   const batch = useWorkbench((state) => state.batch);
   const stopBatch = useWorkbench((state) => state.stopBatch);
 
   useEffect(() => {
     void hydrate();
-    void fetchImagePrice().then((price) => {
-      if (price) setImagePrice(price);
+    void fetchPrice().then((price) => {
+      if (!price) return;
+      setImagePrice(price);
+      if (price.video) setVideoPrice(price.video);
     });
-  }, [hydrate, setImagePrice]);
+  }, [hydrate, setImagePrice, setVideoPrice]);
 
   const view = useMemo(() => toKeyframeView(project, { events }), [project, events]);
   const staleCount = view.cells.reduce(
@@ -215,6 +267,12 @@ export function KeyframesScreen() {
                 <dt className="text-muted-2">尾帧</dt>
                 <dd className="text-muted">
                   {view.lastCount} / {view.cells.length}
+                </dd>
+              </div>
+              <div className="flex items-baseline gap-1.5">
+                <dt className="text-muted-2">视频</dt>
+                <dd className="text-muted">
+                  {view.videoCount} / {view.cells.length}
                 </dd>
               </div>
               {staleCount > 0 && (
@@ -311,10 +369,13 @@ export function KeyframesScreen() {
                   key={cell.id}
                   cell={cell}
                   busy={busy}
+                  videoBusy={jobs[`${cell.id}:video`]?.kind === "video"}
                   batchRunning={Boolean(batch)}
                   readOnly={Boolean(readOnly)}
                   quoteCny={imageCny}
+                  videoCnyPerSecond={videoCnyPerSecond}
                   onGenerate={(frame) => void generateKeyframe(cell.id, frame)}
+                  onGenerateVideo={() => void generateVideo(cell.id)}
                 />
               );
             })}

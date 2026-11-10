@@ -1,12 +1,8 @@
 import { NextResponse } from "next/server";
 import { ConfigError, TreecloudError } from "@loomina/gateway";
-import {
-  CameraSchema,
-  SHEET_ANGLES,
-  ShotSchema,
-  type SheetView,
-} from "@loomina/ir";
+import { SHEET_ANGLES, type SheetView } from "@loomina/ir";
 import { generateCastImage, type CastImageRequest } from "@/lib/generate-image";
+import { name, parseShotMaterial, text } from "@/lib/request-shape";
 
 /** 出图是 20–45 秒的事，别让它跑在 edge 的短超时里。 */
 export const runtime = "nodejs";
@@ -30,17 +26,8 @@ type Body = {
   };
 };
 
-function text(value: unknown, max: number): string {
-  return typeof value === "string" ? value.slice(0, max) : "";
-}
-
 function bad(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
-}
-
-/** 只切掉两侧空白；名字全空就当作没填。 */
-function name(value: unknown): string {
-  return text(value, 40).trim();
 }
 
 function parse(body: Body | null): CastImageRequest | string {
@@ -86,56 +73,11 @@ function parse(body: Body | null): CastImageRequest | string {
   }
 
   if (body.kind === "keyframe") {
-    const shot = body.shot;
-    if (!shot) return "缺少镜头";
     const frame = body.frame ?? "first";
     if (frame !== "first" && frame !== "last") return "关键帧不认识";
-    const size = ShotSchema.shape.shotSize.safeParse(shot.shotSize);
-    if (!size.success) return "景别不认识";
-    const camera = CameraSchema.safeParse(shot.camera);
-    if (!camera.success) return "机位参数不认识";
-
-    const characters = Array.isArray(shot.characters)
-      ? shot.characters
-          .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
-          .slice(0, 4)
-          .map((item) => ({
-            name: name(item.name),
-            appearance: text(item.appearance, 300),
-            mustNotChange: Array.isArray(item.mustNotChange)
-              ? item.mustNotChange
-                  .filter((keep): keep is string => typeof keep === "string")
-                  .slice(0, 12)
-                  .map((keep) => keep.slice(0, 40))
-              : [],
-          }))
-          .filter((item) => item.name)
-      : [];
-
-    const props = Array.isArray(shot.props)
-      ? shot.props
-          .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
-          .slice(0, 6)
-          .map((item) => ({
-            name: name(item.name),
-            description: text(item.description, 300),
-          }))
-          .filter((item) => item.name)
-      : [];
-
-    const where = name(shot.location?.name);
-    return {
-      kind: "keyframe",
-      frame,
-      shot: {
-        description: text(shot.description, 400),
-        shotSize: size.data,
-        camera: camera.data,
-        characters,
-        location: where ? { name: where } : undefined,
-        props,
-      },
-    };
+    const shot = parseShotMaterial(body.shot);
+    if (typeof shot === "string") return shot;
+    return { kind: "keyframe", frame, shot };
   }
 
   return "不认识的资产类型";

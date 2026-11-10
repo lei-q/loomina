@@ -41,6 +41,15 @@ function Cell({
         {String(shot.no).padStart(2, "0")}
       </span>
 
+      {shot.hasVideo && (
+        <span
+          title={`已经有片子 · ${shot.takes.filter((take) => take.uri).length} 拍`}
+          className="absolute bottom-0.5 right-1 text-[8px] text-white/70"
+        >
+          ▶
+        </span>
+      )}
+
       {shot.state === "pick" && <span className="absolute inset-x-0 bottom-0 h-[2px] bg-pick" />}
       {shot.state === "reject" && <span className="absolute inset-x-0 bottom-0 h-[2px] bg-reject" />}
       {stale.length > 0 && (
@@ -72,9 +81,22 @@ export type ReelBarProps = {
   onSetLock: (locked: boolean) => void;
   /** 一步留用并锁定：还没留用时，锁定按钮换个说法（ADR-0041 附记） */
   onApproveAndLock: () => void;
+  /** 按这一镜重拍一条视频：从首帧出发，多一拍 take（ADR-0083） */
+  onRedo: () => void;
+  /** 出一秒视频多少钱；价目不知道就不给 */
+  videoCnyPerSecond?: number;
 };
 
-export function ReelBar({ view, onSelect, onDecide, onInstruct, onSetLock, onApproveAndLock }: ReelBarProps) {
+export function ReelBar({
+  view,
+  onSelect,
+  onDecide,
+  onInstruct,
+  onSetLock,
+  onApproveAndLock,
+  onRedo,
+  videoCnyPerSecond,
+}: ReelBarProps) {
   const current = view.shots[view.current]!;
   const decidable = !current.locked && current.take !== undefined;
   // 锁定是"这一镜定了"：先留用，再锁（ADR-0041）
@@ -82,6 +104,10 @@ export function ReelBar({ view, onSelect, onDecide, onInstruct, onSetLock, onApp
   // 还没留用时，同一个按钮改做"留用并锁"：一次点击写两条事件（ADR-0041 附记）
   const canApproveLock = !current.locked && current.state !== "pick" && current.take !== undefined;
   const lockLabel = current.state === "pick" ? "锁定" : "留用并锁";
+  // 重做 = 重拍视频：首帧是起点，没有首帧就拍不了（ADR-0083）
+  const canRedo = !current.locked && current.hasKeyframe;
+  const redoPrice =
+    videoCnyPerSecond === undefined ? undefined : current.dur * videoCnyPerSecond;
   const lockTitle = canLock
     ? "锁定这一镜：不再改、不再生成"
     : canApproveLock
@@ -159,16 +185,27 @@ export function ReelBar({ view, onSelect, onDecide, onInstruct, onSetLock, onApp
 
             <button
               type="button"
-              disabled
-              title={`${view.requote.basis} · 生成还没接通`}
-              className="flex items-center gap-1.5 rounded-token border border-line px-3 py-2 text-[12px] text-text opacity-40 disabled:pointer-events-none"
+              onClick={onRedo}
+              disabled={!canRedo}
+              title={
+                canRedo
+                  ? videoCnyPerSecond === undefined
+                    ? `按这一镜重拍一条 ${current.dur.toFixed(1)}s 的视频，多一拍 take；价比不出来`
+                    : `${current.dur.toFixed(1)}s × ¥${videoCnyPerSecond.toFixed(2)}/s · 按这一镜重拍一条视频，多一拍 take`
+                  : current.locked
+                    ? "这一镜已锁定，先解锁再重做"
+                    : "先有首帧，才能重拍"
+              }
+              className="flex items-center gap-1.5 rounded-token border border-line px-3 py-2 text-[12px] text-text transition-colors duration-[var(--dur)] hover:border-line-2 disabled:pointer-events-none disabled:opacity-40"
             >
               <RedoIcon className="h-3.5 w-3.5" />
               重做
               <span className="tnum text-[9px] text-muted">
-                {view.requote.totalCny === undefined
-                  ? "价目未知"
-                  : `¥${view.requote.totalCny.toFixed(2)}`}
+                {redoPrice === undefined
+                  ? canRedo
+                    ? "价目未知"
+                    : "先出首帧"
+                  : `¥${redoPrice.toFixed(2)}`}
               </span>
             </button>
 

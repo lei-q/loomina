@@ -14,6 +14,7 @@ import {
   buildSheetPrompt,
   buildKeyframePrompt,
   buildShotPrompt,
+  buildVideoPrompt,
   parseInstruction,
   runMinimalChain,
   shotMaterial,
@@ -181,6 +182,18 @@ describe("首帧提示词（ADR-0037）", () => {
       for (const keep of character.mustNotChange) expect(prompt).toContain(keep);
     }
     expect(prompt).not.toContain("c-");
+  });
+
+  it("视频提示词（ADR-0083）与镜头同源，补的是运动而不是重画", () => {
+    const project = load();
+    const shot = project.shots[0]!;
+    const prompt = buildVideoPrompt(shotMaterial(project, shot));
+
+    expect(prompt).toContain(shot.description);
+    expect(prompt).toContain("从首帧起势");
+    expect(prompt).toContain("保持人物一致");
+    expect(prompt).not.toContain("首帧画面");
+    expect(prompt).not.toContain("无字幕");
   });
 });
 

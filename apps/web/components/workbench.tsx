@@ -5,7 +5,7 @@ import { ReelBar } from "@/components/reel-bar";
 import { Stage } from "@/components/stage";
 import { TopBar } from "@/components/top-bar";
 import { toStageView } from "@/lib/read-model";
-import { fetchImagePrice } from "@/lib/image-price";
+import { fetchPrice } from "@/lib/image-price";
 import { useWorkbench } from "@/lib/workbench-store";
 
 export function Workbench() {
@@ -30,14 +30,20 @@ export function Workbench() {
   const castError = useWorkbench((state) => state.castError);
   const imageCny = useWorkbench((state) => state.imageCny);
   const setImagePrice = useWorkbench((state) => state.setImagePrice);
+  const videoCnyPerSecond = useWorkbench((state) => state.videoCnyPerSecond);
+  const setVideoPrice = useWorkbench((state) => state.setVideoPrice);
+  const generateVideo = useWorkbench((state) => state.generateVideo);
+  const attachVideo = useWorkbench((state) => state.attachVideo);
 
   useEffect(() => {
     void hydrate();
-    // 首帧的价目同样来自服务端：进页面问一次，用来标价并在提交前拦超预算
-    void fetchImagePrice().then((price) => {
-      if (price) setImagePrice(price);
+    // 首帧与视频的价目同样来自服务端：进页面问一次，用来标价并在提交前拦超预算
+    void fetchPrice().then((price) => {
+      if (!price) return;
+      setImagePrice(price);
+      if (price.video) setVideoPrice(price.video);
     });
-  }, [hydrate, setImagePrice]);
+  }, [hydrate, setImagePrice, setVideoPrice]);
 
   const events = useWorkbench((state) => state.events);
   const view = useMemo(
@@ -108,9 +114,13 @@ export function Workbench() {
                   ? "first"
                   : null
             }
+            generatingVideo={jobs[`${view.shots[view.current]!.id}:video`]?.kind === "video"}
             quoteCny={imageCny}
+            videoCnyPerSecond={videoCnyPerSecond}
             readOnly={readOnly ?? false}
             onGenerateKeyframe={(frame) => void generateKeyframe(view.shots[view.current]!.id, frame)}
+            onGenerateVideo={() => void generateVideo(view.shots[view.current]!.id)}
+            onAttachVideo={(uri) => attachVideo(view.shots[view.current]!.id, uri)}
             onRemoveNote={(note) => removeNote(view.shots[view.current]!.id, note)}
             onToggleCharacter={(characterId) =>
               toggleShotCharacter(view.shots[view.current]!.id, characterId)
@@ -128,6 +138,8 @@ export function Workbench() {
             onInstruct={instruct}
             onSetLock={(locked) => setShotLock(view.shots[view.current]!.id, locked)}
             onApproveAndLock={() => approveAndLock(view.shots[view.current]!.id)}
+            onRedo={() => void generateVideo(view.shots[view.current]!.id)}
+            videoCnyPerSecond={videoCnyPerSecond}
           />
         </>
       )}

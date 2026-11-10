@@ -23,16 +23,26 @@ function Neighbour({ shot }: { shot: StageShot }) {
 
 const FRAME_LABEL: Record<Frame, string> = { first: "首帧", last: "尾帧" };
 
+const TAKE_STATUS_CN: Record<string, string> = {
+  approved: "留用",
+  rejected: "淘汰",
+  draft: "待定",
+};
+
 function Current({
   shot,
   subtitle,
   generating,
+  generatingVideo,
   quoteCny,
+  videoCnyPerSecond,
   characters,
   props,
   scenePropIds,
   readOnly,
   onGenerate,
+  onGenerateVideo,
+  onAttachVideo,
   onRemoveNote,
   onToggleCharacter,
   onToggleProp,
@@ -43,8 +53,12 @@ function Current({
   subtitle: string;
   /** 这一镜哪一帧正在生成（两帧可以同时跑，ADR-0038） */
   generating: Frame | null;
+  /** 这一镜正在出视频（ADR-0083） */
+  generatingVideo: boolean;
   /** 生成一张要多少钱；价目不知道就不给（ADR-0035） */
   quoteCny?: number;
+  /** 出视频一秒钟要多少钱；不知道就不给（ADR-0083） */
+  videoCnyPerSecond?: number;
   /** 全部人物：给这一镜点名（ADR-0065） */
   characters: { id: string; name: string }[];
   /** 全部道具：给这一镜点名（ADR-0066） */
@@ -53,6 +67,9 @@ function Current({
   scenePropIds: string[];
   readOnly: boolean;
   onGenerate: (frame: Frame) => void;
+  onGenerateVideo: () => void;
+  /** 贴一条视频地址当 take：供应商不通时的兜底（ADR-0083） */
+  onAttachVideo: (uri: string) => void;
   onRemoveNote: (note: string) => void;
   onToggleCharacter: (characterId: string) => void;
   onToggleProp: (propId: string) => void;
@@ -73,17 +90,30 @@ function Current({
   const visibleProps = sceneOnly
     ? orderedProps.filter((prop) => scenePropIds.includes(prop.id))
     : orderedProps;
-  // 正在看哪一帧：首帧是视频的起点，尾帧是落点（ADR-0038）
-  const [shown, setShown] = useState<Frame>("first");
+  // 正在看哪一帧 / 哪一拍：首帧是视频的起点，尾帧是落点（ADR-0038 / ADR-0083）
+  const [shown, setShown] = useState<Frame | "video">("first");
+  // 多 Take 时点某一拍就切到那一拍；没点就跟随最近一拍
+  const [shownTakeId, setShownTakeId] = useState<string | undefined>();
+  const [draftUri, setDraftUri] = useState("");
   const frames: Array<{ key: Frame; uri?: string; has: boolean }> = [
     { key: "first", uri: shot.keyframeUri, has: shot.hasKeyframe },
     { key: "last", uri: shot.lastKeyframeUri, has: shot.hasLastFrame },
   ];
-  const shownUri = shown === "first" ? shot.keyframeUri : shot.lastKeyframeUri;
-  const shownHas = shown === "first" ? shot.hasKeyframe : shot.hasLastFrame;
+  const shownFrame: Frame = shown === "video" ? "first" : shown;
+  const shownUri = shownFrame === "first" ? shot.keyframeUri : shot.lastKeyframeUri;
+  const shownHas = shownFrame === "first" ? shot.hasKeyframe : shot.hasLastFrame;
   // 出图之后画面输入改过：这一帧已经对不上这一镜（ADR-0057）
-  const shownStale = shown === "first" ? shot.staleFirst : shot.staleLast;
+  const shownStale = shownFrame === "first" ? shot.staleFirst : shot.staleLast;
   const staleOf = (frame: Frame) => (frame === "first" ? shot.staleFirst : shot.staleLast);
+  // 看视频时默认看最近一只有片的 take；点某一拍的签就看那一拍
+  const latestTakeWithVideo = [...shot.takes].reverse().find((take) => take.uri);
+  const displayTake =
+    shot.takes.find((take) => take.id === shownTakeId) ?? latestTakeWithVideo;
+  const videoUri = displayTake?.uri;
+  const videoShown = shown === "video";
+  const hasAnyVideo = shot.takes.some((take) => take.uri);
+  const videoQuote =
+    videoCnyPerSecond === undefined ? undefined : shot.dur * videoCnyPerSecond;
 
   return (
     <figure className="flex shrink-0 flex-col items-center gap-2">
@@ -97,40 +127,146 @@ function Current({
       </figcaption>
 
       <div className={cn(FRAME, "relative overflow-hidden rounded-token border border-white/[.075] bg-surface")}>
-        {shownUri ? (
+        {videoShown && videoUri ? (
+          <video
+            src={videoUri}
+            poster={shot.keyframeUri}
+            controls
+            playsInline
+            loop
+            className="h-full w-full object-cover"
+          />
+        ) : shownUri ? (
           <img
             src={shownUri}
-            alt={`${shotLabel(shot.no)} ${FRAME_LABEL[shown]}`}
+            alt={`${shotLabel(shot.no)} ${FRAME_LABEL[shownFrame]}`}
             className="h-full w-full object-cover"
           />
         ) : (
           <Scene kind={shot.art} className="h-full w-full" />
         )}
 
-        {shownStale && generating !== shown && (
+        {!videoShown && shownStale && generating !== shownFrame && (
           <span
-            title={`${FRAME_LABEL[shown]}出图之后改过：${shownStale.reasons.join("、")}，建议重生成`}
+            title={`${FRAME_LABEL[shownFrame]}出图之后改过：${shownStale.reasons.join("、")}，建议重生成`}
             className="absolute bottom-1.5 left-1.5 rounded-[1px] bg-pick/85 px-1 text-[8.5px] leading-[1.5] text-white"
           >
             过期
           </span>
         )}
 
-        {generating === shown && (
+        {!videoShown && generating === shownFrame && (
           <span className="absolute inset-0 grid place-items-center bg-bg/75 text-[11px] text-text">
             生成中…
           </span>
         )}
 
-        {/* 字幕烧在画面里：审片时看到的就是观众看到的 */}
-        <p className="absolute inset-x-[8%] bottom-[6%] text-center text-[15px] leading-[1.45] text-white [text-shadow:0_1px_3px_rgba(0,0,0,.9)]">
+        {videoShown && generatingVideo && (
+          <span className="absolute inset-0 grid place-items-center bg-bg/75 px-6 text-center text-[11px] leading-[1.8] text-text">
+            出片中… 一两分钟，别关页面
+          </span>
+        )}
+
+        {videoShown && !videoUri && !generatingVideo && (
+          <span className="absolute inset-0 grid place-items-center bg-bg/60 px-6 text-center text-[10.5px] leading-[1.8] text-muted">
+            这一镜还没有片子：出一次视频，或在下面贴一条地址
+          </span>
+        )}
+
+        {/* 字幕烧在画面里：审片时看到的就是观众看到的；放视频时让开原生控件（ADR-0083） */}
+        <p
+          className={cn(
+            "absolute inset-x-[8%] text-center text-[15px] leading-[1.45] text-white [text-shadow:0_1px_3px_rgba(0,0,0,.9)]",
+            videoShown ? "bottom-[16%]" : "bottom-[6%]",
+          )}
+        >
           {subtitle}
         </p>
       </div>
 
+      {/* 多 Take：每一拍的状态与钱都摆出来，点一下看那一拍（ADR-0083） */}
+      {shot.takes.length > 0 && (
+        <div className="flex max-w-[360px] flex-wrap items-center justify-center gap-x-1.5 gap-y-1">
+          <span className="tnum text-[9px] tracking-[.14em] text-muted-2">TAKE</span>
+          {shot.takes.map((take) => {
+            const active = displayTake?.id === take.id && videoShown;
+            return (
+              <button
+                key={take.id}
+                type="button"
+                aria-pressed={active}
+                disabled={!take.uri}
+                onClick={() => {
+                  setShownTakeId(take.id);
+                  setShown("video");
+                }}
+                title={
+                  take.uri
+                    ? `看第 ${take.no} 拍 · ${TAKE_STATUS_CN[take.status] ?? take.status}`
+                    : `第 ${take.no} 拍还没有片子`
+                }
+                className={cn(
+                  "tnum flex items-baseline gap-1 rounded-[1px] border px-1.5 py-[1px] text-[9.5px] transition-colors duration-[var(--dur)]",
+                  active
+                    ? "border-line-2 bg-surface text-text"
+                    : "border-line text-muted-2 hover:border-line-2 hover:text-text",
+                  "disabled:pointer-events-none disabled:opacity-35",
+                )}
+              >
+                <span>{take.no}</span>
+                <span className="text-[8.5px] text-muted-2">
+                  {TAKE_STATUS_CN[take.status] ?? take.status}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* 首尾两帧并排选：点哪格，大画面就看哪一帧（ADR-0038） */}
       <div className="flex items-center gap-2">
-        <div role="group" aria-label="关键帧" className="flex items-end gap-1.5">
+        <div role="group" aria-label="关键帧与视频" className="flex items-end gap-1.5">
+          {/* 视频格：一直摆着，没片子时点进去走「出视频 / 贴地址」（ADR-0083） */}
+          <button
+            type="button"
+            aria-pressed={videoShown}
+            onClick={() => setShown("video")}
+            title={hasAnyVideo ? "看这一镜的片子" : "这一镜还没有片子：出视频，或贴一条地址"}
+            className="group flex flex-col items-center gap-1"
+          >
+            <span
+              className={cn(
+                "relative block h-14 aspect-[9/16] overflow-hidden rounded-[2px] border bg-surface transition-colors duration-[var(--dur)]",
+                videoShown
+                  ? "border-line-2"
+                  : "border-line opacity-60 group-hover:opacity-90",
+                !hasAnyVideo && "border-dashed",
+              )}
+            >
+              {shot.keyframeUri ? (
+                <img src={shot.keyframeUri} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <Scene kind={shot.art} className="h-full w-full" />
+              )}
+              <span
+                className={cn(
+                  "absolute inset-0 grid place-items-center text-[13px] text-white",
+                  hasAnyVideo ? "bg-black/35" : "bg-black/55 text-muted-2",
+                )}
+              >
+                ▶
+              </span>
+              {generatingVideo && (
+                <span className="absolute inset-0 grid place-items-center bg-bg/75 text-[8px] text-text">
+                  ……
+                </span>
+              )}
+            </span>
+            <span className={cn("text-[9px]", videoShown ? "text-text" : "text-muted-2")}>
+              视频
+            </span>
+          </button>
+
           {frames.map((frame) => (
             <button
               key={frame.key}
@@ -178,7 +314,62 @@ function Current({
 
         <span className="h-8 w-px bg-line" />
 
-        {generating === shown ? (
+        {videoShown ? (
+          generatingVideo ? (
+            <span className="tnum text-[10px] text-muted">出片中 · 一两分钟</span>
+          ) : shot.locked ? (
+            <span className="tnum text-[10px] text-muted-2">镜头已锁定 · 只读</span>
+          ) : (
+            <div className="flex flex-col items-start gap-1.5">
+              <button
+                type="button"
+                onClick={onGenerateVideo}
+                title={
+                  shot.hasKeyframe
+                    ? "从首帧出视频：重拍会多一拍 take，不覆盖旧的"
+                    : "先出一张首帧，才能让它动起来"
+                }
+                disabled={!shot.hasKeyframe}
+                className="tnum flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:pointer-events-none disabled:opacity-40"
+              >
+                {hasAnyVideo ? "重拍视频" : "出视频"}
+                {videoQuote !== undefined && (
+                  <span className="text-[9px] text-muted-2">¥{videoQuote.toFixed(2)}</span>
+                )}
+              </button>
+
+              {/* 供应商配额不通时的兜底：贴一条已经有片子的地址（ADR-0083） */}
+              <details className="text-[9.5px] text-muted-2">
+                <summary className="cursor-pointer select-none hover:text-muted">贴视频地址导入</summary>
+                <form
+                  className="mt-1 flex items-center gap-1"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (!draftUri.trim()) return;
+                    onAttachVideo(draftUri);
+                    setDraftUri("");
+                  }}
+                >
+                  <input
+                    type="text"
+                    value={draftUri}
+                    onChange={(event) => setDraftUri(event.target.value)}
+                    placeholder="https://… 或 data:video/mp4;base64,…"
+                    className="w-[190px] rounded-token border border-line bg-surface px-2 py-1 text-[9.5px] text-text placeholder:text-muted-2 focus:border-line-2 focus:outline-none"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!draftUri.trim()}
+                    title="当作一拍 take 挂到这一镜上：不花钱，也不改首尾帧"
+                    className="rounded-token border border-line px-2 py-1 text-[9.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+                  >
+                    导入
+                  </button>
+                </form>
+              </details>
+            </div>
+          )
+        ) : generating === shown ? (
           <span className="tnum text-[10px] text-muted">生成中 · {FRAME_LABEL[shown]}</span>
         ) : shot.locked ? (
           <span className="tnum text-[10px] text-muted-2">镜头已锁定 · 只读</span>
@@ -201,7 +392,11 @@ function Current({
       <details className="max-w-[340px] text-[9.5px] text-muted-2">
         <summary className="cursor-pointer select-none hover:text-muted">这一镜会送出的提示词</summary>
         <p className="mt-1 max-h-[8.5rem] overflow-y-auto whitespace-pre-wrap text-[10px] leading-[1.7] text-muted-2">
-          {shown === "first" ? shot.prompts.first : shot.prompts.last}
+          {videoShown
+            ? shot.prompts.video
+            : shown === "first"
+              ? shot.prompts.first
+              : shot.prompts.last}
         </p>
       </details>
 
@@ -415,10 +610,16 @@ export type StageProps = {
   view: StageView;
   /** 当前镜哪一帧在生成 */
   generating: Frame | null;
+  /** 当前镜正在出视频（ADR-0083） */
+  generatingVideo: boolean;
   /** 生成一张要多少钱；价目不知道就不给 */
   quoteCny?: number;
+  /** 出一秒视频要多少钱；价目不知道就不给 */
+  videoCnyPerSecond?: number;
   readOnly: boolean;
   onGenerateKeyframe: (frame: Frame) => void;
+  onGenerateVideo: () => void;
+  onAttachVideo: (uri: string) => void;
   onRemoveNote: (note: string) => void;
   onToggleCharacter: (characterId: string) => void;
   onToggleProp: (propId: string) => void;
@@ -429,9 +630,13 @@ export type StageProps = {
 export function Stage({
   view,
   generating,
+  generatingVideo,
   quoteCny,
+  videoCnyPerSecond,
   readOnly,
   onGenerateKeyframe,
+  onGenerateVideo,
+  onAttachVideo,
   onRemoveNote,
   onToggleCharacter,
   onToggleProp,
@@ -459,12 +664,16 @@ export function Stage({
           shot={current}
           subtitle={view.subtitle}
           generating={generating}
+          generatingVideo={generatingVideo}
           quoteCny={quoteCny}
+          videoCnyPerSecond={videoCnyPerSecond}
           characters={view.characters}
           props={view.props}
           scenePropIds={scenePropIds}
           readOnly={readOnly}
           onGenerate={onGenerateKeyframe}
+          onGenerateVideo={onGenerateVideo}
+          onAttachVideo={onAttachVideo}
           onRemoveNote={onRemoveNote}
           onToggleCharacter={onToggleCharacter}
           onToggleProp={onToggleProp}

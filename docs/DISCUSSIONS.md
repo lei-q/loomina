@@ -2562,3 +2562,31 @@ ADR-0064 / 0068 给新场定的默认值是「第一个地点 · 内 · 日」�
 - 一版一行，窄栏里长描述截断，只能悬停看全；没有逐字差异。
 - 每改一次留一版，反复微调会攒很长的列表，暂无数上限与清理。
 - 模板、参考图、「不许变」不进这条历史；已删除的对象没有历史入口。
+
+## 第八十七次 · 2026-11-11 · 视频生成与多 Take（N1）
+
+**背景**
+关键帧能出、能重生成、能标过期之后，「让它动起来」这一段一直没接上：审片台的「重做」从第一版起就是禁用的，关键帧页只有首帧 / 尾帧两个计数。网关里的 `TreecloudVideoAdapter` 早就写好了，缺业务侧的一次完整接线。同时要定多 Take 怎么摆、供应商配额不通时怎么办、按 token 计价的 seedance 怎么报价。
+
+**结论**
+- 关键帧先行，视频只补运动：新增 `buildVideoPrompt(material)`，与镜头提示词同源，再补「从首帧起势、动作连贯、镜头平稳、保持人物一致」；不带首尾帧与「无字幕」那些静帧指令。
+- `POST /api/video` 一次请求完成提交与等待：服务端提交后用 `adapter.wait` 轮询（4 秒 / 最长 240 秒，`maxDuration = 300`），成功返回 `{ uri, model, prompt, durationMs, cny? }`；失败回人话 + 供应商原因。
+- 一拍视频落两条事件：`asset.updated`（`kind: video`、`source: generated`、`referenceAssetIds` 记首帧）+ `take.added`（`status: draft`）；每拍新占 `a-video-<shotId>-<n>` / `take-<shotId>-<n>`，旧拍不覆盖。
+- 贴视频地址导入：`attachVideo` 收 `http(s)://` 或 `data:video/`（≤ 12 MB），落 `source: upload`、`modelId: "import"`、`costCny: 0` 的一拍，走同一套留用 / 淘汰 / 锁定。
+- `/api/price` 加一层 `video: { model, resolution?, cnyPerSecond? }`，顶层字段不动；报价按 `每秒价 × 这一镜秒数`，报不出价不拦。seedance 不补价目，界面写「价目未知」。
+- 界面：大画面多一档「视频」（`<video controls playsInline loop poster={首帧}>`），`TAKE n` 签切换每一拍；`ReelBar` 的「重做」接上重拍视频并按秒报价，轨道条有片子的格子标 `▶`；关键帧页每格多「出视频 / 重拍视频」，页头多 `视频 n / 12`。
+- 验收时补两处：视频格改为**一直摆着**（否则第一拍既生不出也贴不进来，导入兜底是死的）；失败红字改成「「SH-03」没出片：<原因（截断 240 字）>。可以先「贴视频地址导入」顶上，或稍后再试。」；原告示里借用的出图报价换成视频按秒报价；视频播放时字幕上移让开原生控件。
+- ADR-0083；`FEATURES.md` B3 / B5、`UX.md` 5.8 / 5.8.1 同步；数据模型无新增（`Asset.kind: video` 与 `Take` 本来就在）。
+
+**验证**
+- 测试：IR 100、web 233（新增 7：读模型 1、store 6）、gateway 17、pipeline 23（新增 1：视频提示词），合计 373；`pnpm typecheck`、`pnpm test`、`pnpm build` 通过。
+- 真实链路（浏览器，1440×900）：给 SH-03 临时塞一张首帧后，审片台视频格可点、显示「这一镜还没有片子：出一次视频，或在下面贴一条地址」；用页面里 MediaRecorder 录一段 1 秒 webm 贴进「贴视频地址导入」，立刻多出 `TAKE 2 待定`，视频格选中，`<video>` 的 `src` 是那条 data URI、`poster` 是首帧；轨道条 SH-03 出现 `▶`，`ReelBar` 的「重做」变为可点、标「价目未知」；关键帧页页头 `视频 1 / 12`，SH-03 卡片角上 `▶`、按钮变「重拍视频 价目未知」、caption `首✓ · 尾— · 视频✓`。
+- 生成链路：点「重拍视频」后约半秒失败，页头红字 `「SH-03」没出片：litellm.AuthenticationError … model group 'seedance-2.0' … invalid API key …`，take 数不变、不写事件；`POST /api/video` 直接打也是 502、0.5 秒返回。供应商这一侧的视频模型组没通（图生图仍在用另一组）。
+
+**诚实地说**
+- 这次只有导入链路真正跑通；生成链路卡在供应商：`litellm` 对 `seedance-2.0` 这组报 invalid API key，没能验收一次真实的「首帧 → 视频」。
+- 无头 Chrome 解不了视频：data URI 与公网 mp4 都停在 `readyState 0`，所以「能播」只验证到 `<video>` 元素、`src`、`poster`、控件都在，实际画面要人在真浏览器里看。
+- 同步等待：一次出片最多占一条路由 5 分钟，同时点多会撞并发；队列（H2）没做。
+- 视频不落对象存储（H3），外链失效就没了；导入的片子也不校验片长是否对得上这一镜。
+- seedance 无价目，预算闸门对视频实际不生效，花费只能等回执。
+- 多 Take 只增不减：没有删单拍、没有逐拍花费对比，`decide` 只作用于最新一拍。
