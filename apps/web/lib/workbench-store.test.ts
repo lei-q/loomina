@@ -498,6 +498,79 @@ describe("镜头锁定（ADR-0041）", () => {
   });
 });
 
+describe("批量补帧（ADR-0042 附记）", () => {
+  beforeEach(() => {
+    state().reset();
+    state().setImagePrice({ model: "gpt-image-2-c", cny: 0.12 });
+  });
+
+  const okResponse = () =>
+    new Response(
+      JSON.stringify({ uri: "data:image/png;base64,RkFLRQ==", model: "gpt-image-2-c", cny: 0.12 }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+
+  it("按镜号补缺、跳过锁定，一镜两条事件，跑完清空进度", async () => {
+    let calls = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => { calls += 1; return okResponse(); }));
+
+    await state().generateMissingFrames("first");
+
+    const patched = state()
+      .events.filter((event) => event.type === "shot.updated")
+      .map((event) => event.shotId);
+    // 十二镜里 s-08 锁着：批量不碰它
+    expect(calls).toBe(11);
+    expect(patched).toHaveLength(11);
+    expect(patched).not.toContain("s-08");
+    expect(state().project.shots.find((shot) => shot.id === "s-08")?.keyframes.firstAssetId).toBeUndefined();
+    expect(state().batch).toBeUndefined();
+    vi.unstubAllGlobals();
+  });
+
+  it("失败说明用整片镜号：第二场以后不能报场内序号", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ error: "上游失败" }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    // s-05 是第二场的第一镜，场内 index 是 0
+    await state().generateKeyframe("s-05");
+
+    expect(state().castError).toContain("SH-05");
+    vi.unstubAllGlobals();
+  });
+
+  it("一张失败就停，后面的不再发请求", async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        if (calls === 2) {
+          return new Response(JSON.stringify({ error: "上游失败" }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return okResponse();
+      }),
+    );
+
+    await state().generateMissingFrames("first");
+
+    expect(calls).toBe(2);
+    expect(state().castError).toContain("上游失败");
+    expect(state().batch).toBeUndefined();
+    vi.unstubAllGlobals();
+  });
+});
+
 describe("预算（ADR-0035）", () => {
   beforeEach(() => {
     state().reset();

@@ -16,7 +16,7 @@ import { parseInstruction, shotMaterial, type Frame } from "@loomina/pipeline";
 import { create } from "zustand";
 import { diffEvents, getEventLog, migrateLog } from "@/lib/event-log";
 import { claimWriter } from "@/lib/writer-lock";
-import { latestTake, spendOf, toStageView } from "@/lib/read-model";
+import { latestTake, shotLabel, spendOf, toStageView } from "@/lib/read-model";
 import { sampleProject } from "@/lib/sample-project";
 
 export type Decision = "approved" | "rejected";
@@ -70,7 +70,12 @@ type WorkbenchState = {
   /** 生成道具参考图 */
   generateProp: (propId: string) => Promise<void>;
   /** 给当前镜生成首帧或尾帧；落一张图 + 一条 shot.updated（ADR-0037 / 0038） */
-  generateKeyframe: (shotId: string, frame?: Frame) => Promise<void>;
+  generateKeyframe: (shotId: string, frame?: Frame) => Promise<boolean>;
+  /** 批量补缺：按镜号顺序一帧一帧生成，跳过锁定，失败即停（ADR-0042 附记） */
+  generateMissingFrames: (frame?: Frame) => Promise<void>;
+  /** 批量补帧的进度；`stop` 置上后当前这一张结束就停 */
+  batch?: { frame: Frame; done: number; total: number; stop?: boolean };
+  stopBatch: () => void;
   /** 一句话指令：查表翻成镜头补丁，写一条 shot.updated；没听懂返回 false（ADR-0039） */
   instruct: (text: string) => boolean;
   /** 划掉一条补充要求：同样写一条 shot.updated（ADR-0039 附记） */
@@ -504,22 +509,24 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   },
 
   generateKeyframe: async (shotId, frame = "first") => {
-    if (get().readOnly) return;
+    if (get().readOnly) return false;
     const { project } = get();
     const shot = project.shots.find((item) => item.id === shotId);
-    if (!shot) return;
+    if (!shot) return false;
     // 锁定的镜头只读：要重做先解锁
-    if (shot.locked) return;
+    if (shot.locked) return false;
 
     // 首尾两帧各占一个资产位，重生成按 id 覆盖（ADR-0038）
     const assetId = frame === "last" ? `a-lastframe-${shot.id}` : `a-keyframe-${shot.id}`;
+    // 镜号要按整片的顺序算：`shot.index` 是场内序号，第二场以后会报错镜号
+    const no = toStageView(project).shots.find((item) => item.id === shot.id)?.no;
     set({ castError: undefined });
-    await generateOne(
+    return generateOne(
       { get, set },
       {
         // 进度分帧记：首帧还在跑时点尾帧，不能把首帧的进度盖掉
         key: `${shot.id}:${frame}`,
-        label: `SH-${String(shot.index + 1).padStart(2, "0")}`,
+        label: no === undefined ? shot.id : shotLabel(no),
         assetId,
         job: { kind: "keyframe", frame },
         body: { kind: "keyframe", frame, shot: shotMaterial(project, shot) },
@@ -537,6 +544,42 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         }),
       },
     );
+  },
+
+  generateMissingFrames: async (frame = "first") => {
+    if (get().readOnly || get().batch) return;
+    const { shots } = toStageView(get().project);
+    const missing = shots
+      // 锁定的镜头跳过：批量不是绕过闸门的理由
+      .filter((shot) => !shot.locked)
+      .filter((shot) => (frame === "last" ? !shot.hasLastFrame : !shot.hasKeyframe))
+      .map((shot) => shot.id);
+
+    if (missing.length === 0) {
+      set({ castError: frame === "last" ? "尾帧都齐了。" : "首帧都齐了。" });
+      return;
+    }
+
+    set({ batch: { frame, done: 0, total: missing.length }, castError: undefined });
+    try {
+      for (const shotId of missing) {
+        if (get().readOnly || get().batch?.stop) break;
+        const ok = await get().generateKeyframe(shotId, frame);
+        const batch = get().batch;
+        if (!batch) break;
+        set({ batch: { ...batch, done: batch.done + 1 } });
+        // 失败（含超预算）就停：后面的也跟着失败，只会多花钱
+        if (!ok) break;
+      }
+    } finally {
+      set({ batch: undefined });
+    }
+  },
+
+  stopBatch: () => {
+    const batch = get().batch;
+    // 当前这一张已经发出去了，停下只在它结束后生效
+    if (batch) set({ batch: { ...batch, stop: true } });
   },
 
   instruct: (text) => {
@@ -634,6 +677,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       events: bootstrap(project),
       currentShotId: initialShotId,
       jobs: {},
+      batch: undefined,
       castError: undefined,
     });
   },

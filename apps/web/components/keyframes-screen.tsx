@@ -21,12 +21,15 @@ const FILTERS: { key: KeyframeFilter; label: string }[] = [
 function Cell({
   cell,
   busy,
+  batchRunning,
   quoteCny,
   onGenerate,
 }: {
   cell: KeyframeCell;
   /** 正在生成哪一帧 */
   busy: "first" | "last" | null;
+  /** 批量补帧进行中：别的格子也不要插队 */
+  batchRunning: boolean;
   quoteCny?: number;
   onGenerate: (frame: "first" | "last") => void;
 }) {
@@ -81,8 +84,14 @@ function Cell({
               key={frame}
               type="button"
               onClick={() => onGenerate(frame)}
-              disabled={cell.locked || busy !== null}
-              title={cell.locked ? "这一镜已锁定" : has ? "重生成，按同一资产位覆盖" : "生成"}
+              disabled={cell.locked || busy !== null || batchRunning}
+              title={
+                cell.locked
+                  ? "这一镜已锁定"
+                  : has
+                    ? "重生成，按同一资产位覆盖"
+                    : "生成"
+              }
               className={cn(
                 "flex flex-1 flex-col items-center rounded-token border border-line px-1 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)]",
                 "hover:border-line-2 hover:text-text disabled:pointer-events-none disabled:opacity-40",
@@ -116,6 +125,9 @@ export function KeyframesScreen() {
   const setImagePrice = useWorkbench((state) => state.setImagePrice);
   const setBudget = useWorkbench((state) => state.setBudget);
   const generateKeyframe = useWorkbench((state) => state.generateKeyframe);
+  const generateMissingFrames = useWorkbench((state) => state.generateMissingFrames);
+  const batch = useWorkbench((state) => state.batch);
+  const stopBatch = useWorkbench((state) => state.stopBatch);
 
   useEffect(() => {
     void hydrate();
@@ -129,6 +141,11 @@ export function KeyframesScreen() {
   const [filter, setFilter] = useState<KeyframeFilter>("all");
   const tally = useMemo(() => keyframeTally(view.cells), [view.cells]);
   const cells = useMemo(() => filterKeyframeCells(view.cells, filter), [view.cells, filter]);
+  // 批量只补没锁的格子：锁定是闸门，批量不是绕过去的理由
+  const missingFirst = view.cells.filter((cell) => !cell.locked && !cell.hasFirst).length;
+  const missingLast = view.cells.filter((cell) => !cell.locked && !cell.hasLast).length;
+  const batchPrice = (count: number) =>
+    imageCny === undefined ? `${count} 张` : `${count} 张 · ¥${(count * imageCny).toFixed(2)}`;
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg text-text">
@@ -184,24 +201,66 @@ export function KeyframesScreen() {
             </dl>
           </div>
 
-          <div className="mt-4 flex flex-wrap items-center gap-1.5" role="group" aria-label="按缺帧筛选">
-            {FILTERS.map(({ key, label }) => (
-              <button
-                key={key}
-                type="button"
-                aria-pressed={filter === key}
-                onClick={() => setFilter(key)}
-                className={cn(
-                  "tnum flex items-baseline gap-1.5 rounded-token border px-2.5 py-1 text-[10.5px] transition-colors duration-[var(--dur)]",
-                  filter === key
-                    ? "border-line-2 bg-surface text-text"
-                    : "border-line text-muted hover:border-line-2 hover:text-text",
-                )}
-              >
-                <span>{label}</span>
-                <span className="text-[9px] text-muted-2">{tally[key]}</span>
-              </button>
-            ))}
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="按缺帧筛选">
+              {FILTERS.map(({ key, label }) => (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={filter === key}
+                  onClick={() => setFilter(key)}
+                  className={cn(
+                    "tnum flex items-baseline gap-1.5 rounded-token border px-2.5 py-1 text-[10.5px] transition-colors duration-[var(--dur)]",
+                    filter === key
+                      ? "border-line-2 bg-surface text-text"
+                      : "border-line text-muted hover:border-line-2 hover:text-text",
+                  )}
+                >
+                  <span>{label}</span>
+                  <span className="text-[9px] text-muted-2">{tally[key]}</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {batch ? (
+                <>
+                  <span className="tnum text-[10.5px] text-muted" aria-live="polite">
+                    补{batch.frame === "first" ? "首" : "尾"}帧 {batch.done} / {batch.total}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={stopBatch}
+                    disabled={batch.stop}
+                    title="当前这一张发出去了，停下在它结束后生效"
+                    className="rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+                  >
+                    {batch.stop ? "停下中…" : "停下"}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void generateMissingFrames("first")}
+                    disabled={missingFirst === 0 || readOnly}
+                    title="按镜号顺序补首帧：跳过锁定的镜头，一张失败就停"
+                    className="tnum rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:pointer-events-none disabled:opacity-40"
+                  >
+                    补缺首帧 <span className="text-[9px] text-muted-2">{batchPrice(missingFirst)}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void generateMissingFrames("last")}
+                    disabled={missingLast === 0 || readOnly}
+                    title="按镜号顺序补尾帧：跳过锁定的镜头，一张失败就停"
+                    className="tnum rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:pointer-events-none disabled:opacity-40"
+                  >
+                    补缺尾帧 <span className="text-[9px] text-muted-2">{batchPrice(missingLast)}</span>
+                  </button>
+                </>
+              )}
+            </div>
           </div>
 
           <div className="mt-4 grid grid-cols-2 gap-x-3 gap-y-5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
@@ -217,6 +276,7 @@ export function KeyframesScreen() {
                   key={cell.id}
                   cell={cell}
                   busy={busy}
+                  batchRunning={Boolean(batch)}
                   quoteCny={imageCny}
                   onGenerate={(frame) => void generateKeyframe(cell.id, frame)}
                 />
