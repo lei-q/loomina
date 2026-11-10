@@ -228,7 +228,7 @@ describe("主镜与道具提示词", () => {
 });
 
 describe("一句话指令（ADR-0039）", () => {
-  const shot = { shotSize: "medium" as const, camera: { angle: "eye" as const, movement: "static" as const, focalMm: 50 } };
+  const shot = { shotSize: "medium" as const, camera: { angle: "eye" as const, movement: "static" as const, focalMm: 50 }, durationMs: 3000 };
 
   it("太暗了落成补充要求，不动结构字段", () => {
     const patch = parseInstruction("太暗了", shot);
@@ -265,6 +265,15 @@ describe("一句话指令（ADR-0039）", () => {
     expect(parseInstruction("试试手持", shot)?.camera?.movement).toBe("handheld");
     // 已经是手持再说手持，没有改动
     expect(parseInstruction("手持", handheld)).toBeNull();
+  });
+
+  it("快一点 / 慢一点一档 0.5 秒，太快 / 太慢反向，到边界不改", () => {
+    expect(parseInstruction("快一点", shot)?.durationMs).toBe(2500);
+    expect(parseInstruction("太慢了", shot)?.durationMs).toBe(2500);
+    expect(parseInstruction("慢一点", shot)?.durationMs).toBe(3500);
+    expect(parseInstruction("太快了", shot)?.durationMs).toBe(3500);
+    expect(parseInstruction("快一点", { ...shot, durationMs: 1000 })).toBeNull();
+    expect(parseInstruction("慢一点", { ...shot, durationMs: 8000 })).toBeNull();
   });
 
   it("没听懂就返回 null，不编参数", () => {

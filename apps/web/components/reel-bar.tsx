@@ -110,7 +110,7 @@ export function ReelBar({ view, onSelect, onDecide, onInstruct, onSetLock, onApp
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               disabled={current.locked}
-              placeholder="说哪里不对：太暗了 · 换个角度 · 她笑得太早了"
+              placeholder="说哪里不对：太暗了 · 换个角度 · 快一点 · 她笑得太早了"
               className="w-full bg-transparent text-[12.5px] text-text placeholder:text-muted-2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
             />
             <kbd className="tnum shrink-0 text-[9px] text-muted-2">⏎</kbd>

@@ -324,12 +324,19 @@ export function buildKeyframePrompt(
 export type ShotPatch = {
   shotSize?: Shot["shotSize"];
   camera?: Shot["camera"];
+  /** 快一点 / 慢一点：改镜头时长，重做报价跟着变 */
+  durationMs?: number;
   /** 落不到结构字段的补充要求，追加进 `promptNotes` */
   note?: string;
 };
 
 const ANGLE_ORDER: Shot["camera"]["angle"][] = ["eye", "low", "high"];
 const SIZE_ORDER: Shot["shotSize"][] = ["wide", "medium", "close", "extreme-close"];
+
+/** 一句话改时长：一档 0.5 秒，最少 1 秒、最多 8 秒（短剧单镜的常见范围）。 */
+const DURATION_STEP_MS = 500;
+const DURATION_MIN_MS = 1000;
+const DURATION_MAX_MS = 8000;
 
 const NOTE_DARK = "整体提亮，补足曝光，阴影保留细节";
 const NOTE_BRIGHT = "压暗一档，高光不过曝";
@@ -342,13 +349,22 @@ const NOTE_BRIGHT = "压暗一档，高光不过曝";
  */
 export function parseInstruction(
   text: string,
-  shot: Pick<Shot, "shotSize" | "camera">,
+  shot: Pick<Shot, "shotSize" | "camera" | "durationMs">,
 ): ShotPatch | null {
   const said = text.trim();
   if (!said) return null;
 
   const patch: ShotPatch = {};
   const { camera } = shot;
+
+  // 时长：先说"太快 / 太慢"，否则"快一点"里的"快"会把方向说反
+  if (/太快|慢一点|慢些|再慢|长一点|拉长|节奏慢/.test(said)) {
+    const next = Math.min(shot.durationMs + DURATION_STEP_MS, DURATION_MAX_MS);
+    if (next !== shot.durationMs) patch.durationMs = next;
+  } else if (/太慢|快一点|快些|再快|短一点|压缩|节奏快/.test(said)) {
+    const next = Math.max(shot.durationMs - DURATION_STEP_MS, DURATION_MIN_MS);
+    if (next !== shot.durationMs) patch.durationMs = next;
+  }
 
   // 亮度：先说"过曝"，否则"太亮"里的"亮"会被暗部规则吃掉
   if (/过曝|太亮|亮过头|刺眼|爆掉/.test(said)) {

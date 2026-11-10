@@ -407,6 +407,26 @@ describe("一句话指令（ADR-0039）", () => {
     expect(rebuild(state().events).shots.find((item) => item.id === id)?.promptNotes).toEqual([]);
   });
 
+  it("快一点改时长：写一条 shot.updated，重做报价跟着变，可回放", () => {
+    const id = state().currentShotId;
+    const before = state().project.shots.find((item) => item.id === id)!;
+    const quoteBefore = toStageView(state().project, { currentShotId: id }).requote.totalCny;
+    const ok = state().instruct("快一点");
+
+    expect(ok).toBe(true);
+    const after = state().project.shots.find((item) => item.id === id)!;
+    expect(after.durationMs).toBe(before.durationMs - 500);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.updated",
+      patch: { durationMs: before.durationMs - 500 },
+    });
+    expect(rebuild(state().events).shots.find((item) => item.id === id)?.durationMs).toBe(
+      before.durationMs - 500,
+    );
+    const quoteAfter = toStageView(state().project, { currentShotId: id }).requote.totalCny;
+    expect(quoteAfter).toBeLessThan(quoteBefore!);
+  });
+
   it("没听懂就什么都不写，并说清现在认得哪些", () => {
     const ok = state().instruct("她笑得太早了");
 
