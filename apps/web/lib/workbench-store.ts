@@ -119,6 +119,10 @@ type WorkbenchState = {
     locationId: string,
     patch: Partial<Pick<Location, "name" | "templateId" | "description">>,
   ) => boolean;
+  /** 新建场次：一条 `scene.added`，加在末尾，新场还没有镜头（ADR-0064） */
+  addScene: (locationId?: string) => string | undefined;
+  /** 新建镜头：一条 `shot.added`，加在这一场的末尾（ADR-0064） */
+  addShot: (sceneId: string) => string | undefined;
   /** 调整场序：写一条 `scene.moved`，场号与镜号跟着重排（ADR-0060） */
   moveScene: (sceneId: string, direction: "up" | "down") => boolean;
   /** 把一场直接挪到第 N 位（从 0 数）：长距离换位不用连点（ADR-0060 附记） */
@@ -139,6 +143,9 @@ function bootstrap(project: Project): ProjectEvent[] {
     },
   ];
 }
+
+/** 新镜头的默认时长：没有台词时先给 3 秒，随后在分镜页改（ADR-0064） */
+const NEW_SHOT_DURATION_MS = 3000;
 
 /** 场景描述的上限：这句会整句进主镜提示词，长了会把画面指令挤掉（ADR-0063） */
 const LOCATION_DESCRIPTION_MAX = 200;
@@ -989,6 +996,80 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       castError: undefined,
     });
     return true;
+  },
+
+  addScene: (locationId) => {
+    if (get().readOnly) return undefined;
+    const { project, events } = get();
+    const target = locationId ?? project.locations[0]?.id;
+    if (!target) {
+      set({ castError: "还没有地点：先去定妆页建一个，场次才有地方发生。" });
+      return undefined;
+    }
+    if (!project.locations.some((item) => item.id === target)) {
+      set({ castError: "找不到这个地点。" });
+      return undefined;
+    }
+    let id = `sc-${Date.now().toString(36)}`;
+    while (project.scenes.some((item) => item.id === id)) id += "x";
+    const scene: Scene = {
+      id,
+      index: project.scenes.length,
+      locationId: target,
+      space: "int",
+      timeOfDay: "day",
+      shotIds: [],
+    };
+    const event: ProjectEvent = {
+      type: "scene.added",
+      at: new Date().toISOString(),
+      scene,
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return id;
+  },
+
+  addShot: (sceneId) => {
+    if (get().readOnly) return undefined;
+    const { project, events } = get();
+    const scene = project.scenes.find((item) => item.id === sceneId);
+    if (!scene) {
+      set({ castError: "找不到这一场。" });
+      return undefined;
+    }
+    let id = `s-${Date.now().toString(36)}`;
+    while (project.shots.some((item) => item.id === id)) id += "x";
+    const shot: Shot = {
+      id,
+      sceneId,
+      index: scene.shotIds.length,
+      durationMs: NEW_SHOT_DURATION_MS,
+      description: "",
+      promptNotes: [],
+      shotSize: "medium",
+      camera: { angle: "eye", movement: "static", focalMm: 35 },
+      characterIds: [],
+      propIds: [],
+      dialogueIds: [],
+      takeIds: [],
+      keyframes: {},
+      locked: false,
+    };
+    const event: ProjectEvent = {
+      type: "shot.added",
+      at: new Date().toISOString(),
+      shot,
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return id;
   },
 
   moveScene: (sceneId, direction) => {

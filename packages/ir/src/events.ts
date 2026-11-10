@@ -41,6 +41,24 @@ export type ProjectEvent =
     }
   | {
       /**
+       * 新建场次（ADR-0064）：只能加到末尾，场号接着排。
+       * 新场还没有镜头，所以这里不带任何镜头引用。
+       */
+      type: "scene.added";
+      at: string;
+      scene: Scene;
+    }
+  | {
+      /**
+       * 新建镜头（ADR-0064）：只能加到所属场次的末尾，镜号跟着排。
+       * 动作描述留空，景别与机位给的是默认值，都可以随后改。
+       */
+      type: "shot.added";
+      at: string;
+      shot: Shot;
+    }
+  | {
+      /**
        * 调整场序（ADR-0060）：一场一位。镜号跟着场序重排；
        * 台词、take、关键帧都按 id 引用，不跟着动。
        */
@@ -161,6 +179,44 @@ export function applyEvent(
         scene.id === event.sceneId ? { ...scene, ...event.patch } : scene,
       );
       return { ...current, scenes };
+    }
+
+    case "scene.added": {
+      if (!current) throw new Error("scene.added 之前必须有 project.created");
+      const scene = event.scene;
+      if (current.scenes.some((item) => item.id === scene.id)) {
+        throw new Error(`scene.added 重复的场次: ${scene.id}`);
+      }
+      if (!current.locations.some((location) => location.id === scene.locationId)) {
+        throw new Error(`scene.added 指向不存在的地点: ${scene.locationId}`);
+      }
+      if (scene.index !== current.scenes.length) {
+        throw new Error(`新建场次只能加到末尾: ${scene.index} / ${current.scenes.length}`);
+      }
+      if (scene.shotIds.length > 0) {
+        throw new Error("新建场次不该带镜头：先用 shot.added 一镜一镜加");
+      }
+      return { ...current, scenes: [...current.scenes, scene] };
+    }
+
+    case "shot.added": {
+      if (!current) throw new Error("shot.added 之前必须有 project.created");
+      const shot = event.shot;
+      if (current.shots.some((item) => item.id === shot.id)) {
+        throw new Error(`shot.added 重复的镜头: ${shot.id}`);
+      }
+      const scene = current.scenes.find((item) => item.id === shot.sceneId);
+      if (!scene) throw new Error(`shot.added 指向不存在的场次: ${shot.sceneId}`);
+      if (shot.index !== scene.shotIds.length) {
+        throw new Error(`新建镜头只能加到这一场的末尾: ${shot.index} / ${scene.shotIds.length}`);
+      }
+      if (shot.dialogueIds.length > 0 || shot.takeIds.length > 0) {
+        throw new Error("新建镜头不该带台词或 take：那样就能绕过各自的添加事件");
+      }
+      const scenes = current.scenes.map((item) =>
+        item.id === scene.id ? { ...item, shotIds: [...item.shotIds, shot.id] } : item,
+      );
+      return { ...current, scenes, shots: [...current.shots, shot] };
     }
 
     case "scene.moved": {

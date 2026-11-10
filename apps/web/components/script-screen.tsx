@@ -44,6 +44,8 @@ export function ScriptScreen() {
   const editScene = useWorkbench((state) => state.editScene);
   const moveScene = useWorkbench((state) => state.moveScene);
   const moveSceneTo = useWorkbench((state) => state.moveSceneTo);
+  const addScene = useWorkbench((state) => state.addScene);
+  const addShot = useWorkbench((state) => state.addShot);
   const setDialogueOrder = useWorkbench((state) => state.setDialogueOrder);
   const moveDialogueTo = useWorkbench((state) => state.moveDialogueTo);
   const restoreLine = useWorkbench((state) => state.restoreLine);
@@ -1093,8 +1095,36 @@ export function ScriptScreen() {
                     </li>
                   ))}
                 </ol>
+
+                {!readOnly && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const id = addShot(scene.id);
+                      setNote(!id ? useWorkbench.getState().castError : undefined);
+                    }}
+                    title="给这一场加一镜：动作留空，景别中景、平视、3 秒，随后都能改"
+                    className="mt-3 rounded-token border border-dashed border-line px-2 py-1 text-[9.5px] text-muted-2 transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                  >
+                    ＋ 加一镜
+                  </button>
+                )}
               </section>
             ))}
+
+            {!readOnly && (
+              <button
+                type="button"
+                onClick={() => {
+                  const id = addScene();
+                  setNote(!id ? useWorkbench.getState().castError : undefined);
+                }}
+                title="在最后新加一场：地点先给第一个，场头随时能改"
+                className="block w-full rounded-token border border-dashed border-line px-3 py-3 text-[10.5px] text-muted-2 transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+              >
+                ＋ 加一场
+              </button>
+            )}
           </div>
 
           {readOnly && (

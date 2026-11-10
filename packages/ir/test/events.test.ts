@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { clone } from "../src/clone";
 import { applyEvent, rebuild, type ProjectEvent } from "../src/events";
+import { validateProject } from "../src/invariants";
 import { ProjectSchema, type Project, type Take } from "../src/schema";
 import minimalJson from "../../../examples/minimal.json";
 
@@ -463,6 +464,134 @@ describe("调整场序（ADR-0060）", () => {
     expect(() =>
       applyEvent(project, { type: "scene.moved", at: AT, sceneId: "sc-404", toIndex: 1 }),
     ).toThrow(/不存在/);
+  });
+});
+
+describe("新建场次与镜头（ADR-0064）", () => {
+  it("加一场：只能加在末尾，新场没有镜头，可回放", () => {
+    const project = load();
+    const scene: ProjectEvent = {
+      type: "scene.added",
+      at: AT,
+      scene: {
+        id: "sc-2",
+        index: 1,
+        locationId: "loc-living",
+        space: "int",
+        timeOfDay: "day",
+        shotIds: [],
+      },
+    };
+    const after = applyEvent(project, scene);
+
+    expect(after.scenes.map((item) => item.id)).toEqual(["sc-1", "sc-2"]);
+    expect(after.scenes[1]).toMatchObject({ index: 1, shotIds: [] });
+    expect(after.shots).toEqual(project.shots);
+    expect(rebuild([created(project), scene])).toEqual(after);
+  });
+
+  it("加一镜：挂到这一场末尾，镜号连续，可回放", () => {
+    const project = load();
+    const shot: ProjectEvent = {
+      type: "shot.added",
+      at: AT,
+      shot: {
+        id: "sh-3",
+        sceneId: "sc-1",
+        index: 2,
+        durationMs: 3000,
+        description: "",
+        promptNotes: [],
+        shotSize: "medium",
+        camera: { angle: "eye", movement: "static", focalMm: 35 },
+        characterIds: [],
+        propIds: [],
+        dialogueIds: [],
+        takeIds: [],
+        keyframes: {},
+        locked: false,
+      },
+    };
+    const after = applyEvent(project, shot);
+
+    expect(after.shots.at(-1)?.id).toBe("sh-3");
+    expect(after.scenes[0]?.shotIds).toEqual(["sh-1", "sh-2", "sh-3"]);
+    expect(rebuild([created(project), shot])).toEqual(after);
+    expect(validateProject(after)).toEqual([]);
+  });
+
+  it("位置不对、地点 / 场次不存在、重复 id、夹带镜头或台词都拒绝", () => {
+    const project = load();
+    const baseScene = {
+      id: "sc-9",
+      index: 1,
+      locationId: "loc-living",
+      space: "int" as const,
+      timeOfDay: "day" as const,
+      shotIds: [],
+    };
+
+    expect(() =>
+      applyEvent(project, {
+        type: "scene.added",
+        at: AT,
+        scene: { ...baseScene, index: 5 },
+      }),
+    ).toThrow(/末尾/);
+    expect(() =>
+      applyEvent(project, {
+        type: "scene.added",
+        at: AT,
+        scene: { ...baseScene, locationId: "loc-404" },
+      }),
+    ).toThrow(/地点/);
+    expect(() =>
+      applyEvent(project, {
+        type: "scene.added",
+        at: AT,
+        scene: { ...baseScene, id: "sc-1" },
+      }),
+    ).toThrow(/重复/);
+    expect(() =>
+      applyEvent(project, {
+        type: "scene.added",
+        at: AT,
+        scene: { ...baseScene, shotIds: ["sh-1"] },
+      }),
+    ).toThrow(/镜头/);
+
+    const shot = {
+      id: "sh-9",
+      sceneId: "sc-1",
+      index: 2,
+      durationMs: 3000,
+      description: "",
+      promptNotes: [],
+      shotSize: "medium" as const,
+      camera: { angle: "eye" as const, movement: "static" as const, focalMm: 35 },
+      characterIds: [],
+      propIds: [],
+      dialogueIds: [],
+      takeIds: [],
+      keyframes: {},
+      locked: false,
+    };
+    expect(() =>
+      applyEvent(project, { type: "shot.added", at: AT, shot: { ...shot, index: 0 } }),
+    ).toThrow(/末尾/);
+    expect(() =>
+      applyEvent(project, { type: "shot.added", at: AT, shot: { ...shot, sceneId: "sc-404" } }),
+    ).toThrow(/场次/);
+    expect(() =>
+      applyEvent(project, { type: "shot.added", at: AT, shot: { ...shot, id: "sh-1" } }),
+    ).toThrow(/重复/);
+    expect(() =>
+      applyEvent(project, {
+        type: "shot.added",
+        at: AT,
+        shot: { ...shot, dialogueIds: ["d-1"] },
+      }),
+    ).toThrow(/台词/);
   });
 });
 

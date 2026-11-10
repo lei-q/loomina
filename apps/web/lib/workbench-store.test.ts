@@ -1118,6 +1118,69 @@ describe("场头改写（ADR-0050）", () => {
   });
 });
 
+describe("新建场次与镜头（ADR-0064）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("加一场：一条 scene.added，加在末尾，新场没有镜头", () => {
+    const snapshot = state().events.length;
+
+    const id = state().addScene();
+    expect(id).toBeTruthy();
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "scene.added",
+      scene: { id, index: 5, locationId: "loc-corridor", shotIds: [] },
+    });
+
+    const view = toScriptView(state().project);
+    expect(view.scenes).toHaveLength(6);
+    expect(view.scenes.at(-1)).toMatchObject({ id, no: 6, shots: [] });
+    expect(view.shotCount).toBe(12);
+    expect(rebuild(state().events).scenes.at(-1)?.index).toBe(5);
+  });
+
+  it("加一镜：一条 shot.added，挂在那一场末尾，镜号接着排", () => {
+    const sceneId = state().addScene()!;
+    const snapshot = state().events.length;
+
+    const shotId = state().addShot(sceneId);
+    expect(shotId).toBeTruthy();
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.added",
+      shot: { id: shotId, sceneId, index: 0, durationMs: 3000, shotSize: "medium" },
+    });
+
+    const view = toScriptView(state().project);
+    expect(view.shotCount).toBe(13);
+    expect(view.scenes.at(-1)?.shots[0]).toMatchObject({
+      id: shotId,
+      no: 13,
+      action: "",
+      dur: 3,
+      locked: false,
+    });
+    expect(state().project.scenes.find((scene) => scene.id === sceneId)?.shotIds).toEqual([
+      shotId,
+    ]);
+  });
+
+  it("陌生场次、只读都不写事件", () => {
+    const snapshot = state().events.length;
+
+    expect(state().addShot("sc-404")).toBeUndefined();
+    expect(state().castError).toContain("找不到");
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().addScene()).toBeUndefined();
+    expect(state().addShot("sc-1")).toBeUndefined();
+    expect(state().events).toHaveLength(snapshot);
+  });
+});
+
 describe("调整场序（ADR-0060）", () => {
   beforeEach(() => {
     state().reset();
