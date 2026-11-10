@@ -62,6 +62,8 @@ type WorkbenchState = {
   setShotLock: (shotId: string, locked: boolean) => void;
   /** 这一镜里谁出场：一条 `shot.updated { characterIds }`（ADR-0065） */
   toggleShotCharacter: (shotId: string, characterId: string) => boolean;
+  /** 道具出场：点一下把这件道具加进或移出这一镜（ADR-0066） */
+  toggleShotProp: (shotId: string, propId: string) => boolean;
   /** 一步留用并锁定：写一条 take.updated + 一条 shot.updated（ADR-0041 附记） */
   approveAndLock: (shotId: string) => void;
   decide: (status: Decision) => void;
@@ -515,6 +517,42 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       at: new Date().toISOString(),
       shotId,
       patch: { characterIds },
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  toggleShotProp: (shotId, propId) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) {
+      set({ castError: "找不到这一镜。" });
+      return false;
+    }
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定，先解锁再改出场道具。" });
+      return false;
+    }
+    if (!project.props.some((item) => item.id === propId)) {
+      set({ castError: "找不到这件道具。" });
+      return false;
+    }
+
+    // 与人物同一套：道具的顺序就是点名的顺序，先点的排在提示词前头
+    const present = shot.propIds.includes(propId);
+    const propIds = present
+      ? shot.propIds.filter((id) => id !== propId)
+      : [...shot.propIds, propId];
+    const event: ProjectEvent = {
+      type: "shot.updated",
+      at: new Date().toISOString(),
+      shotId,
+      patch: { propIds },
     };
     set({
       project: applyEvent(project, event),

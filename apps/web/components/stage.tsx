@@ -29,10 +29,12 @@ function Current({
   generating,
   quoteCny,
   characters,
+  props,
   readOnly,
   onGenerate,
   onRemoveNote,
   onToggleCharacter,
+  onToggleProp,
 }: {
   shot: StageShot;
   subtitle: string;
@@ -42,10 +44,13 @@ function Current({
   quoteCny?: number;
   /** 全部人物：给这一镜点名（ADR-0065） */
   characters: { id: string; name: string }[];
+  /** 全部道具：给这一镜点名（ADR-0066） */
+  props: { id: string; name: string }[];
   readOnly: boolean;
   onGenerate: (frame: Frame) => void;
   onRemoveNote: (note: string) => void;
   onToggleCharacter: (characterId: string) => void;
+  onToggleProp: (propId: string) => void;
 }) {
   // 正在看哪一帧：首帧是视频的起点，尾帧是落点（ADR-0038）
   const [shown, setShown] = useState<Frame>("first");
@@ -239,6 +244,41 @@ function Current({
         {characters.length === 0 && <span className="text-[10px] text-muted-2">还没有人物</span>}
       </div>
 
+      {/* 这一镜里有哪些道具：与人物同一套点签，锚点会带上道具参考（ADR-0066） */}
+      <div className="flex max-w-[340px] flex-wrap items-center justify-center gap-x-2 gap-y-1">
+        <span className="tnum text-[9px] tracking-[.14em] text-muted-2">道具</span>
+        {props.map((prop) => {
+          const present = shot.propIds.includes(prop.id);
+          const disabled = readOnly || shot.locked;
+          return (
+            <button
+              key={prop.id}
+              type="button"
+              aria-pressed={present}
+              disabled={disabled}
+              onClick={() => onToggleProp(prop.id)}
+              title={
+                shot.locked
+                  ? "这一镜已锁定，先解锁再改出场道具"
+                  : present
+                    ? `把${prop.name}从这一镜里拿掉`
+                    : `让${prop.name}出现在这一镜里`
+              }
+              className={cn(
+                "rounded-token border px-2 py-[1px] text-[10px] transition-colors duration-[var(--dur)]",
+                present
+                  ? "border-line-2 bg-surface text-text"
+                  : "border-line text-muted-2 hover:border-line-2 hover:text-text",
+                "disabled:cursor-default disabled:opacity-40 disabled:hover:border-line disabled:hover:text-muted-2",
+              )}
+            >
+              {prop.name}
+            </button>
+          );
+        })}
+        {props.length === 0 && <span className="text-[10px] text-muted-2">还没有道具</span>}
+      </div>
+
       {/* 这一镜带进生成的参考图：审片时就知道生成靠什么钉住（ADR-0029） */}
       {(shot.anchors.labels.length > 0 || shot.anchors.missing.length > 0) && (
         <div className="flex max-w-[340px] flex-wrap items-center justify-center gap-x-2.5 gap-y-1">
@@ -272,6 +312,7 @@ export type StageProps = {
   onGenerateKeyframe: (frame: Frame) => void;
   onRemoveNote: (note: string) => void;
   onToggleCharacter: (characterId: string) => void;
+  onToggleProp: (propId: string) => void;
 };
 
 export function Stage({
@@ -282,6 +323,7 @@ export function Stage({
   onGenerateKeyframe,
   onRemoveNote,
   onToggleCharacter,
+  onToggleProp,
 }: StageProps) {
   const current = view.shots[view.current]!;
   const prev = view.shots[view.current - 1];
@@ -298,10 +340,12 @@ export function Stage({
           generating={generating}
           quoteCny={quoteCny}
           characters={view.characters}
+          props={view.props}
           readOnly={readOnly}
           onGenerate={onGenerateKeyframe}
           onRemoveNote={onRemoveNote}
           onToggleCharacter={onToggleCharacter}
+          onToggleProp={onToggleProp}
         />
         {next && <Neighbour shot={next} />}
       </div>

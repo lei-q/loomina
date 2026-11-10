@@ -22,6 +22,7 @@ export function Workbench() {
   const removeNote = useWorkbench((state) => state.removeNote);
   const setShotLock = useWorkbench((state) => state.setShotLock);
   const toggleShotCharacter = useWorkbench((state) => state.toggleShotCharacter);
+  const toggleShotProp = useWorkbench((state) => state.toggleShotProp);
   const approveAndLock = useWorkbench((state) => state.approveAndLock);
   const jobs = useWorkbench((state) => state.jobs);
   const castError = useWorkbench((state) => state.castError);
@@ -105,6 +106,7 @@ export function Workbench() {
         onToggleCharacter={(characterId) =>
           toggleShotCharacter(view.shots[view.current]!.id, characterId)
         }
+        onToggleProp={(propId) => toggleShotProp(view.shots[view.current]!.id, propId)}
       />
       <ReelBar
         view={view}

@@ -1173,8 +1173,60 @@ describe("这一镜里谁出场（ADR-0065）", () => {
   });
 });
 
-describe("新建场次与镜头（ADR-0064）", () => {
+describe("这一镜里有哪些道具（ADR-0066）", () => {
   beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("点一件道具：一条 shot.updated { propIds }，提示词与锚点跟着变", () => {
+    const snapshot = state().events.length;
+
+    expect(state().toggleShotProp("s-09", "p-lamp")).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.updated",
+      shotId: "s-09",
+      patch: { propIds: ["p-cup", "p-lamp"] },
+    });
+
+    const view = toStageView(state().project);
+    const shot = view.shots.find((item) => item.id === "s-09")!;
+    expect(shot.propIds).toEqual(["p-cup", "p-lamp"]);
+    expect(shot.prompts.first).toContain("台灯");
+    expect(shot.anchors.labels.some((label) => label.includes("台灯"))).toBe(true);
+    expect(rebuild(state().events).shots.find((item) => item.id === "s-09")?.propIds).toEqual([
+      "p-cup",
+      "p-lamp",
+    ]);
+  });
+
+  it("再点一次就拿掉；最后一个道具也拿得掉（与人物不同，不受台词约束）", () => {
+    expect(state().toggleShotProp("s-05", "p-lamp")).toBe(true);
+    expect(state().project.shots.find((item) => item.id === "s-05")?.propIds).toEqual([]);
+
+    expect(state().toggleShotProp("s-09", "p-cup")).toBe(true);
+    expect(state().project.shots.find((item) => item.id === "s-09")?.propIds).toEqual([]);
+    expect(state().castError).toBeUndefined();
+  });
+
+  it("锁定的镜头、陌生镜头 / 道具、只读都不写事件", () => {
+    const snapshot = state().events.length;
+
+    expect(state().toggleShotProp("s-08", "p-cup")).toBe(false);
+    expect(state().castError).toContain("锁定");
+    expect(state().toggleShotProp("s-404", "p-cup")).toBe(false);
+    expect(state().castError).toContain("找不到");
+    expect(state().toggleShotProp("s-05", "p-404")).toBe(false);
+    expect(state().castError).toContain("找不到");
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().toggleShotProp("s-05", "p-cup")).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+  });
+});
+
+describe("新建场次与镜头（ADR-0064）", () => {  beforeEach(() => {
     state().reset();
     useWorkbench.setState({ readOnly: false });
   });
