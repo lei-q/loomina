@@ -4,6 +4,7 @@ import type {
   Asset,
   DialogueLine,
   Id,
+  Location,
   Project,
   Scene,
   Shot,
@@ -37,6 +38,19 @@ export type ProjectEvent =
       at: string;
       sceneId: Id;
       patch: Partial<Pick<Scene, "space" | "timeOfDay" | "locationId">>;
+    }
+  | {
+      /** 加一个地点（ADR-0059）：先有地点，场次才挂得上去 */
+      type: "location.added";
+      at: string;
+      location: Location;
+    }
+  | {
+      /** 改地点（ADR-0059）：名字与模板；主镜与参考图走资产那条路 */
+      type: "location.updated";
+      at: string;
+      locationId: Id;
+      patch: Partial<Pick<Location, "name" | "templateId">>;
     }
   | {
       /**
@@ -131,6 +145,32 @@ export function applyEvent(
         scene.id === event.sceneId ? { ...scene, ...event.patch } : scene,
       );
       return { ...current, scenes };
+    }
+
+    case "location.added": {
+      if (!current) throw new Error("location.added 之前必须有 project.created");
+      if (event.location.name.trim().length === 0) throw new Error("地点总得有个名字");
+      if (current.locations.some((location) => location.id === event.location.id)) {
+        throw new Error(`location.added 重复的地点: ${event.location.id}`);
+      }
+      return { ...current, locations: [...current.locations, event.location] };
+    }
+
+    case "location.updated": {
+      if (!current) throw new Error("location.updated 之前必须有 project.created");
+      if (!current.locations.some((location) => location.id === event.locationId)) {
+        throw new Error(`location.updated 指向不存在的地点: ${event.locationId}`);
+      }
+      if (Object.keys(event.patch).length === 0) {
+        throw new Error("location.updated 的 patch 是空的");
+      }
+      if (event.patch.name !== undefined && event.patch.name.trim().length === 0) {
+        throw new Error("地点总得有个名字");
+      }
+      const locations = current.locations.map((location) =>
+        location.id === event.locationId ? { ...location, ...event.patch } : location,
+      );
+      return { ...current, locations };
     }
 
     case "dialogue.updated": {

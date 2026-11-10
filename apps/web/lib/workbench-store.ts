@@ -7,6 +7,7 @@ import {
   SHEET_ANGLES,
   shotAnchors,
   type ApprovalTargetType,
+  type Location,
   type Project,
   type ProjectEvent,
   type Scene,
@@ -108,6 +109,13 @@ type WorkbenchState = {
   moveDialogueTo: (lineId: string, targetShotId: string) => boolean;
   /** 把一句删掉的台词放回它原来的镜头：`dialogue.added` + 镜头时长加回（ADR-0055） */
   restoreLine: (lineId: string) => boolean;
+  /** 新建地点：一条 `location.added`（ADR-0059） */
+  addLocation: (name: string, templateId?: string) => string | undefined;
+  /** 改地点名字 / 模板：一条 `location.updated`（ADR-0059） */
+  editLocation: (
+    locationId: string,
+    patch: Partial<Pick<Location, "name" | "templateId">>,
+  ) => boolean;
   /** 划掉一条补充要求：同样写一条 shot.updated（ADR-0039 附记） */
   removeNote: (shotId: string, note: string) => void;
   reset: () => void;
@@ -872,6 +880,83 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     set({
       project: written.reduce(applyEvent, project),
       events: [...events, ...written],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  addLocation: (name, templateId) => {
+    if (get().readOnly) return undefined;
+    const { project, events } = get();
+    const trimmed = name.trim();
+    if (!trimmed) {
+      set({ castError: "地点总得有个名字。" });
+      return undefined;
+    }
+    if (project.locations.some((item) => item.name === trimmed)) {
+      set({ castError: `已经有一个叫「${trimmed}」的地点了。` });
+      return undefined;
+    }
+    let id = `loc-${Date.now().toString(36)}`;
+    while (project.locations.some((item) => item.id === id)) id += "x";
+    const location: Location = {
+      id,
+      name: trimmed,
+      referenceImages: [],
+      ...(templateId ? { templateId } : {}),
+    };
+    const event: ProjectEvent = {
+      type: "location.added",
+      at: new Date().toISOString(),
+      location,
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return id;
+  },
+
+  editLocation: (locationId, patch) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const location = project.locations.find((item) => item.id === locationId);
+    if (!location) {
+      set({ castError: "找不到这个地点。" });
+      return false;
+    }
+    const next: Partial<Pick<Location, "name" | "templateId">> = {};
+    if (patch.name !== undefined) {
+      const trimmed = patch.name.trim();
+      if (!trimmed) {
+        set({ castError: "地点总得有个名字。" });
+        return false;
+      }
+      if (trimmed !== location.name) {
+        if (project.locations.some((item) => item.id !== locationId && item.name === trimmed)) {
+          set({ castError: `已经有一个叫「${trimmed}」的地点了。` });
+          return false;
+        }
+        next.name = trimmed;
+      }
+    }
+    if (patch.templateId !== undefined && patch.templateId !== location.templateId) {
+      next.templateId = patch.templateId;
+    }
+    if (Object.keys(next).length === 0) {
+      set({ castError: "地点没改。" });
+      return false;
+    }
+    const event: ProjectEvent = {
+      type: "location.updated",
+      at: new Date().toISOString(),
+      locationId,
+      patch: next,
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
       castError: undefined,
     });
     return true;

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { SHEET_LABELS, type SheetView } from "@loomina/ir";
 import { fetchImagePrice } from "@/lib/image-price";
 import { Bust } from "@/components/bust";
@@ -25,6 +25,14 @@ function clock(iso?: string): string {
     hour12: false,
   });
 }
+
+/** 地点模板：只决定主镜画哪种剪影；名字才是给人看的（ADR-0059） */
+const LOCATION_TEMPLATES = [
+  { id: "corridor", label: "走廊" },
+  { id: "doorway", label: "门口" },
+  { id: "table", label: "桌边" },
+  { id: "door", label: "门厅" },
+] as const;
 
 function StatusChip({
   status,
@@ -177,28 +185,108 @@ function LocationRow({
   location,
   generating,
   quoteCny,
+  readOnly,
   onGenerate,
   onLock,
   onUnlock,
+  onRename,
 }: {
   location: CastLocationView;
   /** 主镜正在生成 */
   generating: boolean;
   /** 这一次生成要花多少（元）；价目不知道就不给 */
   quoteCny?: number;
+  readOnly: boolean;
   onGenerate: () => void;
   onLock: () => void;
   onUnlock: () => void;
+  /** 改名 / 换模板：成功返回 true，表单据此收起 */
+  onRename: (name: string, templateId: string) => boolean;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [draftName, setDraftName] = useState("");
+  const [draftTemplate, setDraftTemplate] = useState(location.templateId ?? "doorway");
+
+  const beginEdit = () => {
+    setDraftName(location.name);
+    setDraftTemplate(location.templateId ?? "doorway");
+    setEditing(true);
+  };
+
   return (
     <section className="border-t border-line py-5">
       <div className="flex flex-wrap items-start gap-6">
         <div className="w-[168px] shrink-0">
-          <div className="flex items-baseline gap-2.5">
-            <h2 className="text-[17px] leading-none text-text">{location.name}</h2>
-            <StatusChip status={location.status} />
-          </div>
-          <p className="tnum mt-2 text-[10px] text-muted-2">主镜 · 全场共用</p>
+          {editing ? (
+            <form
+              className="flex flex-col gap-1.5"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (onRename(draftName, draftTemplate)) setEditing(false);
+              }}
+            >
+              <input
+                type="text"
+                value={draftName}
+                onChange={(event) => setDraftName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setEditing(false);
+                }}
+                autoFocus
+                aria-label="地点名字"
+                className="w-full rounded-token border border-line-2 bg-surface px-2 py-1.5 text-[13px] text-text focus:border-pick focus:outline-none"
+              />
+              <select
+                value={draftTemplate}
+                onChange={(event) => setDraftTemplate(event.target.value)}
+                aria-label="地点模板"
+                className="w-full rounded-token border border-line bg-surface px-2 py-1.5 text-[11.5px] text-muted focus:border-pick focus:outline-none"
+              >
+                {LOCATION_TEMPLATES.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+              <div className="flex gap-1.5">
+                <button
+                  type="submit"
+                  className="rounded-token border border-line-2 px-2 py-0.5 text-[10.5px] text-text transition-colors duration-[var(--dur)] hover:border-pick hover:text-pick"
+                >
+                  保存
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditing(false)}
+                  className="rounded-token border border-line px-2 py-0.5 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                >
+                  取消
+                </button>
+              </div>
+            </form>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-baseline gap-2.5">
+                <h2 className="text-[17px] leading-none text-text">{location.name}</h2>
+                <StatusChip
+                  status={location.status}
+                  missingText={location.required ? "缺 主镜" : "未挂场次"}
+                />
+                {!readOnly && (
+                  <button
+                    type="button"
+                    onClick={beginEdit}
+                    className="text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
+                  >
+                    改名
+                  </button>
+                )}
+              </div>
+              <p className="tnum mt-2 text-[10px] text-muted-2">
+                {location.required ? "主镜 · 全场共用" : "主镜 · 还没挂场次"}
+              </p>
+            </>
+          )}
         </div>
 
         <figure className="w-[120px]">
@@ -394,6 +482,18 @@ export function CastScreen() {
   const imageCny = useWorkbench((state) => state.imageCny);
   const setImagePrice = useWorkbench((state) => state.setImagePrice);
   const setBudget = useWorkbench((state) => state.setBudget);
+  const addLocation = useWorkbench((state) => state.addLocation);
+  const editLocation = useWorkbench((state) => state.editLocation);
+
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newTemplate, setNewTemplate] = useState<string>("doorway");
+
+  const closeCreate = () => {
+    setCreating(false);
+    setNewName("");
+    setNewTemplate("doorway");
+  };
 
   useEffect(() => {
     void hydrate();
@@ -472,16 +572,81 @@ export function CastScreen() {
           </section>
 
           <section className="mt-8">
-            <h2 className="tnum text-[9px] tracking-[.14em] text-muted-2">场景 · 主镜</h2>
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="tnum text-[9px] tracking-[.14em] text-muted-2">场景 · 主镜</h2>
+              {!readOnly && !creating && (
+                <button
+                  type="button"
+                  onClick={() => setCreating(true)}
+                  className="rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                >
+                  新建地点
+                </button>
+              )}
+            </div>
+
+            {creating && (
+              <form
+                className="mt-3 flex flex-wrap items-center gap-2 rounded-token border border-dashed border-line-2 px-3 py-2.5"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (addLocation(newName, newTemplate)) closeCreate();
+                }}
+              >
+                <input
+                  type="text"
+                  value={newName}
+                  onChange={(event) => setNewName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") closeCreate();
+                  }}
+                  autoFocus
+                  aria-label="新地点名字"
+                  placeholder="地点名字：阳台 · 楼梯间 · 便利店门口"
+                  className="min-w-[220px] flex-1 bg-transparent text-[12.5px] text-text placeholder:text-muted-2 focus:outline-none"
+                />
+                <select
+                  value={newTemplate}
+                  onChange={(event) => setNewTemplate(event.target.value)}
+                  aria-label="新地点模板"
+                  className="rounded-token border border-line bg-surface px-2 py-1 text-[11px] text-muted focus:border-pick focus:outline-none"
+                >
+                  {LOCATION_TEMPLATES.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="submit"
+                  className="rounded-token border border-line-2 px-2.5 py-1 text-[10.5px] text-text transition-colors duration-[var(--dur)] hover:border-pick hover:text-pick"
+                >
+                  创建
+                </button>
+                <button
+                  type="button"
+                  onClick={closeCreate}
+                  className="rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                >
+                  取消
+                </button>
+                <span className="w-full text-[10px] text-muted-2">
+                  建好后到剧本页把它挂到场上，场次才有地方发生。
+                </span>
+              </form>
+            )}
+
             {cast.locations.map((location) => (
               <LocationRow
                 key={location.id}
                 location={location}
                 generating={jobs[location.id]?.kind === "master"}
                 quoteCny={imageCny}
+                readOnly={readOnly ?? false}
                 onGenerate={() => void generateMaster(location.id)}
                 onLock={() => lockCast("location", location.id)}
                 onUnlock={() => unlockCast("location", location.id)}
+                onRename={(name, templateId) => editLocation(location.id, { name, templateId })}
               />
             ))}
           </section>

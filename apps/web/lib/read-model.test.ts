@@ -157,6 +157,8 @@ describe("toStageView", () => {
     expect(lin.status).toBe("ready");
     expect(lin.required).toBe(true);
     expect(cast.locations.every((item) => item.masterAssetId)).toBe(true);
+    // 模板带进读模型：改名表单要回填它（ADR-0059）
+    expect(cast.locations.find((item) => item.id === "loc-corridor")?.templateId).toBe("corridor");
 
     const cup = cast.props.find((item) => item.id === "p-cup")!;
     expect(cup.art).toBe("cup");

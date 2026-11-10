@@ -421,3 +421,81 @@ describe("scene.updated（ADR-0050）", () => {
     ).toThrow(/地点/);
   });
 });
+
+describe("location.added / location.updated（ADR-0059）", () => {
+  it("加一个地点，重放后一致", () => {
+    const project = load();
+    const event: ProjectEvent = {
+      type: "location.added",
+      at: AT,
+      location: { id: "loc-balcony", name: "阳台", templateId: "corridor", referenceImages: [] },
+    };
+    const after = applyEvent(project, event);
+    expect(after.locations.at(-1)).toMatchObject({ id: "loc-balcony", name: "阳台" });
+    expect(rebuild([created(project), event])).toEqual(after);
+  });
+
+  it("改名与换模板，别的字段不动；重放后一致", () => {
+    const project = load();
+    const added: ProjectEvent = {
+      type: "location.added",
+      at: AT,
+      location: { id: "loc-balcony", name: "阳台", templateId: "corridor", referenceImages: [] },
+    };
+    const renamed: ProjectEvent = {
+      type: "location.updated",
+      at: AT,
+      locationId: "loc-balcony",
+      patch: { name: "阳台外沿", templateId: "doorway" },
+    };
+    const after = rebuild([created(project), added, renamed]);
+    expect(after.locations.at(-1)).toMatchObject({
+      id: "loc-balcony",
+      name: "阳台外沿",
+      templateId: "doorway",
+    });
+  });
+
+  it("重复的 id、空名字、不存在的地点、空 patch 都拒绝", () => {
+    const project = load();
+    const existing = project.locations[0]!;
+    expect(() =>
+      applyEvent(project, {
+        type: "location.added",
+        at: AT,
+        location: { id: existing.id, name: "又一个", referenceImages: [] },
+      }),
+    ).toThrow(/重复/);
+    expect(() =>
+      applyEvent(project, {
+        type: "location.added",
+        at: AT,
+        location: { id: "loc-blank", name: "  ", referenceImages: [] },
+      }),
+    ).toThrow(/名字/);
+    expect(() =>
+      applyEvent(project, {
+        type: "location.updated",
+        at: AT,
+        locationId: "loc-404",
+        patch: { name: "门厅" },
+      }),
+    ).toThrow(/不存在/);
+    expect(() =>
+      applyEvent(project, {
+        type: "location.updated",
+        at: AT,
+        locationId: existing.id,
+        patch: {},
+      }),
+    ).toThrow(/空/);
+    expect(() =>
+      applyEvent(project, {
+        type: "location.updated",
+        at: AT,
+        locationId: existing.id,
+        patch: { name: "" },
+      }),
+    ).toThrow(/名字/);
+  });
+});

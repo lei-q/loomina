@@ -645,6 +645,8 @@ export type CastCharacterView = {
 export type CastLocationView = {
   id: string;
   name: string;
+  /** 模板：决定主镜画哪种剪影，也决定改名表单里选中哪一项（ADR-0059） */
+  templateId?: string;
   art: SceneKind;
   status: CastStatus;
   required: boolean;
@@ -721,6 +723,7 @@ export function toCastView(project: Project): CastView {
       {
         id: location.id,
         name: location.name,
+        templateId: template,
         art: (template && artByTemplate[template]) || "door",
         status: item.status,
         required: item.required,

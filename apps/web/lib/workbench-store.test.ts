@@ -1118,6 +1118,80 @@ describe("场头改写（ADR-0050）", () => {
   });
 });
 
+describe("新建 / 编辑地点（ADR-0059）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("新建一个地点：一条 location.added，可回放，定妆页能看到", () => {
+    const snapshot = state().events.length;
+
+    const id = state().addLocation("  阳台 ", "corridor");
+    expect(id).toBeTruthy();
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "location.added",
+      location: { id, name: "阳台", templateId: "corridor" },
+    });
+
+    const added = state().project.locations.find((item) => item.id === id);
+    expect(added).toMatchObject({ name: "阳台", templateId: "corridor", referenceImages: [] });
+    expect(rebuild(state().events).locations.find((item) => item.id === id)?.name).toBe("阳台");
+  });
+
+  it("空名字、重名、只读都不写事件", () => {
+    const snapshot = state().events.length;
+
+    expect(state().addLocation("   ")).toBeUndefined();
+    expect(state().castError).toContain("名字");
+    expect(state().addLocation("走廊")).toBeUndefined();
+    expect(state().castError).toContain("走廊");
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().addLocation("阳台")).toBeUndefined();
+    expect(state().events).toHaveLength(snapshot);
+  });
+
+  it("改名与换模板：一条 location.updated，只动这个地点", () => {
+    const snapshot = state().events.length;
+
+    expect(state().editLocation("loc-table", { name: "餐桌边", templateId: "corridor" })).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "location.updated",
+      locationId: "loc-table",
+      patch: { name: "餐桌边", templateId: "corridor" },
+    });
+
+    expect(state().project.locations.find((item) => item.id === "loc-table")).toMatchObject({
+      name: "餐桌边",
+      templateId: "corridor",
+    });
+    expect(state().project.locations.find((item) => item.id === "loc-corridor")?.name).toBe("走廊");
+    expect(rebuild(state().events).locations.find((item) => item.id === "loc-table")?.name).toBe(
+      "餐桌边",
+    );
+  });
+
+  it("没变化、重名、陌生地点、只读都不写事件", () => {
+    const snapshot = state().events.length;
+
+    expect(state().editLocation("loc-table", { name: "桌边" })).toBe(false);
+    expect(state().castError).toContain("没改");
+    expect(state().editLocation("loc-table", { name: "走廊" })).toBe(false);
+    expect(state().castError).toContain("走廊");
+    expect(state().editLocation("loc-404", { name: "门厅" })).toBe(false);
+    expect(state().castError).toContain("找不到");
+    expect(state().editLocation("loc-table", { name: "  " })).toBe(false);
+    expect(state().castError).toContain("名字");
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().editLocation("loc-table", { name: "餐桌边" })).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+  });
+});
+
 describe("台词顺序整组写回（ADR-0053）", () => {
   beforeEach(() => {
     state().reset();
