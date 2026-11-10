@@ -9,12 +9,15 @@ import { PropObject } from "@/components/prop-object";
 import { Scene } from "@/components/scene";
 import { TopBar } from "@/components/top-bar";
 import {
+  castTextHistory,
   toCastView,
   undoableRemoval,
   type CastCharacterView,
   type CastLocationView,
   type CastPropView,
   type CastReference,
+  type CastTextHistory,
+  type CastTextVersion,
 } from "@/lib/read-model";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
@@ -182,6 +185,83 @@ function ReferenceStrip({
   );
 }
 
+/** 名字 / 描述的历史：点一行展开，一版一行，可以整版写回（ADR-0082） */
+function TextHistoryLine({
+  history,
+  name,
+  body,
+  readOnly,
+  onRestore,
+}: {
+  history?: CastTextHistory;
+  /** 现在的名字 / 描述：用来标出"正在用"的那一版 */
+  name: string;
+  body: string;
+  readOnly: boolean;
+  onRestore: (version: CastTextVersion) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!history || history.edits.length === 0) return null;
+
+  const summary = (version: CastTextVersion) =>
+    [version.name, version.body].filter(Boolean).join(" · ");
+  const isCurrent = (version: CastTextVersion) => version.name === name && version.body === body;
+
+  const row = (version: CastTextVersion, label?: string) => (
+    <li
+      key={`${version.at}-${label ?? version.name}`}
+      className="flex flex-wrap items-baseline gap-2 text-[9.5px] leading-[1.5]"
+    >
+      <span className="tnum shrink-0 text-muted-2">{clock(version.at)}</span>
+      <span
+        className={cn("min-w-0 flex-1 truncate", isCurrent(version) ? "text-text" : "text-muted")}
+        title={summary(version)}
+      >
+        {label && <span className="text-muted-2">{label} · </span>}
+        {summary(version) || "（空）"}
+      </span>
+      {isCurrent(version) ? (
+        <span className="shrink-0 text-[9px] text-muted-2">正在用</span>
+      ) : (
+        !readOnly && (
+          <button
+            type="button"
+            onClick={() => onRestore(version)}
+            title="整版写回：名字与描述一起换回这一版，也会记一笔历史"
+            className="shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted transition-colors duration-[var(--dur)] hover:border-pick hover:text-pick"
+          >
+            用这版
+          </button>
+        )
+      )}
+    </li>
+  );
+
+  // 最后一版就是现在这一版：上一版要往前再退一格，退到头就是最初那版
+  const previous = history.edits[history.edits.length - 2] ?? history.original;
+
+  return (
+    <div className="mt-1.5">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        title="改名、改描述都会留一版；可以整版回退"
+        className="flex max-w-full items-baseline gap-1.5 text-left text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
+      >
+        <span className="shrink-0">{open ? "收起历史" : `改过 ${history.edits.length} 次`}</span>
+        {!open && <span className="min-w-0 truncate">· 上一版「{summary(previous)}」</span>}
+      </button>
+      {open && (
+        <ul className="mt-1.5 space-y-1 border-l border-line pl-2">
+          {[...history.edits].reverse().map((version) => row(version))}
+          {row(history.original, "最初")}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function CharacterRow({
   character,
   readOnly,
@@ -196,6 +276,8 @@ function CharacterRow({
   onRemoveMustNotChange,
   onAddReference,
   onRemoveReference,
+  history,
+  onRestoreText,
 }: {
   character: CastCharacterView;
   readOnly: boolean;
@@ -217,6 +299,10 @@ function CharacterRow({
   /** 挂一张参考图：成功返回 true，输入框据此收起（ADR-0079） */
   onAddReference: (uri: string) => boolean;
   onRemoveReference: (assetId: string) => void;
+  /** 名字 / 外形改过哪几版（ADR-0082） */
+  history?: CastTextHistory;
+  /** 整版写回：名字与外形一起换回那一版（ADR-0082） */
+  onRestoreText: (version: CastTextVersion) => void;
 }) {
   const missing = character.panels.filter((panel) => !panel.assetId).length;
   const [editing, setEditing] = useState(false);
@@ -338,6 +424,13 @@ function CharacterRow({
               <p className="mt-2 text-[11.5px] leading-[1.5] text-muted">
                 {character.appearance || "还没写外形描述。"}
               </p>
+              <TextHistoryLine
+                history={history}
+                name={character.name}
+                body={character.appearance}
+                readOnly={readOnly}
+                onRestore={onRestoreText}
+              />
             </>
           )}
           <p className="tnum mt-4 text-[8.5px] tracking-[.12em] text-muted-2">不许变</p>
@@ -531,6 +624,8 @@ function LocationRow({
   onDescribe,
   onRemove,
   otherLocations,
+  history,
+  onRestoreText,
 }: {
   location: CastLocationView;
   /** 主镜正在生成 */
@@ -549,6 +644,10 @@ function LocationRow({
   onRemove: (moveToId?: string) => boolean;
   /** 还有哪些地点可以搬：这一行自己不在里面 */
   otherLocations: { id: string; name: string }[];
+  /** 名字 / 场景描述改过哪几版（ADR-0082） */
+  history?: CastTextHistory;
+  /** 整版写回：名字与描述一起换回那一版（ADR-0082） */
+  onRestoreText: (version: CastTextVersion) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -804,6 +903,13 @@ function LocationRow({
               <p className="text-[9px] leading-[1.6] text-muted-2">
                 同一场的所有镜头都带这张图进生成，房间不许每镜重新想象。
               </p>
+              <TextHistoryLine
+                history={history}
+                name={location.name}
+                body={location.description}
+                readOnly={readOnly}
+                onRestore={onRestoreText}
+              />
             </>
           )}
         </div>
@@ -865,6 +971,8 @@ function PropRow({
   onRemove,
   onAddReference,
   onRemoveReference,
+  history,
+  onRestoreText,
 }: {
   prop: CastPropView;
   readOnly: boolean;
@@ -882,6 +990,10 @@ function PropRow({
   /** 挂一张参考图：成功返回 true（ADR-0079） */
   onAddReference: (uri: string) => boolean;
   onRemoveReference: (assetId: string) => void;
+  /** 名字 / 描述改过哪几版（ADR-0082） */
+  history?: CastTextHistory;
+  /** 整版写回：名字与描述一起换回那一版（ADR-0082） */
+  onRestoreText: (version: CastTextVersion) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -1000,6 +1112,13 @@ function PropRow({
               <p className="mt-2 text-[11px] leading-[1.5] text-muted">
                 {prop.description || "还没写道具描述。"}
               </p>
+              <TextHistoryLine
+                history={history}
+                name={prop.name}
+                body={prop.description}
+                readOnly={readOnly}
+                onRestore={onRestoreText}
+              />
             </>
           )}
         </div>
@@ -1331,6 +1450,10 @@ export function CastScreen() {
                   onRemoveReference={(assetId) =>
                     removeCharacterReference(character.id, assetId)
                   }
+                  history={castTextHistory(events, "character", character.id)}
+                  onRestoreText={(version) =>
+                    editCharacter(character.id, { name: version.name, appearance: version.body })
+                  }
                 />
               );
             })}
@@ -1428,6 +1551,10 @@ export function CastScreen() {
                 otherLocations={cast.locations
                   .filter((item) => item.id !== location.id)
                   .map((item) => ({ id: item.id, name: item.name }))}
+                history={castTextHistory(events, "location", location.id)}
+                onRestoreText={(version) =>
+                  editLocation(location.id, { name: version.name, description: version.body })
+                }
               />
             ))}
           </section>
@@ -1517,6 +1644,10 @@ export function CastScreen() {
                   onRemove={() => removeProp(prop.id)}
                   onAddReference={(uri) => addPropReference(prop.id, uri)}
                   onRemoveReference={(assetId) => removePropReference(prop.id, assetId)}
+                  history={castTextHistory(events, "prop", prop.id)}
+                  onRestoreText={(version) =>
+                    editProp(prop.id, { name: version.name, description: version.body })
+                  }
                 />
               ))}
             </section>

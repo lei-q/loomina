@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ProjectSchema, rebuild, type ProjectEvent, type ProjectInput } from "@loomina/ir";
 import {
   actionHistory,
+  castTextHistory,
   dialogueHistory,
   dialogueOrderHistory,
   filterKeyframeCells,
@@ -1056,5 +1057,51 @@ describe("参考图进读模型（ADR-0079）", () => {
     const lamp = view.props.find((item) => item.id === "p-lamp")!;
     expect(lamp.referenceAssetId).toBe("a-lamp");
     expect(lamp.references).toEqual([{ assetId: "a-lamp", uri: undefined }]);
+  });
+});
+
+describe("名字与描述的历史（ADR-0082）", () => {
+  const at = (h: number) => `2026-11-11T${String(h).padStart(2, "0")}:00:00+08:00`;
+  const events = [
+    { type: "project.created" as const, at: at(0), project: sampleProject },
+    { type: "character.updated" as const, at: at(9), characterId: "c-lin", patch: { name: "林小雨" } },
+    { type: "character.updated" as const, at: at(10), characterId: "c-lin", patch: { appearance: "短发，黑色风衣" } },
+    { type: "character.updated" as const, at: at(11), characterId: "c-lin", patch: { mustNotChange: ["左眼下的痣"] } },
+    { type: "character.updated" as const, at: at(12), characterId: "c-zhou", patch: { name: "周默" } },
+    { type: "prop.updated" as const, at: at(13), propId: "p-cup", patch: { name: "蓝边搪瓷杯", description: "杯沿磕掉一块瓷" } },
+    { type: "location.added" as const, at: at(14), location: { id: "loc-roof", name: "天台", description: "", referenceImages: [], templateId: "rooftop", masterShotId: "a-roof" } },
+    { type: "location.updated" as const, at: at(15), locationId: "loc-roof", patch: { description: "水箱在左边，远处是城市的灯" } },
+  ];
+
+  it("人物：最初一版从引导事件取，每次改名 / 改外形是一版，只改不许变不算", () => {
+    const history = castTextHistory(events, "character", "c-lin")!;
+    expect(history.original).toEqual({ at: at(0), name: "林", body: "短发，深色外套" });
+    expect(history.edits).toEqual([
+      { at: at(9), name: "林小雨", body: "短发，深色外套" },
+      { at: at(10), name: "林小雨", body: "短发，黑色风衣" },
+    ]);
+  });
+
+  it("道具：名字与描述同一条改动合成一版，仍是完整的两个值", () => {
+    const history = castTextHistory(events, "prop", "p-cup")!;
+    expect(history.original).toEqual({ at: at(0), name: "搪瓷杯", body: "白底蓝边搪瓷缸，杯沿有一道旧磕痕" });
+    expect(history.edits).toEqual([
+      { at: at(13), name: "蓝边搪瓷杯", body: "杯沿磕掉一块瓷" },
+    ]);
+  });
+
+  it("地点：后加的地点从 location.added 取最初一版", () => {
+    const history = castTextHistory(events, "location", "loc-roof")!;
+    expect(history.original).toEqual({ at: at(14), name: "天台", body: "" });
+    expect(history.edits).toEqual([
+      { at: at(15), name: "天台", body: "水箱在左边，远处是城市的灯" },
+    ]);
+  });
+
+  it("没改过的人是空历史，没出现过的人是 undefined，别的人的事件不算进来", () => {
+    expect(castTextHistory(events, "character", "c-lin")!.edits).toHaveLength(2);
+    expect(castTextHistory(events, "character", "c-zhou")!.edits).toHaveLength(1);
+    expect(castTextHistory(events, "character", "c-none")).toBeUndefined();
+    expect(castTextHistory(events.slice(0, 1), "character", "c-lin")!.edits).toEqual([]);
   });
 });

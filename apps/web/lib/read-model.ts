@@ -1224,6 +1224,88 @@ export function previousSceneHead(history: SceneHeadHistory): SceneHead | undefi
   return history.edits[history.edits.length - 2]?.head ?? history.original;
 }
 
+/** 人物 / 道具 / 地点：文字类的「那一版长什么样」（ADR-0082） */
+export type CastTextKind = "character" | "prop" | "location";
+
+export type CastTextVersion = {
+  at: string;
+  name: string;
+  /** 人物是外形描述，道具 / 地点是描述 */
+  body: string;
+};
+
+export type CastTextHistory = {
+  /** 建出来那一版；引导事件或 `*.added` 里取 */
+  original: CastTextVersion;
+  /** 从旧到新，一次改动一条；每条是改完之后完整的名字 + 描述 */
+  edits: CastTextVersion[];
+};
+
+/**
+ * 名字与描述被改过几次（ADR-0082）。
+ *
+ * 两类字段挤在同一条 `*.updated` 里，所以历史记的是「那一版长什么样」：
+ * 逐条把 patch 叠到名字 / 描述上，存完整的两个值。最初那版从引导事件
+ * 或 `*.added` 里取，与动作、场头同一套读法。模板、参考图这类改动不算一版。
+ */
+export function castTextHistory(
+  events: ProjectEvent[],
+  kind: CastTextKind,
+  id: string,
+): CastTextHistory | undefined {
+  let original: CastTextVersion | undefined;
+  const edits: CastTextVersion[] = [];
+
+  for (const event of events) {
+    const last = edits[edits.length - 1] ?? original;
+    if (event.type === "project.created") {
+      if (kind === "character") {
+        const item = event.project.characters.find((entry) => entry.id === id);
+        if (item) original = { at: event.at, name: item.name, body: item.appearance };
+      } else if (kind === "prop") {
+        const item = event.project.props.find((entry) => entry.id === id);
+        if (item) original = { at: event.at, name: item.name, body: item.description };
+      } else {
+        const item = event.project.locations.find((entry) => entry.id === id);
+        if (item) original = { at: event.at, name: item.name, body: item.description ?? "" };
+      }
+    } else if (event.type === "character.added" && kind === "character" && event.character.id === id) {
+      original = { at: event.at, name: event.character.name, body: event.character.appearance };
+    } else if (event.type === "prop.added" && kind === "prop" && event.prop.id === id) {
+      original = { at: event.at, name: event.prop.name, body: event.prop.description };
+    } else if (event.type === "location.added" && kind === "location" && event.location.id === id) {
+      original = { at: event.at, name: event.location.name, body: event.location.description ?? "" };
+    } else if (event.type === "character.updated" && kind === "character" && event.characterId === id) {
+      const patch = event.patch;
+      if (patch.name === undefined && patch.appearance === undefined) continue;
+      edits.push({
+        at: event.at,
+        name: patch.name ?? last?.name ?? "",
+        body: patch.appearance ?? last?.body ?? "",
+      });
+    } else if (event.type === "prop.updated" && kind === "prop" && event.propId === id) {
+      const patch = event.patch;
+      if (patch.name === undefined && patch.description === undefined) continue;
+      edits.push({
+        at: event.at,
+        name: patch.name ?? last?.name ?? "",
+        body: patch.description ?? last?.body ?? "",
+      });
+    } else if (event.type === "location.updated" && kind === "location" && event.locationId === id) {
+      const patch = event.patch;
+      if (patch.name === undefined && patch.description === undefined) continue;
+      edits.push({
+        at: event.at,
+        name: patch.name ?? last?.name ?? "",
+        body: patch.description ?? last?.body ?? "",
+      });
+    }
+  }
+
+  if (!original) return undefined;
+  return { original, edits };
+}
+
 /**
  * 剧本导出成纯文本（ADR-0048）：给存档、给外部工具、给人看。
  *
