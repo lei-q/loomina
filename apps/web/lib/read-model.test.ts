@@ -261,3 +261,27 @@ describe("首帧进读模型（ADR-0037）", () => {
     expect(shot?.keyframeUri).toContain("RkFLRQ");
   });
 });
+
+describe("一句话指令进读模型（ADR-0039）", () => {
+  it("景别与机位是中文，补充要求原样带上", () => {
+    const project = {
+      ...sampleProject,
+      shots: sampleProject.shots.map((shot) =>
+        shot.id === "s-03"
+          ? {
+              ...shot,
+              shotSize: "close" as const,
+              camera: { ...shot.camera, angle: "low" as const },
+              promptNotes: ["整体提亮，补足曝光，阴影保留细节"],
+            }
+          : shot,
+      ),
+    };
+    const view = toStageView(project, { currentShotId: "s-03" });
+    const shot = view.shots[view.current];
+
+    expect(shot?.size).toBe("特写");
+    expect(shot?.angle).toBe("仰拍");
+    expect(shot?.notes).toEqual(["整体提亮，补足曝光，阴影保留细节"]);
+  });
+});

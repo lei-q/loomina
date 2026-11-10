@@ -206,6 +206,8 @@ interface Keyframes {
 }
 ```
 
+> **落地情况（ADR-0039，2026-11-10）**：`Shot.promptNotes: string[]`（zod 默认 `[]`）是一句话指令落下的补充要求，提示词里作为「补充：…」原样带上；改结构字段（景别 / 机位 / 运镜）走同一条 `shot.updated` 的 patch，不改版本号。
+
 > **落地情况（ADR-0037 / ADR-0038，2026-11-10）**：`Shot.keyframes` 已进 IR（zod 默认 `{}`，老日志靠默认值补齐，`LOG_VERSION` 仍为 1）。分镜页可生成首尾两帧：首帧资产 id 固定 `a-keyframe-<shotId>`，写 `firstAssetId`；尾帧固定 `a-lastframe-<shotId>`，写 `lastAssetId`。每帧一条 `asset.updated` 加一条 `shot.updated`，patch 里的 `keyframes` 是完整对象（生成尾帧不抹掉首帧）；重生成按 id 覆盖。两帧都不参与 take。
 
 ```ts

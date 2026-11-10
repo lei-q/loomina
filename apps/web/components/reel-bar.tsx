@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Scene } from "@/components/scene";
 import { CheckIcon, CrossIcon, RedoIcon } from "@/components/icons";
 import type { StageShot, StageView } from "@/lib/read-model";
@@ -46,11 +47,14 @@ export type ReelBarProps = {
   view: StageView;
   onSelect: (shotId: string) => void;
   onDecide: (status: Decision) => void;
+  /** 一句话指令：成功返回 true，输入框据此清空（ADR-0039） */
+  onInstruct: (text: string) => boolean;
 };
 
-export function ReelBar({ view, onSelect, onDecide }: ReelBarProps) {
+export function ReelBar({ view, onSelect, onDecide, onInstruct }: ReelBarProps) {
   const current = view.shots[view.current]!;
   const decidable = !current.locked && current.take !== undefined;
+  const [draft, setDraft] = useState("");
 
   return (
     <footer className="shrink-0 border-t border-line">
@@ -70,15 +74,26 @@ export function ReelBar({ view, onSelect, onDecide }: ReelBarProps) {
 
       {/* 一句话指令 + 两个动作，重做永远带价 */}
       <div className="flex items-center gap-2 border-t border-line px-4 py-2.5">
-        <label className="flex flex-1 items-center gap-2.5 rounded-token border border-line bg-surface px-3 py-2 focus-within:border-line-2">
-          <span className="tnum shrink-0 text-[9px] text-muted-2">SH-{String(current.no).padStart(2, "0")}</span>
-          <input
-            type="text"
-            placeholder="说哪里不对：太暗了 · 换个角度 · 她笑得太早了"
-            className="w-full bg-transparent text-[12.5px] text-text placeholder:text-muted-2 focus:outline-none"
-          />
-          <kbd className="tnum shrink-0 text-[9px] text-muted-2">⌘⏎</kbd>
-        </label>
+        <form
+          className="flex-1"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (onInstruct(draft)) setDraft("");
+          }}
+        >
+          <label className="flex items-center gap-2.5 rounded-token border border-line bg-surface px-3 py-2 focus-within:border-line-2">
+            <span className="tnum shrink-0 text-[9px] text-muted-2">SH-{String(current.no).padStart(2, "0")}</span>
+            <input
+              type="text"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              disabled={current.locked}
+              placeholder="说哪里不对：太暗了 · 换个角度 · 她笑得太早了"
+              className="w-full bg-transparent text-[12.5px] text-text placeholder:text-muted-2 focus:outline-none disabled:cursor-not-allowed"
+            />
+            <kbd className="tnum shrink-0 text-[9px] text-muted-2">⏎</kbd>
+          </label>
+        </form>
 
         {current.locked ? (
           <span className="tnum shrink-0 px-1 text-[10.5px] text-muted-2">已锁定 · 只读</span>

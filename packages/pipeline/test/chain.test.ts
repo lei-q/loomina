@@ -14,6 +14,7 @@ import {
   buildSheetPrompt,
   buildKeyframePrompt,
   buildShotPrompt,
+  parseInstruction,
   runMinimalChain,
   shotMaterial,
 } from "../src/index";
@@ -223,5 +224,64 @@ describe("主镜与道具提示词", () => {
 
     expect(prompt).not.toContain("。。");
     expect(prompt.startsWith("道具参考图：台灯。单件静物")).toBe(true);
+  });
+});
+
+describe("一句话指令（ADR-0039）", () => {
+  const shot = { shotSize: "medium" as const, camera: { angle: "eye" as const, movement: "static" as const, focalMm: 50 } };
+
+  it("太暗了落成补充要求，不动结构字段", () => {
+    const patch = parseInstruction("太暗了", shot);
+    expect(patch?.note).toContain("提亮");
+    expect(patch?.shotSize).toBeUndefined();
+    expect(patch?.camera).toBeUndefined();
+  });
+
+  it("太亮走过曝那条，不会被暗部规则吃掉", () => {
+    expect(parseInstruction("太亮了", shot)?.note).toContain("压暗");
+    expect(parseInstruction("高光过曝", shot)?.note).toContain("压暗");
+  });
+
+  it("换个角度按平视 → 仰拍 → 俯拍 → 平视轮换", () => {
+    expect(parseInstruction("换个角度", shot)?.camera?.angle).toBe("low");
+    expect(
+      parseInstruction("换个角度", { ...shot, camera: { ...shot.camera, angle: "low" } })?.camera?.angle,
+    ).toBe("high");
+    expect(
+      parseInstruction("换个角度", { ...shot, camera: { ...shot.camera, angle: "high" } })?.camera?.angle,
+    ).toBe("eye");
+  });
+
+  it("靠近紧一档、拉远松一档，到头了就不改", () => {
+    expect(parseInstruction("靠近一点", shot)?.shotSize).toBe("close");
+    expect(parseInstruction("拉远", shot)?.shotSize).toBe("wide");
+    expect(parseInstruction("再近一点", { ...shot, shotSize: "extreme-close" })).toBeNull();
+    expect(parseInstruction("拉远", { ...shot, shotSize: "wide" })).toBeNull();
+  });
+
+  it("手持与稳住改机位运动", () => {
+    const handheld = { ...shot, camera: { ...shot.camera, movement: "handheld" as const } };
+    expect(parseInstruction("有点晃，稳住", handheld)?.camera?.movement).toBe("static");
+    expect(parseInstruction("试试手持", shot)?.camera?.movement).toBe("handheld");
+    // 已经是手持再说手持，没有改动
+    expect(parseInstruction("手持", handheld)).toBeNull();
+  });
+
+  it("没听懂就返回 null，不编参数", () => {
+    expect(parseInstruction("她笑得太早了", shot)).toBeNull();
+    expect(parseInstruction("   ", shot)).toBeNull();
+  });
+
+  it("补充要求进提示词，作为一句「补充：…」", () => {
+    const project = load();
+    const line = project.shots[0]!;
+    const withNote = {
+      ...line,
+      promptNotes: ["整体提亮，补足曝光，阴影保留细节"],
+    };
+    const prompt = buildKeyframePrompt(shotMaterial({ ...project, shots: [withNote] }, withNote));
+
+    expect(prompt).toContain("补充：整体提亮，补足曝光，阴影保留细节");
+    expect(buildShotPrompt({ ...project, shots: [withNote] }, withNote)).toContain("补充：");
   });
 });

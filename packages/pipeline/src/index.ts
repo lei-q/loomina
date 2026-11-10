@@ -182,14 +182,14 @@ export async function runShot(
   };
 }
 
-const SIZE_CN: Record<Shot["shotSize"], string> = {
+export const SHOT_SIZE_CN: Record<Shot["shotSize"], string> = {
   wide: "全景",
   medium: "中景",
   close: "特写",
   "extreme-close": "大特写",
 };
 
-const ANGLE_CN: Record<Shot["camera"]["angle"], string> = {
+export const SHOT_ANGLE_CN: Record<Shot["camera"]["angle"], string> = {
   eye: "平视",
   low: "仰拍",
   high: "俯拍",
@@ -216,6 +216,8 @@ export type ShotPromptMaterial = {
   description: string;
   shotSize: Shot["shotSize"];
   camera: Shot["camera"];
+  /** 一句话指令落下的补充要求（ADR-0039）；没有就不带 */
+  notes?: string[];
   characters: Pick<Character, "name" | "appearance" | "mustNotChange">[];
   location?: Pick<Location, "name">;
   props: Pick<Prop, "name" | "description">[];
@@ -232,6 +234,7 @@ export function shotMaterial(project: Project, shot: Shot): ShotPromptMaterial {
     description: shot.description,
     shotSize: shot.shotSize,
     camera: shot.camera,
+    notes: shot.promptNotes,
     characters: shot.characterIds
       .map((id) => project.characters.find((character) => character.id === id))
       .filter((character): character is Character => Boolean(character)),
@@ -259,6 +262,10 @@ function shotParts(material: ShotPromptMaterial): string[] {
 
   if (material.location) parts.push(`场景：${material.location.name}`);
 
+  if (material.notes && material.notes.length) {
+    parts.push(`补充：${material.notes.join("；")}`);
+  }
+
   const props = material.props.map((prop) =>
     prop.description ? `${prop.name}，${prop.description}` : prop.name,
   );
@@ -266,7 +273,7 @@ function shotParts(material: ShotPromptMaterial): string[] {
 
   const { shotSize, camera } = material;
   parts.push(
-    `${SIZE_CN[shotSize]}，${ANGLE_CN[camera.angle]}，${MOVE_CN[camera.movement]}，${camera.focalMm}mm`,
+    `${SHOT_SIZE_CN[shotSize]}，${SHOT_ANGLE_CN[camera.angle]}，${MOVE_CN[camera.movement]}，${camera.focalMm}mm`,
   );
 
   return parts;
@@ -308,6 +315,71 @@ export function buildKeyframePrompt(
   parts.push(FRAME_LINE[frame]);
   parts.push(LOOK);
   return parts.join("。");
+}
+
+/**
+ * 一句话指令能改的字段（ADR-0039）。只放这次真的改了的：
+ * 空对象表示没听懂，调用方据此不写事件。
+ */
+export type ShotPatch = {
+  shotSize?: Shot["shotSize"];
+  camera?: Shot["camera"];
+  /** 落不到结构字段的补充要求，追加进 `promptNotes` */
+  note?: string;
+};
+
+const ANGLE_ORDER: Shot["camera"]["angle"][] = ["eye", "low", "high"];
+const SIZE_ORDER: Shot["shotSize"][] = ["wide", "medium", "close", "extreme-close"];
+
+const NOTE_DARK = "整体提亮，补足曝光，阴影保留细节";
+const NOTE_BRIGHT = "压暗一档，高光不过曝";
+
+/**
+ * 把一句人话翻成镜头补丁——**是查表，不是理解**（ADR-0039）。
+ *
+ * 认不出任何一条就返回 `null`：宁可说没听懂，也不把"她笑得太早了"
+ * 编成一段假参数。同一个词只匹配一条规则，按下面的先后顺序取。
+ */
+export function parseInstruction(
+  text: string,
+  shot: Pick<Shot, "shotSize" | "camera">,
+): ShotPatch | null {
+  const said = text.trim();
+  if (!said) return null;
+
+  const patch: ShotPatch = {};
+  const { camera } = shot;
+
+  // 亮度：先说"过曝"，否则"太亮"里的"亮"会被暗部规则吃掉
+  if (/过曝|太亮|亮过头|刺眼|爆掉/.test(said)) {
+    patch.note = NOTE_BRIGHT;
+  } else if (/太暗|太黑|欠曝|曝光不足|提亮|亮一点|打光/.test(said)) {
+    patch.note = NOTE_DARK;
+  }
+
+  if (/角度|机位|视角|换个拍法|换一个拍法/.test(said)) {
+    const next = ANGLE_ORDER[(ANGLE_ORDER.indexOf(camera.angle) + 1) % ANGLE_ORDER.length]!;
+    patch.camera = { ...camera, angle: next };
+  }
+
+  if (/靠近|推近|近一点|再近|特写/.test(said)) {
+    const at = SIZE_ORDER.indexOf(shot.shotSize);
+    const next = SIZE_ORDER[Math.min(at + 1, SIZE_ORDER.length - 1)]!;
+    if (next !== shot.shotSize) patch.shotSize = next;
+  } else if (/拉远|远一点|退后|全景|拉开/.test(said)) {
+    const at = SIZE_ORDER.indexOf(shot.shotSize);
+    const next = SIZE_ORDER[Math.max(at - 1, 0)]!;
+    if (next !== shot.shotSize) patch.shotSize = next;
+  }
+
+  // 先说"稳住"：「有点晃，稳住」「别晃」里的"晃"不该被当成要手持
+  if (/稳住|固定|别晃|三脚架/.test(said) && camera.movement !== "static") {
+    patch.camera = { ...(patch.camera ?? camera), movement: "static" };
+  } else if (/手持|晃/.test(said) && camera.movement !== "handheld") {
+    patch.camera = { ...(patch.camera ?? camera), movement: "handheld" };
+  }
+
+  return Object.keys(patch).length ? patch : null;
 }
 
 function round2(value: number): number {

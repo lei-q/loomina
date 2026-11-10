@@ -359,6 +359,50 @@ describe("尾帧（ADR-0038）", () => {
   });
 });
 
+describe("一句话指令（ADR-0039）", () => {
+  beforeEach(() => {
+    state().reset();
+  });
+
+  it("换个角度写一条 shot.updated，机位真的变了，可回放", () => {
+    const before = state().project.shots.find((item) => item.id === state().currentShotId)!;
+    const ok = state().instruct("换个角度");
+
+    expect(ok).toBe(true);
+    const after = state().project.shots.find((item) => item.id === before.id)!;
+    expect(after.camera.angle).not.toBe(before.camera.angle);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.updated",
+      shotId: before.id,
+      patch: { camera: { angle: after.camera.angle } },
+    });
+    expect(rebuild(state().events).shots.find((item) => item.id === before.id)?.camera.angle).toBe(
+      after.camera.angle,
+    );
+  });
+
+  it("补充要求进 promptNotes，同一句不重复追加", () => {
+    state().instruct("太暗了");
+    state().instruct("太暗了");
+
+    const shot = state().project.shots.find((item) => item.id === state().currentShotId)!;
+    expect(shot.promptNotes).toHaveLength(1);
+    expect(shot.promptNotes[0]).toContain("提亮");
+    // 第二次没改动，不写事件，只给一句说明
+    expect(state().events.filter((event) => event.type === "shot.updated")).toHaveLength(1);
+    expect(state().castError).toContain("没改动");
+  });
+
+  it("没听懂就什么都不写，并说清现在认得哪些", () => {
+    const ok = state().instruct("她笑得太早了");
+
+    expect(ok).toBe(false);
+    expect(state().events).toHaveLength(1);
+    expect(state().castError).toContain("没听懂");
+    expect(state().castError).toContain("太暗了");
+  });
+});
+
 describe("预算（ADR-0035）", () => {
   beforeEach(() => {
     state().reset();

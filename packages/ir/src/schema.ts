@@ -134,6 +134,8 @@ export const ShotSchema = z.object({
   durationMs: z.number().int().positive(),
   /** 人话描述：观众在这一格里看到什么。提示词由它拼出来。 */
   description: z.string().default(""),
+  /** 一句话指令落下的补充要求（ADR-0039）：提示词里作为"补充：…"原样带上 */
+  promptNotes: z.array(z.string()).default([]),
   shotSize: z.enum(["wide", "medium", "close", "extreme-close"]),
   camera: CameraSchema,
   characterIds: z.array(Id).default([]),

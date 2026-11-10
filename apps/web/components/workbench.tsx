@@ -18,6 +18,7 @@ export function Workbench() {
   const readOnly = useWorkbench((state) => state.readOnly);
   const setBudget = useWorkbench((state) => state.setBudget);
   const generateKeyframe = useWorkbench((state) => state.generateKeyframe);
+  const instruct = useWorkbench((state) => state.instruct);
   const jobs = useWorkbench((state) => state.jobs);
   const castError = useWorkbench((state) => state.castError);
   const imageCny = useWorkbench((state) => state.imageCny);
@@ -95,7 +96,7 @@ export function Workbench() {
         quoteCny={imageCny}
         onGenerateKeyframe={(frame) => void generateKeyframe(view.shots[view.current]!.id, frame)}
       />
-      <ReelBar view={view} onSelect={select} onDecide={decide} />
+      <ReelBar view={view} onSelect={select} onDecide={decide} onInstruct={instruct} />
     </div>
   );
 }

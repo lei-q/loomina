@@ -10,8 +10,9 @@ import {
   type Project,
   type ProjectEvent,
   type SheetView,
+  type Shot,
 } from "@loomina/ir";
-import { shotMaterial, type Frame } from "@loomina/pipeline";
+import { parseInstruction, shotMaterial, type Frame } from "@loomina/pipeline";
 import { create } from "zustand";
 import { diffEvents, getEventLog, migrateLog } from "@/lib/event-log";
 import { claimWriter } from "@/lib/writer-lock";
@@ -66,6 +67,8 @@ type WorkbenchState = {
   generateProp: (propId: string) => Promise<void>;
   /** 给当前镜生成首帧或尾帧；落一张图 + 一条 shot.updated（ADR-0037 / 0038） */
   generateKeyframe: (shotId: string, frame?: Frame) => Promise<void>;
+  /** 一句话指令：查表翻成镜头补丁，写一条 shot.updated；没听懂返回 false（ADR-0039） */
+  instruct: (text: string) => boolean;
   reset: () => void;
 };
 
@@ -462,6 +465,49 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         }),
       },
     );
+  },
+
+  instruct: (text) => {
+    if (get().readOnly) return false;
+    const { project, currentShotId, events } = get();
+    const shot = project.shots.find((item) => item.id === currentShotId);
+    if (!shot) return false;
+    // 锁定的镜头只读：与生成一致，要改先解锁
+    if (shot.locked) return false;
+
+    const parsed = parseInstruction(text, shot);
+    if (!parsed) {
+      set({
+        castError:
+          "没听懂这句。现在认得：太暗了 / 太亮 / 换个角度 / 靠近一点 / 拉远 / 手持 / 稳住。",
+      });
+      return false;
+    }
+
+    // 只写这次真的改了的字段；同样的补充不重复追加
+    const patch: Partial<Shot> = {};
+    if (parsed.shotSize) patch.shotSize = parsed.shotSize;
+    if (parsed.camera) patch.camera = parsed.camera;
+    if (parsed.note && !shot.promptNotes.includes(parsed.note)) {
+      patch.promptNotes = [...shot.promptNotes, parsed.note];
+    }
+    if (Object.keys(patch).length === 0) {
+      set({ castError: "这句没改动什么：镜头已经是这样了。" });
+      return false;
+    }
+
+    const event: ProjectEvent = {
+      type: "shot.updated",
+      at: new Date().toISOString(),
+      shotId: shot.id,
+      patch,
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
   },
 
   generateProp: async (propId) => {

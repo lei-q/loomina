@@ -51,6 +51,9 @@ function Current({
     <figure className="flex shrink-0 flex-col items-center gap-2">
       <figcaption className="tnum flex items-baseline gap-2 text-[9px] text-muted">
         <b className="font-medium text-text">{shotLabel(shot.no)}</b>
+        <span className="text-muted-2">
+          {shot.size} · {shot.angle}
+        </span>
         <span>{shot.dur.toFixed(1)}s</span>
         <span className="text-muted-2">TAKE {shot.take ?? "—"}</span>
       </figcaption>
@@ -140,6 +143,18 @@ function Current({
           </button>
         )}
       </div>
+
+      {/* 一句话指令改出来的补充要求：说过什么要看得见（ADR-0039） */}
+      {shot.notes.length > 0 && (
+        <div className="flex max-w-[340px] flex-wrap items-center justify-center gap-x-2 gap-y-1">
+          <span className="tnum text-[9px] tracking-[.14em] text-muted-2">补充</span>
+          {shot.notes.map((note) => (
+            <span key={note} className="text-[10px] text-muted">
+              {note}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* 这一镜带进生成的参考图：审片时就知道生成靠什么钉住（ADR-0029） */}
       {(shot.anchors.labels.length > 0 || shot.anchors.missing.length > 0) && (

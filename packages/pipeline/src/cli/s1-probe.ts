@@ -102,7 +102,10 @@ function required(flag: string, value: string | undefined): string {
  * 都是竖屏短剧里最常出现的调度，不是随机审美。
  */
 const SHOT_BANK: Array<
-  Omit<Shot, "id" | "sceneId" | "index" | "takeIds" | "keyframes">
+  Omit<
+    Shot,
+    "id" | "sceneId" | "index" | "takeIds" | "keyframes" | "promptNotes"
+  >
 > = [
   {
     durationMs: 4000,
