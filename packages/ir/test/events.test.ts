@@ -375,7 +375,25 @@ describe("scene.updated（ADR-0050）", () => {
     expect(project.scenes[0]).toMatchObject({ space: "int", timeOfDay: "day" });
   });
 
-  it("指向不存在的场次、空 patch 都拒绝", () => {
+  it("改地点：重放后场次指向新地点（ADR-0056）", () => {
+    // 最小示例只有一个地点，补一个再改过去
+    const project: Project = { ...load(), locations: [
+      ...load().locations,
+      { id: "loc-hall", name: "门厅", templateId: "doorway" },
+    ] };
+    const target = project.locations.find((item) => item.id === "loc-hall")!;
+    const event: ProjectEvent = {
+      type: "scene.updated",
+      at: AT,
+      sceneId: "sc-1",
+      patch: { locationId: target.id },
+    };
+    const after = applyEvent(project, event);
+    expect(after.scenes[0]?.locationId).toBe(target.id);
+    expect(rebuild([created(project), event])).toEqual(after);
+  });
+
+  it("指向不存在的场次、不存在的地点、空 patch 都拒绝", () => {
     const project = load();
     expect(() =>
       applyEvent(project, {
@@ -393,5 +411,13 @@ describe("scene.updated（ADR-0050）", () => {
         patch: {},
       }),
     ).toThrow(/空/);
+    expect(() =>
+      applyEvent(project, {
+        type: "scene.updated",
+        at: AT,
+        sceneId: "sc-1",
+        patch: { locationId: "loc-404" },
+      }),
+    ).toThrow(/地点/);
   });
 });

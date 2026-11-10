@@ -1093,6 +1093,29 @@ describe("场头改写（ADR-0050）", () => {
     expect(state().editScene("sc-1", { space: "ext" })).toBe(false);
     expect(state().events).toHaveLength(snapshot);
   });
+
+  it("改地点：一条 scene.updated，读模型与导出跟着换名字（ADR-0056）", () => {
+    const target = state().project.locations.find((item) => item.id === "loc-table")!;
+    expect(state().editScene("sc-1", { locationId: target.id })).toBe(true);
+
+    expect(state().project.scenes.find((item) => item.id === "sc-1")?.locationId).toBe(
+      "loc-table",
+    );
+    expect(state().events.at(-1)).toMatchObject({
+      type: "scene.updated",
+      sceneId: "sc-1",
+      patch: { locationId: "loc-table" },
+    });
+
+    // 改回同一个地点不再写事件
+    const snapshot = state().events.length;
+    expect(state().editScene("sc-1", { locationId: "loc-table" })).toBe(false);
+    expect(state().castError).toContain("没改");
+    // 不存在的地点
+    expect(state().editScene("sc-1", { locationId: "loc-404" })).toBe(false);
+    expect(state().castError).toContain("地点");
+    expect(state().events).toHaveLength(snapshot);
+  });
 });
 
 describe("台词顺序整组写回（ADR-0053）", () => {

@@ -97,7 +97,11 @@ export function ScriptScreen() {
 
   const commitScene = (
     sceneId: string,
-    patch: { space?: "int" | "ext"; timeOfDay?: "day" | "night" | "dawn" | "dusk" },
+    patch: {
+      space?: "int" | "ext";
+      timeOfDay?: "day" | "night" | "dawn" | "dusk";
+      locationId?: string;
+    },
   ) => {
     if (!editScene(sceneId, patch)) setNote(useWorkbench.getState().castError);
   };
@@ -294,6 +298,24 @@ export function ScriptScreen() {
                           </option>
                         ))}
                       </select>
+                      <span className="text-muted-2">·</span>
+                      <select
+                        value={scene.locationId}
+                        onChange={(event) =>
+                          commitScene(scene.id, { locationId: event.target.value })
+                        }
+                        aria-label="地点"
+                        className="rounded-token border border-pick/70 bg-surface px-1 py-0 text-[9px] text-text focus:outline-none"
+                      >
+                        {project.locations.map((location) => (
+                          <option key={location.id} value={location.id}>
+                            {location.name}
+                          </option>
+                        ))}
+                        {!project.locations.some((item) => item.id === scene.locationId) && (
+                          <option value={scene.locationId}>{scene.place}</option>
+                        )}
+                      </select>
                     </span>
                   ) : (
                     <button
@@ -303,7 +325,7 @@ export function ScriptScreen() {
                         setEditingScene(scene.id);
                         setNote(undefined);
                       }}
-                      title={readOnly ? "只读标签页不能改场头" : "改内 / 外景与日夜"}
+                      title={readOnly ? "只读标签页不能改场头" : "改内 / 外景、日夜与地点"}
                       className="tnum shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-default disabled:opacity-60"
                     >
                       {sceneHead(scene)}

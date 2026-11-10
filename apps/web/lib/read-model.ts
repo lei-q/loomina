@@ -415,6 +415,7 @@ export type ScriptScene = {
   id: string;
   /** 场号，从 1 开始 */
   no: number;
+  locationId: string;
   place: string;
   space: "int" | "ext";
   timeOfDay: "day" | "night" | "dawn" | "dusk";
@@ -504,6 +505,7 @@ export function toScriptView(project: Project, options: { budgetCny?: number } =
       return {
         id: scene.id,
         no: at + 1,
+        locationId: scene.locationId,
         place: locationById.get(scene.locationId)?.name ?? "未命名场景",
         space: scene.space,
         timeOfDay: scene.timeOfDay,

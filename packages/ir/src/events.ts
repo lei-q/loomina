@@ -36,7 +36,7 @@ export type ProjectEvent =
       type: "scene.updated";
       at: string;
       sceneId: Id;
-      patch: Partial<Pick<Scene, "space" | "timeOfDay">>;
+      patch: Partial<Pick<Scene, "space" | "timeOfDay" | "locationId">>;
     }
   | {
       /**
@@ -120,6 +120,12 @@ export function applyEvent(
       }
       if (Object.keys(event.patch).length === 0) {
         throw new Error("scene.updated 的 patch 是空的");
+      }
+      if (
+        event.patch.locationId !== undefined &&
+        !current.locations.some((location) => location.id === event.patch.locationId)
+      ) {
+        throw new Error(`scene.updated 指向不存在的地点: ${event.patch.locationId}`);
       }
       const scenes = current.scenes.map((scene) =>
         scene.id === event.sceneId ? { ...scene, ...event.patch } : scene,

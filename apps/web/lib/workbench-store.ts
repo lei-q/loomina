@@ -97,8 +97,11 @@ type WorkbenchState = {
   moveDialogue: (lineId: string, direction: "up" | "down") => boolean;
   /** 改这一镜的动作：写一条 `shot.updated { description }`，时长与台词不动（ADR-0049） */
   editAction: (shotId: string, text: string) => boolean;
-  /** 改场头：写一条 `scene.updated`，只收内 / 外景与日夜（ADR-0050） */
-  editScene: (sceneId: string, patch: Partial<Pick<Scene, "space" | "timeOfDay">>) => boolean;
+  /** 改场头：写一条 `scene.updated`，只收内 / 外景、日夜与地点（ADR-0050 / ADR-0056） */
+  editScene: (
+    sceneId: string,
+    patch: Partial<Pick<Scene, "space" | "timeOfDay" | "locationId">>,
+  ) => boolean;
   /** 把台词顺序整组写回：一条 `shot.updated { dialogueIds }`（ADR-0053） */
   setDialogueOrder: (shotId: string, lineIds: string[]) => boolean;
   /** 把一句台词挪到另一镜：两条 `shot.updated`，两镜时长各加减这一句（ADR-0054） */
@@ -848,10 +851,17 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     const { project, events } = get();
     const scene = project.scenes.find((item) => item.id === sceneId);
     if (!scene) return false;
-    const next: Partial<Pick<Scene, "space" | "timeOfDay">> = {};
+    const next: Partial<Pick<Scene, "space" | "timeOfDay" | "locationId">> = {};
     if (patch.space !== undefined && patch.space !== scene.space) next.space = patch.space;
     if (patch.timeOfDay !== undefined && patch.timeOfDay !== scene.timeOfDay) {
       next.timeOfDay = patch.timeOfDay;
+    }
+    if (patch.locationId !== undefined && patch.locationId !== scene.locationId) {
+      if (!project.locations.some((item) => item.id === patch.locationId)) {
+        set({ castError: "找不到这个地点。" });
+        return false;
+      }
+      next.locationId = patch.locationId;
     }
     if (Object.keys(next).length === 0) {
       set({ castError: "场头没改。" });
