@@ -123,10 +123,10 @@ type WorkbenchState = {
     locationId: string,
     patch: Partial<Pick<Location, "name" | "templateId" | "description">>,
   ) => boolean;
-  /** 新建场次：一条 `scene.added`，加在末尾，新场还没有镜头（ADR-0064） */
-  addScene: (locationId?: string) => string | undefined;
-  /** 新建镜头：一条 `shot.added`，加在这一场的末尾（ADR-0064） */
-  addShot: (sceneId: string) => string | undefined;
+  /** 新建场次：一条 `scene.added`，加在末尾或指定场之后，新场还没有镜头（ADR-0064 / ADR-0068） */
+  addScene: (locationId?: string, afterSceneId?: string) => string | undefined;
+  /** 新建镜头：一条 `shot.added`，加在这一场末尾或指定镜之后（ADR-0064 / ADR-0068） */
+  addShot: (sceneId: string, afterShotId?: string) => string | undefined;
   /** 删一镜：一条 `shot.removed`，台词 / take / 时间线项一并摘掉（ADR-0067） */
   removeShot: (shotId: string) => boolean;
   /** 删一场：先逐条删掉它的镜头，再一条 `scene.removed`（ADR-0067） */
@@ -1090,7 +1090,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     return true;
   },
 
-  addScene: (locationId) => {
+  addScene: (locationId, afterSceneId) => {
     if (get().readOnly) return undefined;
     const { project, events } = get();
     const target = locationId ?? project.locations[0]?.id;
@@ -1102,11 +1102,20 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       set({ castError: "找不到这个地点。" });
       return undefined;
     }
+    // 插在指定场之后；没指定就接在末尾（ADR-0068）
+    const at = afterSceneId
+      ? [...project.scenes].sort((a, b) => a.index - b.index).findIndex((item) => item.id === afterSceneId)
+      : project.scenes.length;
+    if (at < 0) {
+      set({ castError: "找不到这一场。" });
+      return undefined;
+    }
+    const index = afterSceneId ? at + 1 : at;
     let id = `sc-${Date.now().toString(36)}`;
     while (project.scenes.some((item) => item.id === id)) id += "x";
     const scene: Scene = {
       id,
-      index: project.scenes.length,
+      index,
       locationId: target,
       space: "int",
       timeOfDay: "day",
@@ -1125,7 +1134,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     return id;
   },
 
-  addShot: (sceneId) => {
+  addShot: (sceneId, afterShotId) => {
     if (get().readOnly) return undefined;
     const { project, events } = get();
     const scene = project.scenes.find((item) => item.id === sceneId);
@@ -1133,12 +1142,19 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       set({ castError: "找不到这一场。" });
       return undefined;
     }
+    // 插在指定镜之后；没指定就接在这一场末尾（ADR-0068）
+    const after = afterShotId ? scene.shotIds.indexOf(afterShotId) : scene.shotIds.length - 1;
+    if (afterShotId && after < 0) {
+      set({ castError: "找不到这一镜。" });
+      return undefined;
+    }
+    const index = after + 1;
     let id = `s-${Date.now().toString(36)}`;
     while (project.shots.some((item) => item.id === id)) id += "x";
     const shot: Shot = {
       id,
       sceneId,
-      index: scene.shotIds.length,
+      index,
       durationMs: NEW_SHOT_DURATION_MS,
       description: "",
       promptNotes: [],

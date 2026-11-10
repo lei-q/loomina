@@ -1288,6 +1288,73 @@ describe("新建场次与镜头（ADR-0064）", () => {  beforeEach(() => {
   });
 });
 
+describe("中间插入场次与镜头（ADR-0068）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("在指定场后面插一场：index 落在下一格，场号重排", () => {
+    const snapshot = state().events.length;
+
+    const id = state().addScene(undefined, "sc-1");
+    expect(id).toBeTruthy();
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "scene.added",
+      scene: { id, index: 1, locationId: "loc-corridor", shotIds: [] },
+    });
+
+    const view = toScriptView(state().project);
+    expect(view.scenes.map((scene) => scene.id)).toEqual([
+      "sc-1",
+      id,
+      "sc-2",
+      "sc-3",
+      "sc-4",
+      "sc-5",
+    ]);
+    expect(view.scenes.map((scene) => scene.no)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(rebuild(state().events).scenes.map((scene) => scene.id)).toEqual(
+      view.scenes.map((scene) => scene.id),
+    );
+  });
+
+  it("在指定镜后面插一镜：后面几镜的镜号顺次后移", () => {
+    const snapshot = state().events.length;
+
+    const id = state().addShot("sc-1", "s-01");
+    expect(id).toBeTruthy();
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.added",
+      shot: { id, sceneId: "sc-1", index: 1, durationMs: 3000 },
+    });
+
+    expect(state().project.scenes.find((scene) => scene.id === "sc-1")?.shotIds).toEqual([
+      "s-01",
+      id,
+      "s-02",
+      "s-03",
+    ]);
+    expect(state().project.shots.find((shot) => shot.id === "s-02")?.index).toBe(2);
+    const view = toScriptView(state().project);
+    expect(view.shotCount).toBe(13);
+    expect(view.scenes[0]?.shots.map((shot) => shot.no)).toEqual([1, 2, 3, 4]);
+    expect(view.scenes[0]?.shots[1]?.id).toBe(id);
+  });
+
+  it("指定位置不存在就不写事件", () => {
+    const snapshot = state().events.length;
+
+    expect(state().addScene(undefined, "sc-404")).toBeUndefined();
+    expect(state().castError).toContain("找不到");
+    expect(state().addShot("sc-1", "s-404")).toBeUndefined();
+    expect(state().castError).toContain("找不到");
+    expect(state().events).toHaveLength(snapshot);
+  });
+});
+
 describe("删一场、删一镜（ADR-0067）", () => {
   beforeEach(() => {
     state().reset();

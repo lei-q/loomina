@@ -41,7 +41,7 @@ export type ProjectEvent =
     }
   | {
       /**
-       * 新建场次（ADR-0064）：只能加到末尾，场号接着排。
+       * 新建场次（ADR-0064 / ADR-0068）：插在第 `scene.index` 位，后面的场次顺次后移。
        * 新场还没有镜头，所以这里不带任何镜头引用。
        */
       type: "scene.added";
@@ -50,8 +50,8 @@ export type ProjectEvent =
     }
   | {
       /**
-       * 新建镜头（ADR-0064）：只能加到所属场次的末尾，镜号跟着排。
-       * 动作描述留空，景别与机位给的是默认值，都可以随后改。
+       * 新建镜头（ADR-0064 / ADR-0068）：插在所属场次的第 `shot.index` 位，
+       * 后面的镜头顺次后移。动作描述留空，景别与机位给的是默认值，都可以随后改。
        */
       type: "shot.added";
       at: string;
@@ -209,13 +209,20 @@ export function applyEvent(
       if (!current.locations.some((location) => location.id === scene.locationId)) {
         throw new Error(`scene.added 指向不存在的地点: ${scene.locationId}`);
       }
-      if (scene.index !== current.scenes.length) {
-        throw new Error(`新建场次只能加到末尾: ${scene.index} / ${current.scenes.length}`);
+      if (
+        !Number.isInteger(scene.index) ||
+        scene.index < 0 ||
+        scene.index > current.scenes.length
+      ) {
+        throw new Error(`新建场次的位置越界: ${scene.index} / ${current.scenes.length}`);
       }
       if (scene.shotIds.length > 0) {
         throw new Error("新建场次不该带镜头：先用 shot.added 一镜一镜加");
       }
-      return { ...current, scenes: [...current.scenes, scene] };
+      // 插在指定位置，后面的场次顺次后移：场号始终连续
+      const ordered = [...current.scenes].sort((a, b) => a.index - b.index);
+      ordered.splice(scene.index, 0, scene);
+      return { ...current, scenes: ordered.map((item, index) => ({ ...item, index })) };
     }
 
     case "shot.added": {
@@ -226,16 +233,28 @@ export function applyEvent(
       }
       const scene = current.scenes.find((item) => item.id === shot.sceneId);
       if (!scene) throw new Error(`shot.added 指向不存在的场次: ${shot.sceneId}`);
-      if (shot.index !== scene.shotIds.length) {
-        throw new Error(`新建镜头只能加到这一场的末尾: ${shot.index} / ${scene.shotIds.length}`);
+      if (
+        !Number.isInteger(shot.index) ||
+        shot.index < 0 ||
+        shot.index > scene.shotIds.length
+      ) {
+        throw new Error(
+          `新建镜头的位置越界: ${shot.index} / ${scene.shotIds.length}`,
+        );
       }
       if (shot.dialogueIds.length > 0 || shot.takeIds.length > 0) {
         throw new Error("新建镜头不该带台词或 take：那样就能绕过各自的添加事件");
       }
+      // 插在指定位置，这一场后面的镜头顺次后移：镜号始终连续
+      const shotIds = [...scene.shotIds];
+      shotIds.splice(shot.index, 0, shot.id);
       const scenes = current.scenes.map((item) =>
-        item.id === scene.id ? { ...item, shotIds: [...item.shotIds, shot.id] } : item,
+        item.id === scene.id ? { ...item, shotIds } : item,
       );
-      return { ...current, scenes, shots: [...current.shots, shot] };
+      const shots = current.shots.map((item) =>
+        item.sceneId === scene.id ? { ...item, index: shotIds.indexOf(item.id) } : item,
+      );
+      return { ...current, scenes, shots: [...shots, shot] };
     }
 
     case "scene.moved": {

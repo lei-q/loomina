@@ -1170,20 +1170,34 @@ export function ScriptScreen() {
                               </button>
                             </span>
                           ) : (
-                            <button
-                              type="button"
-                              disabled={shot.locked}
-                              onClick={() => {
-                                setDeletingShot(shot.id);
-                                setDeleteNote(null);
-                              }}
-                              title={
-                                shot.locked ? "这一镜已锁定，先解锁才能删" : "删掉这一镜"
-                              }
-                              className="tnum mt-1.5 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-pick enabled:hover:text-pick disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              删这一镜
-                            </button>
+                            <span className="mt-1.5 flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                disabled={shot.locked}
+                                onClick={() => {
+                                  setDeletingShot(shot.id);
+                                  setDeleteNote(null);
+                                }}
+                                title={
+                                  shot.locked ? "这一镜已锁定，先解锁才能删" : "删掉这一镜"
+                                }
+                                className="tnum rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-pick enabled:hover:text-pick disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                删这一镜
+                              </button>
+                              {/* 在这一镜后面插一镜（ADR-0068） */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const id = addShot(scene.id, shot.id);
+                                  setNote(!id ? useWorkbench.getState().castError : undefined);
+                                }}
+                                title="在这一镜后面插一镜：动作留空，景别中景、平视、3 秒"
+                                className="tnum rounded-token border border-dashed border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                              >
+                                ＋ 插一镜
+                              </button>
+                            </span>
                           ))}
                         {deleteNote?.id === shot.id && (
                           <p className="mt-1 text-[9.5px] leading-[1.7] text-pick">{deleteNote.text}</p>
@@ -1194,17 +1208,31 @@ export function ScriptScreen() {
                 </ol>
 
                 {!readOnly && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const id = addShot(scene.id);
-                      setNote(!id ? useWorkbench.getState().castError : undefined);
-                    }}
-                    title="给这一场加一镜：动作留空，景别中景、平视、3 秒，随后都能改"
-                    className="mt-3 rounded-token border border-dashed border-line px-2 py-1 text-[9.5px] text-muted-2 transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
-                  >
-                    ＋ 加一镜
-                  </button>
+                  <span className="mt-3 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const id = addShot(scene.id);
+                        setNote(!id ? useWorkbench.getState().castError : undefined);
+                      }}
+                      title="给这一场加一镜：动作留空，景别中景、平视、3 秒，随后都能改"
+                      className="rounded-token border border-dashed border-line px-2 py-1 text-[9.5px] text-muted-2 transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                    >
+                      ＋ 加一镜
+                    </button>
+                    {/* 在这一场后面插一场（ADR-0068） */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const id = addScene(undefined, scene.id);
+                        setNote(!id ? useWorkbench.getState().castError : undefined);
+                      }}
+                      title="在这一场后面插一场空场：地点头先给第一个，场头随时能改"
+                      className="rounded-token border border-dashed border-line px-2 py-1 text-[9.5px] text-muted-2 transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                    >
+                      ＋ 插一场
+                    </button>
+                  </span>
                 )}
               </section>
             ))}

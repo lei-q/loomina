@@ -537,7 +537,7 @@ describe("新建场次与镜头（ADR-0064）", () => {
         at: AT,
         scene: { ...baseScene, index: 5 },
       }),
-    ).toThrow(/末尾/);
+    ).toThrow(/越界/);
     expect(() =>
       applyEvent(project, {
         type: "scene.added",
@@ -577,8 +577,8 @@ describe("新建场次与镜头（ADR-0064）", () => {
       locked: false,
     };
     expect(() =>
-      applyEvent(project, { type: "shot.added", at: AT, shot: { ...shot, index: 0 } }),
-    ).toThrow(/末尾/);
+      applyEvent(project, { type: "shot.added", at: AT, shot: { ...shot, index: 5 } }),
+    ).toThrow(/越界/);
     expect(() =>
       applyEvent(project, { type: "shot.added", at: AT, shot: { ...shot, sceneId: "sc-404" } }),
     ).toThrow(/场次/);
@@ -592,6 +592,107 @@ describe("新建场次与镜头（ADR-0064）", () => {
         shot: { ...shot, dialogueIds: ["d-1"] },
       }),
     ).toThrow(/台词/);
+  });
+});
+
+describe("中间插入场次与镜头（ADR-0068）", () => {
+  it("场次插到指定位置：后面的场号顺次后移，可回放", () => {
+    const project = load();
+    const scene: ProjectEvent = {
+      type: "scene.added",
+      at: AT,
+      scene: {
+        id: "sc-2",
+        index: 0,
+        locationId: "loc-living",
+        space: "ext",
+        timeOfDay: "night",
+        shotIds: [],
+      },
+    };
+    const after = applyEvent(project, scene);
+
+    expect(after.scenes.map((item) => item.id)).toEqual(["sc-2", "sc-1"]);
+    expect(after.scenes.map((item) => item.index)).toEqual([0, 1]);
+    expect(after.shots.map((item) => item.id)).toEqual(["sh-1", "sh-2"]);
+    expect(rebuild([created(project), scene])).toEqual(after);
+    expect(validateProject(after)).toEqual([]);
+  });
+
+  it("镜头插到这一场中间：后面的镜号顺次后移，可回放", () => {
+    const project = load();
+    const shot: ProjectEvent = {
+      type: "shot.added",
+      at: AT,
+      shot: {
+        id: "sh-9",
+        sceneId: "sc-1",
+        index: 1,
+        durationMs: 3000,
+        description: "插进来的一镜",
+        promptNotes: [],
+        shotSize: "medium",
+        camera: { angle: "eye", movement: "static", focalMm: 35 },
+        characterIds: [],
+        propIds: [],
+        dialogueIds: [],
+        takeIds: [],
+        keyframes: {},
+        locked: false,
+      },
+    };
+    const after = applyEvent(project, shot);
+
+    expect(after.scenes[0]?.shotIds).toEqual(["sh-1", "sh-9", "sh-2"]);
+    expect(
+      [...after.shots]
+        .sort((a, b) => a.index - b.index)
+        .map((item) => [item.id, item.index]),
+    ).toEqual([
+      ["sh-1", 0],
+      ["sh-9", 1],
+      ["sh-2", 2],
+    ]);
+    expect(rebuild([created(project), shot])).toEqual(after);
+    expect(validateProject(after)).toEqual([]);
+  });
+
+  it("位置越界、负数都拒绝", () => {
+    const project = load();
+    const scene = {
+      id: "sc-9",
+      index: 5,
+      locationId: "loc-living",
+      space: "int" as const,
+      timeOfDay: "day" as const,
+      shotIds: [],
+    };
+    expect(() =>
+      applyEvent(project, { type: "scene.added", at: AT, scene }),
+    ).toThrow(/越界/);
+    expect(() =>
+      applyEvent(project, { type: "scene.added", at: AT, scene: { ...scene, index: -1 } }),
+    ).toThrow(/越界/);
+
+    const shot = {
+      id: "sh-9",
+      sceneId: "sc-1",
+      index: 3,
+      durationMs: 3000,
+      description: "",
+      promptNotes: [],
+      shotSize: "medium" as const,
+      camera: { angle: "eye" as const, movement: "static" as const, focalMm: 35 },
+      characterIds: [],
+      propIds: [],
+      dialogueIds: [],
+      takeIds: [],
+      keyframes: {},
+      locked: false,
+    };
+    expect(() =>
+      applyEvent(project, { type: "shot.added", at: AT, shot }),
+    ).toThrow(/越界/);
   });
 });
 
