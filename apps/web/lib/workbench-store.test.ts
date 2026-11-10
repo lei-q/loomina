@@ -1239,7 +1239,14 @@ describe("新建场次与镜头（ADR-0064）", () => {  beforeEach(() => {
     expect(state().events).toHaveLength(snapshot + 1);
     expect(state().events.at(-1)).toMatchObject({
       type: "scene.added",
-      scene: { id, index: 5, locationId: "loc-corridor", shotIds: [] },
+      scene: {
+        id,
+        index: 5,
+        locationId: "loc-table",
+        space: "int",
+        timeOfDay: "night",
+        shotIds: [],
+      },
     });
 
     const view = toScriptView(state().project);
@@ -1352,6 +1359,36 @@ describe("中间插入场次与镜头（ADR-0068）", () => {
     expect(state().addShot("sc-1", "s-404")).toBeUndefined();
     expect(state().castError).toContain("找不到");
     expect(state().events).toHaveLength(snapshot);
+  });
+});
+
+describe("新场沿用前一场的地点与日夜（ADR-0069）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("接在末尾：沿用最后一场的地点、内外景与日夜", () => {
+    const id = state().addScene()!;
+    const scene = state().project.scenes.find((item) => item.id === id);
+
+    // 示例最后一场是 sc-5：桌边 · 内 · 夜
+    expect(scene).toMatchObject({ locationId: "loc-table", space: "int", timeOfDay: "night" });
+  });
+
+  it("插在某场后面：沿用那一场，而不是第一个地点", () => {
+    const id = state().addScene(undefined, "sc-1")!;
+    const scene = state().project.scenes.find((item) => item.id === id);
+
+    // sc-1 是走廊 · 内 · 夜
+    expect(scene).toMatchObject({ locationId: "loc-corridor", space: "int", timeOfDay: "night" });
+  });
+
+  it("显式指定地点时地点跟着指定值，日夜仍沿用前一场", () => {
+    const id = state().addScene("loc-door", "sc-1")!;
+    const scene = state().project.scenes.find((item) => item.id === id);
+
+    expect(scene).toMatchObject({ locationId: "loc-door", space: "int", timeOfDay: "night" });
   });
 });
 

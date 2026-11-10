@@ -123,7 +123,7 @@ type WorkbenchState = {
     locationId: string,
     patch: Partial<Pick<Location, "name" | "templateId" | "description">>,
   ) => boolean;
-  /** 新建场次：一条 `scene.added`，加在末尾或指定场之后，新场还没有镜头（ADR-0064 / ADR-0068） */
+  /** 新建场次：一条 `scene.added`，加在末尾或指定场之后，沿用前一场的地点与日夜（ADR-0064 / 0068 / 0069） */
   addScene: (locationId?: string, afterSceneId?: string) => string | undefined;
   /** 新建镜头：一条 `shot.added`，加在这一场末尾或指定镜之后（ADR-0064 / ADR-0068） */
   addShot: (sceneId: string, afterShotId?: string) => string | undefined;
@@ -1093,7 +1093,20 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
   addScene: (locationId, afterSceneId) => {
     if (get().readOnly) return undefined;
     const { project, events } = get();
-    const target = locationId ?? project.locations[0]?.id;
+    const ordered = [...project.scenes].sort((a, b) => a.index - b.index);
+    // 插在指定场之后；没指定就接在末尾（ADR-0068）
+    const at = afterSceneId
+      ? ordered.findIndex((item) => item.id === afterSceneId)
+      : ordered.length;
+    if (at < 0) {
+      set({ castError: "找不到这一场。" });
+      return undefined;
+    }
+    // 新场默认沿用插入点前面那一场的地点、内外景与日夜（ADR-0069）；
+    // 还没有场次时退回第一个地点
+    const index = afterSceneId ? at + 1 : at;
+    const previous = ordered[index - 1];
+    const target = locationId ?? previous?.locationId ?? project.locations[0]?.id;
     if (!target) {
       set({ castError: "还没有地点：先去定妆页建一个，场次才有地方发生。" });
       return undefined;
@@ -1102,23 +1115,14 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       set({ castError: "找不到这个地点。" });
       return undefined;
     }
-    // 插在指定场之后；没指定就接在末尾（ADR-0068）
-    const at = afterSceneId
-      ? [...project.scenes].sort((a, b) => a.index - b.index).findIndex((item) => item.id === afterSceneId)
-      : project.scenes.length;
-    if (at < 0) {
-      set({ castError: "找不到这一场。" });
-      return undefined;
-    }
-    const index = afterSceneId ? at + 1 : at;
     let id = `sc-${Date.now().toString(36)}`;
     while (project.scenes.some((item) => item.id === id)) id += "x";
     const scene: Scene = {
       id,
       index,
       locationId: target,
-      space: "int",
-      timeOfDay: "day",
+      space: previous?.space ?? "int",
+      timeOfDay: previous?.timeOfDay ?? "day",
       shotIds: [],
     };
     const event: ProjectEvent = {
