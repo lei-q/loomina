@@ -34,6 +34,8 @@ export type StageShot = {
   take?: number;
   /** 锁定的镜头在审片台里只读 */
   locked: boolean;
+  /** 这一镜里谁出场：分镜页据此点亮人物签（ADR-0065） */
+  characterIds: string[];
   /** 景别与人话机位（"特写 · 仰拍"）：一句话指令改了哪个当场看得见（ADR-0039） */
   size: string;
   angle: string;
@@ -113,6 +115,8 @@ export type StageView = {
   requoteAll: ProjectRequote;
   /** 烧在画面里的字幕；当前镜没有台词时为空串 */
   subtitle: string;
+  /** 全部人物：分镜页给这一镜点名用（ADR-0065） */
+  characters: { id: string; name: string }[];
   shots: StageShot[];
 };
 
@@ -218,6 +222,7 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
       state: shotState(shot, take),
       take: take ? shot.takeIds.indexOf(take.id) + 1 : undefined,
       locked: shot.locked ?? false,
+      characterIds: shot.characterIds,
       size: SHOT_SIZE_CN[shot.shotSize],
       angle: SHOT_ANGLE_CN[shot.camera.angle],
       notes: shot.promptNotes,
@@ -265,6 +270,8 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
     requote: currentShot ? requoteShot(currentShot.durationMs) : { basis: "没有当前镜" },
     requoteAll: requoteProject(ordered.map((shot) => shot.durationMs)),
     subtitle,
+    /** 可选的人物：分镜页用它给这一镜点名（ADR-0065） */
+    characters: project.characters.map((item) => ({ id: item.id, name: item.name })),
     shots,
   };
 }

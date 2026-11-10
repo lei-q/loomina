@@ -60,6 +60,8 @@ type WorkbenchState = {
   select: (shotId: string) => void;
   /** 锁 / 解锁一镜：留用过的镜头才能锁；读写都留痕（ADR-0041） */
   setShotLock: (shotId: string, locked: boolean) => void;
+  /** 这一镜里谁出场：一条 `shot.updated { characterIds }`（ADR-0065） */
+  toggleShotCharacter: (shotId: string, characterId: string) => boolean;
   /** 一步留用并锁定：写一条 take.updated + 一条 shot.updated（ADR-0041 附记） */
   approveAndLock: (shotId: string) => void;
   decide: (status: Decision) => void;
@@ -472,6 +474,54 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       events: [...events, event],
       castError: undefined,
     });
+  },
+
+  toggleShotCharacter: (shotId, characterId) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) {
+      set({ castError: "找不到这一镜。" });
+      return false;
+    }
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定，先解锁再改出场人物。" });
+      return false;
+    }
+    if (!project.characters.some((item) => item.id === characterId)) {
+      set({ castError: "找不到这个人物。" });
+      return false;
+    }
+
+    const present = shot.characterIds.includes(characterId);
+    if (present) {
+      // 人走了，这一镜里他的话还留着——字幕里会出现一个不在画面上的人
+      const speaking = shot.dialogueIds
+        .map((id) => project.dialogue.find((line) => line.id === id))
+        .some((line) => line?.characterId === characterId);
+      if (speaking) {
+        const name = project.characters.find((item) => item.id === characterId)?.name ?? "这个人物";
+        set({ castError: `${name}在这一镜还有台词：先删掉或换人，再把他从出场里拿掉。` });
+        return false;
+      }
+    }
+
+    // 出场顺序就是点名的顺序：先点的人排在提示词前头
+    const characterIds = present
+      ? shot.characterIds.filter((id) => id !== characterId)
+      : [...shot.characterIds, characterId];
+    const event: ProjectEvent = {
+      type: "shot.updated",
+      at: new Date().toISOString(),
+      shotId,
+      patch: { characterIds },
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
   },
 
   approveAndLock: (shotId) => {

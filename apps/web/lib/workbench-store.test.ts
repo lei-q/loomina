@@ -1118,6 +1118,61 @@ describe("场头改写（ADR-0050）", () => {
   });
 });
 
+describe("这一镜里谁出场（ADR-0065）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("点一个人名：一条 shot.updated { characterIds }，锚点与提示词跟着变", () => {
+    const snapshot = state().events.length;
+
+    expect(state().toggleShotCharacter("s-01", "c-lin")).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.updated",
+      shotId: "s-01",
+      patch: { characterIds: ["c-lin"] },
+    });
+
+    const view = toStageView(state().project);
+    const shot = view.shots.find((item) => item.id === "s-01")!;
+    expect(shot.characterIds).toEqual(["c-lin"]);
+    expect(shot.prompts.first).toContain("林");
+    expect(shot.anchors.labels.some((label) => label.includes("林"))).toBe(true);
+    expect(rebuild(state().events).shots.find((item) => item.id === "s-01")?.characterIds).toEqual([
+      "c-lin",
+    ]);
+  });
+
+  it("再点一次就拿掉；还有台词的人拿不掉", () => {
+    expect(state().toggleShotCharacter("s-04", "c-lin")).toBe(true);
+    expect(
+      state().project.shots.find((item) => item.id === "s-04")?.characterIds,
+    ).toEqual(["c-zhou"]);
+
+    const snapshot = state().events.length;
+    expect(state().toggleShotCharacter("s-04", "c-zhou")).toBe(false);
+    expect(state().castError).toContain("台词");
+    expect(state().events).toHaveLength(snapshot);
+  });
+
+  it("锁定的镜头、陌生镜头 / 人物、只读都不写事件", () => {
+    const snapshot = state().events.length;
+
+    expect(state().toggleShotCharacter("s-08", "c-zhou")).toBe(false);
+    expect(state().castError).toContain("锁定");
+    expect(state().toggleShotCharacter("s-404", "c-lin")).toBe(false);
+    expect(state().castError).toContain("找不到");
+    expect(state().toggleShotCharacter("s-01", "c-404")).toBe(false);
+    expect(state().castError).toContain("找不到");
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().toggleShotCharacter("s-01", "c-lin")).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+  });
+});
+
 describe("新建场次与镜头（ADR-0064）", () => {
   beforeEach(() => {
     state().reset();
