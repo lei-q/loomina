@@ -94,6 +94,8 @@ type WorkbenchState = {
   changeSpeaker: (lineId: string, characterId: string) => boolean;
   /** 调整台词顺序：写一条 `shot.updated` 换 dialogueIds 的顺序（ADR-0047） */
   moveDialogue: (lineId: string, direction: "up" | "down") => boolean;
+  /** 改这一镜的动作：写一条 `shot.updated { description }`，时长与台词不动（ADR-0049） */
+  editAction: (shotId: string, text: string) => boolean;
   /** 划掉一条补充要求：同样写一条 shot.updated（ADR-0039 附记） */
   removeNote: (shotId: string, note: string) => void;
   reset: () => void;
@@ -672,6 +674,36 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       { get, set },
       { lineId, text, durationMs, unchanged: "这句已经是这一版了。" },
     ),
+  editAction: (shotId, rawText) => {
+    if (get().readOnly) return false;
+    const text = rawText.replace(/\s+$/, "");
+    if (text.length === 0) {
+      set({ castError: "动作不能是空的。" });
+      return false;
+    }
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) return false;
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定：要改动作先解锁。" });
+      return false;
+    }
+    if (text === shot.description) {
+      set({ castError: "动作没改。" });
+      return false;
+    }
+    const at = new Date().toISOString();
+    const next: ProjectEvent[] = [
+      { type: "shot.updated", at, shotId, patch: { description: text } },
+    ];
+    set({
+      project: next.reduce(applyEvent, project),
+      events: [...events, ...next],
+      castError: undefined,
+    });
+    return true;
+  },
+
 
   addDialogue: (shotId, characterId, rawText) => {
     if (get().readOnly) return false;

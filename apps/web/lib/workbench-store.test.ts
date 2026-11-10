@@ -1003,3 +1003,51 @@ describe("台词排序（ADR-0047）", () => {
     expect(state().events).toHaveLength(snapshot);
   });
 });
+
+describe("动作改写（ADR-0049）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("改动作写一条 shot.updated，只动描述，时长与台词不动", () => {
+    const before = state().project.shots.find((item) => item.id === "s-01")!;
+    const snapshot = state().events.length;
+
+    expect(state().editAction("s-01", "走廊尽头，灯管又闪了一下。")).toBe(true);
+
+    const after = state().project.shots.find((item) => item.id === "s-01")!;
+    expect(after.description).toBe("走廊尽头，灯管又闪了一下。");
+    expect(after.durationMs).toBe(before.durationMs);
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.updated",
+      shotId: "s-01",
+      patch: { description: "走廊尽头，灯管又闪了一下。" },
+    });
+    expect(rebuild(state().events).shots.find((item) => item.id === "s-01")?.description).toBe(
+      "走廊尽头，灯管又闪了一下。",
+    );
+  });
+
+  it("锁定的镜头不让改动作", () => {
+    const snapshot = state().events.length;
+    expect(state().editAction("s-08", "换一个动作。")).toBe(false);
+    expect(state().castError).toContain("锁定");
+    expect(state().events).toHaveLength(snapshot);
+  });
+
+  it("空动作、没改动的动作、只读时都不写事件", () => {
+    const before = state().project.shots.find((item) => item.id === "s-02")!;
+    const snapshot = state().events.length;
+
+    expect(state().editAction("s-02", "  ")).toBe(false);
+    expect(state().castError).toContain("不能是空");
+    expect(state().editAction("s-02", before.description)).toBe(false);
+    expect(state().castError).toContain("没改");
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().editAction("s-02", "另一个动作。")).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+  });
+});

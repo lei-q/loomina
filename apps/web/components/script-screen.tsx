@@ -30,10 +30,13 @@ export function ScriptScreen() {
   const removeDialogue = useWorkbench((state) => state.removeDialogue);
   const changeSpeaker = useWorkbench((state) => state.changeSpeaker);
   const moveDialogue = useWorkbench((state) => state.moveDialogue);
+  const editAction = useWorkbench((state) => state.editAction);
   const events = useWorkbench((state) => state.events);
 
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [editingAction, setEditingAction] = useState<string | null>(null);
+  const [actionDraft, setActionDraft] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
   const [swapping, setSwapping] = useState<string | null>(null);
   const [adding, setAdding] = useState<string | null>(null);
@@ -51,6 +54,22 @@ export function ScriptScreen() {
     setEditing(lineId);
     setDraft(text);
     setNote(undefined);
+  };
+
+  const startAction = (shotId: string, text: string) => {
+    setEditingAction(shotId);
+    setActionDraft(text);
+    setEditing(null);
+    setNote(undefined);
+  };
+
+  const saveAction = (shotId: string) => {
+    if (editAction(shotId, actionDraft)) {
+      setEditingAction(null);
+      setNote(undefined);
+    } else {
+      setNote(useWorkbench.getState().castError);
+    }
   };
 
   const save = (lineId: string) => {
@@ -135,8 +154,8 @@ export function ScriptScreen() {
             <div>
               <h1 className="text-[13px] tracking-[.06em] text-text">剧本</h1>
               <p className="mt-1 text-[10.5px] leading-[1.6] text-muted-2">
-                按场次和镜序摊平：动作在前，台词在后。台词点「改」可以重写，
-                时长按 0.3 秒 / 字重估，所属镜头跟着挪。
+                按场次和镜序摊平：动作在前，台词在后。动作点一下就能改；
+                台词点「改」可以重写，时长按 0.3 秒 / 字重估，所属镜头跟着挪。
               </p>
             </div>
             <dl className="tnum flex items-baseline gap-5 text-[10.5px]">
@@ -179,11 +198,57 @@ export function ScriptScreen() {
                         {shotLabel(shot.no)}
                       </span>
                       <div className="min-w-0">
-                        <p className="text-[13px] leading-[1.9] text-text">
-                          {shot.action || (
-                            <span className="text-muted-2">（这一镜还没有动作描述）</span>
-                          )}
-                        </p>
+                        {editingAction === shot.id ? (
+                          <div>
+                            <textarea
+                              autoFocus
+                              value={actionDraft}
+                              rows={2}
+                              onChange={(event) => setActionDraft(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                                  saveAction(shot.id);
+                                }
+                                if (event.key === "Escape") setEditingAction(null);
+                              }}
+                              className="w-full resize-none rounded-token border border-line-2 bg-surface px-2 py-1.5 text-[13px] leading-[1.8] text-text focus:border-pick focus:outline-none"
+                            />
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-[9.5px]">
+                              <button
+                                type="button"
+                                onClick={() => saveAction(shot.id)}
+                                className="rounded-token border border-line-2 px-2 py-0.5 text-text transition-colors duration-[var(--dur)] hover:border-pick hover:text-pick"
+                              >
+                                保存
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingAction(null)}
+                                className="rounded-token border border-line px-2 py-0.5 text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                              >
+                                取消
+                              </button>
+                              <span className="text-muted-2">⌘↩ 保存 · Esc 取消</span>
+                              {note && <span className="text-pick">{note}</span>}
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={readOnly || shot.locked}
+                            onClick={() => startAction(shot.id, shot.action)}
+                            title={
+                              shot.locked
+                                ? "这一镜已锁定，先解锁才能改动作"
+                                : "改这一镜的动作"
+                            }
+                            className="-mx-1 block w-full rounded-token px-1 text-left text-[13px] leading-[1.9] text-text transition-colors duration-[var(--dur)] enabled:hover:bg-surface disabled:cursor-default"
+                          >
+                            {shot.action || (
+                              <span className="text-muted-2">（这一镜还没有动作描述）</span>
+                            )}
+                          </button>
+                        )}
 
                         {shot.lines.length > 0 && (
                           <div className="mt-2 space-y-2">
