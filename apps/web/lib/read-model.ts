@@ -416,9 +416,28 @@ export type ScriptScene = {
   /** 场号，从 1 开始 */
   no: number;
   place: string;
+  space: "int" | "ext";
+  timeOfDay: "day" | "night" | "dawn" | "dusk";
   dur: number;
   shots: ScriptShot[];
 };
+
+/** 场头两个小签的中文写法（ADR-0050） */
+export const SPACE_LABEL: Record<ScriptScene["space"], string> = {
+  int: "内",
+  ext: "外",
+};
+
+export const TIME_LABEL: Record<ScriptScene["timeOfDay"], string> = {
+  day: "日",
+  night: "夜",
+  dawn: "晨",
+  dusk: "昏",
+};
+
+export function sceneHead(scene: ScriptScene): string {
+  return `${SPACE_LABEL[scene.space]} · ${TIME_LABEL[scene.timeOfDay]}`;
+}
 
 export type ScriptView = {
   title: string;
@@ -486,6 +505,8 @@ export function toScriptView(project: Project, options: { budgetCny?: number } =
         id: scene.id,
         no: at + 1,
         place: locationById.get(scene.locationId)?.name ?? "未命名场景",
+        space: scene.space,
+        timeOfDay: scene.timeOfDay,
         dur: round2(shots.reduce((sum, shot) => sum + shot.dur, 0)),
         shots,
       };
@@ -726,7 +747,9 @@ export function scriptToText(view: ScriptView): string {
 
   for (const scene of view.scenes) {
     lines.push("");
-    lines.push(`第 ${scene.no} 场 · ${scene.place}（${scene.dur.toFixed(1)}s · ${scene.shots.length} 镜）`);
+    lines.push(
+      `第 ${scene.no} 场 · ${sceneHead(scene)} · ${scene.place}（${scene.dur.toFixed(1)}s · ${scene.shots.length} 镜）`,
+    );
     for (const shot of scene.shots) {
       lines.push("");
       lines.push(`${shotLabel(shot.no)} · ${shot.size} · ${shot.angle} · ${shot.dur.toFixed(1)}s`);

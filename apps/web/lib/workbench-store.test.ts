@@ -1051,3 +1051,46 @@ describe("动作改写（ADR-0049）", () => {
     expect(state().events).toHaveLength(snapshot);
   });
 });
+
+describe("场头改写（ADR-0050）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("改场头写一条 scene.updated，只动这一场", () => {
+    const snapshot = state().events.length;
+
+    expect(state().editScene("sc-1", { space: "ext", timeOfDay: "dawn" })).toBe(true);
+
+    const scene = state().project.scenes.find((item) => item.id === "sc-1")!;
+    expect(scene).toMatchObject({ space: "ext", timeOfDay: "dawn" });
+    expect(state().project.scenes.find((item) => item.id === "sc-2")).toMatchObject({
+      space: "int",
+      timeOfDay: "night",
+    });
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "scene.updated",
+      sceneId: "sc-1",
+      patch: { space: "ext", timeOfDay: "dawn" },
+    });
+    expect(rebuild(state().events).scenes.find((item) => item.id === "sc-1")).toMatchObject({
+      space: "ext",
+      timeOfDay: "dawn",
+    });
+  });
+
+  it("没变化、只读、陌生的场次都不写事件", () => {
+    const before = state().project.scenes.find((item) => item.id === "sc-1")!;
+    const snapshot = state().events.length;
+
+    expect(state().editScene("sc-1", { space: before.space })).toBe(false);
+    expect(state().castError).toContain("没改");
+    expect(state().editScene("sc-404", { space: "ext" })).toBe(false);
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().editScene("sc-1", { space: "ext" })).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+  });
+});

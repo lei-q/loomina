@@ -5,6 +5,7 @@ import type {
   DialogueLine,
   Id,
   Project,
+  Scene,
   Shot,
   Take,
 } from "./schema";
@@ -27,6 +28,16 @@ export type ProjectEvent =
       budgetCny: number;
     }
   | { type: "shot.updated"; at: string; shotId: Id; patch: Partial<Shot> }
+  | {
+      /**
+       * 场头改写（ADR-0050）：目前只允许内 / 外景与日夜。
+       * 地点、场号属于结构，不在这里改。
+       */
+      type: "scene.updated";
+      at: string;
+      sceneId: Id;
+      patch: Partial<Pick<Scene, "space" | "timeOfDay">>;
+    }
   | {
       /**
        * 台词改写（ADR-0044）：只允许改文本与时长。
@@ -100,6 +111,20 @@ export function applyEvent(
         shot.id === event.shotId ? { ...shot, ...event.patch } : shot,
       );
       return { ...current, shots };
+    }
+
+    case "scene.updated": {
+      if (!current) throw new Error("scene.updated 之前必须有 project.created");
+      if (!current.scenes.some((scene) => scene.id === event.sceneId)) {
+        throw new Error(`scene.updated 指向不存在的场次: ${event.sceneId}`);
+      }
+      if (Object.keys(event.patch).length === 0) {
+        throw new Error("scene.updated 的 patch 是空的");
+      }
+      const scenes = current.scenes.map((scene) =>
+        scene.id === event.sceneId ? { ...scene, ...event.patch } : scene,
+      );
+      return { ...current, scenes };
     }
 
     case "dialogue.updated": {

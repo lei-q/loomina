@@ -76,11 +76,11 @@ const raw: ProjectInput = {
   approvals: [],
 
   scenes: [
-    { id: "sc-1", index: 0, locationId: "loc-corridor", shotIds: ["s-01", "s-02", "s-03"] },
-    { id: "sc-2", index: 1, locationId: "loc-table", shotIds: ["s-04", "s-05"] },
-    { id: "sc-3", index: 2, locationId: "loc-corridor", shotIds: ["s-06"] },
-    { id: "sc-4", index: 3, locationId: "loc-door", shotIds: ["s-07", "s-08"] },
-    { id: "sc-5", index: 4, locationId: "loc-table", shotIds: ["s-09", "s-10", "s-11", "s-12"] },
+    { id: "sc-1", index: 0, locationId: "loc-corridor", space: "int", timeOfDay: "night", shotIds: ["s-01", "s-02", "s-03"] },
+    { id: "sc-2", index: 1, locationId: "loc-table", space: "int", timeOfDay: "night", shotIds: ["s-04", "s-05"] },
+    { id: "sc-3", index: 2, locationId: "loc-corridor", space: "int", timeOfDay: "night", shotIds: ["s-06"] },
+    { id: "sc-4", index: 3, locationId: "loc-door", space: "ext", timeOfDay: "night", shotIds: ["s-07", "s-08"] },
+    { id: "sc-5", index: 4, locationId: "loc-table", space: "int", timeOfDay: "night", shotIds: ["s-09", "s-10", "s-11", "s-12"] },
   ],
 
   dialogue: [

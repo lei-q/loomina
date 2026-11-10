@@ -152,6 +152,10 @@ export const SceneSchema = z.object({
   id: Id,
   index: z.number().int().nonnegative(),
   locationId: Id,
+  /** 内 / 外景（ADR-0050）：场头第一眼要能看出来 */
+  space: z.enum(["int", "ext"]).default("int"),
+  /** 日夜（ADR-0050）：光线与提示词的第一个变量 */
+  timeOfDay: z.enum(["day", "night", "dawn", "dusk"]).default("day"),
   shotIds: z.array(Id).default([]),
 });
 export type Scene = z.infer<typeof SceneSchema>;

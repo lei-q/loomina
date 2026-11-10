@@ -5,8 +5,11 @@ import { TopBar } from "@/components/top-bar";
 import {
   dialogueHistory,
   previousDialogueText,
+  sceneHead,
   scriptToText,
+  SPACE_LABEL,
   shotLabel,
+  TIME_LABEL,
   toScriptView,
 } from "@/lib/read-model";
 import { useWorkbench } from "@/lib/workbench-store";
@@ -31,12 +34,14 @@ export function ScriptScreen() {
   const changeSpeaker = useWorkbench((state) => state.changeSpeaker);
   const moveDialogue = useWorkbench((state) => state.moveDialogue);
   const editAction = useWorkbench((state) => state.editAction);
+  const editScene = useWorkbench((state) => state.editScene);
   const events = useWorkbench((state) => state.events);
 
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [editingAction, setEditingAction] = useState<string | null>(null);
   const [actionDraft, setActionDraft] = useState("");
+  const [editingScene, setEditingScene] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [swapping, setSwapping] = useState<string | null>(null);
   const [adding, setAdding] = useState<string | null>(null);
@@ -47,6 +52,18 @@ export function ScriptScreen() {
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
+  // 场头的小编辑器：点外面就收起。只看 blur 不够——
+  // 下拉没拿过焦点时，外面点击不会触发 blur，面板会一直挂着。
+  useEffect(() => {
+    if (!editingScene) return;
+    const close = (event: PointerEvent) => {
+      const target = event.target as Element | null;
+      if (target?.closest(`[data-scene-editor="${editingScene}"]`)) return;
+      setEditingScene(null);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [editingScene]);
 
   const view = useMemo(() => toScriptView(project), [project]);
 
@@ -61,6 +78,13 @@ export function ScriptScreen() {
     setActionDraft(text);
     setEditing(null);
     setNote(undefined);
+  };
+
+  const commitScene = (
+    sceneId: string,
+    patch: { space?: "int" | "ext"; timeOfDay?: "day" | "night" | "dawn" | "dusk" },
+  ) => {
+    if (!editScene(sceneId, patch)) setNote(useWorkbench.getState().castError);
   };
 
   const saveAction = (shotId: string) => {
@@ -185,6 +209,62 @@ export function ScriptScreen() {
                   <span className="tnum shrink-0 text-[9.5px] tracking-[.14em] text-muted-2">
                     第 {scene.no} 场
                   </span>
+                  {editingScene === scene.id ? (
+                    <span
+                      data-scene-editor={scene.id}
+                      className="flex shrink-0 items-baseline gap-1"
+                    >
+                      <select
+                        autoFocus
+                        value={scene.space}
+                        onChange={(event) =>
+                          commitScene(scene.id, { space: event.target.value as "int" | "ext" })
+                        }
+                        aria-label="内外景"
+                        className="rounded-token border border-pick/70 bg-surface px-1 py-0 text-[9px] text-text focus:outline-none"
+                      >
+                        {Object.entries(SPACE_LABEL).map(([value, label]) => (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="text-muted-2">·</span>
+                      <select
+                        value={scene.timeOfDay}
+                        onChange={(event) =>
+                          commitScene(scene.id, {
+                            timeOfDay: event.target.value as
+                              | "day"
+                              | "night"
+                              | "dawn"
+                              | "dusk",
+                          })
+                        }
+                        aria-label="日夜"
+                        className="rounded-token border border-pick/70 bg-surface px-1 py-0 text-[9px] text-text focus:outline-none"
+                      >
+                        {Object.entries(TIME_LABEL).map(([value, label]) => (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={readOnly}
+                      onClick={() => {
+                        setEditingScene(scene.id);
+                        setNote(undefined);
+                      }}
+                      title={readOnly ? "只读标签页不能改场头" : "改内 / 外景与日夜"}
+                      className="tnum shrink-0 rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-default disabled:opacity-60"
+                    >
+                      {sceneHead(scene)}
+                    </button>
+                  )}
                   <h2 className="text-[13px] tracking-[.04em] text-text">{scene.place}</h2>
                   <span className="tnum ml-auto shrink-0 text-[9.5px] text-muted-2">
                     {scene.dur.toFixed(1)}s · {scene.shots.length} 镜

@@ -71,6 +71,14 @@ describe("parseEvents", () => {
     ]);
   });
 
+  it("场头改写也认得出来", () => {
+    const events = parseEvents([
+      created(),
+      { type: "scene.updated", at: AT, sceneId: "sc-1", patch: { space: "ext" } },
+    ]);
+    expect(events?.map((event) => event.type)).toEqual(["project.created", "scene.updated"]);
+  });
+
   it("项目快照坏了就不硬跑", () => {
     expect(parseEvents([{ type: "project.created", at: AT, project: { title: "" } }])).toBeNull();
   });

@@ -9,6 +9,7 @@ import {
   type ApprovalTargetType,
   type Project,
   type ProjectEvent,
+  type Scene,
   type SheetView,
   type Shot,
 } from "@loomina/ir";
@@ -96,6 +97,8 @@ type WorkbenchState = {
   moveDialogue: (lineId: string, direction: "up" | "down") => boolean;
   /** 改这一镜的动作：写一条 `shot.updated { description }`，时长与台词不动（ADR-0049） */
   editAction: (shotId: string, text: string) => boolean;
+  /** 改场头：写一条 `scene.updated`，只收内 / 外景与日夜（ADR-0050） */
+  editScene: (sceneId: string, patch: Partial<Pick<Scene, "space" | "timeOfDay">>) => boolean;
   /** 划掉一条补充要求：同样写一条 shot.updated（ADR-0039 附记） */
   removeNote: (shotId: string, note: string) => void;
   reset: () => void;
@@ -704,6 +707,30 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     return true;
   },
 
+
+  editScene: (sceneId, patch) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const scene = project.scenes.find((item) => item.id === sceneId);
+    if (!scene) return false;
+    const next: Partial<Pick<Scene, "space" | "timeOfDay">> = {};
+    if (patch.space !== undefined && patch.space !== scene.space) next.space = patch.space;
+    if (patch.timeOfDay !== undefined && patch.timeOfDay !== scene.timeOfDay) {
+      next.timeOfDay = patch.timeOfDay;
+    }
+    if (Object.keys(next).length === 0) {
+      set({ castError: "场头没改。" });
+      return false;
+    }
+    const at = new Date().toISOString();
+    const written: ProjectEvent[] = [{ type: "scene.updated", at, sceneId, patch: next }];
+    set({
+      project: written.reduce(applyEvent, project),
+      events: [...events, ...written],
+      castError: undefined,
+    });
+    return true;
+  },
 
   addDialogue: (shotId, characterId, rawText) => {
     if (get().readOnly) return false;

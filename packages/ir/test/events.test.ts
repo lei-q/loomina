@@ -353,3 +353,45 @@ describe("换说话人（ADR-0046）", () => {
     ).toThrow(/已经是/);
   });
 });
+
+describe("scene.updated（ADR-0050）", () => {
+  it("改内 / 外景与日夜，重放后一致，别的场不动", () => {
+    const project = load();
+    const event: ProjectEvent = {
+      type: "scene.updated",
+      at: AT,
+      sceneId: "sc-1",
+      patch: { space: "ext", timeOfDay: "dawn" },
+    };
+    const after = applyEvent(project, event);
+
+    expect(after.scenes[0]).toMatchObject({ space: "ext", timeOfDay: "dawn" });
+    expect(rebuild([created(project), event])).toEqual(after);
+  });
+
+  it("缺省值是内景 / 日，旧项目回放不用改", () => {
+    // minimal.json 没有这两个字段，schema 解析时补上
+    const project = load();
+    expect(project.scenes[0]).toMatchObject({ space: "int", timeOfDay: "day" });
+  });
+
+  it("指向不存在的场次、空 patch 都拒绝", () => {
+    const project = load();
+    expect(() =>
+      applyEvent(project, {
+        type: "scene.updated",
+        at: AT,
+        sceneId: "sc-404",
+        patch: { space: "ext" },
+      }),
+    ).toThrow(/不存在/);
+    expect(() =>
+      applyEvent(project, {
+        type: "scene.updated",
+        at: AT,
+        sceneId: "sc-1",
+        patch: {},
+      }),
+    ).toThrow(/空/);
+  });
+});
