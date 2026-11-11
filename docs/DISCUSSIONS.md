@@ -2762,3 +2762,28 @@ ADR-0009 把 animatic 定为视频生成前的闸门，但眼下没有任何地�
 - 权利声明不是核验；用户勾选后仍可能上传无权文本。投诉与下架流程还没做。
 - 没有自动重试或逐场重写；JSON 不合格直接报错，整份重来。
 - 无头环境只验了页面结构、事件与跳转，没有验真实文件选择器（用 setter 填文本域代替）；GB18030 解码逻辑没有拿真实 GBK 文件测。
+
+## 第九十四次 · 2026-11-11 · AI 生成内容标识（H5 · ADR-0090）
+
+**背景**
+ADR-0008 定了「AI 标识内建」，发布包与 OTIO 里已经有 `aiLabel`，但成片页播放器与导出的预览 HTML 上看不到任何标识。法规要求显式标识与隐式标识同时存在；只写 JSON 字段等于只有隐式标识，用户把预览 HTML 发给别人时，对方看不出这是生成内容。
+
+**结论**
+- 成片页播放器画面右下角常驻「AI 生成」角标，`pointer-events: none`，不挡播放；没有开关，也不进 Project IR（ADR-0090）。
+- 导出预览 HTML 同样在画面右下角显示角标，`<head>` 增加 `<meta name="ai-generated" content="true">` 与 `<meta name="ai-label-standard" content="AI生成">`。
+- OTIO `metadata.loom.aiLabel` 与发布包 `aiLabel` 保持 `{ explicit: true, implicit: true, standard: "AI生成" }`。
+- 导出区加一句说明：标识不是可选项；预览角标、HTML 元数据、OTIO 元数据与发布包 `aiLabel` 都会带上，mp4 接上后角标也要烧进画面。
+- 标识是 `export-cut.ts` 里的常量，不新增事件字段、不做迁移。强制项没有选择，也就不该有状态。
+
+**验证**
+- 测试：web 280（新增 2：预览 HTML 的角标与元数据、OTIO 元数据里的 `aiLabel`）、IR 110、gateway 28、pipeline 30，合计 448；`pnpm typecheck`、`pnpm test`、`pnpm --filter web build` 通过。
+- 真实页面（1440×900，无头 Chrome，先关掉所有旧标签页避免单写者锁）：`/edit` 页头「成片」，播放器右下角能看到「AI 生成」；角标位置在画面内、不挡字幕与播放控件，`pointer-events` 为 `none`。截图 `/tmp/h5-edit-player.png`。
+- 点「导出预览 HTML」得到 `夜班-预览.html`（7.9 KB），导出结果写「预览已导出：0.0 MB」。打开导出的文件：画面右下角同样有「AI 生成」，`<meta name="ai-generated" content="true">` 与 `<meta name="ai-label-standard" content="AI生成">` 都在。截图 `/tmp/h5-preview-html.png`。
+- 本轮没有改项目数据，验证后 IndexedDB 仍是示例项目（2 个时间线片段、全长 5.5s）。
+
+**诚实地说**
+- **mp4 还没烧录**：当前没有服务端渲染，发布包视频位如实为 `null`；标识只落在预览 HTML、OTIO 与发布包 JSON 上。验收标准 5（导出 MP4 带 AI 标识）仍未满足。
+- 预览 HTML 的 `<meta>` 不是签名，任何人都能改；强隐式标识（签名 / 水印）还没做。
+- 角标固定在右下角，没有按平台安全区调整；平台 UI 可能遮挡，等 G7 规格库。
+- 没有统一的导出闸门：现在四条导出路径都带标识，但新增导出路径仍要靠调用点记得写常量，G8 合规预检还没做。
+- 无头环境只验了页面结构与导出文件，没有验真实视频画面上的角标（没有视频可放）。

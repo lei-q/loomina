@@ -159,6 +159,25 @@ describe("导出（E6 / D3 / G1）", () => {
     expect(audio.children).toHaveLength(1);
   });
 
+  it("预览 HTML 带不可关掉的 AI 生成标识与元数据（H5）", () => {
+    const html = buildPreviewHtml(toEditView(sampleProject), "default");
+    expect(html).toContain('<meta name="ai-generated" content="true">');
+    expect(html).toContain('<meta name="ai-label-standard" content="AI生成">');
+    expect(html).toContain('aria-label="AI 生成内容标识"');
+    expect(html).toContain(">AI 生成</div>");
+  });
+
+  it("OTIO 元数据也带 AI 标注（H5）", () => {
+    const otio = buildOtio(toEditView(sampleProject)) as {
+      metadata: { loom: { aiLabel: unknown } };
+    };
+    expect(otio.metadata.loom.aiLabel).toEqual({
+      explicit: true,
+      implicit: true,
+      standard: "AI生成",
+    });
+  });
+
   it("发布包带 AI 标注、字幕与未完成项；视频位如实为空", () => {
     const view = toEditView(sampleProject);
     const pack = buildPublishPackage(view, {

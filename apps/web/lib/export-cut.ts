@@ -223,6 +223,8 @@ export function buildPreviewHtml(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="ai-generated" content="true">
+<meta name="ai-label-standard" content="${AI_LABEL.standard}">
 <title>${escapeHtml(view.title)} · 预览</title>
 <style>
 :root { color-scheme: dark; --bg:#0C0C0D; --surface:#131316; --line:#2B2B2F; --text:#F2F2EF; --muted:#7B7C7F; --pick:#E0442E; }
@@ -239,6 +241,7 @@ header span { color:var(--muted); font-size:11px; font-variant-numeric:tabular-n
 .stage .safe { position:absolute; inset:${SAFE_AREA.topPct}% ${SAFE_AREA.sidePct}% ${SAFE_AREA.bottomPct}%; border:1px dashed rgba(242,242,239,.12); display:none; pointer-events:none; }
 .stage.show-safe .safe { display:block; }
 .subtitle { position:absolute; left:${SAFE_AREA.sidePct}%; right:${SAFE_AREA.sidePct}%; bottom:${style.bottomPct}%; text-align:center; font-size:${style.fontSizeCqw}cqw; line-height:1.38; font-weight:600; color:#fff; text-shadow:0 0 ${style.strokeCqw}cqw #000, 0 0 ${style.strokeCqw}cqw #000, 0 ${style.strokeCqw * 0.5}cqw ${style.strokeCqw * 1.2}cqw #000; letter-spacing:.02em; }
+.ai-badge { position:absolute; right:8px; bottom:8px; z-index:3; padding:3px 6px; border:1px solid rgba(255,255,255,.16); background:rgba(0,0,0,.58); color:rgba(255,255,255,.82); font-size:10px; line-height:1.2; letter-spacing:.08em; pointer-events:none; }
 .controls { width:100%; max-width:420px; display:flex; flex-direction:column; gap:10px; }
 .row { display:flex; align-items:center; gap:10px; }
 button { background:var(--surface); color:var(--text); border:1px solid var(--line); font:inherit; font-size:12px; padding:7px 14px; cursor:pointer; }
@@ -260,6 +263,7 @@ input[type=range] { flex:1; accent-color:var(--pick); }
   <div class="placeholder" id="placeholder">这一镜还没有画面</div>
   <div class="safe"></div>
   <div class="subtitle" id="subtitle"></div>
+  <div class="ai-badge" aria-label="AI 生成内容标识">AI 生成</div>
 </div>
 <div class="controls">
   <div class="row"><span class="time" id="clock">00:00.0</span><input id="seek" type="range" min="0" max="${view.totalMs}" value="0" aria-label="进度"><span class="time" id="total">${seconds(view.totalMs)}s</span></div>

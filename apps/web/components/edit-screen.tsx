@@ -347,6 +347,12 @@ export function EditScreen() {
                       已锁定
                     </span>
                   )}
+                  <span
+                    aria-label="AI 生成内容标识"
+                    className="pointer-events-none absolute bottom-2 right-2 rounded-token border border-white/15 bg-black/55 px-1.5 py-0.5 text-[8.5px] tracking-[.08em] text-white/80"
+                  >
+                    AI 生成
+                  </span>
                 </div>
 
                 <div className="mt-2 flex items-center gap-2">
@@ -677,6 +683,10 @@ export function EditScreen() {
                     <span className="text-muted"> mp4 还没做</span>——本机 ffmpeg 已装好，
                     但服务端渲染管线还没接，所以发布包里的视频位先空着，
                     拿 OTIO 去剪辑软件出片是现在能走通的路。
+                  </p>
+                  <p className="mt-2 text-[9.5px] leading-[1.7] text-muted-2">
+                    AI 标识不是可选项：预览画面右下角的「AI 生成」角标、HTML 元数据、OTIO
+                    元数据与发布包里的 `aiLabel` 都会带上；mp4 接上后角标也要烧进画面。
                   </p>
                 </section>
               </div>
