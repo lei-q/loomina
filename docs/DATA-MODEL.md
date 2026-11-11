@@ -644,7 +644,9 @@ interface AudioTrack {
 - `data:`：存量项目与迁移前的素材，继续可用。
 - `https://`：供应商直接回的地址。
 
-`AssetStore` 接口（`read` / `put` / `remove`）与 `LOOMINA_ASSET_STORE=local|s3` 是切换点；`S3AssetStore` 只做 SigV4 预签名 PUT / GET，**依赖方案待确认**，不引 `@aws-sdk/client-s3`。迁移是设置页的显式动作，旧事件里的 data URI 不动（日志只追加，后写的 `asset.updated` 覆盖前面的）；回收**只列不删**。
+`AssetStore` 接口（`read` / `put` / `remove` / `list`）与 `LOOMINA_ASSET_STORE=local|s3` 是切换点；`S3AssetStore` 只做 SigV4 预签名 PUT / GET，**依赖方案待确认**，不引 `@aws-sdk/client-s3`。迁移是设置页的显式动作，旧事件里的 data URI 不动（日志只追加，后写的 `asset.updated` 覆盖前面的）；回收**只列不删**。
+
+**已落地（H3.1，2026-11-12）**：`apps/web/lib/asset-uri.ts` 管地址（`audio/webm` 落 `.weba`，保证扩展名唯一反推 mime；`assetHref()` 给浏览器换成 `/api/asset/<hash>.<ext>`），`apps/web/lib/asset-store.ts` 管读写（临时文件 + `rename`，写失败不留半个文件）。生成路径的 data URI 超过 **128 KB** 自动进库；导出（预览 HTML / OTIO / 发布包）前 `hydrateView()` 读回字节，读不回来保留原地址并计数。
 
 ```ts
 interface Asset {
@@ -693,6 +695,8 @@ interface Approval {
 
 51. **资产库按内容寻址**（H3 / ADR-0128）：同一段字节只存一份，`uri` 里的 hash 与内容一致。
 52. **资产回收只列不删**：未被任何引用方指向的资产标记为「未引用」，清理必须是显式动作。
+53. **资产库地址的扩展名唯一反推 mime**（H3.1）：`/api/asset/<hash>.<ext>` 的 `Content-Type` 只能由扩展名给出，所以一种 mime 一个后缀（`audio/webm` 用 `weba`，`webm` 只属于视频）。
+54. **导出物自包含**（H3.1 / P20）：预览 HTML、OTIO 与发布包在导出前把 `loomina://` 读回 `data:`；读不回来保留原地址并在提示里数出来，不假装完整。
 
 ### 5.2 时间线的落地（ADR-0086）
 
@@ -839,7 +843,7 @@ interface AILabel {
 24. **`StoryBible.arcs` 只能引用存在的人物**（`REF_STORY_CHARACTER`）；`StoryBible.relationships` 的两端也必须是存在的人物。
 25. **每个 `characterId` 最多一条弧光**（`STORY_ARC_UNIQUE`）；重复时整份项目不合法。
 
-> 本节只收跨层的结构不变量（1–25）。各层自己的不变量写在该层末尾，编号不重排：表演 21–24（§11）、声音 25–29（§12）、发布 30–35（§13）、成本 36–41（§14）、配置 42–45（§15）、本次新增的空间 46–47（§11.5）、声音 48–50（§12）与资产 51–52（§5.1）。
+> 本节只收跨层的结构不变量（1–25）。各层自己的不变量写在该层末尾，编号不重排：表演 21–24（§11）、声音 25–29（§12）、发布 30–35（§13）、成本 36–41（§14）、配置 42–45（§15）、本次新增的空间 46–47（§11.5）、声音 48–50（§12）与资产 51–54（§5.1）。
 
 ## 8. 与 OTIO 的映射
 

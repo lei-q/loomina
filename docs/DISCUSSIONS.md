@@ -3735,3 +3735,33 @@ H18 一直写着「界面上没有重置入口」。想重来一遍只能开 dev
 
 **下一步**
 按「零依赖优先」继续：H3 本地资产库（它让后面所有素材操作都变轻）→ B13.1 俯视走位板 → A18 本地报告 → C10 曲线与动机。
+
+## 第一百三十二次 · 2026-11-12 · H3.1 本机资产库落地
+
+**背景**
+ADR-0128 定了边界，但素材一直还是以 base64 躺在事件日志里：一张定妆图约 2.4 MB，一个正常项目几十兆，撤销 / 回滚 / 重放都在拿这份大日志做前缀操作。H3 的第一刀是把「素材存在哪」从日志里拆出来，零依赖。
+
+**结论**
+- 新 `apps/web/lib/asset-uri.ts`（纯函数，浏览器与 Node 共用）：`loomina://assets/<sha256>.<ext>` 的解析与生成、mime ↔ 扩展名一一对应（`audio/webm` 用 `weba`，不和视频抢 `webm`）、`assetHref()` 把地址换成 `/api/asset/<hash>.<ext>`。
+- 新 `apps/web/lib/asset-store.ts`：`AssetStore` 接口（`read` / `put` / `remove` / `list`）+ `LocalAssetStore`。落 `.loomina/assets/`（0700 / 0600），内容寻址、同一段字节只存一份，单文件上限 200 MB，写临时文件再 `rename`（写一半失败不留「存在的」素材），已存在时只顺手把权限纠回 0600。`LOOMINA_ASSET_DIR` 可覆盖目录（测试用）。
+- 三个入口：`GET /api/asset/<hash>.<ext>` 读盘（`immutable` 缓存一年，只认 64 位哈希 + 已知扩展名，目录穿越拼不出来）；`POST/DELETE/GET /api/asset/store` 写入、清点、清理；`writeAsset` 在渲染路由里加 `loomina://` 分支，直接给本地路径，不再 base64 解码，并把 30 MB 上限补到资产库文件上（清单只算 data URI 的体积）。
+- 生成路径统一先过 `persistAsset()`：出图、出视频、出声拿到的 data URI 超过 128 KB 就先进资产库，日志里只留地址。小图留在日志里——一个 HTTP 往返换几 KB 不值得。写不进去不抛错，退回 data URI，刚花钱生成的东西不会丢。
+- 迁移是显式动作：设置页「本机资产库」区点一下，逐个搬、逐个写 `asset.updated`，旧事件里的 data URI 不动。清点与清理都走服务端：清理先 `dryRun` 拿「会删几个」，确认句里写真实数字。
+- 导出仍自包含（P20）：预览 HTML、OTIO、发布包导出前先 `hydrateView()` 把资产库地址读回字节换成 data URI；读不回来的保留原地址并如实数出来，不假装导出包完整。
+- 界面里 16 处 `<img>` / `<video>` / `<audio>` 的 src 统一过 `assetHref()`，迁移过的素材照常显示。
+
+**验证**
+- 单测 837 全过（IR 160 + gateway 28 + pipeline 51 + web 598），新增 21 条：`asset-store.test.ts` 13、`asset-inventory.test.ts` 5、`asset-hydrate.test.ts` 3；`render-manifest.test.ts` 加 5 条 `loomina://` 用例。`pnpm typecheck`、`next build` 全过。
+- 接口：`POST /api/asset/store` 回 `loomina://assets/c414…png`；`GET /api/asset/c414….png` 200 + `cache-control: public, max-age=31536000, immutable` + 70 字节；不存在的哈希 404；`..%2F..%2Fconfig.json` 400。
+- 浏览器（生产 3100）：定妆页挂一张参考图（96×96 PNG）→ 设置页显示「还在日志里 3 个 · 182 KB」→ 点迁移 → 「已进资产库 3 个、还在日志里 0 个」，资产库文件从 1 个变 4 个 → 回定妆页参考图 src 变成 `/api/asset/66c1….png`，`naturalWidth` 96×96、`complete: true`（真读到了）。
+- 渲染：用 `loomina://` 素材提交 `POST /api/render` → `done`，ffprobe 得 540×960 / h264 / 1.000s，抽帧能看到那张斜纹图（证明不是占位图）。
+- 清理：先放一个 64 位哈希的孤儿文件 → 点「清理没人引用的文件」→ 确认句写「会删掉 1 个（约 6 B）」→ 确认后盘上只剩在用的 3 个。
+- **没验到的**：预览 HTML 与 OTIO 的「读回字节」这一步——示例项目当前时间线上的素材都还没有地址（`noPicture`），导出出来的 HTML 里没有任何素材，`hydrateView()` 只由 3 条单测覆盖。
+
+**边界**
+- 日志文件不会因为迁移变小：旧事件里的 base64 还在，真正的缩小要等日志压缩（未做）。
+- 本机资产库不是备份：删 `.loomina/`、清缓存、换机器都会丢；S3 接入后才谈备份。
+- `S3AssetStore` 没做：按 CLAUDE.md「未经确认，不引入重型依赖或自建基础设施」，签名方案（自写 SigV4 还是 `aws4`）要单独确认。
+
+**下一步**
+按「零依赖优先」继续：B13.1 俯视走位板 → A18 本地报告 → C10 曲线与动机。

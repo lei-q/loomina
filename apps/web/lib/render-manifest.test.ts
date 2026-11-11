@@ -259,3 +259,67 @@ describe("成片渲染清单（E6）", () => {
     expect(noSubtitleFileName("夜班-成片")).toBe("夜班-成片-无字幕.mp4");
   });
 });
+
+describe("清单里的本机资产库地址（H3 / ADR-0128）", () => {
+  const HASH = "a".repeat(64);
+
+  it("loomina:// 的图片片段通过，且不计入请求体积", () => {
+    const ok = validateRenderManifest(
+      manifest({
+        clips: [
+          { durationMs: 1000, media: `loomina://assets/${HASH}.png`, mediaKind: "image" },
+        ],
+      }),
+    );
+    expect(ok.ok).toBe(true);
+  });
+
+  it("扩展名与 mediaKind 对不上就拒", () => {
+    const ok = validateRenderManifest(
+      manifest({
+        clips: [
+          { durationMs: 1000, media: `loomina://assets/${HASH}.mp3`, mediaKind: "video" },
+        ],
+      }),
+    );
+    expect(ok.ok).toBe(false);
+    if (ok.ok) return;
+    expect(ok.error).toContain("标成视频但不是视频格式");
+  });
+
+  it("音轨与配乐也认资产库地址", () => {
+    const ok = validateRenderManifest(
+      manifest({
+        audio: [{ audio: `loomina://assets/${HASH}.mp3`, startMs: 0, durationMs: 1000 }],
+        music: [
+          {
+            audio: `loomina://assets/${HASH}.mp3`,
+            startMs: 0,
+            endMs: 1000,
+            gainDb: -18,
+            duckDb: 15,
+          },
+        ],
+      }),
+    );
+    expect(ok.ok).toBe(true);
+  });
+
+  it("叠加层必须是 PNG：资产库里的 mp3 不行", () => {
+    const ok = validateRenderManifest(
+      manifest({ overlays: [{ image: `loomina://assets/${HASH}.mp3`, startMs: 0, endMs: 1000 }] }),
+    );
+    expect(ok.ok).toBe(false);
+    if (ok.ok) return;
+    expect(ok.error).toContain("必须是 PNG");
+  });
+
+  it("既不是 data URI 也不是资产库地址的字符串被拒", () => {
+    const ok = validateRenderManifest(
+      manifest({
+        clips: [{ durationMs: 1000, media: "file:///tmp/a.png", mediaKind: "image" }],
+      }),
+    );
+    expect(ok.ok).toBe(false);
+  });
+});

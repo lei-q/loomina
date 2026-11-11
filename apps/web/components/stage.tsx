@@ -3,6 +3,7 @@ import type { Frame } from "@loomina/pipeline";
 import { Scene } from "@/components/scene";
 import { shotLabel, type StageShot, type StageView } from "@/lib/read-model";
 import { cn } from "@/lib/utils";
+import { assetHref } from "@/lib/asset-uri";
 
 const FRAME = "h-[min(56vh,500px)] aspect-[9/16]";
 
@@ -12,7 +13,7 @@ function Neighbour({ shot }: { shot: StageShot }) {
       <figcaption className="tnum text-[9px] text-muted-2">{shotLabel(shot.no)}</figcaption>
       <div className={cn(FRAME, "relative overflow-hidden rounded-token border border-white/[.06] bg-surface opacity-[.48]")}>
         {shot.keyframeUri ? (
-          <img src={shot.keyframeUri} alt={`${shotLabel(shot.no)} 首帧`} className="h-full w-full object-cover" />
+          <img src={assetHref(shot.keyframeUri)} alt={`${shotLabel(shot.no)} 首帧`} className="h-full w-full object-cover" />
         ) : (
           <Scene kind={shot.art} className="h-full w-full" />
         )}
@@ -160,8 +161,8 @@ function Current({
       <div className={cn(FRAME, "relative overflow-hidden rounded-token border border-white/[.075] bg-surface")}>
         {videoShown && videoUri ? (
           <video
-            src={videoUri}
-            poster={shot.keyframeUri}
+            src={assetHref(videoUri)}
+            poster={assetHref(shot.keyframeUri)}
             controls
             playsInline
             loop
@@ -169,7 +170,7 @@ function Current({
           />
         ) : shownUri ? (
           <img
-            src={shownUri}
+            src={assetHref(shownUri)}
             alt={`${shotLabel(shot.no)} ${FRAME_LABEL[shownFrame]}`}
             className="h-full w-full object-cover"
           />
@@ -342,7 +343,7 @@ function Current({
               )}
             >
               {shot.keyframeUri ? (
-                <img src={shot.keyframeUri} alt="" className="h-full w-full object-cover" />
+                <img src={assetHref(shot.keyframeUri)} alt="" className="h-full w-full object-cover" />
               ) : (
                 <Scene kind={shot.art} className="h-full w-full" />
               )}
@@ -382,7 +383,7 @@ function Current({
                 )}
               >
                 {frame.uri ? (
-                  <img src={frame.uri} alt="" className="h-full w-full object-cover" />
+                  <img src={assetHref(frame.uri)} alt="" className="h-full w-full object-cover" />
                 ) : (
                   <Scene kind={shot.art} className="h-full w-full" />
                 )}

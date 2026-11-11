@@ -6,6 +6,7 @@ import { TopBar } from "@/components/top-bar";
 import { shotLabel, toVoiceView, type VoiceLine, type VoiceRole } from "@/lib/read-model";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
+import { assetHref } from "@/lib/asset-uri";
 
 /**
  * 声音页（ADR-0085）：一句台词一条音轨。
@@ -71,7 +72,7 @@ function LineAudio({ line, onMeasure }: { line: VoiceLine; onMeasure: (ms: numbe
     <audio
       controls
       preload="metadata"
-      src={line.audioUri}
+      src={assetHref(line.audioUri)}
       onLoadedMetadata={(event) => {
         if (measured.current) return;
         measured.current = true;

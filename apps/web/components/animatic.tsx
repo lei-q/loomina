@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { Scene } from "@/components/scene";
 import { shotLabel, type AnimaticView } from "@/lib/read-model";
 import { elapsedMsOf, locateInTimeline, totalMsOf } from "@/lib/animatic-clock";
+import { assetHref } from "@/lib/asset-uri";
 import { CloseIcon, PauseIcon, PlayIcon } from "@/components/icons";
 
 /**
@@ -43,6 +44,10 @@ export function AnimaticOverlay({
   const [musicOn, setMusicOn] = useState(true);
   const segment = view.segments[index];
   const clips = segment?.clips ?? [];
+  /** 素材地址先过 assetHref：资产库里的素材走 /api/asset/…（H3 / ADR-0128） */
+  const videoSrc = assetHref(segment?.videoUri);
+  const imageSrc = assetHref(segment?.imageUri);
+  const musicSrc = assetHref(music?.uri);
   /** 下一次「跳转」要把片子对到哪一毫秒；只有跳转时才有值 */
   const pendingSeek = useRef<number | undefined>(undefined);
 
@@ -147,7 +152,12 @@ export function AnimaticOverlay({
       element.pause();
       return;
     }
-    if (element.src !== current.uri) element.src = current.uri;
+    const src = assetHref(current.uri);
+    if (!src) {
+      element.pause();
+      return;
+    }
+    if (element.getAttribute("src") !== src) element.src = src;
     void element.play().catch(() => {
       // 浏览器不给自动播放时，字幕照走；用户点一下「暂停 / 播放」即可
     });
@@ -245,12 +255,12 @@ export function AnimaticOverlay({
 
       <div className="flex min-h-0 flex-1 items-center justify-center gap-8 px-6">
         <div className="relative aspect-[9/16] h-[min(68vh,620px)] overflow-hidden rounded-token border border-white/[.075] bg-surface">
-          {segment?.videoUri ? (
+          {videoSrc ? (
             <video
-              key={segment.id}
+              key={segment?.id}
               ref={videoRef}
-              src={segment.videoUri}
-              poster={segment.imageUri}
+              src={videoSrc}
+              poster={imageSrc}
               muted
               playsInline
               autoPlay
@@ -258,10 +268,10 @@ export function AnimaticOverlay({
               onLoadedMetadata={applyPendingSeek}
               className="h-full w-full object-cover"
             />
-          ) : segment?.imageUri ? (
+          ) : imageSrc ? (
             <img
-              src={segment.imageUri}
-              alt={`${shotLabel(segment.no)} 预演画面`}
+              src={imageSrc}
+              alt={`${shotLabel(segment?.no ?? 1)} 预演画面`}
               className="h-full w-full object-cover"
             />
           ) : (
@@ -300,8 +310,8 @@ export function AnimaticOverlay({
             }}
             className="hidden"
           />
-          {music?.uri && (
-            <audio ref={musicRef} src={music.uri} preload="auto" className="hidden" />
+          {musicSrc && (
+            <audio ref={musicRef} src={musicSrc} preload="auto" className="hidden" />
           )}
         </div>
 

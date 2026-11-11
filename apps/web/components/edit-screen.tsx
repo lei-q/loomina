@@ -30,6 +30,8 @@ import {
 } from "@/lib/compliance";
 import { shotLabel, spendOf, toStageView } from "@/lib/read-model";
 import { cancelRender, exportMp4 } from "@/lib/render-client";
+import { hydrateView } from "@/lib/asset-hydrate";
+import { assetHref } from "@/lib/asset-uri";
 import { RENDER_PROFILES, type RenderQuality } from "@/lib/render-manifest";
 import { stageStateOf } from "@/lib/stage-flow";
 import type { LoudnessReport } from "@/lib/render-audio";
@@ -355,7 +357,7 @@ export function EditScreen() {
         if (elapsed < line.startMs || elapsed >= line.startMs + line.durationMs) continue;
         if (fired.current.has(line.id)) continue;
         fired.current.add(line.id);
-        element.src = line.audioUri;
+        element.src = assetHref(line.audioUri)!;
         void element.play().catch(() => {});
       }
     }
@@ -459,7 +461,8 @@ export function EditScreen() {
     const cue = view.music[0];
     if (!element || !cue?.uri) return;
     if (element.paused) {
-      if (element.src !== cue.uri) element.src = cue.uri;
+      const src = assetHref(cue.uri);
+      if (src && element.getAttribute("src") !== src) element.src = src;
       element.currentTime = 0;
       element.volume = Math.pow(10, cue.gainDb / 20);
       void element.play().catch(() => setMusicError("浏览器没能播放这条音乐。"));
@@ -468,15 +471,21 @@ export function EditScreen() {
     }
   };
 
-  const exportPreview = () => {    if (!gateOpen) {
+  const exportPreview = async () => {
+    if (!gateOpen) {
       setNotice(gateReason);
       return;
     }
-    const html = buildPreviewHtml(view, styleId);
+    // 预览必须自包含（P20）：资产库里的素材先读回字节换成 data URI
+    setNotice("正在把素材收进预览…");
+    const { view: hydrated, failed } = await hydrateView(view);
+    const html = buildPreviewHtml(hydrated, styleId);
     const size = new Blob([html]).size;
     downloadFile(safeFileName(view.title, "预览.html"), html, "text/html");
     setNotice(
-      `预览已导出：${(size / 1024 / 1024).toFixed(1)} MB。双击打开就能播；素材是内嵌的。`,
+      `预览已导出：${(size / 1024 / 1024).toFixed(1)} MB。双击打开就能播；素材是内嵌的。${
+        failed > 0 ? `有 ${failed} 个素材没读回来，预览里仍指向本机地址。` : ""
+      }`,
     );
   };
 
@@ -537,18 +546,24 @@ export function EditScreen() {
     );
   };
 
-  const exportOtio = () => {
+  const exportOtio = async () => {
     if (!gateOpen) {
       setNotice(gateReason);
       return;
     }
-    const otio = buildOtio(view);
+    // OTIO 要能被剪辑软件直接打开：资产库地址先换成内嵌字节（P20 自包含）
+    const { view: hydrated, failed } = await hydrateView(view);
+    const otio = buildOtio(hydrated);
     downloadFile(
       safeFileName(view.title, "时间线.otio"),
       JSON.stringify(otio, null, 2),
       "application/json",
     );
-    setNotice("时间线已按 OTIO 导出：可以拿到剪辑软件里继续剪。");
+    setNotice(
+      `时间线已按 OTIO 导出：可以拿到剪辑软件里继续剪。${
+        failed > 0 ? `有 ${failed} 个素材没读回来，时间线里仍指向本机地址。` : ""
+      }`,
+    );
   };
 
   const exportSrt = () => {
@@ -575,12 +590,14 @@ export function EditScreen() {
     );
   };
 
-  const exportPackage = () => {
+  const exportPackage = async () => {
     if (!gateOpen) {
       setNotice(gateReason);
       return;
     }
-    const pack = buildPublishPackage(view, {
+    // 封面也是素材：资产库地址先换成内嵌字节，发布包里不留本机路径
+    const { view: hydrated, failed } = await hydrateView(view);
+    const pack = buildPublishPackage(hydrated, {
       title,
       description,
       topics: topics.split(/[,，\s]+/),
@@ -603,9 +620,11 @@ export function EditScreen() {
     });
     const tail = recorded ? "已记进项目的发布记录。" : "项目是只读的，这次没有记进发布记录。";
     setNotice(
-      pack.warnings.length > 0
-        ? `发布包已导出。${tail}还有几件事没齐：${pack.warnings.join("；")}。`
-        : `发布包已导出：标题、简介、话题、封面、字幕、成片信息与 AI 标注都在里面。${tail}`,
+      `${
+        pack.warnings.length > 0
+          ? `发布包已导出。${tail}还有几件事没齐：${pack.warnings.join("；")}。`
+          : `发布包已导出：标题、简介、话题、封面、字幕、成片信息与 AI 标注都在里面。${tail}`
+      }${failed > 0 ? `有 ${failed} 个素材没读回来，封面仍是本机地址。` : ""}`,
     );
   };
 
@@ -697,7 +716,7 @@ export function EditScreen() {
                     <video
                       key={current.id}
                       ref={videoRef}
-                      src={current.uri}
+                      src={assetHref(current.uri)}
                       muted
                       playsInline
                       preload="metadata"
@@ -714,7 +733,7 @@ export function EditScreen() {
                   ) : current?.stillUri ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
-                      src={current.stillUri}
+                      src={assetHref(current.stillUri)}
                       alt={`${shotLabel(current.shotNo)} 的画面`}
                       className="absolute inset-0 h-full w-full object-cover"
                     />

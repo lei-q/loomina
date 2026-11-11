@@ -56,6 +56,9 @@ import {
   undoableRemoval,
   type RemovalKind,
 } from "@/lib/read-model";
+import { persistAsset } from "@/lib/asset-client";
+import { inlineBytesOf, inventoryOf, type AssetInventory } from "@/lib/asset-inventory";
+import { isStoredAssetUri } from "@/lib/asset-uri";
 import { getModelChoice } from "@/lib/model-choice";
 import { sampleProject } from "@/lib/sample-project";
 import { stageMetaOf, stageSignature } from "@/lib/stage-flow";
@@ -479,6 +482,16 @@ type WorkbenchState = {
   restoreTo: (toEventCount: number, label?: string) => boolean;
   /** 划掉一条补充要求：同样写一条 shot.updated（ADR-0039 附记） */
   removeNote: (shotId: string, note: string) => void;
+  /**
+   * 把还在日志里的素材搬进本机资产库（H3 / ADR-0128）。
+   *
+   * 显式动作：一次几十兆的读写 + 几十条事件，自动跑会在作者没准备时卡住页面。
+   * 每搬一个写一条 `asset.updated { uri }`；旧事件里的 data URI 不动。
+   * 返回搬了几个、失败几个。
+   */
+  migrateAssets: () => Promise<{ moved: number; failed: number; bytes: number }>;
+  /** 素材清点（H3）：几个在日志里、几个已进资产库、哪些没人引用 */
+  assetInventory: () => AssetInventory;
   reset: () => void;
 };
 
@@ -694,6 +707,8 @@ async function generateOne(
     }
 
     const at = stamp();
+    // 大图先进本机资产库（H3 / ADR-0128）：事件里只留地址，日志不背 base64
+    const uri = await persistAsset(payload.uri);
     const event: ProjectEvent = {
       type: "asset.updated",
       at,
@@ -701,7 +716,7 @@ async function generateOne(
         id: input.assetId,
         kind: "image",
         source: "generated",
-        uri: payload.uri,
+        uri,
         mime: "image/png",
         // 价目表给了单价就记上；没给就让 costCny 缺省，界面如实说"无价目"
         costCny: typeof payload.cny === "number" ? payload.cny : undefined,
@@ -1941,7 +1956,9 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
         assetId = `a-video-${shot.id}-${n}`;
       }
       const at = stamp();
-      const mime = /^data:(video\/[a-z0-9.+-]+)[;,]/i.exec(payload.uri)?.[1];
+      // 视频动辄几 MB：先进本机资产库（H3 / ADR-0128），日志里只留地址
+      const uri = await persistAsset(payload.uri);
+      const mime = /^data:(video\/[a-z0-9.+-]+)[;,]/i.exec(uri)?.[1];
       const provenance = {
         modelId: payload.model ?? "unknown",
         prompt: payload.prompt,
@@ -1956,7 +1973,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
             id: assetId,
             kind: "video",
             source: "generated",
-            uri: payload.uri,
+            uri,
             ...(mime ? { mime } : {}),
             durationMs: payload.durationMs ?? shot.durationMs,
             costCny: typeof payload.cny === "number" ? payload.cny : undefined,
@@ -2134,7 +2151,9 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       // 一句台词一个资产位：重配就换掉这一句的旧音轨，不累积成 take
       const assetId = `a-voice-${lineId}`;
       const at = stamp();
-      const mime = /^data:(audio\/[a-z0-9.+-]+)[;,]/i.exec(payload.uri)?.[1];
+      // 音轨也先进资产库（H3 / ADR-0128）：一句 8 MB 的 base64 不该进日志
+      const uri = await persistAsset(payload.uri);
+      const mime = /^data:(audio\/[a-z0-9.+-]+)[;,]/i.exec(uri)?.[1];
       const written: ProjectEvent[] = [
         {
           type: "asset.updated",
@@ -2143,7 +2162,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
             id: assetId,
             kind: "audio",
             source: "generated",
-            uri: payload.uri,
+            uri,
             ...(payload.mime || mime ? { mime: payload.mime ?? mime } : {}),
             provenance: {
               modelId: payload.model ?? "unknown",
@@ -4297,6 +4316,40 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
         }),
       },
     );
+  },
+
+  assetInventory: () => inventoryOf(get().project),
+  migrateAssets: async () => {
+    if (get().readOnly) return { moved: 0, failed: 0, bytes: 0 };
+    let moved = 0;
+    let failed = 0;
+    let bytes = 0;
+    // 逐个搬、逐个写事件：中途失败也能停在半个项目的状态上，而不是全丢
+    const targets = get().project.assets.filter(
+      (asset) => asset.uri && !isStoredAssetUri(asset.uri) && asset.uri.startsWith("data:"),
+    );
+    for (const asset of targets) {
+      const uri = await persistAsset(asset.uri!, { force: true });
+      if (!isStoredAssetUri(uri)) {
+        failed += 1;
+        continue;
+      }
+      const { project, events } = get();
+      const current = project.assets.find((item) => item.id === asset.id);
+      if (!current || current.uri === uri) continue;
+      const event: ProjectEvent = {
+        type: "asset.updated",
+        at: stamp(),
+        asset: { ...current, uri },
+      };
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+      });
+      moved += 1;
+      bytes += inlineBytesOf(asset.uri);
+    }
+    return { moved, failed, bytes };
   },
 
   reset: () => {

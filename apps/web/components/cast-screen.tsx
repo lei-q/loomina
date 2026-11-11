@@ -26,6 +26,7 @@ import {
 } from "@/lib/read-model";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
+import { assetHref } from "@/lib/asset-uri";
 
 function clock(iso?: string): string {
   if (!iso) return "";
@@ -116,7 +117,7 @@ function ReferenceStrip({
             <div className="relative aspect-[9/16] overflow-hidden rounded-[1px] border border-line bg-[#0f1013]">
               {reference.uri ? (
                 <img
-                  src={reference.uri}
+                  src={assetHref(reference.uri)}
                   alt={`参考图 ${startAt + index}`}
                   className="h-full w-full object-cover"
                 />
@@ -547,7 +548,7 @@ function CharacterRow({
               >
                 {panel.uri ? (
                   <img
-                    src={panel.uri}
+                    src={assetHref(panel.uri)}
                     alt={`${character.name} · ${panel.label}`}
                     className="h-full w-full object-cover"
                   />
@@ -850,7 +851,7 @@ function LocationRow({
           <div className="relative aspect-[9/16] overflow-hidden rounded-[1px] border border-line bg-[#0f1013]">
             {location.masterUri ? (
               <img
-                src={location.masterUri}
+                src={assetHref(location.masterUri)}
                 alt={`${location.name} · 主镜`}
                 className="h-full w-full object-cover"
               />
@@ -1165,7 +1166,7 @@ function PropRow({
           <div className="relative aspect-[9/16] overflow-hidden rounded-[1px] border border-line bg-[#0f1013]">
             {prop.referenceUri ? (
               <img
-                src={prop.referenceUri}
+                src={assetHref(prop.referenceUri)}
                 alt={`${prop.name} · 参考图`}
                 className="h-full w-full object-cover"
               />

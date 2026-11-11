@@ -23,6 +23,7 @@ import {
   type RenderQuality,
 } from "./render-manifest";
 import type { LoudnessReport } from "./render-audio";
+import { isStoredAssetUri, mimeForExtension, storedAssetRef } from "./asset-uri";
 
 export type RenderBuild = {
   manifest: RenderManifest;
@@ -65,6 +66,13 @@ function visualOf(clip: EditClip): Visual {
     if (!uri) continue;
     if (/^https?:\/\//i.test(uri)) {
       return { remote: uri, mediaKind: kind };
+    }
+    // 资产库地址（H3）：清单里带 loomina:// 原样走，服务端直接读盘
+    if (isStoredAssetUri(uri)) {
+      const mime = mimeForExtension(storedAssetRef(uri)!.extension);
+      if (kind === "video" && isVideoMime(mime)) return { media: uri, mediaKind: "video" };
+      if (kind === "image" && isImageMime(mime)) return { media: uri, mediaKind: "image" };
+      continue;
     }
     const parts = parseDataUri(uri);
     if (!parts) continue;
@@ -226,6 +234,12 @@ export function buildRenderManifest(
         audio.push({ remote: line.audioUri, startMs: line.startMs, durationMs: line.durationMs });
         continue;
       }
+      if (isStoredAssetUri(line.audioUri)) {
+        const mime = mimeForExtension(storedAssetRef(line.audioUri)!.extension);
+        if (!isAudioMime(mime)) continue;
+        audio.push({ audio: line.audioUri, startMs: line.startMs, durationMs: line.durationMs });
+        continue;
+      }
       const parts = parseDataUri(line.audioUri);
       if (!parts || !isAudioMime(parts.mime)) continue;
       audio.push({ audio: line.audioUri, startMs: line.startMs, durationMs: line.durationMs });
@@ -247,6 +261,12 @@ export function buildRenderManifest(
     };
     if (/^https?:\/\//i.test(cue.uri)) {
       music.push({ remote: cue.uri, ...common });
+      continue;
+    }
+    if (isStoredAssetUri(cue.uri)) {
+      const mime = mimeForExtension(storedAssetRef(cue.uri)!.extension);
+      if (!isAudioMime(mime)) continue;
+      music.push({ audio: cue.uri, ...common });
       continue;
     }
     const parts = parseDataUri(cue.uri);

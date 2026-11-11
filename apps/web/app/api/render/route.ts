@@ -29,6 +29,7 @@ import {
   saveRenderJobs,
   type PersistedRenderJob,
 } from "@/lib/render-job-store";
+import { localPathOf } from "@/lib/asset-store";
 
 /**
  * 成片渲染任务队列（E6 / H2）。
@@ -208,8 +209,19 @@ function extensionFor(mime: string): string {
 }
 
 async function writeAsset(dir: string, uri: string, name: string): Promise<string> {
+  // 本机资产库（H3 / ADR-0128）：字节已经在盘上，直接给路径，不再 base64 解码
+  const stored = localPathOf(uri);
+  if (stored) {
+    const info = await stat(stored).catch(() => null);
+    if (!info?.isFile()) throw new Error("素材不在本机资产库里");
+    // 清单校验只算 data URI 的体积，资产库里的文件要在这里补上同一道上限
+    if (info.size > RENDER_MAX_ASSET_BYTES) {
+      throw new Error(`素材超过 ${RENDER_MAX_ASSET_BYTES / 1024 / 1024} MB：先换小一点的素材`);
+    }
+    return stored;
+  }
   const parts = parseDataUri(uri);
-  if (!parts) throw new Error("素材不是 data URI");
+  if (!parts) throw new Error("素材既不是 data URI，也不在本机资产库里");
   const file = path.join(/* turbopackIgnore: true */ dir, `${name}.${extensionFor(parts.mime)}`);
   await writeFile(file, Buffer.from(parts.base64, "base64"));
   return file;

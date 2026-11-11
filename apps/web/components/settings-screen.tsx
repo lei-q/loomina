@@ -16,6 +16,7 @@ import { fetchModelConfig, invalidateModelConfig } from "@/lib/model-choice";
 import { useWorkbench } from "@/lib/workbench-store";
 import type { CapabilityResponse, ModelCapabilityView } from "@/lib/capabilities";
 import type { ProbeReportView } from "@/lib/probes";
+import { inventoryOf, referencedUris } from "@/lib/asset-inventory";
 import { cn } from "@/lib/utils";
 
 /**
@@ -895,6 +896,8 @@ export function SettingsScreen() {
           onReset={reset}
         />
 
+        <AssetStoreSection readOnly={Boolean(readOnly)} />
+
         <section className="mt-8 border-t border-line pt-4 text-[9.5px] leading-[1.8] text-muted-2">
           <p>
             页面里怎么切换：每个阶段顶栏的下拉只作用于当前浏览器，不选就用该模态的默认。
@@ -1047,6 +1050,13 @@ function probeOutcome(report: ProbeReportView): string {
   return `失败 ${entries.map(([code, n]) => `${code}×${n}`).join(" / ")}`;
 }
 
+/** 字节数说成人话：素材常是几 MB，也常有几十 KB */
+function fmtBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${bytes} B`;
+}
+
 function modelIdValid(model: ModelDraft): boolean {
   return Boolean(model.providerId && model.model.trim());
 }
@@ -1124,6 +1134,219 @@ function LocalProjectSection({
           </button>
         )}
       </div>
+    </section>
+  );
+}
+
+/**
+ * 本机资产库（H3 / ADR-0128）。
+ *
+ * 说清三件事：素材现在存在哪、还能不能搬、谁没人引用。
+ * 迁移与清理都是显式动作：几十兆的读写、删掉花钱生成的东西，都不该自动发生。
+ */
+function AssetStoreSection({ readOnly }: { readOnly: boolean }) {
+  const project = useWorkbench((state) => state.project);
+  const migrateAssets = useWorkbench((state) => state.migrateAssets);
+  const inventory = useMemo(() => inventoryOf(project), [project]);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string>();
+  const [error, setError] = useState<string>();
+  const [cleaning, setCleaning] = useState(false);
+  const [wouldRemove, setWouldRemove] = useState<{ count: number; bytes: number }>();
+  const [storeCount, setStoreCount] = useState<number>();
+
+  const loadStore = useCallback(async () => {
+    try {
+      const response = await fetch("/api/asset/store", { cache: "no-store" });
+      if (!response.ok) return;
+      const payload = (await response.json()) as { count?: number };
+      if (typeof payload.count === "number") setStoreCount(payload.count);
+    } catch {
+      // 读不到统计不影响这一页：迁移与清理各自会报错
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadStore();
+  }, [loadStore, project]);
+
+  const migrate = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      const result = await migrateAssets();
+      setNotice(
+        result.moved === 0 && result.failed === 0
+          ? "没有要搬的素材：都已经在资产库里了。"
+          : `搬完 ${result.moved} 个素材（日志里约 ${fmtBytes(result.bytes)}）${
+              result.failed > 0 ? `，${result.failed} 个没搬成` : ""
+            }。新素材不再进日志；旧事件里那份 base64 还在，要等日志压缩。`,
+      );
+      await loadStore();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "迁移失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 第一步：先问服务端「会删几个」，把真实数字写进确认句，不靠客户端猜 */
+  const askClean = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      const response = await fetch("/api/asset/store", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keep: referencedUris(project), dryRun: true }),
+      });
+      const payload = (await response.json()) as {
+        wouldRemove?: number;
+        bytes?: number;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(payload.error ?? `清点失败（${response.status}）`);
+      setWouldRemove({ count: payload.wouldRemove ?? 0, bytes: payload.bytes ?? 0 });
+      setCleaning(true);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "清点失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clean = async () => {
+    setCleaning(false);
+    setBusy(true);
+    setError(undefined);
+    try {
+      const response = await fetch("/api/asset/store", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keep: referencedUris(project) }),
+      });
+      const payload = (await response.json()) as {
+        removed?: number;
+        bytes?: number;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(payload.error ?? `清理失败（${response.status}）`);
+      setNotice(
+        payload.removed
+          ? `清掉 ${payload.removed} 个没人引用的素材（约 ${fmtBytes(payload.bytes ?? 0)}）。`
+          : "没有没人引用的素材。",
+      );
+      await loadStore();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "清理失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="mt-9 border-t border-line pt-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-[12px] tracking-[.04em]">本机资产库</h2>
+          <span className="tnum text-[9px] text-muted-2">H3</span>
+        </div>
+        <span className="tnum text-[9.5px] text-muted-2">
+          {inventory.total} 个素材 · 资产库 {storeCount ?? "—"} 个文件
+        </span>
+      </div>
+      <p className="mt-1 max-w-[640px] text-[9.5px] leading-[1.7] text-muted-2">
+        素材按内容存在这台机器的 <code className="text-muted">.loomina/assets/</code>{" "}
+        里，同一段字节只存一份。日志里只剩地址，撤销、回滚、重放都会变快。
+        这里不是备份：删掉 <code className="text-muted">.loomina/</code> 或清浏览器数据就没了。
+      </p>
+
+      <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1 text-[10px] sm:grid-cols-4">
+        <div>
+          <dt className="text-[9px] text-muted-2">还在日志里</dt>
+          <dd className="tnum text-muted">
+            {inventory.inline} 个 · {fmtBytes(inventory.inlineBytes)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-[9px] text-muted-2">已进资产库</dt>
+          <dd className="tnum text-muted">{inventory.stored} 个</dd>
+        </div>
+        <div>
+          <dt className="text-[9px] text-muted-2">没人引用</dt>
+          <dd className="tnum text-muted">{inventory.unreferenced.length} 个</dd>
+        </div>
+        <div>
+          <dt className="text-[9px] text-muted-2">没地址</dt>
+          <dd className="tnum text-muted">
+            {inventory.total - inventory.inline - inventory.stored} 个
+          </dd>
+        </div>
+      </dl>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => void migrate()}
+          disabled={readOnly || busy || inventory.inline === 0}
+          title={
+            readOnly
+              ? "另一个标签页在编辑：这一页只读"
+              : inventory.inline === 0
+                ? "素材都已在资产库里"
+                : "把日志里的 data URI 搬进本机资产库"
+          }
+          className="rounded-token border border-line px-2.5 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+        >
+          {busy ? "处理中…" : `把素材搬进资产库（${inventory.inline} 个）`}
+        </button>
+
+        {cleaning ? (
+          <>
+            <span className="text-[10px] leading-[1.6] text-pick">
+              {wouldRemove
+                ? `清理会删掉 ${wouldRemove.count} 个「当前项目一个都没引用」的文件（约 ${fmtBytes(
+                    wouldRemove.bytes,
+                  )}），撤销找不回来。确定？`
+                : "正在清点资产库…"}
+            </span>
+            <button
+              type="button"
+              onClick={() => void clean()}
+              className="rounded-token border border-pick px-2.5 py-1 text-[10px] text-pick transition-colors duration-[var(--dur)] hover:bg-pick/10"
+            >
+              确认清理
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCleaning(false);
+                setWouldRemove(undefined);
+              }}
+              className="rounded-token border border-line px-2.5 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+            >
+              算了
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => void askClean()}
+            disabled={readOnly || busy || (storeCount ?? 0) === 0}
+            title="只删没有任何引用的文件；不自动删"
+            className="rounded-token border border-line px-2.5 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+          >
+            清理没人引用的文件
+          </button>
+        )}
+      </div>
+
+      {notice && <p className="mt-2 text-[9.5px] leading-[1.7] text-muted">{notice}</p>}
+      {error && <p className="mt-2 text-[9.5px] leading-[1.7] text-pick">{error}</p>}
     </section>
   );
 }

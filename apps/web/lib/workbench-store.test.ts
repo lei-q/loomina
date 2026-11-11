@@ -3935,3 +3935,71 @@ describe("自由工作台与阶段硬锁（F8）", () => {
     expect(state().lockedNotice).toBeUndefined();
   });
 });
+
+describe("本机资产库（H3 / ADR-0128）", () => {
+  const HASH = "e".repeat(64);
+  const BIG = `data:image/png;base64,${"A".repeat(300_000)}`;
+
+  beforeEach(() => {
+    state().reset();
+  });
+
+  it("素材清点跟着项目走：没人引用的单独列出来", () => {
+    const inventory = state().assetInventory();
+    expect(inventory.total).toBe(state().project.assets.length);
+    // 示例项目的资产没有 uri，全部记「没地址」
+    expect(inventory.inline).toBe(0);
+    expect(inventory.usage.every((item) => item.placement === "none")).toBe(true);
+  });
+
+  it("迁移：只搬日志里的 data URI，每搬一个写一条 asset.updated", async () => {
+    const uris: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as { uri: string };
+        uris.push(body.uri);
+        return new Response(JSON.stringify({ uri: `loomina://assets/${HASH}.png` }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+
+    // 塞两个 data URI 资产：一个被引用、一个没人用
+    state().addCharacterReference("c-lin", BIG);
+    const before = state().events.length;
+
+    const result = await state().migrateAssets();
+
+    expect(result.moved).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(uris).toHaveLength(1);
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "asset.updated" });
+    const asset = state().project.assets.find((item) => item.uri?.startsWith("loomina://"));
+    expect(asset).toBeDefined();
+    expect(state().assetInventory().inline).toBe(0);
+
+    // 再迁一次什么都不做
+    expect((await state().migrateAssets()).moved).toBe(0);
+    vi.unstubAllGlobals();
+  });
+
+  it("迁移失败不动 IR：素材留在日志里，数如实报", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "磁盘满了" }), { status: 500 })),
+    );
+    state().addCharacterReference("c-lin", BIG);
+    const before = state().events.length;
+
+    const result = await state().migrateAssets();
+
+    expect(result.moved).toBe(0);
+    expect(result.failed).toBe(1);
+    expect(state().events).toHaveLength(before);
+    expect(state().assetInventory().inline).toBe(1);
+    vi.unstubAllGlobals();
+  });
+});

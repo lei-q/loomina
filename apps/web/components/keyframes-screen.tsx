@@ -9,6 +9,7 @@ import { fetchPrice } from "@/lib/image-price";
 import { shotLabel, toKeyframeView, filterKeyframeCells, keyframeTally, type KeyframeCell, type KeyframeFilter } from "@/lib/read-model";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
+import { assetHref } from "@/lib/asset-uri";
 
 const PREVIEW = "aspect-[9/16] w-full";
 
@@ -76,7 +77,7 @@ function Cell({
         )}
       >
         {uri ? (
-          <img src={uri} alt={`${shotLabel(cell.no)} ${frame === "first" ? "首帧" : "尾帧"}`} className="h-full w-full object-cover" />
+          <img src={assetHref(uri)} alt={`${shotLabel(cell.no)} ${frame === "first" ? "首帧" : "尾帧"}`} className="h-full w-full object-cover" />
         ) : (
           <Scene kind={cell.art} className="h-full w-full" />
         )}

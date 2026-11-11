@@ -6,6 +6,7 @@
  * 服务端只做校验、拼滤镜与编码，不信任客户端给的尺寸与时长。
  */
 
+import { isStoredAssetUri, mimeForExtension, storedAssetRef } from "./asset-uri";
 import { scanText, type RenderCompliance } from "./compliance";
 
 /** 输出档位（H13）：草稿先看节奏，定稿才交付。 */
@@ -175,6 +176,28 @@ function assetBytes(uri: string): number {
 }
 
 /**
+ * 素材地址的 mime 与请求体积（H3 / ADR-0128）。
+ *
+ * - `data:` URI：mime 与解码后字节数都在地址里；
+ * - `loomina://assets/…`：mime 由扩展名反推，**请求体积记 0**——
+ *   字节已经在本机资产库里，清单里只有一行地址，渲染路由直接读盘。
+ */
+export function inspectAsset(uri: string): { mime: string; bytes: number } | null {
+  const parts = parseDataUri(uri);
+  if (parts) return { mime: parts.mime, bytes: parts.bytes };
+  const ref = storedAssetRef(uri);
+  if (!ref) return null;
+  return { mime: mimeForExtension(ref.extension), bytes: 0 };
+}
+
+/** 地址是不是「渲染路由能读到的素材」：data URI 或本机资产库 */
+export function isReadableAsset(uri: string): boolean {
+  return inspectAsset(uri) !== null;
+}
+
+export { isStoredAssetUri };
+
+/**
  * 校验客户端送来的清单。返回人话错误，路由直接回 400。
  *
  * 这里刻意不自动「修」清单：缺口、超长、非 data URI 都要用户知道为什么会失败，
@@ -237,9 +260,9 @@ export function validateRenderManifest(
       return { ok: false, error: `第 ${index + 1} 段的远端素材需要一张兜底图` };
     }
     if (typeof clip.fallback === "string") {
-      const fallback = parseDataUri(clip.fallback);
+      const fallback = inspectAsset(clip.fallback);
       if (!fallback || !isImageMime(fallback.mime)) {
-        return { ok: false, error: `第 ${index + 1} 段的兜底图必须是图片 data URI` };
+        return { ok: false, error: `第 ${index + 1} 段的兜底图必须是图片` };
       }
       if (fallback.bytes > RENDER_MAX_ASSET_BYTES) {
         return { ok: false, error: `第 ${index + 1} 段的兜底图超过 30 MB` };
@@ -248,9 +271,9 @@ export function validateRenderManifest(
 
     if (clip.media !== undefined) {
       if (typeof clip.media !== "string") return { ok: false, error: "媒体不是字符串" };
-      const parts = parseDataUri(clip.media);
+      const parts = inspectAsset(clip.media);
       if (!parts) {
-        return { ok: false, error: `第 ${index + 1} 段的媒体不是 data URI` };
+        return { ok: false, error: `第 ${index + 1} 段的媒体不是可读素材（data URI 或本机资产库）` };
       }
       if (parts.bytes > RENDER_MAX_ASSET_BYTES) {
         return { ok: false, error: `第 ${index + 1} 段的媒体超过 30 MB` };
@@ -290,9 +313,9 @@ export function validateRenderManifest(
     if (!item || typeof item !== "object") return { ok: false, error: `叠加层 ${index + 1} 不是对象` };
     const overlay = item as Record<string, unknown>;
     if (typeof overlay.image !== "string") return { ok: false, error: "叠加层不是图片" };
-    const parts = parseDataUri(overlay.image);
+    const parts = inspectAsset(overlay.image);
     if (!parts || parts.mime !== "image/png") {
-      return { ok: false, error: `叠加层 ${index + 1} 必须是 PNG data URI` };
+      return { ok: false, error: `叠加层 ${index + 1} 必须是 PNG` };
     }
     if (parts.bytes > RENDER_MAX_ASSET_BYTES) {
       return { ok: false, error: `叠加层 ${index + 1} 超过 30 MB` };
@@ -323,9 +346,9 @@ export function validateRenderManifest(
       return { ok: false, error: `音轨 ${index + 1} 的远端地址不是 http(s)` };
     }
     if (typeof track.audio === "string") {
-      const parts = parseDataUri(track.audio);
+      const parts = inspectAsset(track.audio);
       if (!parts || !isAudioMime(parts.mime)) {
-        return { ok: false, error: `音轨 ${index + 1} 必须是音频 data URI` };
+        return { ok: false, error: `音轨 ${index + 1} 必须是音频（data URI 或本机资产库）` };
       }
       if (parts.bytes > RENDER_MAX_ASSET_BYTES) {
         return { ok: false, error: `音轨 ${index + 1} 超过 30 MB` };
@@ -365,9 +388,9 @@ export function validateRenderManifest(
       return { ok: false, error: `配乐 ${index + 1} 的远端地址不是 http(s)` };
     }
     if (typeof track.audio === "string") {
-      const parts = parseDataUri(track.audio);
+      const parts = inspectAsset(track.audio);
       if (!parts || !isAudioMime(parts.mime)) {
-        return { ok: false, error: `配乐 ${index + 1} 必须是音频 data URI` };
+        return { ok: false, error: `配乐 ${index + 1} 必须是音频（data URI 或本机资产库）` };
       }
       if (parts.bytes > RENDER_MAX_ASSET_BYTES) {
         return { ok: false, error: `配乐 ${index + 1} 超过 30 MB` };

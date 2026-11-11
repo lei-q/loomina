@@ -69,6 +69,8 @@ loomina/
 | 对象存储 | S3 兼容（OSS / COS） | 国内合规、CDN 成熟 | MinIO（本地） | 高 |
 
 > **落地口径（H3 / ADR-0128，2026-11-11）**：先定边界再换实现。`AssetStore` 接口 + `LOOMINA_ASSET_STORE=local|s3`；第一刀 `LocalAssetStore` 零依赖（`.loomina/assets/`，内容寻址，单文件 200 MB），立刻把素材从事件日志里拿出来。S3 适配器只做 SigV4 预签名 PUT / GET，**不引 `@aws-sdk/client-s3`**；签名自写（约 100 行）还是用 `aws4`（约 3 KB）需单独确认。
+>
+> **H3.1 已落地（2026-11-12）**：`apps/web/lib/asset-uri.ts`（纯函数，浏览器与 Node 共用）+ `apps/web/lib/asset-store.ts`（`LocalAssetStore`，`LOOMINA_ASSET_DIR` 可覆盖目录，测试用）。`audio/webm` 落 `.weba`，让扩展名能唯一反推 mime。生成路径按 128 KB 分流，导出前 `hydrateView()` 读回字节。S3 仍未做。
 | 数据库 | Postgres（托管） | JSONB 适合 IR，生态成熟 | — | 高 |
 | 缓存 | Redis（托管） | 限流/会话/缓存 | — | 高 |
 | 日志/追踪 | Pino + OpenTelemetry | 结构化、可观测 | — | 中高 |
