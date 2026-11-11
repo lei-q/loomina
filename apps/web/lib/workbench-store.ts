@@ -19,6 +19,7 @@ import {
   type Character,
   type GateStage,
   type Location,
+  type Motif,
   type MusicCue,
   type Blocking,
   type CameraPlacement,
@@ -50,6 +51,7 @@ import { create } from "zustand";
 import { diffEvents, getEventLog, migrateLog } from "@/lib/event-log";
 import { estimateDialogueMs } from "@/lib/dialogue";
 import { autoCut, timelineEquals } from "@/lib/edit";
+import { planMusicFill } from "@/lib/music-curve";
 import { buildHistory, historyPosition, nextUndo } from "@/lib/history";
 import { claimWriter } from "@/lib/writer-lock";
 import {
@@ -362,12 +364,22 @@ type WorkbenchState = {
     durationMs: number;
     licenseRef: string;
   }) => boolean;
-  /** 调配乐：增益 / ducking 深度 / 开关 / 情绪；写一条 `timeline.music.updated` */
+  /** 调配乐：增益 / ducking 深度 / 开关 / 情绪 / 角色 / 动机；写一条 `timeline.music.updated` */
   updateMusic: (
-    patch: Partial<Pick<MusicCue, "gainDb" | "duckDb" | "ducking" | "mood">>,
+    patch: Partial<Pick<MusicCue, "gainDb" | "duckDb" | "ducking" | "mood" | "role" | "motifId">>,
+    cueId?: string,
   ) => boolean;
-  /** 移掉配乐床：写一条空的 `timeline.music.updated`，资产留在项目里 */
-  removeMusic: () => boolean;
+  /** 移掉配乐床：不给 id 就全部移掉；写一条 `timeline.music.updated`，资产留在项目里 */
+  removeMusic: (cueId?: string) => boolean;
+  /**
+   * 按曲线补 cue（C10 / ADR-0125）：给没有配乐覆盖的拍铺上同一条素材，
+   * 边界对齐拍的起止，已有 cue 不动。写一条 `timeline.music.updated`（整条替换）。
+   */
+  fillMusicByCurve: (cueId: string) => boolean;
+  /** 新建 / 替换一个主题动机（C10）：写一条 `motif.updated` */
+  upsertMotif: (input: Omit<Motif, "id"> & { id?: string }) => boolean;
+  /** 删掉一个动机：写一条 `motif.removed`，引用它的 cue 只清 `motifId` */
+  removeMotif: (motifId: string) => boolean;
   /** 批量补缺：按镜号顺序一帧一帧生成，跳过锁定，失败即停（ADR-0042 附记） */
   /**
    * 批量补帧（H21）：按镜号顺序补缺的帧，跳过锁定，失败即停。
@@ -2682,8 +2694,9 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       return false;
     }
     const { project, events } = get();
-    if (project.timeline.music.length > 0) {
-      set({ editError: "现在只支持一条配乐床：先移掉旧的再加。" });
+    // 渲染清单最多 4 条配乐：加第 5 条渲染时会整份被拒，提前拦
+    if (project.timeline.music.length >= 4) {
+      set({ editError: "配乐最多 4 条（渲染清单上限）：先合并或移掉一条。" });
       return false;
     }
     const uri = rawUri.trim();
@@ -2734,11 +2747,12 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       duckDb: 15,
       ducking: true,
       loop: true,
+      role: "bed",
       licenseRef: licenseRef.trim().slice(0, 240),
     };
     const written: ProjectEvent[] = [
       { type: "asset.updated", at, asset },
-      { type: "timeline.music.updated", at, music: [cue] },
+      { type: "timeline.music.updated", at, music: [...project.timeline.music, cue] },
     ];
     try {
       set({
@@ -2753,13 +2767,16 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     return true;
   },
 
-  updateMusic: (patch) => {
+  updateMusic: (patch, cueId) => {
     if (get().readOnly) {
       set({ editError: "另一个标签页正在编辑：这里只读。" });
       return false;
     }
     const { project, events } = get();
-    const cue = project.timeline.music[0];
+    // 没给 id 时沿用旧行为（只有一条 cue 的时代）：改第一条
+    const cue = cueId
+      ? project.timeline.music.find((item) => item.id === cueId)
+      : project.timeline.music[0];
     if (!cue) return false;
     const next: MusicCue = {
       ...cue,
@@ -2771,11 +2788,15 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
         : {}),
       ...(patch.ducking !== undefined ? { ducking: patch.ducking } : {}),
       ...(patch.mood !== undefined ? { mood: patch.mood.slice(0, 40) } : {}),
+      ...(patch.role !== undefined ? { role: patch.role } : {}),
+      ...(patch.motifId ? { motifId: patch.motifId } : {}),
     };
+    // 清动机要真的去掉字段：`motifId: undefined` 留在对象上不算清干净
+    if (patch.motifId === "") delete (next as { motifId?: string }).motifId;
     const event: ProjectEvent = {
       type: "timeline.music.updated",
       at: stamp(),
-      music: [next],
+      music: project.timeline.music.map((item) => (item.id === cue.id ? next : item)),
     };
     try {
       set({
@@ -2790,23 +2811,123 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     return true;
   },
 
-  removeMusic: () => {
+  removeMusic: (cueId) => {
     if (get().readOnly) {
       set({ editError: "另一个标签页正在编辑：这里只读。" });
       return false;
     }
     const { project, events } = get();
     if (project.timeline.music.length === 0) return false;
+    const music = cueId
+      ? project.timeline.music.filter((cue) => cue.id !== cueId)
+      : [];
+    if (cueId && music.length === project.timeline.music.length) return false;
     const event: ProjectEvent = {
       type: "timeline.music.updated",
       at: stamp(),
-      music: [],
+      music,
     };
     set({
       project: applyEvent(project, event),
       events: [...events, event],
       editError: undefined,
     });
+    return true;
+  },
+
+  fillMusicByCurve: (cueId) => {
+    if (get().readOnly) {
+      set({ editError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    const { project, events } = get();
+    const source = project.timeline.music.find((cue) => cue.id === cueId);
+    if (!source) {
+      set({ editError: "先有一条配乐，才能按曲线铺。" });
+      return false;
+    }
+    const plan = planMusicFill(project, source);
+    if (plan.cues.length === 0) {
+      set({
+        editError:
+          plan.outOfCut > 0
+            ? `成片时间线只排到这里：还有 ${plan.outOfCut} 拍的配乐位在成片之外，先初剪把镜头排进来。`
+            : "每一拍都已经有配乐了，不用再铺。",
+      });
+      return false;
+    }
+    const event: ProjectEvent = {
+      type: "timeline.music.updated",
+      at: stamp(),
+      music: [...project.timeline.music, ...plan.cues],
+    };
+    try {
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        editError: plan.overflow
+          ? `渲染清单最多 4 条配乐：先合并相邻的拍，还有 ${plan.skipped} 段没铺。`
+          : undefined,
+      });
+    } catch (error) {
+      set({ editError: error instanceof Error ? error.message : "按曲线铺配乐失败" });
+      return false;
+    }
+    return true;
+  },
+
+  upsertMotif: (input) => {
+    if (get().readOnly) {
+      set({ editError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    const { project, events } = get();
+    let id = input.id?.trim();
+    if (!id) {
+      id = `motif-${Date.now().toString(36)}`;
+      while (project.motifs.some((motif) => motif.id === id)) id += "x";
+    }
+    const motif: Motif = {
+      id,
+      label: input.label.trim().slice(0, 40),
+      targetKind: input.targetKind,
+      targetId: input.targetId,
+      assetId: input.assetId,
+      licenseRef: input.licenseRef.trim().slice(0, 240),
+      note: input.note.trim().slice(0, 200),
+    };
+    const event: ProjectEvent = { type: "motif.updated", at: stamp(), motif };
+    try {
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        editError: undefined,
+      });
+    } catch (error) {
+      set({ editError: error instanceof Error ? error.message : "动机存不下来" });
+      return false;
+    }
+    return true;
+  },
+
+  removeMotif: (motifId) => {
+    if (get().readOnly) {
+      set({ editError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    const { project, events } = get();
+    if (!project.motifs.some((motif) => motif.id === motifId)) return false;
+    const event: ProjectEvent = { type: "motif.removed", at: stamp(), motifId };
+    try {
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        editError: undefined,
+      });
+    } catch (error) {
+      set({ editError: error instanceof Error ? error.message : "动机删不掉" });
+      return false;
+    }
     return true;
   },
 

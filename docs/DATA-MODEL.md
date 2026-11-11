@@ -739,11 +739,21 @@ interface MusicCue {
   duckDb: number;          // 12–18，默认 15
   ducking: boolean;        // 默认 true
   loop: boolean;           // 默认 true
+  role: "bed" | "hit" | "transition";  // 缺省 "bed"（C10）
+  motifId?: string;        // 指向 Project.motifs（C10）；清空时删字段，不写 undefined
   licenseRef: string;      // 必填；空串拒绝写入（不变量 28）
 }
 ```
 
-校验：资产存在且是音频、授权备注非空、起点在成片之内、增益与 ducking 深度在范围内。
+校验：资产存在且是音频、授权备注非空、起点在成片之内、增益与 ducking 深度在范围内；`motifId` 若存在，必须是 `project.motifs` 里的 id（C10）。
+
+**落地细节（C10 第一档，2026-11-12）**
+
+- **校验顺序**：`timeline.music.updated` 先跑 `checkMusic`（上面这些，人话报错），再逐条 `MusicCueSchema.safeParse` 填 `role` 默认值。反过来 zod 的英文报错会盖掉「起点不合法」，而旧日志缺 `role` 时必须走一次 `safeParse` 才补得上默认值。
+- **`motifId` 的清空**：`undefined` 在 JSON 里会消失，所以 store 里清动机用 `delete` 删字段（`patch.motifId === ""` 时），不是赋 `undefined`。事件回放里 `motif.removed` 用解构去掉字段。
+- **`Motif` 的生命周期**：`motif.updated { motif }` 按 id 幂等替换，`motif.removed { motifId }` 删并清掉引用它的 cue 的 `motifId`（cue 保留）。`character.removed` 删掉指向该角色的角色动机与以他为端点的关系动机；`story.updated` 删掉 `from->to` 已不存在的关系动机。
+- **曲线不进 IR**：`analyzeMusicCurve(project)`（`apps/web/lib/music-curve.ts`）每次现算，与剧本医生同一口径。读模型 `EditMusic` 带出 `role` / `motifId`，界面不直接读 IR。
+- **成片之外的拍**：曲线按分镜的 `BeatSpan` 算，`MusicBeatLine.inCut` 标记这一拍是否落在 `timeline.items` 覆盖的区间里。`timeline.music.updated` 拒「起点在成片之外」，所以「按曲线铺」只铺 `inCut` 的拍，其余在界面上说明「先初剪把这一镜排进来」。
 
 **初剪规则**：场次顺序 → 场内镜序；每镜优先最后一条 `approved`，否则最后一条非 `rejected`；没有可用 take 的镜头跳过，store 把镜号写进 `editError`。时长读 `shot.durationMs`，起点累计。
 

@@ -53,6 +53,7 @@ function view(uri: string): EditView {
         duckDb: 15,
         ducking: true,
         loop: true,
+        role: "bed",
         licenseRef: "自己录",
       },
     ],

@@ -481,10 +481,44 @@ export const MusicCueSchema = z.object({
   ducking: z.boolean().default(true),
   /** 音乐比片子短时是否循环铺满这一段 */
   loop: z.boolean().default(true),
+  /**
+   * 这一段在音乐结构里干什么（C10 / ADR-0125）：铺底、重音、转场。
+   * 旧日志读出来是 `bed`。它不影响渲染，只用于曲线显示与复盘。
+   */
+  role: z.enum(["bed", "hit", "transition"]).default("bed"),
+  /** 这条 cue 用的是哪个主题动机（C10）；空 = 没有动机 */
+  motifId: Id.optional(),
   /** 授权来源备注：文件名 / 曲库 / 授权书编号，不允许空 */
   licenseRef: z.string().min(1).max(240),
 });
 export type MusicCue = z.infer<typeof MusicCueSchema>;
+
+/**
+ * 主题动机（C10 / ADR-0125，SOUND.md 第五节「leitmotif」）。
+ *
+ * 一段可循环的短素材，代表一个人 / 一对关系 / 一个地点。它是**创作决定**，
+ * 无法从别的数据推出来，所以是本次唯一新增的 IR 实体；情绪曲线本身仍是派生的。
+ *
+ * 第一版只做「同一段素材重复出现」：变奏要音频处理，等 C4 生成音乐之后再做。
+ */
+export const MotifSchema = z.object({
+  id: Id,
+  /** 人话名字，例如「林晚的灯」 */
+  label: z.string().min(1).max(40),
+  /** 代表谁 / 哪对关系 / 哪个地点 */
+  targetKind: z.enum(["character", "relationship", "location"]),
+  /**
+   * 关系没有自己的 id，用 `${from}->${to}`（有向，与 A16 一致）。
+   * 角色被删时，指向它的关系动机一起失效，由 `character.removed` 清理。
+   */
+  targetId: Id,
+  /** 动机音频：一段可循环的短素材 */
+  assetId: Id,
+  /** 授权来源，与 cue 同一口径：没有它不许存 */
+  licenseRef: z.string().min(1).max(240),
+  note: z.string().max(200).default(""),
+});
+export type Motif = z.infer<typeof MotifSchema>;
 
 /**
  * 手动断句覆盖（D2）。
@@ -548,6 +582,8 @@ export const ProjectSchema = z.object({
   onBudgetExceed: z.enum(["block", "keep"]).default("block"),
   /** 故事层（ADR-0017 / ADR-0088）：logline、人物弧光、关系与钩子 */
   story: StoryBibleSchema.default({}),
+  /** 主题动机（C10 / ADR-0125）：代表一个人 / 一对关系 / 一个地点 */
+  motifs: z.array(MotifSchema).default([]),
   locations: z.array(LocationSchema).default([]),
   characters: z.array(CharacterSchema).default([]),
   props: z.array(PropSchema).default([]),

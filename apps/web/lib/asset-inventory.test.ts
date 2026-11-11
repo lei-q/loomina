@@ -23,6 +23,7 @@ function base(): Project {
       arcs: [],
       relationships: [],
     },
+    motifs: [],
     locations: [],
     characters: [],
     props: [],
@@ -107,6 +108,7 @@ describe("素材清点（H3 / ADR-0128）", () => {
         duckDb: 15,
         ducking: true,
         loop: true,
+        role: "bed",
         licenseRef: "自己录",
       },
     ];

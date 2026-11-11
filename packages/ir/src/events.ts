@@ -4,6 +4,7 @@ import {
   BlockingSchema,
   CameraSchema,
   LocationSpaceSchema,
+  MusicCueSchema,
   PerformanceSpecSchema,
   StagingMarkSchema,
 } from "./schema";
@@ -18,6 +19,7 @@ import type {
   Location,
   LocationSpace,
   MusicCue,
+  Motif,
   Project,
   Prop,
   PublishPackage,
@@ -357,6 +359,23 @@ export type ProjectEvent =
     }
   | {
       /**
+       * 主题动机（C10 / ADR-0125）：整条新增或替换，按 id 幂等。
+       * 同一目标只能有一个动机——重复定义直接拒绝，让作者先删旧的。
+       */
+      type: "motif.updated";
+      at: string;
+      motif: Motif;
+    }
+  | {
+      /**
+       * 删掉一个动机。引用它的 cue 保留（音乐还在），只把 `motifId` 清掉。
+       */
+      type: "motif.removed";
+      at: string;
+      motifId: Id;
+    }
+  | {
+      /**
        * 全局回滚（F2 / ADR-0109）：把项目恢复到「前 `toEventCount` 条事件之后」的样子。
        *
        * 不携带快照：日志只追加、前缀的回放结果永远相同，存一个位置就够了。
@@ -413,6 +432,7 @@ function checkTimeline(items: TimelineItem[], project: Project) {
 
 function checkMusic(cues: MusicCue[], project: Project) {
   const ids = new Set<Id>();
+  const motifIds = new Set(project.motifs.map((motif) => motif.id));
   const timelineEnd = project.timeline.items.reduce(
     (end, item) => Math.max(end, item.startMs + item.durationMs),
     0,
@@ -442,7 +462,62 @@ function checkMusic(cues: MusicCue[], project: Project) {
     if (cue.duckDb < 12 || cue.duckDb > 18) {
       throw new Error(`timeline.music.updated 的 ${cue.id} ducking 深度超出 12–18 dB`);
     }
+    if (cue.motifId !== undefined && !motifIds.has(cue.motifId)) {
+      throw new Error(`timeline.music.updated 的 ${cue.id} 指向不存在的动机: ${cue.motifId}`);
+    }
   }
+}
+
+/** 去掉 cue 的动机引用：`undefined` 会在 JSON 里消失，这里用解构而不是赋值 */
+function withoutMotif(cue: MusicCue): MusicCue {
+  const { motifId: _motifId, ...rest } = cue;
+  return rest;
+}
+
+/**
+ * 动机校验（C10 / ADR-0125）。
+ *
+ * 比 cue 严一档：音频资产要存在、授权来源要写、目标要真实存在，
+ * 而且**同一个目标只能有一个动机**——两个动机指向同一个人，界面上没法决定用哪个。
+ */
+function checkMotif(input: Motif, project: Project): Motif {
+  const motif = clone(input);
+  if (!motif.label.trim()) throw new Error("动机缺少名字");
+  if (!motif.licenseRef.trim()) throw new Error(`动机「${motif.label}」缺少授权来源`);
+  const asset = project.assets.find((item) => item.id === motif.assetId);
+  if (!asset || asset.kind !== "audio") {
+    throw new Error(`动机「${motif.label}」没有挂到音频资产 ${motif.assetId}`);
+  }
+  if (motif.targetKind === "character") {
+    if (!project.characters.some((item) => item.id === motif.targetId)) {
+      throw new Error(`动机「${motif.label}」指向不存在的角色: ${motif.targetId}`);
+    }
+  } else if (motif.targetKind === "location") {
+    if (!project.locations.some((item) => item.id === motif.targetId)) {
+      throw new Error(`动机「${motif.label}」指向不存在的地点: ${motif.targetId}`);
+    }
+  } else {
+    const [from, to] = motif.targetId.split("->");
+    const exists =
+      from &&
+      to &&
+      project.story.relationships.some(
+        (item) => item.fromCharacterId === from && item.toCharacterId === to,
+      );
+    if (!exists) {
+      throw new Error(`动机「${motif.label}」指向不存在的关系: ${motif.targetId}`);
+    }
+  }
+  const clash = project.motifs.find(
+    (item) =>
+      item.id !== motif.id &&
+      item.targetKind === motif.targetKind &&
+      item.targetId === motif.targetId,
+  );
+  if (clash) {
+    throw new Error(`同一个目标只能有一个动机：「${clash.label}」已经用着它，先删掉那个`);
+  }
+  return motif;
 }
 
 function checkReferenceImages(ids: Id[], assets: Asset[], label: string) {
@@ -572,7 +647,27 @@ function applyEventCore(
         touched += 1;
       }
       if (touched === 0) throw new Error("story.updated 没有要改的字段");
-      return { ...current, story: next };
+      // 关系被删掉之后，指向它的动机失去对象：一起清掉，不留下悬空引用。
+      // 关系被改写（张力等）不算删——key 还在，动机继续有效。
+      const keys = new Set(
+        next.relationships.map((item) => `${item.fromCharacterId}->${item.toCharacterId}`),
+      );
+      const dropped = current.motifs.filter(
+        (motif) => motif.targetKind === "relationship" && !keys.has(motif.targetId),
+      );
+      if (dropped.length === 0) return { ...current, story: next };
+      const droppedIds = new Set(dropped.map((motif) => motif.id));
+      return {
+        ...current,
+        story: next,
+        motifs: current.motifs.filter((motif) => !droppedIds.has(motif.id)),
+        timeline: {
+          ...current.timeline,
+          music: current.timeline.music.map((cue) =>
+            cue.motifId && droppedIds.has(cue.motifId) ? withoutMotif(cue) : cue,
+          ),
+        },
+      };
     }
 
     case "shot.updated": {
@@ -979,9 +1074,32 @@ function applyEventCore(
           `character.removed 还有 ${speaking.length} 句台词属于这个人: ${event.characterId}`,
         );
       }
+      // 删人时顺手清掉指向「含这个人」的关系动机：关系没了，动机也就没了对象。
+      // 角色本身的动机不在这里删——那是另一条独立事实，作者可能想留着给新角色。
+      const motifs = current.motifs.filter((motif) => {
+        if (motif.targetKind !== "relationship") return true;
+        const [from, to] = motif.targetId.split("->");
+        return from !== event.characterId && to !== event.characterId;
+      });
+      const orphaned = new Set(
+        current.motifs
+          .filter((motif) => !motifs.includes(motif))
+          .map((motif) => motif.id),
+      );
       return {
         ...current,
         characters: current.characters.filter((character) => character.id !== event.characterId),
+        ...(motifs.length !== current.motifs.length ? { motifs } : {}),
+        ...(orphaned.size > 0
+          ? {
+              timeline: {
+                ...current.timeline,
+                music: current.timeline.music.map((cue) =>
+                  cue.motifId && orphaned.has(cue.motifId) ? withoutMotif(cue) : cue,
+                ),
+              },
+            }
+          : {}),
       };
     }
 
@@ -1229,12 +1347,24 @@ function applyEventCore(
 
     case "timeline.music.updated": {
       if (!current) throw new Error("timeline.music.updated 之前必须有 project.created");
+      // 先跑人话校验（起点 / 时长 / 增益 / ducking 各有一句），再用 schema 补默认值：
+      // 旧日志没有 `role`，回放时按 `bed` 补齐（C10 / ADR-0125）。
+      // 回放拿到的结构必须与新建时一致，否则「改一次就变」会莫名其妙。
       checkMusic(event.music, current);
+      const music = event.music.map((cue) => {
+        const parsed = MusicCueSchema.safeParse(cue);
+        if (!parsed.success) {
+          throw new Error(
+            `配乐不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`,
+          );
+        }
+        return parsed.data;
+      });
       return {
         ...current,
         timeline: {
           ...current.timeline,
-          music: event.music.map((cue) => ({ ...cue })),
+          music,
         },
       };
     }
@@ -1260,6 +1390,36 @@ function applyEventCore(
       return {
         ...current,
         publishPackages: [...current.publishPackages, clone(pack)],
+      };
+    }
+
+    case "motif.updated": {
+      if (!current) throw new Error("motif.updated 之前必须有 project.created");
+      const motif = checkMotif(event.motif, current);
+      const replaced = current.motifs.some((item) => item.id === motif.id);
+      return {
+        ...current,
+        motifs: replaced
+          ? current.motifs.map((item) => (item.id === motif.id ? motif : item))
+          : [...current.motifs, motif],
+      };
+    }
+
+    case "motif.removed": {
+      if (!current) throw new Error("motif.removed 之前必须有 project.created");
+      if (!current.motifs.some((item) => item.id === event.motifId)) {
+        throw new Error(`motif.removed 指向不存在的动机: ${event.motifId}`);
+      }
+      return {
+        ...current,
+        motifs: current.motifs.filter((item) => item.id !== event.motifId),
+        // 音乐还在：只清引用，不删 cue
+        timeline: {
+          ...current.timeline,
+          music: current.timeline.music.map((cue) =>
+            cue.motifId === event.motifId ? withoutMotif(cue) : cue,
+          ),
+        },
       };
     }
 

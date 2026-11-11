@@ -212,6 +212,10 @@ export function describeEvent(before: Project, event: ProjectEvent): string {
       return `初剪：${event.items.length} 段`;
     case "timeline.music.updated":
       return `配乐：${event.music.length} 段`;
+    case "motif.updated":
+      return `主题动机「${event.motif.label}」`;
+    case "motif.removed":
+      return "删掉一个主题动机";
     case "gate.confirmed":
       return `确认「${stageMetaOf(event.stage).name}」阶段${event.override ? "（带条件）" : ""}`;
     case "gate.reopened":

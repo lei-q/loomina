@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { StageGate } from "@/components/stage-gate";
 import { ComplianceCheckpoints } from "@/components/compliance-checkpoints";
+import { MusicCurvePanel } from "@/components/music-curve-panel";
 import { TopBar } from "@/components/top-bar";
 import {
   DEFAULT_SUBTITLE_CHARS,
@@ -197,6 +198,9 @@ export function EditScreen() {
   const addMusic = useWorkbench((state) => state.addMusic);
   const updateMusic = useWorkbench((state) => state.updateMusic);
   const removeMusic = useWorkbench((state) => state.removeMusic);
+  const fillMusicByCurve = useWorkbench((state) => state.fillMusicByCurve);
+  const upsertMotif = useWorkbench((state) => state.upsertMotif);
+  const removeMotif = useWorkbench((state) => state.removeMotif);
   const setBudget = useWorkbench((state) => state.setBudget);
   const recordPublish = useWorkbench((state) => state.recordPublish);
 
@@ -1308,7 +1312,7 @@ export function EditScreen() {
                               value={cue.gainDb}
                               disabled={Boolean(readOnly)}
                               onChange={(event) =>
-                                updateMusic({ gainDb: Number(event.target.value) })
+                                updateMusic({ gainDb: Number(event.target.value) }, cue.id)
                               }
                               className="min-w-0 flex-1 accent-[var(--pick)]"
                             />
@@ -1326,7 +1330,7 @@ export function EditScreen() {
                               value={cue.duckDb}
                               disabled={Boolean(readOnly) || !cue.ducking}
                               onChange={(event) =>
-                                updateMusic({ duckDb: Number(event.target.value) })
+                                updateMusic({ duckDb: Number(event.target.value) }, cue.id)
                               }
                               className="min-w-0 flex-1 accent-[var(--pick)]"
                             />
@@ -1341,7 +1345,9 @@ export function EditScreen() {
                               type="checkbox"
                               checked={cue.ducking}
                               disabled={Boolean(readOnly)}
-                              onChange={(event) => updateMusic({ ducking: event.target.checked })}
+                              onChange={(event) =>
+                                updateMusic({ ducking: event.target.checked }, cue.id)
+                              }
                               className="accent-[var(--pick)]"
                             />
                             台词下自动 ducking
@@ -1351,7 +1357,9 @@ export function EditScreen() {
                             <select
                               value={cue.mood}
                               disabled={Boolean(readOnly)}
-                              onChange={(event) => updateMusic({ mood: event.target.value })}
+                              onChange={(event) =>
+                                updateMusic({ mood: event.target.value }, cue.id)
+                              }
                               className="rounded-token border border-line bg-transparent px-1 py-0.5 text-[9.5px] text-text focus:border-line-2 focus:outline-none"
                             >
                               {["", "紧张", "悬疑", "温柔", "悲伤", "燃", "轻松"].map((mood) => (
@@ -1371,7 +1379,7 @@ export function EditScreen() {
                           <button
                             type="button"
                             onClick={() => {
-                              removeMusic();
+                              removeMusic(cue.id);
                               setLoudness(undefined);
                             }}
                             disabled={Boolean(readOnly)}
@@ -1388,6 +1396,19 @@ export function EditScreen() {
                       </div>
                     ))
                   )}
+
+                  <MusicCurvePanel
+                    project={project}
+                    readOnly={Boolean(readOnly)}
+                    onFill={(cueId) => fillMusicByCurve(cueId)}
+                    onUpdateCue={(patch, cueId) => {
+                      updateMusic(patch, cueId);
+                    }}
+                    onUpsertMotif={(input) => upsertMotif(input)}
+                    onRemoveMotif={(motifId) => {
+                      removeMotif(motifId);
+                    }}
+                  />
 
                   {loudness && (
                     <div className="mt-2 rounded-token border border-line bg-surface/60 px-2.5 py-2">

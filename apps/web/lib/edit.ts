@@ -1,4 +1,4 @@
-import type { Project, Take, TimelineItem } from "@loomina/ir";
+import type { MusicCue, Project, Take, TimelineItem } from "@loomina/ir";
 import { toStageView, type SceneKind } from "./read-model";
 import { subtitleCues } from "./subtitle";
 
@@ -200,6 +200,10 @@ export type EditMusic = {
   duckDb: number;
   ducking: boolean;
   loop: boolean;
+  /** 作用：铺底 / 重音 / 转场（C10） */
+  role: MusicCue["role"];
+  /** 指向的主题动机（C10）；没挂就是 undefined */
+  motifId?: string;
   licenseRef: string;
 };
 
@@ -399,6 +403,8 @@ export function toEditView(
         duckDb: cue.duckDb,
         ducking: cue.ducking,
         loop: cue.loop,
+        role: cue.role,
+        ...(cue.motifId ? { motifId: cue.motifId } : {}),
         licenseRef: cue.licenseRef,
       },
     ];

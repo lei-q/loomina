@@ -1680,6 +1680,7 @@ describe("配乐（C4 / C12）", () => {
     duckDb: 15,
     ducking: true,
     loop: true,
+    role: "bed" as const,
     licenseRef: "自有素材",
   };
 

@@ -576,6 +576,7 @@ export function projectFromStoryDraft(
         createdAt: options.at,
       },
     },
+    motifs: [],
     locations,
     characters,
     props,
