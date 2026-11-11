@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { StageGate } from "@/components/stage-gate";
 import { TopBar } from "@/components/top-bar";
 import { shotLabel, toVoiceView, type VoiceLine, type VoiceRole } from "@/lib/read-model";
 import { useWorkbench } from "@/lib/workbench-store";
@@ -397,6 +398,7 @@ export function VoiceScreen() {
           )}
         </div>
       </main>
+      <StageGate stage="voice" />
     </div>
   );
 }

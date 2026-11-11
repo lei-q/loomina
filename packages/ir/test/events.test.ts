@@ -1584,3 +1584,97 @@ describe("配乐（C4 / C12）", () => {
     ).toThrow(/ducking/);
   });
 });
+
+describe("阶段闸门与单镜预算（F8 / F9 / H10）", () => {
+  it("旧项目没有 gates 时按空数组补齐", () => {
+    const project = load();
+    expect(project.gates).toEqual([]);
+  });
+
+  it("确认一个阶段写一条记录，同阶段再确认按阶段覆盖", () => {
+    const project = load();
+    const first = applyEvent(project, {
+      type: "gate.confirmed",
+      at: AT,
+      stage: "story",
+      signature: "1a2b3c4d",
+      note: "故事定了",
+    });
+    expect(first.gates).toEqual([
+      { stage: "story", signature: "1a2b3c4d", at: AT, note: "故事定了" },
+    ]);
+
+    const second = applyEvent(first, {
+      type: "gate.confirmed",
+      at: "2026-11-10T09:00:00Z",
+      stage: "story",
+      signature: "deadbeef",
+    });
+    expect(second.gates).toHaveLength(1);
+    expect(second.gates[0]!.signature).toBe("deadbeef");
+    expect(second.gates[0]!.note).toBe("");
+  });
+
+  it("回退阶段只删这一阶段的记录", () => {
+    const project = load();
+    const confirmed = rebuild([
+      created(project),
+      { type: "gate.confirmed", at: AT, stage: "story", signature: "1a2b3c4d" },
+      { type: "gate.confirmed", at: AT, stage: "script", signature: "0f0f0f0f" },
+      { type: "gate.reopened", at: AT, stage: "story" },
+    ]);
+    expect(confirmed.gates.map((gate) => gate.stage)).toEqual(["script"]);
+  });
+
+  it("签名必须像 8 位十六进制，备注不超过 240 字", () => {
+    const project = load();
+    expect(() =>
+      applyEvent(project, {
+        type: "gate.confirmed",
+        at: AT,
+        stage: "story",
+        signature: "nope",
+      }),
+    ).toThrow(/8 位十六进制/);
+    expect(() =>
+      applyEvent(project, {
+        type: "gate.confirmed",
+        at: AT,
+        stage: "story",
+        signature: "1a2b3c4d",
+        note: "长".repeat(241),
+      }),
+    ).toThrow(/240/);
+  });
+
+  it("单镜预算必须是正数；可以清空回默认", () => {
+    const project = load();
+    const capped = applyEvent(project, {
+      type: "shot.updated",
+      at: AT,
+      shotId: "sh-1",
+      patch: { budgetCny: 8 },
+    });
+    expect(capped.shots[0]!.budgetCny).toBe(8);
+
+    const cleared = applyEvent(capped, {
+      type: "shot.updated",
+      at: AT,
+      shotId: "sh-1",
+      patch: { budgetCny: undefined },
+    });
+    expect(cleared.shots[0]!.budgetCny).toBeUndefined();
+  });
+
+  it("0 或负数不是「取消上限」，直接拒绝", () => {
+    const project = load();
+    expect(() =>
+      applyEvent(project, {
+        type: "shot.updated",
+        at: AT,
+        shotId: "sh-1",
+        patch: { budgetCny: 0 },
+      }),
+    ).toThrow(/大于 0/);
+  });
+});

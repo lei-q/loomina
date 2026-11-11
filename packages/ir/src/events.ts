@@ -4,6 +4,7 @@ import type {
   Asset,
   Character,
   DialogueLine,
+  GateStage,
   Id,
   Location,
   MusicCue,
@@ -25,6 +26,9 @@ export const REFERENCE_IMAGES_MAX = 8;
 
 /** 音色标识上限：供应商的音色名通常很短，留点余量（ADR-0085） */
 export const VOICE_PROFILE_MAX = 40;
+
+/** 阶段闸门备注上限（F9）：一句话说清「为什么这时候确认」，不是写检讨 */
+export const GATE_NOTE_MAX = 240;
 
 /**
  * 事件日志（ADR-0011）。
@@ -240,6 +244,28 @@ export type ProjectEvent =
     }
   | {
       /**
+       * 阶段确认（F8 / F9）：把「这一阶段的内容我认了」写进日志。
+       * 同阶段只有一条，重复确认按阶段覆盖；签名对不上当前内容就算过期。
+       */
+      type: "gate.confirmed";
+      at: string;
+      stage: GateStage;
+      /** 确认时的内容指纹，8 位十六进制 */
+      signature: string;
+      /** 作者备注，最多 240 字 */
+      note?: string;
+    }
+  | {
+      /**
+       * 回退阶段闸门：删掉这一阶段的确认记录。
+       * 不删下游的确认记录——它们各自会因为签名变化显示「内容改过」。
+       */
+      type: "gate.reopened";
+      at: string;
+      stage: GateStage;
+    }
+  | {
+      /**
        * 配乐床整条替换（C4）。和 `timeline.updated` 分开：
        * 换 take 不该顺手重写音乐，音乐改了也不该假装画面动了。
        */
@@ -351,6 +377,16 @@ export function applyEvent(
 
     case "shot.updated": {
       if (!current) throw new Error("shot.updated 之前必须有 project.created");
+      if (!current.shots.some((shot) => shot.id === event.shotId)) {
+        throw new Error(`shot.updated 指向不存在的镜头: ${event.shotId}`);
+      }
+      // 单镜预算（H10）：要么不设，要么是正的有限数；0 与负数都不代表「不设上限」
+      if (
+        event.patch.budgetCny !== undefined &&
+        (!Number.isFinite(event.patch.budgetCny) || event.patch.budgetCny <= 0)
+      ) {
+        throw new Error(`单镜预算必须大于 0：${event.patch.budgetCny}`);
+      }
       const shots = current.shots.map((shot) =>
         shot.id === event.shotId ? { ...shot, ...event.patch } : shot,
       );
@@ -840,6 +876,36 @@ export function applyEvent(
         ...current,
         shots,
         takes: [...current.takes, event.take],
+      };
+    }
+
+    case "gate.confirmed": {
+      if (!current) throw new Error("gate.confirmed 之前必须有 project.created");
+      if (!/^[0-9a-f]{8}$/.test(event.signature)) {
+        throw new Error(`gate.confirmed 的签名不是 8 位十六进制: ${event.signature}`);
+      }
+      const note = event.note?.trim() ?? "";
+      if (note.length > GATE_NOTE_MAX) {
+        throw new Error(`gate.confirmed 的备注超过 ${GATE_NOTE_MAX} 字`);
+      }
+      const record = {
+        stage: event.stage,
+        signature: event.signature,
+        at: event.at,
+        note,
+      };
+      const exists = current.gates.some((gate) => gate.stage === event.stage);
+      const gates = exists
+        ? current.gates.map((gate) => (gate.stage === event.stage ? record : gate))
+        : [...current.gates, record];
+      return { ...current, gates };
+    }
+
+    case "gate.reopened": {
+      if (!current) throw new Error("gate.reopened 之前必须有 project.created");
+      return {
+        ...current,
+        gates: current.gates.filter((gate) => gate.stage !== event.stage),
       };
     }
 

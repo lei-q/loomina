@@ -7,6 +7,8 @@ import type { ProjectRequote } from "@/lib/pricing";
 import { ExportIcon, Logomark, PlayIcon } from "@/components/icons";
 import { ModelPicker } from "@/components/model-picker";
 import type { Modality } from "@/lib/config-types";
+import { nextOpenStage, stageStates } from "@/lib/stage-flow";
+import { useWorkbench } from "@/lib/workbench-store";
 
 /** 阶段是一列；还没做出来的阶段 href 为 null，点了不跳。 */
 const stages = [
@@ -88,6 +90,9 @@ export function TopBar({
   consistencyCount,
 }: TopBarProps) {
   const [draftBudget, setDraftBudget] = useState<string>("");
+  const project = useWorkbench((state) => state.project);
+  const gateStates = stageStates(project);
+  const nextStage = nextOpenStage(gateStates);
   const budget = budgetCny ?? 60;
   // 超预算是硬事：数字变 pick，展开里单独一行写超了多少
   const over = spentCny !== undefined ? Math.round((spentCny - budget) * 100) / 100 : 0;
@@ -110,23 +115,55 @@ export function TopBar({
       <nav aria-label="阶段" className="tnum hidden items-center gap-2.5 text-[10px] text-muted md:flex">
         {stages.map((item, i) => {
           const active = item.name === stage;
+          const gate = gateStates.find((state) => state.name === item.name);
+          const gateTitle =
+            gate?.gate === "confirmed"
+              ? `${gate.name}已确认${gate.confirmedAt ? `（${gate.confirmedAt.slice(5, 10)}）` : ""}`
+              : gate?.gate === "stale"
+                ? `${gate.name}确认后内容改过，需要再确认`
+                : `${gate?.name ?? item.name}还没确认`;
           return (
             <span key={item.name} className="flex items-center gap-2.5">
               {i > 0 && <span className="text-line-2">·</span>}
-              <Link
-                href={item.href}
-                aria-current={active ? "page" : undefined}
-                className={cn(
-                  "transition-colors duration-[var(--dur)] hover:text-text",
-                  active ? "text-text" : "text-muted",
-                )}
-              >
-                {item.name}
-              </Link>
+              <span className="flex items-center gap-1.5">
+                <span
+                  aria-hidden="true"
+                  title={gateTitle}
+                  className={cn(
+                    "block h-[4px] w-[4px] shrink-0 rounded-full",
+                    gate?.gate === "confirmed"
+                      ? "bg-text"
+                      : gate?.gate === "stale"
+                        ? "bg-pick"
+                        : "border border-line-2",
+                  )}
+                />
+                <Link
+                  href={item.href}
+                  aria-current={active ? "page" : undefined}
+                  className={cn(
+                    "transition-colors duration-[var(--dur)] hover:text-text",
+                    active ? "text-text" : "text-muted",
+                  )}
+                >
+                  {item.name}
+                </Link>
+              </span>
             </span>
           );
         })}
       </nav>
+
+      {/* 阶段式默认路径：一条「下一步」把人领到还没确认的那一阶段（F8） */}
+      {nextStage && (
+        <Link
+          href={nextStage.href}
+          className="tnum hidden items-center gap-1.5 border-l border-line pl-6 text-[10px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text xl:flex"
+        >
+          下一步 · {nextStage.name}
+          <span className="text-muted-2">→</span>
+        </Link>
+      )}
 
       <div className="ml-auto flex items-center gap-4">
         {STAGE_MODELS[stage] && (

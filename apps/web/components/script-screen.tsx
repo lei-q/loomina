@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { StageGate } from "@/components/stage-gate";
 import { TopBar } from "@/components/top-bar";
 import {
   actionHistory,
@@ -1533,6 +1534,7 @@ export function ScriptScreen() {
           )}
         </div>
       </main>
+      <StageGate stage="script" />
     </div>
   );
 }

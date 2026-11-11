@@ -581,6 +581,7 @@ export function projectFromStoryDraft(
     takes: [],
     assets: [],
     approvals: [],
+    gates: [],
     timeline: { items: [], music: [] },
     publishPackages: [],
   };

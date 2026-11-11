@@ -12,6 +12,7 @@ import {
   type Asset,
   type BeatKind,
   type Character,
+  type GateStage,
   type Location,
   type MusicCue,
   type Project,
@@ -38,12 +39,14 @@ import {
   latestTake,
   removedLines,
   shotLabel,
+  shotSpendOf,
   spendOf,
   toStageView,
   undoableRemoval,
 } from "@/lib/read-model";
 import { getModelChoice } from "@/lib/model-choice";
 import { sampleProject } from "@/lib/sample-project";
+import { stageMetaOf, stageSignature } from "@/lib/stage-flow";
 
 export type Decision = "approved" | "rejected";
 
@@ -136,6 +139,15 @@ type WorkbenchState = {
   setVideoPrice: (price: { model: string; cnyPerSecond?: number }) => void;
   /** 改预算上限：写一条 `project.updated`，预算改了要留痕 */
   setBudget: (cny: number) => void;
+  /** 改这一镜的金额上限（H10）：写一条 `shot.updated`；空值表示取消单镜上限 */
+  setShotBudget: (shotId: string, cny: number | undefined) => boolean;
+  /**
+   * 确认一个阶段（F8 / F9）：按当前内容算签名，写一条 `gate.confirmed`。
+   * 已确认的阶段再确认一次就是更新签名，不新增第二条记录。
+   */
+  confirmGate: (stage: GateStage, note?: string) => boolean;
+  /** 回退阶段确认：写一条 `gate.reopened`，删除这一阶段的记录 */
+  reopenGate: (stage: GateStage) => boolean;
   /** 从本地日志恢复；已经恢复过就什么都不做 */
   hydrate: () => Promise<void>;
   select: (shotId: string) => void;
@@ -455,6 +467,8 @@ async function generateOne(
     assetId: string;
     job: GenerateJob;
     body: Record<string, unknown>;
+    /** 这一张属于哪一镜：单镜上限按它算（H10） */
+    shotId?: string;
     /** 这张图还要改项目结构时，在这里追加事件（例如首帧挂回镜头） */
     after?: (assetId: string, at: string) => ProjectEvent | undefined;
     /** 溯源里记下这一张引用了哪些已锁定的锚点 */
@@ -468,13 +482,27 @@ async function generateOne(
   // 不知道单价时不拦——报不出价的时候宁可如实说，也不假拦。
   const unit = get().imageCny;
   if (unit !== undefined) {
-    const { spent } = spendOf(get().project);
-    const budget = get().project.budgetCny;
+    const project = get().project;
+    const { spent } = spendOf(project);
+    const budget = project.budgetCny;
     if (spent + unit > budget) {
       set({
         castError: `「${input.label}」超出预算：这一张 ¥${unit.toFixed(2)}，已花 ¥${spent.toFixed(2)} / 预算 ¥${budget.toFixed(2)}。先提高预算再生成。`,
       });
       return false;
+    }
+    // 单镜上限（H10）：先到的那条拦
+    const shot = input.shotId
+      ? project.shots.find((item) => item.id === input.shotId)
+      : undefined;
+    if (shot?.budgetCny !== undefined) {
+      const shotSpend = shotSpendOf(project, shot.id);
+      if (shotSpend.spent + unit > shot.budgetCny) {
+        set({
+          castError: `「${input.label}」超出这一镜的上限：这一张 ¥${unit.toFixed(2)}，这一镜已花 ¥${shotSpend.spent.toFixed(2)} / 上限 ¥${shot.budgetCny.toFixed(2)}。先在分镜页提高单镜上限，或改项目预算。`,
+        });
+        return false;
+      }
     }
   }
 
@@ -680,6 +708,72 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       budgetCny,
     };
     set({ project: applyEvent(project, event), events: [...events, event] });
+  },
+
+  setShotBudget: (shotId, cny) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) return false;
+    if (cny !== undefined && (!Number.isFinite(cny) || cny <= 0)) {
+      set({ castError: "单镜上限要大于 0 元；想取消上限就先清空这一栏。" });
+      return false;
+    }
+    const budgetCny = cny === undefined ? undefined : Math.round(cny * 100) / 100;
+    if (budgetCny === shot.budgetCny) return true;
+
+    const event: ProjectEvent = {
+      type: "shot.updated",
+      at: new Date().toISOString(),
+      shotId: shot.id,
+      // undefined 在落盘时会消失，回读就是「没有上限」，与清空同义
+      patch: { budgetCny },
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  confirmGate: (stage, note) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const meta = stageMetaOf(stage);
+    const event: ProjectEvent = {
+      type: "gate.confirmed",
+      at: new Date().toISOString(),
+      stage,
+      signature: stageSignature(project, stage),
+      note: (note ?? "").trim().slice(0, 240),
+    };
+    try {
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        castError: undefined,
+      });
+      return true;
+    } catch (error) {
+      set({
+        castError: error instanceof Error ? error.message : `「${meta.name}」没确认上。`,
+      });
+      return false;
+    }
+  },
+
+  reopenGate: (stage) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    if (!project.gates.some((gate) => gate.stage === stage)) return false;
+    const event: ProjectEvent = {
+      type: "gate.reopened",
+      at: new Date().toISOString(),
+      stage,
+    };
+    set({ project: applyEvent(project, event), events: [...events, event] });
+    return true;
   },
 
   select: (shotId) => {
@@ -1203,6 +1297,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         key: `${shot.id}:${frame}`,
         label: no === undefined ? shot.id : shotLabel(no),
         assetId,
+        shotId: shot.id,
         job: { kind: "keyframe", frame },
         body: { kind: "keyframe", frame, shot: shotMaterial(project, shot) },
         referenceAssetIds: shotAnchors(project, shot).refs.map((ref) => ref.assetId),
@@ -1253,6 +1348,15 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
           castError: `「${label}」出视频要 ¥${unit.toFixed(2)}，已花 ¥${spent.toFixed(2)} / 预算 ¥${project.budgetCny.toFixed(2)}。先提高预算再生成。`,
         });
         return false;
+      }
+      if (shot.budgetCny !== undefined) {
+        const shotSpend = shotSpendOf(project, shot.id);
+        if (shotSpend.spent + unit > shot.budgetCny) {
+          set({
+            castError: `「${label}」超出这一镜的上限：这一段要 ¥${unit.toFixed(2)}，这一镜已花 ¥${shotSpend.spent.toFixed(2)} / 上限 ¥${shot.budgetCny.toFixed(2)}。先在分镜页提高单镜上限，或改项目预算。`,
+          });
+          return false;
+        }
       }
     }
 

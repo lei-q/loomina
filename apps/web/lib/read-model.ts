@@ -80,6 +80,10 @@ export type StageShot = {
   staleLast?: StaleMark;
   /** 这一镜台词拼成的字幕（预演与审片共用，ADR-0084） */
   subtitle: string;
+  /** 这一镜的金额上限（H10）；不设就是只受项目预算约束 */
+  budgetCny?: number;
+  /** 这一镜已经花掉多少（H10） */
+  spentCny: number;
 };
 
 export type Spend = {
@@ -120,6 +124,40 @@ export function spendOf(project: Project): Spend {
     rejected: round(rejected),
     unpriced,
   };
+}
+
+export type ShotSpend = {
+  /** 这一镜已经花掉的钱：take 的费用 + 首尾帧资产 */
+  spent: number;
+  /** 生成过、但价目表里没有单价的图与视频 */
+  unpriced: number;
+};
+
+/**
+ * 单镜已经花了多少（H10）。
+ *
+ * 只数这一镜自己的东西：属于它的 take，以及挂在它首尾帧上的资产。
+ * 定妆、场景主镜、道具参考图是项目级成本，不摊到某一镜上——
+ * 摊了之后「单镜上限」就说不清是限制重拍还是限制定妆。
+ */
+export function shotSpendOf(project: Project, shotId: string): ShotSpend {
+  const shot = project.shots.find((item) => item.id === shotId);
+  if (!shot) return { spent: 0, unpriced: 0 };
+  const takes = project.takes.filter((take) => take.shotId === shotId);
+  // take 的费用记在 take 上；它的视频资产再记一次就重复了，所以跳过
+  const takeAssetIds = new Set(takes.map((take) => take.assetId));
+  const assetIds = new Set<string>();
+  if (shot.keyframes.firstAssetId) assetIds.add(shot.keyframes.firstAssetId);
+  if (shot.keyframes.lastAssetId) assetIds.add(shot.keyframes.lastAssetId);
+
+  let spent = takes.reduce((sum, take) => sum + take.costCny, 0);
+  let unpriced = 0;
+  for (const asset of project.assets) {
+    if (!assetIds.has(asset.id) || takeAssetIds.has(asset.id)) continue;
+    if (asset.costCny !== undefined) spent += asset.costCny;
+    else if (asset.source === "generated" && asset.uri) unpriced += 1;
+  }
+  return { spent: Math.round(spent * 100) / 100, unpriced };
 }
 
 export type StageView = {
@@ -292,6 +330,8 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
         .map((id) => dialogueById.get(id)?.text)
         .filter((text): text is string => Boolean(text))
         .join(" "),
+      budgetCny: shot.budgetCny,
+      spentCny: shotSpendOf(project, shot.id).spent,
     };
   });
 

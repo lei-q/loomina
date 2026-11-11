@@ -10,6 +10,7 @@
  */
 
 import type { Project } from "@loomina/ir";
+import { fnv1a } from "./fnv";
 import { platformCheckDetail, platformSpecOf, validatePlatform, type PlatformId } from "./platforms";
 
 export type ComplianceSeverity = "block" | "review";
@@ -330,16 +331,6 @@ export function scanProject(
     findings.push(...scanText(unit.text, unit.path));
   }
   return findings;
-}
-
-/** 较小的稳定指纹：UI 用它判断「确认之后内容有没有改过」 */
-function fnv1a(input: string): string {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= input.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash.toString(16).padStart(8, "0");
 }
 
 function rightsCheck(project: Project): {

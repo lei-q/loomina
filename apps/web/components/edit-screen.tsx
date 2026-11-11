@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { StageGate } from "@/components/stage-gate";
 import { TopBar } from "@/components/top-bar";
 import {
   DEFAULT_SUBTITLE_CHARS,
@@ -1371,6 +1372,7 @@ export function EditScreen() {
           )}
         </div>
       </main>
+      <StageGate stage="edit" />
     </div>
   );
 }

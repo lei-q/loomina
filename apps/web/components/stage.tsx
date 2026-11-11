@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Frame } from "@loomina/pipeline";
 import { Scene } from "@/components/scene";
 import { shotLabel, type StageShot, type StageView } from "@/lib/read-model";
@@ -49,6 +49,7 @@ function Current({
   onToggleProp,
   onMoveCharacter,
   onMoveProp,
+  onSetBudget,
 }: {
   shot: StageShot;
   subtitle: string;
@@ -78,6 +79,8 @@ function Current({
   onToggleProp: (propId: string) => void;
   onMoveCharacter: (characterId: string, delta: -1 | 1) => void;
   onMoveProp: (propId: string, delta: -1 | 1) => void;
+  /** 单镜金额上限（H10）；空值表示取消 */
+  onSetBudget: (cny: number | undefined) => void;
 }) {
   // 出场的人按点名顺序排在前面：顺序就是提示词里的顺序（ADR-0077）
   const ordered = [
@@ -98,6 +101,26 @@ function Current({
   // 多 Take 时点某一拍就切到那一拍；没点就跟随最近一拍
   const [shownTakeId, setShownTakeId] = useState<string | undefined>();
   const [draftUri, setDraftUri] = useState("");
+  const [budgetDraft, setBudgetDraft] = useState(
+    shot.budgetCny === undefined ? "" : String(shot.budgetCny),
+  );
+  // 撤销 / 重放 / 换镜之后跟上
+  useEffect(() => {
+    setBudgetDraft(shot.budgetCny === undefined ? "" : String(shot.budgetCny));
+  }, [shot.id, shot.budgetCny]);
+  const commitBudget = () => {
+    const raw = budgetDraft.trim();
+    if (raw === "") {
+      if (shot.budgetCny !== undefined) onSetBudget(undefined);
+      return;
+    }
+    const value = Number.parseFloat(raw);
+    if (!Number.isFinite(value) || value <= 0) {
+      setBudgetDraft(shot.budgetCny === undefined ? "" : String(shot.budgetCny));
+      return;
+    }
+    onSetBudget(value);
+  };
   const frames: Array<{ key: Frame; uri?: string; has: boolean }> = [
     { key: "first", uri: shot.keyframeUri, has: shot.hasKeyframe },
     { key: "last", uri: shot.lastKeyframeUri, has: shot.hasLastFrame },
@@ -407,6 +430,34 @@ function Current({
         </p>
       </details>
 
+      {/* 单镜金额上限（H10）：这一镜最多花多少，和项目预算同时生效 */}
+      <div className="tnum flex items-center gap-1.5 text-[9.5px] text-muted-2">
+        <span>单镜上限</span>
+        <input
+          value={budgetDraft}
+          onChange={(event) => setBudgetDraft(event.target.value)}
+          onBlur={commitBudget}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+            if (event.key === "Escape") {
+              setBudgetDraft(shot.budgetCny === undefined ? "" : String(shot.budgetCny));
+              event.currentTarget.blur();
+            }
+          }}
+          disabled={readOnly || shot.locked}
+          inputMode="decimal"
+          placeholder="不限"
+          aria-label={`${shotLabel(shot.no)} 的单镜上限`}
+          title="这一镜最多花多少元；清空表示只受项目预算约束"
+          className="w-[54px] rounded-token border border-line bg-transparent px-1.5 py-0.5 text-[9.5px] text-text placeholder:text-muted-2 focus:border-line-2 focus:outline-none disabled:opacity-45"
+        />
+        <span>元</span>
+        <span className="text-muted-2">· 已花 ¥{shot.spentCny.toFixed(2)}</span>
+        {shot.budgetCny !== undefined && shot.spentCny > shot.budgetCny && (
+          <span className="text-pick">· 已超上限</span>
+        )}
+      </div>
+
       {/* 一句话指令改出来的补充要求：说过什么要看得见（ADR-0039） */}
       {shot.notes.length > 0 && (
         <div className="flex max-w-[340px] flex-wrap items-center justify-center gap-x-2 gap-y-1">
@@ -634,6 +685,7 @@ export type StageProps = {
   onToggleProp: (propId: string) => void;
   onMoveCharacter: (characterId: string, delta: -1 | 1) => void;
   onMoveProp: (propId: string, delta: -1 | 1) => void;
+  onSetBudget: (cny: number | undefined) => void;
 };
 
 export function Stage({
@@ -652,6 +704,7 @@ export function Stage({
   onToggleProp,
   onMoveCharacter,
   onMoveProp,
+  onSetBudget,
 }: StageProps) {
   const current = view.shots[view.current]!;
   const prev = view.shots[view.current - 1];
@@ -690,6 +743,7 @@ export function Stage({
           onToggleProp={onToggleProp}
           onMoveCharacter={onMoveCharacter}
           onMoveProp={onMoveProp}
+          onSetBudget={onSetBudget}
         />
         {next && <Neighbour shot={next} />}
       </div>

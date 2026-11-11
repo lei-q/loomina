@@ -121,3 +121,24 @@ describe("migrateLog", () => {
     expect(migrateLog({ version: 1, events: [locked()] })).toBeNull();
   });
 });
+
+describe("阶段闸门事件（F8 / F9）", () => {
+  it("gate.confirmed 与 gate.reopened 能回放，整份日志仍然有效", () => {
+    const events = parseEvents([
+      created(),
+      { type: "gate.confirmed", at: AT, stage: "story", signature: "1a2b3c4d", note: "故事定了" },
+      { type: "gate.reopened", at: AT, stage: "story" },
+    ]);
+    expect(events?.map((event) => event.type)).toEqual([
+      "project.created",
+      "gate.confirmed",
+      "gate.reopened",
+    ]);
+  });
+
+  it("签名不合法的事件整份丢掉", () => {
+    expect(
+      parseEvents([created(), { type: "gate.confirmed", at: AT, stage: "story", signature: "x" }]),
+    ).toBeNull();
+  });
+});

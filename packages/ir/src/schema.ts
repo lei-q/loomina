@@ -163,6 +163,34 @@ export const ApprovalSchema = z.object({
 });
 export type Approval = z.infer<typeof ApprovalSchema>;
 
+/**
+ * 阶段闸门（F8 / F9）：七个阶段，键与路由一一对应。
+ *
+ * 与 `Approval` 分开：`Approval` 锁的是一个角色 / 场景 / 道具，
+ * 阶段闸门确认的是「这一阶段的整体内容」——签名一变就过期，需要再确认。
+ */
+export const GATE_STAGES = [
+  "story",
+  "script",
+  "cast",
+  "storyboard",
+  "keyframes",
+  "voice",
+  "edit",
+] as const;
+export const GateStageSchema = z.enum(GATE_STAGES);
+export type GateStage = z.infer<typeof GateStageSchema>;
+
+export const GateRecordSchema = z.object({
+  stage: GateStageSchema,
+  /** 确认那一刻的内容指纹（8 位十六进制）；内容一变，这条确认就过期 */
+  signature: z.string().regex(/^[0-9a-f]{8}$/),
+  at: z.string().min(1),
+  /** 作者留下的一句话；不写就空着 */
+  note: z.string().max(240).default(""),
+});
+export type GateRecord = z.infer<typeof GateRecordSchema>;
+
 export const DialogueLineSchema = z.object({
   id: Id,
   characterId: Id,
@@ -235,6 +263,11 @@ export const ShotSchema = z.object({
   takeIds: z.array(Id).default([]),
   keyframes: KeyframesSchema.default({}),
   locked: z.boolean().default(false),
+  /**
+   * 这一镜最多花多少钱（元，H10）。不写就是只受项目预算约束。
+   * 单镜上限与项目上限同时生效：先到的那条拦。
+   */
+  budgetCny: z.number().positive().optional(),
 });
 export type Shot = z.infer<typeof ShotSchema>;
 
@@ -338,6 +371,8 @@ export const ProjectSchema = z.object({
   takes: z.array(TakeSchema).default([]),
   assets: z.array(AssetSchema).default([]),
   approvals: z.array(ApprovalSchema).default([]),
+  /** 阶段闸门的确认记录：一个阶段最多一条，重复确认按阶段覆盖（F8 / F9） */
+  gates: z.array(GateRecordSchema).default([]),
   timeline: TimelineSchema.default({ items: [] }),
   publishPackages: z.array(PublishPackageSchema).default([]),
 });

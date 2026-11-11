@@ -22,6 +22,7 @@ interface Project {
   episodes: Episode[];      // 分集
   assets: Asset[];          // 全项目资产（图/视频/音频/字体）
   approvals: Approval[];    // 阶段闸门：定妆 / 道具确认（ADR-0028）
+  gates: GateRecord[];      // 阶段确认记录：七阶段各一条，带内容指纹（ADR-0100）
   publishPackages: PublishPackage[];
 
   settings: ProjectSettings;
@@ -34,6 +35,8 @@ interface ProjectSettings {
   defaultStyleId?: ID;      // 指向 StyleProfile
 }
 ```
+
+> **落地情况（ADR-0100，2026-11-11）**：`Project.gates: GateRecord[]` 是七个阶段的确认记录，同一阶段最多一条（确认即覆盖）。每条记下确认时这一阶段内容的 8 位 FNV-1a 指纹；读模型把现算指纹与记录比对，得出 `none / confirmed / stale` 三态。确认与回退只走 `gate.confirmed` / `gate.reopened` 两条事件，追加不删历史；回退只删这一阶段的记录，不级联下游。旧项目没有该字段，zod 默认 `[]`，`LOG_VERSION` 仍为 1。
 
 ## 2. 故事圣经（一致性锚点）
 
@@ -205,6 +208,8 @@ interface Shot {
   timingPolicy?: "dialogue-first" | "visual-first";  // 音画冲突时的裁决（L7）
   consistency?: ConsistencyReport;
 
+  budgetCny?: number;       // 这一镜最多花多少（正数）；不写只受项目预算约束（ADR-0100）
+
   prompt?: PromptRecord;    // 最终提示词与编译来源
 }
 
@@ -239,6 +244,8 @@ interface Keyframes {
 > **落地情况（ADR-0039，2026-11-10）**：`Shot.promptNotes: string[]`（zod 默认 `[]`）是一句话指令落下的补充要求，提示词里作为「补充：…」原样带上；改结构字段（景别 / 机位 / 运镜）走同一条 `shot.updated` 的 patch，不改版本号。
 
 > **落地情况（ADR-0037 / ADR-0038，2026-11-10）**：`Shot.keyframes` 已进 IR（zod 默认 `{}`，老日志靠默认值补齐，`LOG_VERSION` 仍为 1）。分镜页可生成首尾两帧：首帧资产 id 固定 `a-keyframe-<shotId>`，写 `firstAssetId`；尾帧固定 `a-lastframe-<shotId>`，写 `lastAssetId`。每帧一条 `asset.updated` 加一条 `shot.updated`，patch 里的 `keyframes` 是完整对象（生成尾帧不抹掉首帧）；重生成按 id 覆盖。两帧都不参与 take。
+
+> **落地情况（ADR-0100，2026-11-11）**：`Shot.budgetCny?: number` 是这一镜的金额上限，只接受正数，`shot.updated` 的 patch 可带它，`undefined` 表示清除。`shotSpendOf(project, shotId)` 现算已花：该镜所有 take 的 `costCny` + 首尾帧资产的 `costCny`；take 引用的视频资产不重复计入（成本已记在 take 上）。图像 / 视频生成前先过项目预算、再过单镜上限，超了一次请求都不发。文本生成不设单镜上限（token 单价未知）。
 
 > **落地情况（ADR-0050，2026-11-10）**：`Scene.space`（`int` / `ext`，默认 `int`）与 `Scene.timeOfDay`（`day` / `night` / `dawn` / `dusk`，默认 `day`）已进 IR；老日志靠默认值补齐，`LOG_VERSION` 仍为 1。改场头写 `scene.updated { sceneId, patch }`，patch 只收这两个字段；地点与场号属于结构，不在这一刀里改。
 
@@ -350,6 +357,14 @@ interface Approval {
   note?: string;
 }
 
+/** 阶段确认记录：只记「确认时这一阶段是什么样」，不锁编辑（ADR-0100） */
+interface GateRecord {
+  stage: "story" | "script" | "cast" | "storyboard" | "keyframes" | "voice" | "edit";
+  signature: string;   // 8 位 hex，FNV-1a；对不上表示确认后内容改过
+  at: ISODate;
+  note: string;        // ≤240 字，默认空
+}
+
 /** 语义编辑：用户说人话，系统映射为结构化参数补丁（L5 / F7） */
 interface SemanticEdit {
   id: ID;
@@ -376,7 +391,7 @@ interface Budget {
 }
 ```
 
-> **落地情况（ADR-0035，2026-11-10）**：只实现了项目级上限——`Project.budgetCny`（默认 60）+ 一条 `project.updated` 事件；"已花"由 `spendOf(project)` 现算，不落字段。出图在提交前拦（知道单价、且会超就一次请求都不发）。**镜头级上限、重试次数上限、`onExceed` 的降级路径都还没做。**
+> **落地情况（ADR-0035 / ADR-0100，2026-11-10 / 11）**：项目级上限是 `Project.budgetCny`（默认 60）+ 一条 `project.updated` 事件；镜头级上限是 `Shot.budgetCny?`，走 `shot.updated`。"已花"都由现算函数得出（`spendOf(project)` / `shotSpendOf(project, shotId)`），不落字段。图像与视频在提交前先过项目预算、再过单镜上限（知道单价、且会超就一次请求都不发）。**重试次数上限、`onExceed` 的降级路径、文本模态的单镜上限仍没做。**
 
 ### 4.4 审片决定的写回（ADR-0027）
 
@@ -418,6 +433,26 @@ type ProjectUpdatedEvent = {
   budgetCny: number;   // 只接受正数；非正数在 applyEvent 里直接抛错
 };
 ```
+
+阶段确认同样走事件（ADR-0100）。确认与回退各一条，只追加、不删历史：
+
+```ts
+type GateConfirmedEvent = {
+  type: "gate.confirmed";
+  at: ISODate;
+  stage: GateStage;            // story / script / cast / storyboard / keyframes / voice / edit
+  signature: string;           // /^[0-9a-f]{8}$/，确认时这一阶段内容的指纹
+  note?: string;               // ≤240 字，落库前裁掉首尾空白
+};
+
+type GateReopenedEvent = {
+  type: "gate.reopened";
+  at: ISODate;
+  stage: GateStage;            // 只删这一阶段的确认记录，不碰下游
+};
+```
+
+`gate.confirmed` 按 stage upsert（同一阶段只留最新一条）；`gate.reopened` 对没有记录的 stage 是空操作，不写日志。
 
 ## 4.5 分镜规划与一致性
 

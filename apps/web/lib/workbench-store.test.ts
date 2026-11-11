@@ -3136,3 +3136,85 @@ describe("分镜节拍与镜头目的（ADR-0096）", () => {
     expect(state().events).toHaveLength(before);
   });
 });
+
+describe("阶段闸门与单镜预算（F8 / F9 / H10）", () => {
+  beforeEach(() => {
+    state().reset();
+    state().setImagePrice({ model: "gpt-image-2-c", cny: 0.12 });
+  });
+
+  const stub = () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        calls.push(JSON.parse(String(init?.body)).kind);
+        return new Response(
+          JSON.stringify({ uri: "data:image/png;base64,RkFLRQ==", model: "gpt-image-2-c", cny: 0.12 }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+    return calls;
+  };
+
+  it("单镜上限低于这一张的报价时，不发请求", async () => {
+    const calls = stub();
+    state().setShotBudget("s-03", 0.05);
+    await state().generateKeyframe("s-03");
+
+    expect(calls).toHaveLength(0);
+    expect(state().castError).toContain("这一镜的上限");
+    expect(state().castError).toContain("SH-03");
+    vi.unstubAllGlobals();
+  });
+
+  it("单镜上限够就照常生成，事件重放后上限还在", async () => {
+    const calls = stub();
+    state().setShotBudget("s-03", 5);
+    await state().generateKeyframe("s-03");
+
+    expect(calls).toHaveLength(1);
+    expect(
+      state().events.find(
+        (event) =>
+          event.type === "shot.updated" &&
+          event.shotId === "s-03" &&
+          event.patch.budgetCny === 5,
+      ),
+    ).toBeDefined();
+    expect(rebuild(state().events).shots.find((shot) => shot.id === "s-03")?.budgetCny).toBe(5);
+    vi.unstubAllGlobals();
+  });
+
+  it("0 元不是「不限」：拒绝写入", () => {
+    state().setShotBudget("s-03", 0);
+    expect(state().project.shots.find((shot) => shot.id === "s-03")?.budgetCny).toBeUndefined();
+    expect(state().castError).toContain("大于 0");
+  });
+
+  it("确认阶段写一条 gate.confirmed，签名与当前内容一致", () => {
+    const project = state().project;
+    expect(state().confirmGate("story", "先认下来")).toBe(true);
+
+    const record = state().project.gates.find((gate) => gate.stage === "story");
+    expect(record?.note).toBe("先认下来");
+    expect(record?.signature).toMatch(/^[0-9a-f]{8}$/);
+    expect(state().events.at(-1)?.type).toBe("gate.confirmed");
+    expect(rebuild(state().events).gates).toEqual(state().project.gates);
+    expect(project.gates).toHaveLength(0);
+  });
+
+  it("回退阶段删掉记录并留一条 gate.reopened", () => {
+    state().confirmGate("script");
+    expect(state().reopenGate("script")).toBe(true);
+    expect(state().project.gates).toHaveLength(0);
+    expect(state().events.at(-1)).toMatchObject({ type: "gate.reopened", stage: "script" });
+  });
+
+  it("没确认过的阶段回退不写日志", () => {
+    const before = state().events.length;
+    expect(state().reopenGate("voice")).toBe(false);
+    expect(state().events).toHaveLength(before);
+  });
+});

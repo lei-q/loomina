@@ -11,6 +11,7 @@ import {
   type StoryDraft,
 } from "@loomina/pipeline";
 import { TopBar } from "@/components/top-bar";
+import { StageGate } from "@/components/stage-gate";
 import { ModelPicker } from "@/components/model-picker";
 import { estimateDialogueMs } from "@/lib/dialogue";
 import { useModelCatalog, useModelChoice } from "@/lib/model-choice";
@@ -695,6 +696,7 @@ export function StoryScreen() {
           )}
         </div>
       </main>
+      <StageGate stage="story" />
     </div>
   );
 }

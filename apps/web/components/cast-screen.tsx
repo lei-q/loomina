@@ -1,12 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { SHEET_LABELS, type SheetView } from "@loomina/ir";
 import { fetchImagePrice } from "@/lib/image-price";
 import { Bust } from "@/components/bust";
 import { PropObject } from "@/components/prop-object";
 import { Scene } from "@/components/scene";
+import { StageGate } from "@/components/stage-gate";
 import { TopBar } from "@/components/top-bar";
 import {
   castTextHistory,
@@ -1297,7 +1297,6 @@ export function CastScreen() {
       : undefined;
   const removalNoun =
     pageRemoval?.kind === "character" ? "人物" : pageRemoval?.kind === "prop" ? "道具" : "地点";
-  const done = cast.lockedCount === cast.totalRequired;
   const progress = cast.totalRequired === 0 ? 0 : (cast.lockedCount / cast.totalRequired) * 100;
 
   return (
@@ -1655,31 +1654,7 @@ export function CastScreen() {
         </div>
       </main>
 
-      <footer className="flex shrink-0 items-center gap-4 border-t border-line px-4 py-3">
-        <span className="tnum text-[10px] text-muted">
-          {cast.lockedCount} / {cast.totalRequired}
-        </span>
-        <span className="text-[11.5px] text-muted-2">
-          {done ? "锚点锁住了，可以进分镜" : "定妆没锁完，分镜不开"}
-        </span>
-
-        <span className="ml-auto">
-          {done ? (
-            <Link
-              href="/"
-              className="flex items-center gap-1.5 rounded-token bg-text px-3 py-2 text-[12px] text-bg transition-opacity duration-[var(--dur)] hover:opacity-85"
-            >
-              进分镜
-              <span aria-hidden="true">→</span>
-            </Link>
-          ) : (
-            <span className="flex items-center gap-1.5 rounded-token border border-line px-3 py-2 text-[12px] text-muted-2">
-              进分镜
-              <span aria-hidden="true">→</span>
-            </span>
-          )}
-        </span>
-      </footer>
+      <StageGate stage="cast" />
     </div>
   );
 }

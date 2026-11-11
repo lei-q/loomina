@@ -6,6 +6,7 @@ import { ConsistencyPanel } from "@/components/consistency-panel";
 import { ReelBar } from "@/components/reel-bar";
 import { Stage } from "@/components/stage";
 import { StoryboardPanel } from "@/components/storyboard-panel";
+import { StageGate } from "@/components/stage-gate";
 import { TopBar } from "@/components/top-bar";
 import { toAnimaticView, toStageView } from "@/lib/read-model";
 import { fetchPrice } from "@/lib/image-price";
@@ -26,6 +27,7 @@ export function Workbench() {
   const instruct = useWorkbench((state) => state.instruct);
   const removeNote = useWorkbench((state) => state.removeNote);
   const setShotLock = useWorkbench((state) => state.setShotLock);
+  const setShotBudget = useWorkbench((state) => state.setShotBudget);
   const setShotPlan = useWorkbench((state) => state.setShotPlan);
   const toggleShotCharacter = useWorkbench((state) => state.toggleShotCharacter);
   const toggleShotProp = useWorkbench((state) => state.toggleShotProp);
@@ -175,6 +177,7 @@ export function Workbench() {
               moveShotCharacter(view.shots[view.current]!.id, characterId, delta)
             }
             onMoveProp={(propId, delta) => moveShotProp(view.shots[view.current]!.id, propId, delta)}
+            onSetBudget={(cny) => setShotBudget(view.shots[view.current]!.id, cny)}
           />
           <ReelBar
             view={view}
@@ -188,6 +191,7 @@ export function Workbench() {
           />
         </>
       )}
+      <StageGate stage="storyboard" />
       {previewOpen && view.shots.length > 0 && (
         <AnimaticOverlay view={animatic} onClose={() => setPreviewOpen(false)} />
       )}

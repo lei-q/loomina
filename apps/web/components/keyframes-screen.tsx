@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Scene } from "@/components/scene";
 import { LockIcon } from "@/components/icons";
+import { StageGate } from "@/components/stage-gate";
 import { TopBar } from "@/components/top-bar";
 import { fetchPrice } from "@/lib/image-price";
 import { shotLabel, toKeyframeView, filterKeyframeCells, keyframeTally, type KeyframeCell, type KeyframeFilter } from "@/lib/read-model";
@@ -394,6 +395,7 @@ export function KeyframesScreen() {
           )}
         </div>
       </main>
+      <StageGate stage="keyframes" />
     </div>
   );
 }
