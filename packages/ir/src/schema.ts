@@ -420,6 +420,24 @@ export const MusicCueSchema = z.object({
 });
 export type MusicCue = z.infer<typeof MusicCueSchema>;
 
+/**
+ * 手动断句覆盖（D2）。
+ *
+ * 自动断句是读模型派生出来的，不落 IR；作者手动改过某一句的字幕之后，
+ * 这一句的断句就以这里为准。按「整句」覆盖而不是按单条字幕 id 覆盖：
+ * 单条 id 是「第几段」，改了每行字数就会错位。
+ */
+export const SubtitleCueOverrideSchema = z.object({
+  text: z.string().min(1).max(200),
+  durationMs: z.number().int().positive(),
+});
+
+export const SubtitleOverrideSchema = z.object({
+  lineId: Id,
+  cues: z.array(SubtitleCueOverrideSchema).min(1).max(20),
+});
+export type SubtitleOverride = z.infer<typeof SubtitleOverrideSchema>;
+
 export const TimelineSchema = z.object({
   items: z.array(TimelineItemSchema).default([]),
   music: z.array(MusicCueSchema).default([]),
@@ -476,6 +494,8 @@ export const ProjectSchema = z.object({
   /** 阶段闸门的确认记录：一个阶段最多一条，重复确认按阶段覆盖（F8 / F9） */
   gates: z.array(GateRecordSchema).default([]),
   timeline: TimelineSchema.default({ items: [] }),
+  /** 手动断句覆盖（D2）：只有作者改过的句子才在这里，没改的走自动断句 */
+  subtitleOverrides: z.array(SubtitleOverrideSchema).default([]),
   publishPackages: z.array(PublishPackageSchema).default([]),
 });
 export type Project = z.infer<typeof ProjectSchema>;

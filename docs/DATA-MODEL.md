@@ -25,6 +25,7 @@ interface Project {
   assets: Asset[];          // 全项目资产（图/视频/音频/字体）
   approvals: Approval[];    // 阶段闸门：定妆 / 道具确认（ADR-0028）
   gates: GateRecord[];      // 阶段确认记录：七阶段各一条，带内容指纹（ADR-0100）
+  subtitleOverrides: SubtitleOverride[];  // 手改断句（D2 / ADR-0117），默认 []
   publishPackages: PublishPackage[];
 
   settings: ProjectSettings;
@@ -680,6 +681,12 @@ interface Timeline {
   music: MusicCue[];       // 配乐床（ADR-0099）；旧日志缺省为 []
 }
 
+// 手改断句（D2 / ADR-0117）：只有作者改过的句子才在这里
+interface SubtitleOverride {
+  lineId: ID;
+  cues: { text: string; durationMs: number }[];  // 1–20 条，text 非空
+}
+
 interface TimelineItem {
   id: string;              // 初剪固定 tl-<shotId>
   shotId: string;
@@ -718,6 +725,7 @@ interface MusicCue {
 - 画面：take 的 `kind === "video"` 资产 uri → take 的图片资产 uri → 镜头的首帧 / 尾帧 → 空。
 - 字幕与音轨：同一镜的 `dialogueIds` 从片段起点依次累加 `durationMs`；`audioAssetId` 指向的音频 uri 就是这一句的音轨。
 - 断句（ADR-0087）：每句台词按标点切小句、合并到每行不超过 `maxChars`（12 / 16 / 20，默认 16）个可见字，再按可见字数把 `durationMs` 分给各条 cue（每条至少 600ms，总和严格等于台词时长）。cue 是由读模型现算的，**不落 IR**：改字数档位只重算显示，不写事件。
+- 手改断句（D2 / ADR-0117）：作者改过的那一句以 `subtitleOverrides` 为准，没改过的仍走自动断句。覆盖按**整句**存，不按单条 cue 存——单条 cue 的 id 是「第几段」，改了每行字数就会错位。覆盖里的 `durationMs` 是相对权重，读模型按比例缩放到整句时长，舍入误差落在最后一条，所以时间总和永远等于 `line.durationMs`。改字数档位不影响已覆盖的句子。
 - 总数：全长 = 最晚片段终点；`missing` = 没进时间线的镜头数。
 
 > **落地情况（ADR-0102，2026-11-11）**：实际进 IR 的 `PublishPackage` 是精简的发布记录，只回答「什么时候、往哪个平台、发了哪一版成片」：

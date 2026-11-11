@@ -191,6 +191,7 @@ export function EditScreen() {
   const setTimelineTake = useWorkbench((state) => state.setTimelineTake);
   const removeTimelineItem = useWorkbench((state) => state.removeTimelineItem);
   const moveTimelineItem = useWorkbench((state) => state.moveTimelineItem);
+  const editSubtitles = useWorkbench((state) => state.editSubtitles);
   const addMusic = useWorkbench((state) => state.addMusic);
   const updateMusic = useWorkbench((state) => state.updateMusic);
   const removeMusic = useWorkbench((state) => state.removeMusic);
@@ -207,6 +208,9 @@ export function EditScreen() {
   // 删片段要两步：时间线上的一段背后是一整条 take（E1）
   const [deletingClip, setDeletingClip] = useState<string | null>(null);
   const [showSafe, setShowSafe] = useState(true);
+  /** 正在手改断句的是哪一句台词；undefined 表示没打开（D2） */
+  const [cueLineId, setCueLineId] = useState<string>();
+  const [cueDraft, setCueDraft] = useState<string[]>([]);
   const [styleId, setStyleId] = useState<SubtitleStyleId>("default");
   const [maxChars, setMaxChars] = useState<SubtitleChars>(DEFAULT_SUBTITLE_CHARS);
   const [title, setTitle] = useState(project.title);
@@ -366,6 +370,45 @@ export function EditScreen() {
   const restart = () => {
     setPlaying(false);
     seekTo(0);
+  };
+
+  const editingLine = useMemo(
+    () => view.clips.flatMap((clip) => clip.lines).find((line) => line.id === cueLineId),
+    [view.clips, cueLineId],
+  );
+
+  const openCueEditor = (lineId: string) => {
+    const line = view.clips.flatMap((clip) => clip.lines).find((item) => item.id === lineId);
+    if (!line) return;
+    setCueLineId(lineId);
+    setCueDraft(line.cues.map((cue) => cue.text));
+  };
+
+  /** 保存手改断句：时长按字数分，整句时长不变（D2） */
+  const saveCues = () => {
+    if (!editingLine) return;
+    const texts = cueDraft.map((text) => text.trim());
+    if (texts.some((text) => text.length === 0)) {
+      setNotice("每条字幕都要有字：空的那条并到上一行，或删掉。");
+      return;
+    }
+    const totalChars = texts.reduce((sum, text) => sum + text.length, 0);
+    const cues = texts.map((text) => ({
+      text,
+      durationMs: Math.max(1, Math.round((editingLine.durationMs * text.length) / Math.max(1, totalChars))),
+    }));
+    if (editSubtitles(editingLine.id, cues)) {
+      setCueLineId(undefined);
+      setNotice("字幕已按你改的断句：SRT、ASS、预览与渲染都跟着变。");
+    }
+  };
+
+  const restoreCues = () => {
+    if (!editingLine) return;
+    if (editSubtitles(editingLine.id, null)) {
+      setCueLineId(undefined);
+      setNotice("已恢复自动断句。");
+    }
   };
 
   const chooseMusic = async (file: File | undefined) => {
@@ -852,8 +895,11 @@ export function EditScreen() {
                       <button
                         key={cue.id}
                         type="button"
-                        onClick={() => seekTo(cue.startMs)}
-                        title={`${timecode(cue.startMs)} · ${cue.characterName}：${cue.text}`}
+                        onClick={() => {
+                          seekTo(cue.startMs);
+                          openCueEditor(cue.lineId);
+                        }}
+                        title={`${timecode(cue.startMs)} · ${cue.characterName}：${cue.text}${cue.manual ? "（手改过）" : ""} · 点开改断句`}
                         style={{
                           width: `${(cue.durationMs / Math.max(1, view.totalMs)) * 100}%`,
                           minWidth: cue.text.length > 0 ? 2 : 0,
@@ -866,7 +912,10 @@ export function EditScreen() {
                             : "bg-line/50 text-muted hover:bg-line-2",
                         )}
                       >
-                        <span className="truncate">{cue.text}</span>
+                        <span className="truncate">
+                          {cue.manual && <span className="mr-0.5 text-text">·</span>}
+                          {cue.text}
+                        </span>
                       </button>
                     ))}
                     {view.cues.length === 0 && (
@@ -876,8 +925,114 @@ export function EditScreen() {
                     )}
                   </div>
                   <p className="mt-1 text-[8.5px] leading-[1.6] text-muted-2">
-                    按标点断句，时间按字数分；改字数档位，断句会立刻重排。点一条字幕跳到那一句。
+                    按标点断句，时间按字数分；改字数档位，断句会立刻重排。点一条字幕跳到那一句，同时打开手改。
                   </p>
+
+                  {editingLine && (
+                    <div className="mt-2 rounded-token border border-line bg-surface/60 p-2">
+                      <div className="flex flex-wrap items-baseline justify-between gap-2">
+                        <span className="text-[10px] text-text">
+                          手改断句 · {editingLine.characterName}
+                          {editingLine.manual && (
+                            <span className="ml-1 text-[9px] text-muted-2">（已手改）</span>
+                          )}
+                        </span>
+                        <span className="tnum text-[9px] text-muted-2">
+                          整句 {fmtSec(editingLine.durationMs)}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[9px] leading-[1.6] text-muted-2">
+                        原句：{editingLine.text}
+                      </p>
+                      <div className="mt-1.5 flex flex-col gap-1">
+                        {cueDraft.map((text, index) => (
+                          <div key={index} className="flex items-center gap-1">
+                            <span className="tnum w-3 shrink-0 text-[9px] text-muted-2">
+                              {index + 1}
+                            </span>
+                            <input
+                              value={text}
+                              onChange={(event) =>
+                                setCueDraft((prev) =>
+                                  prev.map((item, at) => (at === index ? event.target.value : item)),
+                                )
+                              }
+                              maxLength={200}
+                              className="min-w-0 flex-1 rounded-token border border-line bg-transparent px-1.5 py-0.5 text-[10px] text-text focus:border-line-2 focus:outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setCueDraft((prev) => {
+                                  const cut = Math.max(1, Math.ceil(text.length / 2));
+                                  return [
+                                    ...prev.slice(0, index),
+                                    text.slice(0, cut).trim(),
+                                    text.slice(cut).trim(),
+                                    ...prev.slice(index + 1),
+                                  ];
+                                })
+                              }
+                              disabled={text.trim().length < 2}
+                              title="从中间拆成两条"
+                              className="shrink-0 rounded-token border border-line px-1 py-0.5 text-[9px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+                            >
+                              拆
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setCueDraft((prev) =>
+                                  prev.length <= 1
+                                    ? prev
+                                    : [
+                                        ...prev.slice(0, index - 1),
+                                        `${prev[index - 1] ?? ""}${text}`,
+                                        ...prev.slice(index + 1),
+                                      ],
+                                )
+                              }
+                              disabled={index === 0 || cueDraft.length <= 1}
+                              title="并到上一条"
+                              className="shrink-0 rounded-token border border-line px-1 py-0.5 text-[9px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+                            >
+                              并
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={saveCues}
+                          disabled={readOnly}
+                          className="rounded-token border border-line-2 bg-text/10 px-2 py-0.5 text-[9.5px] text-text transition-colors duration-[var(--dur)] hover:bg-text/20 disabled:opacity-40"
+                        >
+                          保存断句
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCueLineId(undefined)}
+                          className="rounded-token border border-line px-2 py-0.5 text-[9.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                        >
+                          不改了
+                        </button>
+                        {editingLine.manual && (
+                          <button
+                            type="button"
+                            onClick={restoreCues}
+                            disabled={readOnly}
+                            className="rounded-token border border-line px-2 py-0.5 text-[9.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+                          >
+                            恢复自动断句
+                          </button>
+                        )}
+                        <span className="text-[8.5px] text-muted-2">
+                          时长按字数分，整句总长不变
+                        </span>
+                      </div>
+                    </div>
+                  )}
 
                   {view.missing > 0 && (
                     <p className="mt-1 text-[9.5px] text-muted-2">

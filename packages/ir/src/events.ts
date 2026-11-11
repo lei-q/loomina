@@ -218,6 +218,18 @@ export type ProjectEvent =
       at: string;
       lineId: Id;
     }
+  | {
+      /**
+       * 手改一句的断句（D2）。
+       *
+       * `cues` 为 null 表示恢复自动断句。覆盖按整句存：自动断句是读模型派生的，
+       * 只改其中一条字幕会让其余几条的边界跟着漂。
+       */
+      type: "subtitle.updated";
+      at: string;
+      lineId: Id;
+      cues: { text: string; durationMs: number }[] | null;
+    }
   | { type: "take.added"; at: string; take: Take }
   | {
       /**
@@ -923,12 +935,38 @@ function applyEventCore(
       return {
         ...current,
         dialogue: current.dialogue.filter((item) => item.id !== event.lineId),
+        // 台词没了，它的手动断句也没地方落，一起摘掉（D2）
+        subtitleOverrides: current.subtitleOverrides.filter(
+          (override) => override.lineId !== event.lineId,
+        ),
         shots: current.shots.map((item) =>
           item.dialogueIds.includes(event.lineId)
             ? { ...item, dialogueIds: item.dialogueIds.filter((id) => id !== event.lineId) }
             : item,
         ),
       };
+    }
+
+    case "subtitle.updated": {
+      if (!current) throw new Error("subtitle.updated 之前必须有 project.created");
+      if (!current.dialogue.some((item) => item.id === event.lineId)) {
+        throw new Error(`subtitle.updated 指向不存在的台词: ${event.lineId}`);
+      }
+      const rest = current.subtitleOverrides.filter(
+        (override) => override.lineId !== event.lineId,
+      );
+      const next =
+        event.cues === null
+          ? rest
+          : [...rest, { lineId: event.lineId, cues: event.cues }];
+      if (event.cues !== null) {
+        const empty = event.cues.some((cue) => cue.text.trim().length === 0);
+        if (empty) throw new Error("subtitle.updated 的每条字幕都要有字");
+        if (event.cues.some((cue) => cue.durationMs <= 0)) {
+          throw new Error("subtitle.updated 的每条字幕都要有正时长");
+        }
+      }
+      return { ...current, subtitleOverrides: next };
     }
 
     case "take.updated": {

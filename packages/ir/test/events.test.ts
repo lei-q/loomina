@@ -2089,3 +2089,107 @@ describe("项目版本随事件递增（F1 / ADR-0113）", () => {
     expect(versions).toEqual([start, start + 1, start + 2, start + 3, start + 4]);
   });
 });
+
+describe("手改断句（D2）", () => {
+  it("按整句覆盖，重复写覆盖同一句而不是叠加", () => {
+    const project = load();
+    const lineId = project.dialogue[0]!.id;
+    const cues = [
+      { text: "前半句", durationMs: 800 },
+      { text: "后半句", durationMs: 1200 },
+    ];
+    const once = rebuild([
+      created(project),
+      { type: "subtitle.updated", at: AT, lineId, cues },
+    ]);
+    expect(once.subtitleOverrides).toEqual([{ lineId, cues }]);
+
+    const twice = rebuild([
+      created(project),
+      { type: "subtitle.updated", at: AT, lineId, cues },
+      {
+        type: "subtitle.updated",
+        at: AT,
+        lineId,
+        cues: [{ text: "整句", durationMs: 2000 }],
+      },
+    ]);
+    expect(twice.subtitleOverrides).toEqual([
+      { lineId, cues: [{ text: "整句", durationMs: 2000 }] },
+    ]);
+  });
+
+  it("cues 为 null 恢复自动断句", () => {
+    const project = load();
+    const lineId = project.dialogue[0]!.id;
+    const after = rebuild([
+      created(project),
+      {
+        type: "subtitle.updated",
+        at: AT,
+        lineId,
+        cues: [{ text: "改过", durationMs: 1000 }],
+      },
+      { type: "subtitle.updated", at: AT, lineId, cues: null },
+    ]);
+    expect(after.subtitleOverrides).toHaveLength(0);
+  });
+
+  it("空字或非正时长被拒绝", () => {
+    const project = load();
+    const lineId = project.dialogue[0]!.id;
+    expect(() =>
+      rebuild([
+        created(project),
+        {
+          type: "subtitle.updated",
+          at: AT,
+          lineId,
+          cues: [{ text: "   ", durationMs: 500 }],
+        },
+      ]),
+    ).toThrow(/要有字/);
+    expect(() =>
+      rebuild([
+        created(project),
+        {
+          type: "subtitle.updated",
+          at: AT,
+          lineId,
+          cues: [{ text: "有字", durationMs: 0 }],
+        },
+      ]),
+    ).toThrow(/正时长/);
+  });
+
+  it("指向不存在的台词被拒绝", () => {
+    const project = load();
+    expect(() =>
+      rebuild([
+        created(project),
+        {
+          type: "subtitle.updated",
+          at: AT,
+          lineId: "line-nope",
+          cues: [{ text: "有字", durationMs: 500 }],
+        },
+      ]),
+    ).toThrow(/不存在的台词/);
+  });
+
+  it("台词被删时它的手动断句一起摘掉", () => {
+    const project = load();
+    const lineId = project.dialogue[0]!.id;
+    const after = rebuild([
+      created(project),
+      {
+        type: "subtitle.updated",
+        at: AT,
+        lineId,
+        cues: [{ text: "改过", durationMs: 1000 }],
+      },
+      { type: "dialogue.removed", at: AT, lineId },
+    ]);
+    expect(after.subtitleOverrides).toHaveLength(0);
+  });
+});

@@ -1324,6 +1324,68 @@ describe("台词改写（ADR-0044）", () => {
   });
 });
 
+describe("手改断句（D2）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("写一条 subtitle.updated，可回放", () => {
+    const cues = [
+      { text: "你早就知道", durationMs: 1200 },
+      { text: "对吧", durationMs: 1400 },
+    ];
+    expect(state().editSubtitles("d-01", cues)).toBe(true);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "subtitle.updated",
+      lineId: "d-01",
+      cues,
+    });
+    expect(rebuild(state().events).subtitleOverrides).toEqual([{ lineId: "d-01", cues }]);
+  });
+
+  it("null 恢复自动断句；本来就没改过时不写事件", () => {
+    const snapshot = state().events.length;
+    expect(state().editSubtitles("d-01", null)).toBe(false);
+    expect(state().castError).toContain("本来就是自动断句");
+    expect(state().events).toHaveLength(snapshot);
+
+    state().editSubtitles("d-01", [{ text: "整句", durationMs: 2600 }]);
+    expect(state().editSubtitles("d-01", null)).toBe(true);
+    expect(state().project.subtitleOverrides).toHaveLength(0);
+  });
+
+  it("同样的内容不重复写事件", () => {
+    const cues = [{ text: "整句", durationMs: 2600 }];
+    state().editSubtitles("d-01", cues);
+    const snapshot = state().events.length;
+    expect(state().editSubtitles("d-01", [{ ...cues[0]! }])).toBe(false);
+    expect(state().castError).toContain("没改");
+    expect(state().events).toHaveLength(snapshot);
+  });
+
+  it("空字被拦下，不写事件", () => {
+    const snapshot = state().events.length;
+    expect(
+      state().editSubtitles("d-01", [
+        { text: "有字", durationMs: 1000 },
+        { text: "  ", durationMs: 1000 },
+      ]),
+    ).toBe(false);
+    expect(state().castError).toContain("都要有字");
+    expect(state().events).toHaveLength(snapshot);
+  });
+
+  it("不存在的台词与只读模式都不写事件", () => {
+    expect(state().editSubtitles("d-nope", [{ text: "字", durationMs: 100 }])).toBe(false);
+    const snapshot = state().events.length;
+    useWorkbench.setState({ readOnly: true });
+    expect(state().editSubtitles("d-01", [{ text: "字", durationMs: 100 }])).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+    useWorkbench.setState({ readOnly: false });
+  });
+});
+
 describe("台词增删（ADR-0045）", () => {
   beforeEach(() => {
     state().reset();

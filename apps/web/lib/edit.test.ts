@@ -108,6 +108,67 @@ describe("成片读模型（ADR-0086）", () => {
   });
 });
 
+describe("手改断句（D2）", () => {
+  function withOverride(
+    cues: { text: string; durationMs: number }[],
+  ) {
+    return ProjectSchema.parse({
+      ...sampleProject,
+      subtitleOverrides: [{ lineId: "d-01", cues }],
+    });
+  }
+
+  it("覆盖整句断句，时间按比例缩放到整句时长", () => {
+    const project = withOverride([
+      { text: "你早就知道", durationMs: 1000 },
+      { text: "对吧", durationMs: 1000 },
+    ]);
+    const view = toEditView(project, { maxChars: 6 });
+    const line = view.clips[0]!.lines[0]!;
+    expect(line.manual).toBe(true);
+    expect(line.cues.map((cue) => cue.text)).toEqual(["你早就知道", "对吧"]);
+    // 整句 2600ms，两条各占一半 → 1300 / 1300
+    expect(line.cues.map((cue) => cue.durationMs)).toEqual([1300, 1300]);
+    expect(line.cues[0]!.startMs).toBe(line.startMs);
+    expect(line.cues.at(-1)!.startMs + line.cues.at(-1)!.durationMs).toBe(
+      line.startMs + line.durationMs,
+    );
+    expect(view.cues).toHaveLength(2);
+    expect(view.cues.every((cue) => cue.manual)).toBe(true);
+  });
+
+  it("改字数档位不影响手改过的句子，只影响没改的", () => {
+    const project = ProjectSchema.parse({
+      ...sampleProject,
+      subtitleOverrides: [
+        { lineId: "d-01", cues: [{ text: "整句不拆", durationMs: 2600 }] },
+      ],
+    });
+    const wide = toEditView(project, { maxChars: 20 });
+    const narrow = toEditView(project, { maxChars: 6 });
+    expect(wide.clips[0]!.lines[0]!.cues.map((cue) => cue.text)).toEqual(["整句不拆"]);
+    expect(narrow.clips[0]!.lines[0]!.cues.map((cue) => cue.text)).toEqual(["整句不拆"]);
+  });
+
+  it("舍入误差落在最后一条上，总和永远等于整句时长", () => {
+    const project = withOverride([
+      { text: "一", durationMs: 1 },
+      { text: "二", durationMs: 1 },
+      { text: "三", durationMs: 1 },
+    ]);
+    const line = toEditView(project).clips[0]!.lines[0]!;
+    const sum = line.cues.reduce((total, cue) => total + cue.durationMs, 0);
+    expect(sum).toBe(line.durationMs);
+    expect(line.cues.at(-1)!.durationMs).toBeGreaterThanOrEqual(1);
+  });
+
+  it("没有覆盖时字幕不带 manual 标记", () => {
+    const line = toEditView(sampleProject, { maxChars: 6 }).clips[0]!.lines[0]!;
+    expect(line.manual).toBeUndefined();
+    expect(line.cues.every((cue) => cue.manual === undefined)).toBe(true);
+  });
+});
+
 describe("导出（E6 / D3 / G1）", () => {
   it("SRT 一句一条，起止按绝对时间", () => {
     const srt = buildSrt(toEditView(sampleProject));

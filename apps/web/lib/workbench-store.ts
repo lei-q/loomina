@@ -366,6 +366,11 @@ type WorkbenchState = {
   removeDialogue: (lineId: string) => boolean;
   /** 换说话人：写一条 `dialogue.speaker.updated`，文本与时长不动（ADR-0046） */
   changeSpeaker: (lineId: string, characterId: string) => boolean;
+  /**
+   * 手改一句的断句（D2）：`cues` 为 null 恢复自动断句。
+   * 按整句覆盖——自动断句是派生的，只改一条会让其余边界漂。
+   */
+  editSubtitles: (lineId: string, cues: { text: string; durationMs: number }[] | null) => boolean;
   /** 调整台词顺序：写一条 `shot.updated` 换 dialogueIds 的顺序（ADR-0047） */
   moveDialogue: (lineId: string, direction: "up" | "down") => boolean;
   /** 改这一镜的动作：写一条 `shot.updated { description }`，时长与台词不动（ADR-0049） */
@@ -2738,6 +2743,38 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       { get, set },
       { lineId, text, durationMs, unchanged: "这句已经是这一版了。" },
     ),
+  editSubtitles: (lineId, cues) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    if (!project.dialogue.some((line) => line.id === lineId)) return false;
+    const current = project.subtitleOverrides.find((item) => item.lineId === lineId);
+    const same =
+      cues === null
+        ? !current
+        : current !== undefined &&
+          current.cues.length === cues.length &&
+          current.cues.every(
+            (cue, index) =>
+              cue.text === cues[index]!.text && cue.durationMs === cues[index]!.durationMs,
+          );
+    if (same) {
+      set({ castError: cues === null ? "这句本来就是自动断句。" : "字幕没改。" });
+      return false;
+    }
+    if (cues !== null && cues.some((cue) => cue.text.trim().length === 0)) {
+      set({ castError: "每条字幕都要有字。" });
+      return false;
+    }
+    const at = stamp();
+    const event: ProjectEvent = { type: "subtitle.updated", at, lineId, cues };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
   editAction: (shotId, rawText) => {
     if (get().readOnly) return false;
     const text = rawText.replace(/\s+$/, "");

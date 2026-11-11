@@ -142,6 +142,8 @@ export type EditCue = {
   /** 绝对时间：从整条片子的 0 点算起 */
   startMs: number;
   durationMs: number;
+  /** 这一条是作者手改过的断句（D2），不是自动断出来的 */
+  manual?: boolean;
 };
 
 export type EditLine = {
@@ -156,6 +158,8 @@ export type EditLine = {
   audioUri?: string;
   /** 断句后的显示单元；时间加起来等于整句 */
   cues: EditCue[];
+  /** 这一句的断句被作者手改过（D2） */
+  manual?: boolean;
 };
 
 export type EditClip = {
@@ -222,6 +226,32 @@ export type EditView = {
 };
 
 /**
+ * 手改断句的时间分配（D2）。
+ *
+ * 覆盖里存的是「这几条字幕各占多久」，但台词本身的时长是事实：手改不能改掉
+ * 整句的时长，否则这一镜的时间线就对不上了。所以按比例缩放到整句时长，
+ * 最后一条吃掉舍入误差——加起来永远等于 line.durationMs。
+ */
+function fitCues(
+  cues: { durationMs: number }[],
+  totalMs: number,
+): { startMs: number; durationMs: number }[] {
+  const wanted = cues.reduce((sum, cue) => sum + cue.durationMs, 0);
+  const scale = wanted > 0 ? totalMs / wanted : 1;
+  const spans: { startMs: number; durationMs: number }[] = [];
+  let cursor = 0;
+  cues.forEach((cue, index) => {
+    const last = index === cues.length - 1;
+    const durationMs = last
+      ? totalMs - cursor
+      : Math.max(1, Math.round(cue.durationMs * scale));
+    spans.push({ startMs: cursor, durationMs });
+    cursor += durationMs;
+  });
+  return spans;
+}
+
+/**
  * 时间线 → 成片读模型。
  *
  * 时间线是事实，台词与音轨按片段起点换算成绝对时间；画面先看这一 take 的视频，
@@ -242,6 +272,9 @@ export function toEditView(
     project.characters.map((character) => [character.id, character]),
   );
   const sceneById = new Map(project.scenes.map((scene) => [scene.id, scene]));
+  const overrideByLine = new Map(
+    project.subtitleOverrides.map((override) => [override.lineId, override]),
+  );
 
   const clips: EditClip[] = [...project.timeline.items]
     .sort((a, b) => a.startMs - b.startMs)
@@ -269,23 +302,36 @@ export function toEditView(
           : undefined;
         const characterName =
           characterById.get(line.characterId)?.name ?? line.characterId;
-        const cues: EditCue[] = subtitleCues(line.text, line.durationMs, {
-          maxChars,
-        }).flatMap((cue, index) => {
-          const text = cue.text.trim();
-          if (!text) return [];
-          return [
-            {
-              id: `${line.id}-${index + 1}`,
+        const override = overrideByLine.get(line.id);
+        const spans = override ? fitCues(override.cues, line.durationMs) : [];
+        const cues: EditCue[] = override
+          ? override.cues.map((cue, index) => ({
+              id: `${line.id}-m${index + 1}`,
               lineId: line.id,
               shotId: item.shotId,
               characterName,
-              text,
-              startMs: startMs + cue.startMs,
-              durationMs: cue.durationMs,
-            },
-          ];
-        });
+              text: cue.text.trim(),
+              startMs: startMs + spans[index]!.startMs,
+              durationMs: spans[index]!.durationMs,
+              manual: true,
+            }))
+          : subtitleCues(line.text, line.durationMs, { maxChars }).flatMap(
+              (cue, index) => {
+                const text = cue.text.trim();
+                if (!text) return [];
+                return [
+                  {
+                    id: `${line.id}-${index + 1}`,
+                    lineId: line.id,
+                    shotId: item.shotId,
+                    characterName,
+                    text,
+                    startMs: startMs + cue.startMs,
+                    durationMs: cue.durationMs,
+                  },
+                ];
+              },
+            );
         return [
           {
             id: line.id,
@@ -296,6 +342,7 @@ export function toEditView(
             durationMs: line.durationMs,
             audioUri: voice?.uri,
             cues,
+            ...(override ? { manual: true } : {}),
           },
         ];
       });

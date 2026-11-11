@@ -158,6 +158,13 @@ export function describeEvent(before: Project, event: ProjectEvent): string {
       return `加一句台词（${before.characters.find((item) => item.id === event.line.characterId)?.name ?? "角色"}）`;
     case "dialogue.removed":
       return `删一句台词`;
+    case "subtitle.updated": {
+      const line = before.dialogue.find((item) => item.id === event.lineId);
+      const preview = line ? `「${line.text.slice(0, 12)}」` : "一句台词";
+      return event.cues === null
+        ? `恢复自动断句：${preview}`
+        : `手改断句：${preview}（${event.cues.length} 条）`;
+    }
     case "take.added":
       return `加一条 ${shotName(before, event.take.shotId)} 的 take`;
     case "take.updated": {

@@ -587,6 +587,7 @@ export function projectFromStoryDraft(
     approvals: [],
     gates: [],
     timeline: { items: [], music: [] },
+    subtitleOverrides: [],
     publishPackages: [],
   };
 
