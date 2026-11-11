@@ -402,7 +402,16 @@ export type PublishOptions = {
   platform?: PlatformId;
   /** 导出前预检证据（G8）；发布包里留一份，便于回溯 */
   compliance?: RenderCompliance;
+  /** 已经导出的成片（G1）；没渲染过就不写，别编一个假路径 */
+  video?: {
+    fileName: string;
+    bytes: number;
+    quality: "draft" | "final";
+    renderedAt: string;
+  };
 };
+
+export type PublishVideo = NonNullable<PublishOptions["video"]>;
 
 export type PublishPackage = {
   formatVersion: 1;
@@ -412,7 +421,8 @@ export type PublishPackage = {
   platformName: string;
   specVersion: string;
   platformChecks: PlatformCheck[];
-  video: null;
+  /** 成片文件信息；没渲染过就是 null，并写明为什么 */
+  video: PublishVideo | null;
   videoNote: string;
   cover?: string;
   title: string;
@@ -438,10 +448,11 @@ export type PublishPackage = {
 };
 
 /**
- * 发布包（G1）：标题、简介、话题、封面、字幕与 AI 标注，一起打包成一份 JSON。
+ * 发布包（G1）：标题、简介、话题、封面、字幕、成片信息与 AI 标注，一起打包成一份 JSON。
  *
- * 视频本身是 `null`：发布包是清单，不含二进制；成片 MP4 由成片页单独导出
- * （`/api/render`）。与其塞一条假路径，不如让「视频在哪」写清楚。
+ * 视频仍是引用而不是二进制：成片 MP4 由成片页单独导出（`/api/render`），
+ * 这里只记文件名、字节数、档位与渲染时间；没渲染过就写 `null` 并说明，
+ * 不塞假路径（ADR-0102）。
  */
 export function buildPublishPackage(
   view: EditView,
@@ -472,6 +483,8 @@ export function buildPublishPackage(
       }`,
     );
   }
+  const video = options.video ?? null;
+  if (!video) warnings.push("还没有导出过成片 MP4：发布包的视频位是空的");
 
   return {
     formatVersion: 1,
@@ -481,9 +494,10 @@ export function buildPublishPackage(
     platformName: spec.name,
     specVersion: PLATFORM_SPEC_VERSION,
     platformChecks: validation.checks,
-    video: null,
-    videoNote:
-      "发布包是清单，不含视频文件；成片 MP4 在成片页单独导出（本机 ffmpeg，1080×1920，带字幕与 AI 角标）。",
+    video,
+    videoNote: video
+      ? `${video.quality === "final" ? "定稿" : "草稿"}成片 ${video.fileName}（${(video.bytes / 1024 / 1024).toFixed(1)} MB）已在本机导出；发布包只记文件信息，不内嵌二进制。`
+      : "发布包是清单，不含视频文件；先在成片页导出一次 MP4（草稿或定稿），再回来打发布包，视频位会带上文件名、字节数与档位。",
     ...(cover ? { cover } : {}),
     title,
     description: options.description.trim(),

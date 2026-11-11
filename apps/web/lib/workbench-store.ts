@@ -18,6 +18,7 @@ import {
   type Project,
   type Prop,
   type ProjectEvent,
+  type PublishPackage,
   type Scene,
   type SheetView,
   type Shot,
@@ -145,6 +146,17 @@ type WorkbenchState = {
   setRetryLimit: (attempts: number) => void;
   /** 改超预算后的处置（H10）：block 阻断，keep 保留现有结果不再调用生成 */
   setOnBudgetExceed: (mode: "block" | "keep") => void;
+  /**
+   * 记一条发布记录（G1）：把平台、档位与成片文件信息追加进 `publishPackages`。
+   * 只记元数据，不存视频二进制。
+   */
+  recordPublish: (input: {
+    platform: string;
+    quality?: "draft" | "final";
+    fileName?: string;
+    bytes?: number;
+    videoAssetId?: string;
+  }) => boolean;
   /**
    * 确认一个阶段（F8 / F9）：按当前内容算签名，写一条 `gate.confirmed`。
    * 已确认的阶段再确认一次就是更新签名，不新增第二条记录。
@@ -771,6 +783,33 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       onBudgetExceed: mode,
     };
     set({ project: applyEvent(project, event), events: [...events, event] });
+  },
+
+  recordPublish: (input) => {
+    if (get().readOnly) return false;
+    const platform = input.platform.trim();
+    if (!platform) return false;
+    if (input.bytes !== undefined && (!Number.isInteger(input.bytes) || input.bytes < 0)) {
+      return false;
+    }
+    const { project, events } = get();
+    const recordedAt = new Date().toISOString();
+    // id 只要在这一份项目里唯一即可：时间 + 随机后缀，便于日志里认人
+    const id = `pub-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const pack: PublishPackage = {
+      id,
+      platform,
+      ...(input.quality ? { quality: input.quality } : {}),
+      ...(input.fileName ? { fileName: input.fileName } : {}),
+      ...(input.bytes !== undefined ? { bytes: input.bytes } : {}),
+      ...(input.videoAssetId ? { videoAssetId: input.videoAssetId } : {}),
+      recordedAt,
+      aiLabel: { explicit: true, implicit: true, standard: "AI生成" },
+    };
+
+    const event: ProjectEvent = { type: "publish.recorded", at: recordedAt, package: pack };
+    set({ project: applyEvent(project, event), events: [...events, event] });
+    return true;
   },
 
   confirmGate: (stage, note) => {

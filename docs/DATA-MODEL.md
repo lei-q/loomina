@@ -720,7 +720,24 @@ interface MusicCue {
 - 断句（ADR-0087）：每句台词按标点切小句、合并到每行不超过 `maxChars`（12 / 16 / 20，默认 16）个可见字，再按可见字数把 `durationMs` 分给各条 cue（每条至少 600ms，总和严格等于台词时长）。cue 是由读模型现算的，**不落 IR**：改字数档位只重算显示，不写事件。
 - 总数：全长 = 最晚片段终点；`missing` = 没进时间线的镜头数。
 
-**导出**（不写回 IR）：预览 HTML、OTIO、SRT、发布包 JSON 都是本地生成的文件。IR 里的 `PublishPackage` schema 仍在，尚没有写入它的事件；视频渲染未做，发布包的视频位为空。
+> **落地情况（ADR-0102，2026-11-11）**：实际进 IR 的 `PublishPackage` 是精简的发布记录，只回答「什么时候、往哪个平台、发了哪一版成片」：
+
+```ts
+interface PublishPackage {
+  id: ID;
+  platform: string;                 // 平台 id，如 douyin / youtube-shorts
+  videoAssetId?: ID;                // 只有存成资产时才写；当前渲染结果直接下载，留空
+  quality?: "draft" | "final";      // 这一包对应的成片档位（H13）
+  fileName?: string;                // 成片文件名与字节数，便于找回交付物
+  bytes?: number;                   // 非负整数
+  recordedAt?: string;              // 写入 IR 的时间
+  aiLabel?: AILabel;                // 必须 explicit + implicit，否则 applyEvent 拒绝
+}
+```
+
+写入只走 `publish.recorded { package }`：id 唯一、平台非空、AI 标识完整、字节数为非负整数；通过后追加，不覆盖旧记录。发布包下载 JSON 的完整内容（标题、简介、话题、字幕、`platformChecks`、`warnings`、`compliance`、`video`）仍只在本机文件里，不进事件日志。
+
+**导出**：预览 HTML、OTIO、SRT、发布包 JSON 都是本地生成的文件；只有发布包 JSON 会额外写一条 `publish.recorded`（ADR-0102）。视频渲染已由 E6 / H13 实现，发布包视频位在导出过成片后带文件名、字节数与档位。
 
 **导出前合规证据（ADR-0095）**：成片页先跑 `preflightProject`，得到四项检查、命中项与内容指纹；MP4 渲染清单与发布包 JSON 都带 `compliance: { ok, checkedAt, signature, reviewAcknowledged, findings }`。这是导出物的字段，不写回 IR：规则与确认状态不属于作品数据。
 

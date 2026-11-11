@@ -190,6 +190,7 @@ export function EditScreen() {
   const updateMusic = useWorkbench((state) => state.updateMusic);
   const removeMusic = useWorkbench((state) => state.removeMusic);
   const setBudget = useWorkbench((state) => state.setBudget);
+  const recordPublish = useWorkbench((state) => state.recordPublish);
 
   useEffect(() => {
     void hydrate();
@@ -209,6 +210,13 @@ export function EditScreen() {
   const [rendering, setRendering] = useState(false);
   const [renderStage, setRenderStage] = useState("");
   const [quality, setQuality] = useState<RenderQuality>("draft");
+  /** 最近一次成功导出的成片：发布包用它填视频位，不重置、不伪造 */
+  const [lastRender, setLastRender] = useState<{
+    fileName: string;
+    bytes: number;
+    quality: RenderQuality;
+    renderedAt: string;
+  }>();
   const [loudness, setLoudness] = useState<LoudnessReport>();
   const [musicFile, setMusicFile] = useState<{
     name: string;
@@ -438,6 +446,12 @@ export function EditScreen() {
       if (result.remoteSkipped > 0) notes.push(`${result.remoteSkipped} 个远端素材没下载`);
       setLoudness(result.loudness);
       if (result.loudness) notes.push(result.loudness.detail);
+      setLastRender({
+        fileName: result.fileName,
+        bytes: result.bytes,
+        quality,
+        renderedAt: new Date().toISOString(),
+      });
       setNotice(
         `${profile.label}成片已导出：${mb} MB · ${profile.width}×${profile.height} / ${profile.fps}fps · 带字幕与「AI 生成」角标${
           notes.length > 0 ? `。${notes.join("；")}` : ""
@@ -484,19 +498,27 @@ export function EditScreen() {
       description,
       topics: topics.split(/[,，\s]+/),
       style: styleId,
-      kind: "draft",
+      kind: lastRender?.quality ?? quality,
       platform,
       compliance: renderComplianceOf(report, acknowledged),
+      ...(lastRender ? { video: lastRender } : {}),
     });
     downloadFile(
       safeFileName(view.title, "发布包.json"),
       JSON.stringify(pack, null, 2),
       "application/json",
     );
+    const recorded = recordPublish({
+      platform,
+      quality: lastRender?.quality,
+      fileName: lastRender?.fileName,
+      bytes: lastRender?.bytes,
+    });
+    const tail = recorded ? "已记进项目的发布记录。" : "项目是只读的，这次没有记进发布记录。";
     setNotice(
       pack.warnings.length > 0
-        ? `发布包已导出。还有几件事没齐：${pack.warnings.join("；")}。`
-        : "发布包已导出：标题、简介、话题、封面、字幕与 AI 标注都在里面。",
+        ? `发布包已导出。${tail}还有几件事没齐：${pack.warnings.join("；")}。`
+        : `发布包已导出：标题、简介、话题、封面、字幕、成片信息与 AI 标注都在里面。${tail}`,
     );
   };
 
@@ -1398,6 +1420,12 @@ export function EditScreen() {
                       {renderStage || notice}
                     </p>
                   )}
+
+                  <p className="mt-2 text-[9.5px] leading-[1.7] text-muted-2">
+                    {lastRender
+                      ? `这一版成片：${lastRender.fileName} · ${(lastRender.bytes / 1024 / 1024).toFixed(1)} MB · ${RENDER_PROFILES[lastRender.quality].label}。打发布包会带上它，并记进项目发布记录（已有 ${project.publishPackages.length} 份）。`
+                      : `还没有导出过成片：先导出草稿或定稿 MP4，发布包的视频位才有内容。项目里已有 ${project.publishPackages.length} 份发布记录。`}
+                  </p>
 
                   <p className="mt-3 text-[9.5px] leading-[1.7] text-muted-2">
                     成片 MP4 由本机 ffmpeg 渲染：草稿 540×960 / 24fps 出处快、定稿 1080×1920 / 30fps 画质高，都带字幕与「AI 生成」角标。

@@ -964,6 +964,50 @@ describe("预算（ADR-0035）", () => {
   });
 });
 
+describe("发布记录（G1 / ADR-0102）", () => {
+  beforeEach(() => {
+    state().reset();
+  });
+
+  it("记发布记录写 publish.recorded，重放后还在", () => {
+    const ok = state().recordPublish({
+      platform: "douyin",
+      quality: "final",
+      fileName: "夜班-成片.mp4",
+      bytes: 1_048_576,
+    });
+
+    expect(ok).toBe(true);
+    expect(state().project.publishPackages).toHaveLength(1);
+    expect(state().project.publishPackages[0]).toMatchObject({
+      platform: "douyin",
+      quality: "final",
+      fileName: "夜班-成片.mp4",
+      bytes: 1_048_576,
+      aiLabel: { explicit: true, implicit: true },
+    });
+    expect(state().events.at(-1)?.type).toBe("publish.recorded");
+    expect(rebuild(state().events).publishPackages).toHaveLength(1);
+  });
+
+  it("没渲染过成片也能记：只带平台，不编文件名", () => {
+    expect(state().recordPublish({ platform: "generic" })).toBe(true);
+    const pack = state().project.publishPackages[0];
+    expect(pack?.platform).toBe("generic");
+    expect(pack?.fileName).toBeUndefined();
+    expect(pack?.bytes).toBeUndefined();
+    expect(pack?.quality).toBeUndefined();
+  });
+
+  it("平台为空或字节数不合法就不记", () => {
+    const before = state().events.length;
+    expect(state().recordPublish({ platform: "  " })).toBe(false);
+    expect(state().recordPublish({ platform: "douyin", bytes: -1 })).toBe(false);
+    expect(state().recordPublish({ platform: "douyin", bytes: 1.5 })).toBe(false);
+    expect(state().events).toHaveLength(before);
+  });
+});
+
 describe("本地事件日志（ADR-0034）", () => {
   type MemoryLog = EventLog & {
     records: ProjectEvent[];

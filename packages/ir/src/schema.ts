@@ -346,7 +346,15 @@ export type AILabel = z.infer<typeof AILabelSchema>;
 export const PublishPackageSchema = z.object({
   id: Id,
   platform: z.string().min(1),
-  videoAssetId: Id,
+  /** 成片资产；渲染结果没存成资产时留空，不编一个不存在的 id（ADR-0102） */
+  videoAssetId: Id.optional(),
+  /** 发布出去的档位（H13）：draft / final */
+  quality: z.enum(["draft", "final"]).optional(),
+  /** 成片文件名与字节数：便于回溯这一包对应哪个交付物 */
+  fileName: z.string().optional(),
+  bytes: z.number().int().nonnegative().optional(),
+  /** 这条发布记录写入 IR 的时间 */
+  recordedAt: z.string().optional(),
   aiLabel: AILabelSchema.optional(),
 });
 export type PublishPackage = z.infer<typeof PublishPackageSchema>;

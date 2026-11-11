@@ -197,13 +197,43 @@ describe("导出（E6 / D3 / G1）", () => {
       standard: "AI生成",
     });
     expect(pack.video).toBeNull();
-    expect(pack.videoNote).toContain("成片 MP4 在成片页单独导出");
+    expect(pack.videoNote).toContain("先在成片页导出一次 MP4");
     expect(pack.subtitles).toContain("你早就知道，对吧。");
     expect(pack.warnings).toEqual([
       "2 个片段没有画面",
       "整条片子还没有配音",
       "剧本里还有 10 镜没进时间线",
+      "还没有导出过成片 MP4：发布包的视频位是空的",
     ]);
+  });
+
+  it("导出过成片后，发布包带上文件名、字节数与档位（G1）", () => {
+    const pack = buildPublishPackage(toEditView(sampleProject), {
+      title: "夜班",
+      description: "",
+      topics: [],
+      style: "default",
+      kind: "final",
+      platform: "generic",
+      video: {
+        fileName: "夜班-成片.mp4",
+        bytes: 8_388_608,
+        quality: "final",
+        renderedAt: "2026-11-11T10:00:00+08:00",
+      },
+    });
+    expect(pack.kind).toBe("final");
+    expect(pack.video).toEqual({
+      fileName: "夜班-成片.mp4",
+      bytes: 8_388_608,
+      quality: "final",
+      renderedAt: "2026-11-11T10:00:00+08:00",
+    });
+    expect(pack.videoNote).toContain("定稿成片 夜班-成片.mp4");
+    expect(pack.videoNote).toContain("8.0 MB");
+    expect(
+      pack.warnings.some((warning) => warning.includes("还没有导出过成片")),
+    ).toBe(false);
   });
 
   it("发布包默认按抖音规格校验，短于下限时如实警告", () => {

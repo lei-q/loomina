@@ -3136,3 +3136,30 @@ F8 / F9 / H10 / A9 完成后，原队列 8 项全部收口。按 `FEATURES.md` �
 
 **下一步**
 进入第 2 项 G1：发布包带上成片视频位，并写回 IR 的 `publishPackages`。
+
+---
+
+## 第一百零八次 · 2026-11-11 · G1 发布包收尾
+
+**背景**
+按第一百零六次的顺序进入第 2 项：发布包不再把视频位写死为 `null`，并且真正写回 IR 的 `publishPackages`。
+
+**结论**
+- 发布包 JSON 的 `video` 槽改为「有就写、没有就 null」：`{ fileName, bytes, quality, renderedAt }`，取自最近一次成功导出的成片；没导出过时 `videoNote` 说明先导 MP4，`warnings` 加一条「还没有导出过成片 MP4」。
+- 发布包的 `kind` 跟随实际成片档位，而不是当前下拉选中的档位，避免包与文件对不上。
+- IR 的 `PublishPackageSchema` 放宽：`videoAssetId` 改为可选（当前渲染结果直接下载，没有落成资产），新增 `quality / fileName / bytes / recordedAt`。
+- 新增事件 `publish.recorded { package }`：追加不覆盖，applyEvent 校验 id 唯一、平台非空、AI 标识完整、字节数为非负整数；同时登记进 `EVENT_TYPES`。
+- 成片页「导出发布包」下载 JSON 后写一条事件；只读标签页说明「这次没有记进发布记录」。导出区下方显示最近成片信息与发布记录份数。
+- 明确不做：MP4 二进制不进事件日志、不在每次 MP4 导出时自动记发布、不删改发布记录。
+
+**验证**
+- 浏览器实测：切到 YouTube Shorts（5.5 秒不触及时长下限）并勾选素材授权后，导出草稿成片（540×960，111951 字节），再打发布包；提示「发布包已导出。已记进项目的发布记录」，下方变成「已有 1 份」。
+- IndexedDB 回读：`publish.recorded` 带 `{ platform: "youtube-shorts", quality: "draft", fileName: "夜班-成片.mp4", bytes: 111951, aiLabel: { explicit: true, implicit: true } }`。
+- 测试 610 全过（IR 132 + gateway 28 + pipeline 30 + web 420），`pnpm typecheck` 与 `next build` 全过。
+
+**边界**
+- `videoAssetId` 暂为空，发布记录与成片文件只靠文件名关联；等 H3 对象存储落地再补资产引用。
+- 发布历史只存元数据，完整 JSON 仍只在本机下载目录。
+
+**下一步**
+进入第 3 项：B16 表演节拍 + B17 视线与调度 + B15 场景模板。

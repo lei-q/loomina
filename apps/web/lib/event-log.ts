@@ -72,6 +72,7 @@ const EVENT_TYPES: Record<ProjectEvent["type"], true> = {
   "timeline.music.updated": true,
   "gate.confirmed": true,
   "gate.reopened": true,
+  "publish.recorded": true,
 };
 
 /**

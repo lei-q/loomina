@@ -10,6 +10,7 @@ import type {
   MusicCue,
   Project,
   Prop,
+  PublishPackage,
   Scene,
   Shot,
   Take,
@@ -277,6 +278,15 @@ export type ProjectEvent =
       type: "timeline.music.updated";
       at: string;
       music: MusicCue[];
+    }
+  | {
+      /**
+       * 记一条发布记录（G1）：把这一包对应的平台、档位与成片文件信息写进 IR。
+       * 只追加，不覆盖——同一版改过标题再发一次，是两条发布历史（ADR-0102）。
+       */
+      type: "publish.recorded";
+      at: string;
+      package: PublishPackage;
     };
 
 /** 时间线项的公共校验：id 唯一、时长合法、take 属于该镜、片段不重叠 */
@@ -957,6 +967,30 @@ export function applyEvent(
           ...current.timeline,
           music: event.music.map((cue) => ({ ...cue })),
         },
+      };
+    }
+
+    case "publish.recorded": {
+      if (!current) throw new Error("publish.recorded 之前必须有 project.created");
+      const pack = event.package;
+      if (!pack?.id) throw new Error("publish.recorded 缺少发布包 id");
+      if (current.publishPackages.some((item) => item.id === pack.id)) {
+        throw new Error(`publish.recorded 有重复的发布包 id: ${pack.id}`);
+      }
+      if (!pack.platform?.trim()) throw new Error("publish.recorded 缺少平台");
+      // AI 标识不能靠界面补：缺了就直接拒绝，别让 IR 处于无效状态（准则 P16）
+      if (!pack.aiLabel?.explicit || !pack.aiLabel?.implicit) {
+        throw new Error(`发布包 ${pack.id} 缺少显式 / 隐式 AI 标识`);
+      }
+      if (
+        pack.bytes !== undefined &&
+        (!Number.isInteger(pack.bytes) || pack.bytes < 0)
+      ) {
+        throw new Error(`发布包 ${pack.id} 的字节数不合法: ${pack.bytes}`);
+      }
+      return {
+        ...current,
+        publishPackages: [...current.publishPackages, clone(pack)],
       };
     }
   }

@@ -242,6 +242,58 @@ describe("Project.budgetCny", () => {
   });
 });
 
+describe("publish.recorded（G1 / ADR-0102）", () => {
+  const pack = {
+    id: "pub-1",
+    platform: "douyin",
+    quality: "final" as const,
+    fileName: "夜班-成片.mp4",
+    bytes: 8_388_608,
+    recordedAt: AT,
+    aiLabel: { explicit: true, implicit: true, standard: "AI生成" },
+  };
+
+  it("记一条发布记录，回放后还在", () => {
+    const base = load();
+    const next = applyEvent(base, { type: "publish.recorded", at: AT, package: pack });
+    expect(next.publishPackages).toHaveLength(base.publishPackages.length + 1);
+    expect(next.publishPackages.at(-1)).toMatchObject({
+      id: "pub-1",
+      platform: "douyin",
+      quality: "final",
+      bytes: 8_388_608,
+    });
+  });
+
+  it("同一 id 不能记两次，缺 AI 标识直接拒绝", () => {
+    const once = applyEvent(load(), { type: "publish.recorded", at: AT, package: pack });
+    expect(() =>
+      applyEvent(once, { type: "publish.recorded", at: AT, package: pack }),
+    ).toThrow();
+    expect(() =>
+      applyEvent(load(), {
+        type: "publish.recorded",
+        at: AT,
+        package: { ...pack, aiLabel: undefined },
+      }),
+    ).toThrow();
+  });
+
+  it("没渲染过成片也可以只有平台与 AI 标识", () => {
+    const next = applyEvent(load(), {
+      type: "publish.recorded",
+      at: AT,
+      package: {
+        id: "pub-2",
+        platform: "generic",
+        aiLabel: { explicit: true, implicit: true, standard: "AI生成" },
+      },
+    });
+    expect(next.publishPackages.at(-1)?.fileName).toBeUndefined();
+    expect(next.publishPackages.at(-1)?.videoAssetId).toBeUndefined();
+  });
+});
+
 describe("Project.maxAttemptsPerShot / onBudgetExceed（H10）", () => {
   it("老快照没有这两个字段时取默认值：最多试 3 次、超预算阻断", () => {
     const parsed = ProjectSchema.parse({
