@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { ConfigError, TreecloudError } from "@loomina/gateway";
 import { StoryDraftError } from "@loomina/pipeline";
+import { recordHealthEvent } from "@/lib/health-events";
 import { generateStory, storyInfo } from "@/lib/story";
 
 /**
@@ -42,7 +43,14 @@ export async function POST(request: Request) {
   const modelId = typeof body.modelId === "string" ? body.modelId : undefined;
 
   try {
-    return NextResponse.json(await generateStory({ idea, source, genre, beatSheet }, modelId));
+    const result = await generateStory({ idea, source, genre, beatSheet }, modelId);
+    void recordHealthEvent({
+      at: new Date().toISOString(),
+      modality: "text",
+      ...(modelId ? { modelId } : {}),
+      ok: true,
+    });
+    return NextResponse.json(result);
   } catch (error) {
     const message =
       error instanceof TreecloudError ||
@@ -65,6 +73,23 @@ export async function POST(request: Request) {
               ? 400
               : 502
             : 400;
+    // 400 是这次请求本身的参数问题（空输入），不算供应商的账
+    if (status !== 400) {
+      void recordHealthEvent({
+        at: new Date().toISOString(),
+        modality: "text",
+        ...(modelId ? { modelId } : {}),
+        ok: false,
+        code:
+          error instanceof TreecloudError
+            ? error.code
+            : error instanceof StoryDraftError
+              ? "story_draft"
+              : error instanceof ConfigError
+                ? "config"
+                : "unknown",
+      });
+    }
     return NextResponse.json({ error: message }, { status });
   }
 }

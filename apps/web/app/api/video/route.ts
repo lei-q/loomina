@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { ConfigError } from "@loomina/gateway";
 import { VideoGenerationError, generateShotVideo } from "@/lib/generate-video";
+import { recordHealthEvent } from "@/lib/health-events";
 import { PromptBlockedError } from "@/lib/moderation";
 import { parseShotMaterial } from "@/lib/request-shape";
 
@@ -45,13 +46,20 @@ export async function POST(request: Request) {
   const rawDuration = typeof body.durationMs === "number" ? body.durationMs : 3000;
   const durationMs = Math.min(8000, Math.max(1000, Math.round(rawDuration)));
 
+  const modelId = typeof body.modelId === "string" ? body.modelId : undefined;
   try {
-    return NextResponse.json(
-      await generateShotVideo(
-        { shot, firstFrame, durationMs },
-        typeof body.modelId === "string" ? body.modelId : undefined,
-      ),
+    const result = await generateShotVideo(
+      { shot, firstFrame, durationMs },
+      modelId,
     );
+    // 健康检查（H11）：只记成没成，不记提示词
+    void recordHealthEvent({
+      at: new Date().toISOString(),
+      modality: "video",
+      ...(modelId ? { modelId } : {}),
+      ok: true,
+    });
+    return NextResponse.json(result);
   } catch (error) {
     // 适配器已经做过 <redacted>；这里只补一句人话 + 原始原因
     const message =
@@ -62,17 +70,28 @@ export async function POST(request: Request) {
         : error instanceof ConfigError
           ? 500
           : 502;
+    const code =
+      error instanceof PromptBlockedError
+        ? "prompt_blocked"
+        : error instanceof VideoGenerationError
+          ? error.code
+          : error instanceof ConfigError
+            ? "config"
+            : "unknown";
+    // 400 是这次请求本身的参数（比如提示词被审核拦下），不算供应商的账
+    if (status !== 400) {
+      void recordHealthEvent({
+        at: new Date().toISOString(),
+        modality: "video",
+        ...(modelId ? { modelId } : {}),
+        ok: false,
+        code,
+      });
+    }
     return NextResponse.json(
       {
         error: message,
-        code:
-          error instanceof PromptBlockedError
-            ? "prompt_blocked"
-            : error instanceof VideoGenerationError
-              ? error.code
-              : error instanceof ConfigError
-                ? "config"
-                : "unknown",
+        code,
         moderation:
           error instanceof PromptBlockedError ? error.moderation : undefined,
         // 只有「确定没在跑」的失败才让客户端自动重交（B6）

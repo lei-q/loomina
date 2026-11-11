@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { ConfigError, TreecloudError } from "@loomina/gateway";
 import { speakLine, voiceInfo } from "@/lib/generate-voice";
+import { recordHealthEvent } from "@/lib/health-events";
 
 /**
  * 出声（ADR-0085）。
@@ -50,9 +51,14 @@ export async function POST(request: Request) {
   const modelId = typeof body.modelId === "string" ? body.modelId : undefined;
 
   try {
-    return NextResponse.json(
-      await speakLine({ text, ...(voice ? { voice } : {}), modelId }),
-    );
+    const result = await speakLine({ text, ...(voice ? { voice } : {}), modelId });
+    void recordHealthEvent({
+      at: new Date().toISOString(),
+      modality: "tts",
+      ...(modelId ? { modelId } : {}),
+      ok: true,
+    });
+    return NextResponse.json(result);
   } catch (error) {
     const message =
       error instanceof TreecloudError || error instanceof ConfigError
@@ -66,6 +72,18 @@ export async function POST(request: Request) {
       (error instanceof TreecloudError && error.code === "tts_not_configured")
         ? 500
         : 502;
+    void recordHealthEvent({
+      at: new Date().toISOString(),
+      modality: "tts",
+      ...(modelId ? { modelId } : {}),
+      ok: false,
+      code:
+        error instanceof TreecloudError
+          ? error.code
+          : error instanceof ConfigError
+            ? "config"
+            : "unknown",
+    });
     return NextResponse.json({ error: message }, { status });
   }
 }

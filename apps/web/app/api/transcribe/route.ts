@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { ConfigError, TreecloudError } from "@loomina/gateway";
+import { recordHealthEvent } from "@/lib/health-events";
 import { transcribeInfo, transcribeLine } from "@/lib/transcribe-line";
 
 /**
@@ -40,7 +41,14 @@ export async function POST(request: Request) {
 
   const modelId = typeof body.modelId === "string" ? body.modelId : undefined;
   try {
-    return NextResponse.json(await transcribeLine({ uri, modelId }));
+    const result = await transcribeLine({ uri, modelId });
+    void recordHealthEvent({
+      at: new Date().toISOString(),
+      modality: "asr",
+      ...(modelId ? { modelId } : {}),
+      ok: true,
+    });
+    return NextResponse.json(result);
   } catch (error) {
     const message =
       error instanceof TreecloudError || error instanceof ConfigError
@@ -59,6 +67,21 @@ export async function POST(request: Request) {
             ? 400
             : 502
           : 400;
+    // 400 是这次请求本身的参数问题（空音轨），不算供应商的账
+    if (status !== 400) {
+      void recordHealthEvent({
+        at: new Date().toISOString(),
+        modality: "asr",
+        ...(modelId ? { modelId } : {}),
+        ok: false,
+        code:
+          error instanceof TreecloudError
+            ? error.code
+            : error instanceof ConfigError
+              ? "config"
+              : "unknown",
+      });
+    }
     return NextResponse.json({ error: message }, { status });
   }
 }

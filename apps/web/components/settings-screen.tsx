@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { HealthPanel } from "@/components/health-panel";
 import { Logomark } from "@/components/icons";
 import {
   MODALITIES,
@@ -807,6 +808,8 @@ export function SettingsScreen() {
           {error && <p className="mt-2 text-[10px] leading-5 text-pick">{error}</p>}
           {notice && <p className="mt-2 text-[10px] leading-5 text-muted">{notice}</p>}
         </section>
+
+        <HealthPanel />
 
         <section className="mt-9 border-t border-line pt-5">
           <div className="flex flex-wrap items-baseline justify-between gap-3">

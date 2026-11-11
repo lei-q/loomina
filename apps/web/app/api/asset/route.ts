@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { ConfigError, TreecloudError } from "@loomina/gateway";
 import { SHEET_ANGLES, type SheetView } from "@loomina/ir";
 import { generateCastImage, type CastImageRequest } from "@/lib/generate-image";
+import { recordHealthEvent } from "@/lib/health-events";
 import { PromptBlockedError } from "@/lib/moderation";
 import { name, parseShotMaterial, text } from "@/lib/request-shape";
 
@@ -89,13 +90,16 @@ export async function POST(request: Request) {
   const parsed = parse(body);
   if (typeof parsed === "string") return bad(parsed);
 
+  const modelId = typeof body?.modelId === "string" ? body.modelId : undefined;
   try {
-    return NextResponse.json(
-      await generateCastImage(
-        parsed,
-        typeof body?.modelId === "string" ? body.modelId : undefined,
-      ),
-    );
+    const result = await generateCastImage(parsed, modelId);
+    void recordHealthEvent({
+      at: new Date().toISOString(),
+      modality: "image",
+      ...(modelId ? { modelId } : {}),
+      ok: true,
+    });
+    return NextResponse.json(result);
   } catch (error) {
     // 错误信息里不含密钥（适配器已做 <redacted>）；只回一句人话 + 原始原因
     const message =
@@ -111,6 +115,21 @@ export async function POST(request: Request) {
         : error instanceof ConfigError
           ? 500
           : 502;
+    // 400 是这次请求本身的参数问题，不算供应商的账
+    if (status !== 400) {
+      void recordHealthEvent({
+        at: new Date().toISOString(),
+        modality: "image",
+        ...(modelId ? { modelId } : {}),
+        ok: false,
+        code:
+          error instanceof TreecloudError
+            ? error.code
+            : error instanceof ConfigError
+              ? "config"
+              : "unknown",
+      });
+    }
     return NextResponse.json(
       {
         error: message,
