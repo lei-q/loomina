@@ -7,6 +7,7 @@ import { PerformancePanel } from "@/components/performance-panel";
 import { ReelBar } from "@/components/reel-bar";
 import { Stage } from "@/components/stage";
 import { StoryboardPanel } from "@/components/storyboard-panel";
+import { TimelineStrip } from "@/components/timeline-strip";
 import { StageGate } from "@/components/stage-gate";
 import { TopBar } from "@/components/top-bar";
 import { toAnimaticView, toStageView } from "@/lib/read-model";
@@ -44,6 +45,7 @@ export function Workbench() {
   const videoCnyPerSecond = useWorkbench((state) => state.videoCnyPerSecond);
   const setVideoPrice = useWorkbench((state) => state.setVideoPrice);
   const generateVideo = useWorkbench((state) => state.generateVideo);
+  const mode = useWorkbench((state) => state.mode);
   const attachVideo = useWorkbench((state) => state.attachVideo);
 
   useEffect(() => {
@@ -208,6 +210,8 @@ export function Workbench() {
             onRedo={() => void generateVideo(view.shots[view.current]!.id)}
             videoCnyPerSecond={videoCnyPerSecond}
           />
+          {/* 自由工作台：分镜、预览、时间线同屏（F8） */}
+          {mode === "free" && <TimelineStrip />}
         </>
       )}
       <StageGate stage="storyboard" />

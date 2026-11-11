@@ -56,6 +56,33 @@ import {
 import { getModelChoice } from "@/lib/model-choice";
 import { sampleProject } from "@/lib/sample-project";
 import { stageMetaOf, stageSignature } from "@/lib/stage-flow";
+import {
+  stageLockOf,
+  stageLockViolation,
+  type StageLock,
+  type WorkbenchMode,
+} from "@/lib/stage-lock";
+
+/** 工作台模式存在这里：跨页面、跨刷新都记得（F8） */
+const MODE_KEY = "loomina.mode";
+
+function storedMode(): WorkbenchMode {
+  if (typeof window === "undefined") return "guided";
+  try {
+    return window.localStorage.getItem(MODE_KEY) === "free" ? "free" : "guided";
+  } catch {
+    return "guided";
+  }
+}
+
+function persistMode(mode: WorkbenchMode): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(MODE_KEY, mode);
+  } catch {
+    // 隐私模式写不进就不记：这次切换照常生效
+  }
+}
 
 export type Decision = "approved" | "rejected";
 
@@ -115,6 +142,10 @@ type WorkbenchState = {
   castError?: string;
   /** 历史抽屉的一句话：刚撤销了什么 / 回滚到了哪一步（F2 / ADR-0109） */
   historyNotice?: string;
+  /** 阶段式 / 自由工作台（F8）：存在 localStorage，跨页面生效 */
+  mode: WorkbenchMode;
+  /** 刚刚被阶段硬锁拦下的那句话（F8）：写一次就弹一次 */
+  lockedNotice?: string;
   /** 本地写入失败（配额、隐私模式）：不能让用户以为已经存住了 */
   storageError?: string;
   /** 另一个标签页在编辑：这里只读，改了也存不下 */
@@ -189,6 +220,10 @@ type WorkbenchState = {
   confirmGate: (stage: GateStage, note?: string) => boolean;
   /** 回退阶段确认：写一条 `gate.reopened`，删除这一阶段的记录 */
   reopenGate: (stage: GateStage) => boolean;
+  /** 切工作台模式（F8）：阶段式会锁住已确认阶段，自由工作台全部展开 */
+  setMode: (mode: WorkbenchMode) => void;
+  /** 收起「已确认，先回退再改」那条提示 */
+  dismissLockNotice: () => void;
   /** 从本地日志恢复；已经恢复过就什么都不做 */
   hydrate: () => Promise<void>;
   select: (shotId: string) => void;
@@ -507,6 +542,23 @@ type Store = {
 };
 
 /**
+ * 阶段硬锁（F8）的第二道闸：花钱 / 调接口之前先问一句。
+ *
+ * 写状态的闸口能拦住「改了没生效」，但生成是先请求、后落事件——
+ * 等快照写回才拦就白花了钱。所以每个会花钱的动作开头先过这里。
+ */
+function lockedStage(
+  { get, set }: Store,
+  stage: GateStage,
+): boolean {
+  const { project, mode } = get();
+  const lock = stageLockOf(project, stage, mode);
+  if (!lock) return false;
+  set({ lockedNotice: lock.message });
+  return true;
+}
+
+/**
  * 出一张图，落一条 `asset.updated`。
  *
  * 失败写一句人话并返回 false：批量生成据此停下，不把后面的也浪费掉。
@@ -809,11 +861,53 @@ function commitDialogue(
   return true;
 }
 
-export const useWorkbench = create<WorkbenchState>()((set, get) => ({
+/** 这次写入是「在日志末尾接一段」吗？加载 / 重来会整体换掉日志，不算编辑 */
+function appendOnly(before: ProjectEvent[], after: ProjectEvent[]): boolean {
+  if (after.length <= before.length) return false;
+  for (let index = 0; index < before.length; index += 1) {
+    if (after[index] !== before[index]) return false;
+  }
+  return true;
+}
+
+export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
+  /**
+   * 阶段硬锁（F8）的唯一闸口：所有写项目的改动都从这里过。
+   * 只拦「在日志末尾接事件」的编辑；加载、重来、回滚不动。
+   */
+  const set: typeof rawSet = ((partial: unknown, replace?: unknown) => {
+    const state = get();
+    const next = (
+      typeof partial === "function"
+        ? (partial as (current: WorkbenchState) => unknown)(state)
+        : partial
+    ) as Partial<WorkbenchState> | null;
+    if (next && typeof next === "object") {
+      const events = next.events;
+      const project = next.project;
+      if (events && project && appendOnly(state.events, events)) {
+        const lock = stageLockViolation(
+          state.project,
+          project,
+          events.slice(state.events.length),
+          state.mode,
+        );
+        if (lock) {
+          (rawSet as (value: Partial<WorkbenchState>) => void)({ lockedNotice: lock.message });
+          return;
+        }
+      }
+    }
+    (rawSet as (value: unknown, replace?: unknown) => void)(partial, replace);
+  }) as typeof rawSet;
+
+  return ({
+
   project: sampleProject,
   events: initialEvents,
   currentShotId: initialShotId,
   jobs: {},
+  mode: storedMode(),
 
   hydrate: async () => {
     if (hydrated) return;
@@ -987,8 +1081,18 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       at: stamp(),
       stage,
     };
-    set({ project: applyEvent(project, event), events: [...events, event] });
+    // 回退就是「解锁」：被拦下的那条提示也跟着收起来
+    set({ project: applyEvent(project, event), events: [...events, event], lockedNotice: undefined });
     return true;
+  },
+
+  setMode: (mode) => {
+    persistMode(mode);
+    set({ mode, lockedNotice: undefined });
+  },
+
+  dismissLockNotice: () => {
+    set({ lockedNotice: undefined });
   },
 
   select: (shotId) => {
@@ -1535,6 +1639,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   generateSheet: async (characterId) => {
     if (get().readOnly) return;
+    if (lockedStage({ get, set }, "cast")) return;
     const { project } = get();
     const character = project.characters.find((item) => item.id === characterId);
     if (!character) return;
@@ -1573,6 +1678,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   generateMaster: async (locationId) => {
     if (get().readOnly) return;
+    if (lockedStage({ get, set }, "cast")) return;
     const { project } = get();
     const location = project.locations.find((item) => item.id === locationId);
     if (!location) return;
@@ -1600,6 +1706,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   generateKeyframe: async (shotId, frame = "first") => {
     if (get().readOnly) return false;
+    if (lockedStage({ get, set }, "keyframes")) return false;
     const { project } = get();
     const shot = project.shots.find((item) => item.id === shotId);
     if (!shot) return false;
@@ -1643,6 +1750,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   generateVideo: async (shotId) => {
     if (get().readOnly) return false;
+    if (lockedStage({ get, set }, "keyframes")) return false;
     const { project } = get();
     const shot = project.shots.find((item) => item.id === shotId);
     if (!shot) return false;
@@ -1811,6 +1919,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   attachVideo: (shotId, rawUri) => {
     if (get().readOnly) return false;
+    if (lockedStage({ get, set }, "keyframes")) return false;
     const { project, events } = get();
     const shot = project.shots.find((item) => item.id === shotId);
     if (!shot) {
@@ -1905,6 +2014,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   generateVoice: async (lineId) => {
     if (get().readOnly) return false;
+    if (lockedStage({ get, set }, "voice")) return false;
     const { project } = get();
     const line = project.dialogue.find((item) => item.id === lineId);
     if (!line) return false;
@@ -1995,6 +2105,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   attachVoice: (lineId, rawUri) => {
     if (get().readOnly) return false;
+    if (lockedStage({ get, set }, "voice")) return false;
     const { project, events } = get();
     const line = project.dialogue.find((item) => item.id === lineId);
     if (!line) {
@@ -2107,6 +2218,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       set({ castError: "另一个标签页正在编辑：这里只读。" });
       return false;
     }
+    if (lockedStage({ get, set }, "voice")) return false;
     const { project } = get();
     const line = project.dialogue.find((item) => item.id === lineId);
     if (!line) return false;
@@ -3932,9 +4044,11 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       lastSwap: undefined,
       asrResult: undefined,
       editError: undefined,
+      lockedNotice: undefined,
     });
   },
-}));
+  });
+});
 
 /**
  * 事件日志同步到本地（ADR-0034）。

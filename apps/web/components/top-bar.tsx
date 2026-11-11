@@ -34,6 +34,19 @@ const STAGE_MODELS: Partial<Record<StageName, Modality[]>> = {
   声音: ["tts", "asr"],
 };
 
+/** 每个阶段用得上的工具（F8）：阶段式只露这些，自由工作台全开 */
+type StageTool = "ledger" | "budget" | "export" | "preview" | "check" | "performance" | "consistency";
+
+const STAGE_TOOLS: Record<StageName, StageTool[]> = {
+  故事: [],
+  剧本: ["export"],
+  定妆: ["ledger", "budget"],
+  分镜: ["ledger", "budget", "export", "preview", "check", "performance", "consistency"],
+  关键帧: ["ledger", "budget", "preview"],
+  声音: ["ledger", "budget", "preview"],
+  成片: ["ledger", "budget", "export"],
+};
+
 export type TopBarProps = {
   title: string;
   version: number;
@@ -106,6 +119,12 @@ export function TopBar({
   const undo = useWorkbench((state) => state.undo);
   const setRetryLimit = useWorkbench((state) => state.setRetryLimit);
   const setOnBudgetExceed = useWorkbench((state) => state.setOnBudgetExceed);
+  const mode = useWorkbench((state) => state.mode);
+  const setMode = useWorkbench((state) => state.setMode);
+  const lockedNotice = useWorkbench((state) => state.lockedNotice);
+  const dismissLockNotice = useWorkbench((state) => state.dismissLockNotice);
+  // 阶段式只露这一阶段的工具；自由工作台全部展开（F8）
+  const shows = (tool: StageTool) => mode === "free" || STAGE_TOOLS[stage].includes(tool);
   // 撤销一步是哪一步：按钮 title 与历史抽屉用同一份判断（F2 / ADR-0109）
   const step = useMemo(() => nextUndo(events, buildHistory(events)), [events]);
 
@@ -147,6 +166,11 @@ export function TopBar({
         <span className="text-[13px] tracking-[.08em] text-text">{title}</span>
         <span className="tnum text-[9px] text-muted-2">v{version}</span>
         <span className="tnum rounded-token border border-line px-1.5 py-px text-[8.5px] text-muted-2">示例</span>
+        {mode === "free" && (
+          <span className="tnum rounded-token border border-line-2 px-1.5 py-px text-[8.5px] text-muted">
+            自由工作台
+          </span>
+        )}
       </div>
 
       <nav aria-label="阶段" className="tnum hidden items-center gap-2.5 text-[10px] text-muted md:flex">
@@ -163,18 +187,20 @@ export function TopBar({
             <span key={item.name} className="flex items-center gap-2.5">
               {i > 0 && <span className="text-line-2">·</span>}
               <span className="flex items-center gap-1.5">
-                <span
-                  aria-hidden="true"
-                  title={gateTitle}
-                  className={cn(
-                    "block h-[4px] w-[4px] shrink-0 rounded-full",
-                    gate?.gate === "confirmed"
-                      ? "bg-text"
-                      : gate?.gate === "stale"
-                        ? "bg-pick"
-                        : "border border-line-2",
-                  )}
-                />
+                {mode === "guided" && (
+                  <span
+                    aria-hidden="true"
+                    title={gateTitle}
+                    className={cn(
+                      "block h-[4px] w-[4px] shrink-0 rounded-full",
+                      gate?.gate === "confirmed"
+                        ? "bg-text"
+                        : gate?.gate === "stale"
+                          ? "bg-pick"
+                          : "border border-line-2",
+                    )}
+                  />
+                )}
                 <Link
                   href={item.href}
                   aria-current={active ? "page" : undefined}
@@ -192,7 +218,7 @@ export function TopBar({
       </nav>
 
       {/* 阶段式默认路径：一条「下一步」把人领到还没确认的那一阶段（F8） */}
-      {nextStage && (
+      {mode === "guided" && nextStage && (
         <Link
           href={nextStage.href}
           className="tnum hidden items-center gap-1.5 border-l border-line pl-6 text-[10px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text xl:flex"
@@ -210,20 +236,34 @@ export function TopBar({
             ))}
           </div>
         )}
+        <button
+          type="button"
+          onClick={() => setMode(mode === "guided" ? "free" : "guided")}
+          title={
+            mode === "guided"
+              ? "切到自由工作台：收起阶段闸门，全部工具展开，已确认的阶段也不再锁编辑"
+              : "切回阶段式：按七阶段走，已确认的阶段会锁住编辑"
+          }
+          className="text-[10px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
+        >
+          {mode === "guided" ? "自由工作台" : "回到阶段式"}
+        </button>
         <Link
           href="/settings"
           className="text-[10px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
         >
           设置
         </Link>
-        <button
-          type="button"
-          onClick={() => setLedgerOpen(true)}
-          title="按阶段与按镜看钱花在哪：不花钱"
-          className="text-[10px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
-        >
-          记账
-        </button>
+        {shows("ledger") && (
+          <button
+            type="button"
+            onClick={() => setLedgerOpen(true)}
+            title="按阶段与按镜看钱花在哪：不花钱"
+            className="text-[10px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
+          >
+            记账
+          </button>
+        )}
         <button
           type="button"
           onClick={() => void undo()}
@@ -263,7 +303,7 @@ export function TopBar({
             未保存
           </span>
         )}
-        {spentCny !== undefined && (
+        {shows("budget") && spentCny !== undefined && (
           <details className="relative">
             <summary
               className={cn(
@@ -408,7 +448,7 @@ export function TopBar({
             </div>
           </details>
         )}
-        {onConsistency && (
+        {shows("consistency") && onConsistency && (
           <button
             type="button"
             onClick={onConsistency}
@@ -421,7 +461,7 @@ export function TopBar({
             )}
           </button>
         )}
-        {onPerformance && (
+        {shows("performance") && onPerformance && (
           <button
             type="button"
             onClick={onPerformance}
@@ -434,7 +474,7 @@ export function TopBar({
             )}
           </button>
         )}
-        {onCheck && (
+        {shows("check") && onCheck && (
           <button
             type="button"
             onClick={onCheck}
@@ -447,7 +487,7 @@ export function TopBar({
             )}
           </button>
         )}
-        {onPreview && (
+        {shows("preview") && onPreview && (
           <button
             type="button"
             onClick={onPreview}
@@ -458,17 +498,36 @@ export function TopBar({
             预演
           </button>
         )}
-        <button
-          type="button"
-          onClick={onExport}
-          disabled={!onExport}
-          title={onExport ? exportLabel ?? "导出当前页" : "这一页还不能导出"}
-          className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-45"
-        >
-          <ExportIcon className="h-3.5 w-3.5" />
-          导出
-        </button>
+        {shows("export") && (
+          <button
+            type="button"
+            onClick={onExport}
+            disabled={!onExport}
+            title={onExport ? exportLabel ?? "导出当前页" : "这一页还不能导出"}
+            className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            <ExportIcon className="h-3.5 w-3.5" />
+            导出
+          </button>
+        )}
       </div>
+      {/* 阶段硬锁（F8）：被拦下的那一次写在底部，不弹窗、不打断 */}
+      {lockedNotice && (
+        <div
+          role="status"
+          className="fixed bottom-6 left-1/2 z-50 flex w-[min(560px,calc(100vw-32px))] -translate-x-1/2 items-center gap-3 rounded-token border border-pick/60 bg-surface px-3 py-2 text-[10.5px] shadow-lg"
+        >
+          <span className="shrink-0 text-pick">阶段已确认</span>
+          <span className="min-w-0 flex-1 leading-[1.6] text-muted">{lockedNotice}</span>
+          <button
+            type="button"
+            onClick={dismissLockNotice}
+            className="shrink-0 rounded-token border border-line px-2 py-0.5 text-[9.5px] text-muted-2 transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            知道了
+          </button>
+        </div>
+      )}
       <SpendLedger
         project={project}
         open={ledgerOpen}

@@ -19,10 +19,16 @@ export function StageGate({ stage }: { stage: StageKey }) {
   const readOnly = useWorkbench((state) => state.readOnly);
   const confirmGate = useWorkbench((state) => state.confirmGate);
   const reopenGate = useWorkbench((state) => state.reopenGate);
+  const mode = useWorkbench((state) => state.mode);
   const router = useRouter();
   const [open, setOpen] = useState(false);
 
   const stageState = useMemo(() => stageStateOf(project, stage), [project, stage]);
+
+  // 自由工作台把闸门收起来：全部展开时不该再有一条底栏提醒走到哪（F8）
+  if (mode === "free") return null;
+
+  const locked = stageState.gate === "confirmed";
 
   const statusLabel =
     stageState.gate === "confirmed"
@@ -72,6 +78,7 @@ export function StageGate({ stage }: { stage: StageKey }) {
               {stageState.note ? ` ·「${stageState.note}」` : ""}
             </span>
           )}
+          {locked && <span className="text-muted-2"> · 改内容要先回退本阶段</span>}
         </p>
 
         <div className="ml-auto flex shrink-0 items-center gap-2">

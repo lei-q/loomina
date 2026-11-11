@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 import { setEventLog, type EventLog } from "./event-log";
 import { claimWriter, releaseWriter } from "./writer-lock";
 import { toScriptView, toStageView } from "./read-model";
+import { stageStateOf } from "./stage-flow";
 import { resetPersistenceForTests, useWorkbench } from "./workbench-store";
 
 const state = () => useWorkbench.getState();
@@ -3517,5 +3518,82 @@ describe("多步撤销与历史回滚（F2 / ADR-0109）", () => {
     expect(state().undo()).toBe(false);
     expect(state().restoreTo(1)).toBe(false);
     expect(state().events).toHaveLength(before);
+  });
+});
+
+describe("自由工作台与阶段硬锁（F8）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ mode: "guided", lockedNotice: undefined, readOnly: false });
+  });
+
+  it("确认分镜后再改分镜：写入被拦下，提示先回退本阶段", () => {
+    expect(state().confirmGate("storyboard")).toBe(true);
+    const before = state().events.length;
+
+    state().setShotPlan("s-03", { beat: "setup" });
+
+    expect(state().events).toHaveLength(before);
+    expect(state().project.shots.find((shot) => shot.id === "s-03")?.beat).toBeUndefined();
+    expect(state().lockedNotice).toContain("分镜");
+    expect(state().lockedNotice).toContain("回退本阶段");
+  });
+
+  it("回退本阶段之后就能改，拦下的提示也收起", () => {
+    state().confirmGate("storyboard");
+    state().setShotPlan("s-03", { beat: "setup" });
+    expect(state().lockedNotice).toContain("分镜");
+
+    expect(state().reopenGate("storyboard")).toBe(true);
+    expect(state().lockedNotice).toBeUndefined();
+
+    state().setShotPlan("s-03", { beat: "setup" });
+
+    expect(state().project.shots.find((shot) => shot.id === "s-03")?.beat).toBe("setup");
+  });
+
+  it("自由工作台不锁：改得进去，闸门转「内容改过」", () => {
+    state().confirmGate("storyboard");
+    state().setMode("free");
+    const before = state().events.length;
+
+    state().setShotPlan("s-03", { beat: "setup" });
+
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().project.shots.find((shot) => shot.id === "s-03")?.beat).toBe("setup");
+    expect(stageStateOf(state().project, "storyboard").gate).toBe("stale");
+  });
+
+  it("花图钱之前就拦：确认关键帧后一次请求都不发", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        calls.push(String(url));
+        return new Response("{}", { status: 200 });
+      }),
+    );
+    state().confirmGate("keyframes");
+    const before = state().events.length;
+
+    const ok = await state().generateKeyframe("s-03");
+
+    expect(ok).toBe(false);
+    expect(calls).toHaveLength(0);
+    expect(state().events).toHaveLength(before);
+    expect(state().lockedNotice).toContain("关键帧");
+    vi.unstubAllGlobals();
+  });
+
+  it("切回阶段式后，自由工作台里改过的阶段已经过期，不锁", () => {
+    state().confirmGate("storyboard");
+    state().setMode("free");
+    state().setShotPlan("s-03", { beat: "setup" });
+    state().setMode("guided");
+
+    state().setShotPlan("s-03", { purpose: "information" });
+
+    expect(state().project.shots.find((shot) => shot.id === "s-03")?.purpose).toBe("information");
+    expect(state().lockedNotice).toBeUndefined();
   });
 });
