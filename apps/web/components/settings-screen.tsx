@@ -13,6 +13,7 @@ import {
   type VideoApiName,
 } from "@/lib/config-types";
 import { fetchModelConfig, invalidateModelConfig } from "@/lib/model-choice";
+import { useWorkbench } from "@/lib/workbench-store";
 import type { CapabilityResponse, ModelCapabilityView } from "@/lib/capabilities";
 import type { ProbeReportView } from "@/lib/probes";
 import { cn } from "@/lib/utils";
@@ -153,6 +154,10 @@ const inputClass =
 const selectClass = `${inputClass} appearance-none`;
 
 export function SettingsScreen() {
+  const reset = useWorkbench((state) => state.reset);
+  const hydrate = useWorkbench((state) => state.hydrate);
+  const readOnly = useWorkbench((state) => state.readOnly);
+  const eventCount = useWorkbench((state) => state.events.length);
   const [providers, setProviders] = useState<ProviderDraft[]>([]);
   const [models, setModels] = useState<ModelDraft[]>([]);
   const [defaults, setDefaults] = useState<Partial<Record<Modality, string>>>({});
@@ -207,9 +212,11 @@ export function SettingsScreen() {
   }, []);
 
   useEffect(() => {
+    // 这一页也要读本地项目：重置要覆盖的是真实日志，不是内存里的示例
+    void hydrate();
     void load();
     void loadCapability();
-  }, [load, loadCapability]);
+  }, [hydrate, load, loadCapability]);
 
   const providerIds = useMemo(() => new Set(providers.map((item) => item.id)), [providers]);
   const providerName = useCallback(
@@ -882,6 +889,12 @@ export function SettingsScreen() {
           )}
         </section>
 
+        <LocalProjectSection
+          eventCount={eventCount}
+          readOnly={Boolean(readOnly)}
+          onReset={reset}
+        />
+
         <section className="mt-8 border-t border-line pt-4 text-[9.5px] leading-[1.8] text-muted-2">
           <p>
             页面里怎么切换：每个阶段顶栏的下拉只作用于当前浏览器，不选就用该模态的默认。
@@ -1036,4 +1049,81 @@ function probeOutcome(report: ProbeReportView): string {
 
 function modelIdValid(model: ModelDraft): boolean {
   return Boolean(model.providerId && model.model.trim());
+}
+
+/**
+ * 本地项目（H18）：说清这份项目存在哪、怎么重来。
+ *
+ * 重置走 store 的 `reset`：内存回到示例项目，订阅器把整份日志覆盖写回 IndexedDB。
+ * 两步确认——这一步删的是作者的全部编辑，不该一点就中。
+ */
+function LocalProjectSection({
+  eventCount,
+  readOnly,
+  onReset,
+}: {
+  eventCount: number;
+  readOnly: boolean;
+  onReset: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [done, setDone] = useState(false);
+
+  return (
+    <section className="mt-9 border-t border-line pt-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-[12px] tracking-[.04em]">本地项目</h2>
+          <span className="tnum text-[9px] text-muted-2">H18</span>
+        </div>
+        <span className="tnum text-[9.5px] text-muted-2">{eventCount} 条事件</span>
+      </div>
+      <p className="mt-1 max-w-[640px] text-[9.5px] leading-[1.7] text-muted-2">
+        项目就是这条事件日志，存在这个浏览器的 IndexedDB 里。清浏览器数据、换浏览器或换设备都会看不到它；
+        云端对象存储还没接（F4 / H3），所以这里没有「同步」。
+      </p>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {done ? (
+          <span className="text-[10px] text-muted">
+            已重置：回到示例项目「夜班」。刚才的项目已经从本地库里整份换掉，撤销也找不回来。
+          </span>
+        ) : confirming ? (
+          <>
+            <span className="text-[10px] leading-[1.6] text-pick">
+              重置会把整条日志整份换成示例项目，{eventCount} 条事件一起消失，撤销也找不回来。确定？
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                onReset();
+                setConfirming(false);
+                setDone(true);
+              }}
+              className="rounded-token border border-pick px-2.5 py-1 text-[10px] text-pick transition-colors duration-[var(--dur)] hover:bg-pick/10"
+            >
+              确认重置
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirming(false)}
+              className="rounded-token border border-line px-2.5 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+            >
+              算了
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            disabled={readOnly}
+            title={readOnly ? "另一个标签页在编辑：这一页只读" : "回到示例项目"}
+            className="rounded-token border border-line px-2.5 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+          >
+            重置为示例项目
+          </button>
+        )}
+      </div>
+    </section>
+  );
 }

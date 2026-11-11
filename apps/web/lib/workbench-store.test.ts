@@ -1120,6 +1120,46 @@ describe("发布记录（G1 / ADR-0102）", () => {
   });
 });
 
+describe("重置为示例项目（H18）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("清掉所有编辑，只留引导事件", () => {
+    state().setBudget(120);
+    state().editStory({ logline: "改过的 logline" });
+    expect(state().events.length).toBeGreaterThan(1);
+
+    state().reset();
+
+    expect(state().events).toHaveLength(1);
+    expect(state().events[0]?.type).toBe("project.created");
+    expect(state().project.story.logline).not.toBe("改过的 logline");
+    expect(state().project.budgetCny).toBe(60);
+    expect(state().castError).toBeUndefined();
+  });
+
+  it("只读标签页不能重置", () => {
+    state().setBudget(120);
+    const snapshot = state().events.length;
+    useWorkbench.setState({ readOnly: true });
+
+    state().reset();
+
+    expect(state().events).toHaveLength(snapshot);
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("重置后能继续写，回放等于内存", () => {
+    state().setBudget(120);
+    state().reset();
+    state().setBudget(90);
+    expect(state().project.budgetCny).toBe(90);
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+});
+
 describe("本地事件日志（ADR-0034）", () => {
   type MemoryLog = EventLog & {
     records: ProjectEvent[];

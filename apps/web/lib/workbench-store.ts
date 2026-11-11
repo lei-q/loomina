@@ -4300,6 +4300,8 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
   },
 
   reset: () => {
+    // 只读标签页不能把别人的项目覆盖掉（H18）
+    if (get().readOnly) return;
     const project = applyEvent(null, initialEvents[0]!);
     set({
       project,
