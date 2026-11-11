@@ -29,4 +29,11 @@ describe("ProjectSchema", () => {
     bad.shots[0]!.shotSize = "super-wide";
     expect(() => ProjectSchema.parse(bad)).toThrow();
   });
+
+  it("旧项目没有 story 时补一份空的 Story Bible（ADR-0088）", () => {
+    const project = ProjectSchema.parse(clone(minimalJson));
+    expect(project.story.logline).toBe("");
+    expect(project.story.arcs).toEqual([]);
+    expect(project.story.hooks.opening).toBe("");
+  });
 });

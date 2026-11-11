@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { clone } from "../src/clone";
 import { validateProject } from "../src/invariants";
-import { ProjectSchema, type Project } from "../src/schema";
+import {
+  ProjectSchema,
+  StoryArcSchema,
+  StoryRelationshipSchema,
+  type Project,
+} from "../src/schema";
 import minimalJson from "../../../examples/minimal.json";
 
 function load(): Project {
@@ -101,12 +106,30 @@ describe("validateProject", () => {
     expect(codes(project)).toContain("APPROVAL_LOCKED_ASSET");
   });
 
-  it("发布包缺少隐式 AI 标识", () => {
+  it("人物弧光引用不存在的角色", () => {
     const project = load();
-    project.publishPackages[0]!.aiLabel = {
-      explicit: true,
-      implicit: false,
-    };
-    expect(codes(project)).toContain("PUBLISH_AI_LABEL");
+    project.story.arcs.push(StoryArcSchema.parse({ characterId: "c-ghost" }));
+    expect(codes(project)).toContain("REF_STORY_CHARACTER");
+  });
+
+  it("同一个人物不能有多条弧光", () => {
+    const project = load();
+    const characterId = project.characters[0]!.id;
+    project.story.arcs.push(
+      StoryArcSchema.parse({ characterId }),
+      StoryArcSchema.parse({ characterId }),
+    );
+    expect(codes(project)).toContain("STORY_ARC_UNIQUE");
+  });
+
+  it("关系张力引用不存在的角色", () => {
+    const project = load();
+    project.story.relationships.push(
+      StoryRelationshipSchema.parse({
+        fromCharacterId: project.characters[0]!.id,
+        toCharacterId: "c-ghost",
+      }),
+    );
+    expect(codes(project)).toContain("REF_STORY_CHARACTER");
   });
 });

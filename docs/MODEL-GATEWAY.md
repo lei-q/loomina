@@ -1,7 +1,7 @@
 # 模型网关：中转站实况与适配策略
 
 > 本文件记录**实测**得到的供应商契约，不是推测。
-> 最后一次实测：2026-11-10（`GET /v1/models`、`GET /v1/model/info`、`POST /v1/images/generations`、`POST /v1/images/edits`、`POST /v1/chat/completions`）。
+> 最后一次实测：2026-11-11（`GET /v1/models`、`GET /v1/model/info`、`POST /v1/images/generations`、`POST /v1/images/edits`、`POST /v1/chat/completions`）。
 > 供应商换版本时，先改这里，再改代码（[`../packages/gateway/src/treecloud.ts`](../packages/gateway/src/treecloud.ts)）。
 
 ## 一、结论先行
@@ -43,6 +43,20 @@ POST /v1/images/generations
 - **慢**：实测一次请求挂到 300s 才被上游判 `deadline_exceeded`。必须自己设超时（默认 120s）。
 - **不接受参考图**：请求体只有 `model / prompt / size / n`，没有实测过可用的 `images/edits` 或主体参考字段。`ImageInput.referenceAssetIds` 只进契约与溯源，**不要塞进没验证过的字段**（ADR-0029）。图片接口接通前，资产锚点只作用于提示词与验收基线，不作用于像素。
 - 见过 `503 image_response_invalid`——上游返回体无法解析，不是我们的参数错。
+
+### 文本（chat）
+
+```
+POST /v1/chat/completions
+{ "model": "claude-sonnet-5-5", "messages": [{ "role": "system", "content": "..." }],
+  "max_tokens": 16000 }
+```
+
+- OpenAI 兼容。`message.content` 可能是字符串，也可能是 `[{ type: "text", text }]` 数组，适配器两种都收。
+- **不要传 `temperature`**：代理上的 Anthropic 模型只接受默认值，传 `0.7` 直接 400。`TreecloudChatAdapter` 只发 `model / messages / max_tokens`（ADR-0088）。
+- 模型可用性会变：2026-11-11 实测 `qwen3.8-max` 回 `403 No authorized bound group supports this request`，`claude-sonnet-5-5` / `claude-haiku-5-5` 正常。模型取 `TEXT_MODEL`，没配抛 `text_not_configured`（500），一个请求都不发。
+- **必须给足 `max_tokens`**：故事草稿一份约 8–11k completion tokens，其中一半是推理；8000 会在 JSON 中途被截断。故事入口用 16000、超时 150s，实测 60–90 秒返回。
+- 空内容回 502 `chat_empty_text`，不把空字符串当成功。`usage` 里的 prompt / completion tokens 进 provenance，便于之后按 token 记账。
 
 ### 视频
 

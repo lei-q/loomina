@@ -79,8 +79,27 @@ export interface TranscriptionOutput {
   costCny?: number;
 }
 
-export type VideoJobStatus = "queued" | "running" | "succeeded" | "failed";
+export type ChatRole = "system" | "user" | "assistant";
 
+export interface ChatMessage {
+  role: ChatRole;
+  content: string;
+}
+
+export interface ChatInput {
+  messages: ChatMessage[];
+  /** 输出上限；不填用供应商默认值 */
+  maxTokens?: number;
+}
+
+export interface ChatOutput {
+  text: string;
+  provenance: Provenance;
+  /** 供应商给了 usage 才带；没有就不猜 */
+  usage?: { promptTokens?: number; completionTokens?: number };
+}
+
+export type VideoJobStatus = "queued" | "running" | "succeeded" | "failed";
 /** 视频接口路由家族。不同中转站路由不同，见 docs/MODEL-GATEWAY.md。 */
 export type VideoApiName = "treecloud" | "litellm";
 
@@ -113,4 +132,9 @@ export interface SpeechAdapter {
 
 export interface TranscriptionAdapter {
   transcribe(input: TranscriptionInput): Promise<TranscriptionOutput>;
+}
+
+/** 文本模型（ADR-0088）：故事入口只依赖这一条可替换的接口。 */
+export interface ChatAdapter {
+  complete(input: ChatInput): Promise<ChatOutput>;
 }

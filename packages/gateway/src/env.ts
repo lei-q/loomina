@@ -47,6 +47,8 @@ export interface TreecloudEnv {
   ttsVoice?: string;
   /** ASR 模型（ADR-0087）：没配就不识别，界面如实说 */
   asrModel?: string;
+  /** 文本模型（ADR-0088）：故事入口用；没配就不生成，界面如实说 */
+  textModel?: string;
 }
 
 export class ConfigError extends Error {}
@@ -77,6 +79,7 @@ export function treecloudEnvFrom(env: EnvMap): TreecloudEnv {
     ttsModel: env.TTS_MODEL || undefined,
     ttsVoice: env.TTS_VOICE || undefined,
     asrModel: env.ASR_MODEL || undefined,
+    textModel: env.TEXT_MODEL || undefined,
   };
   return config;
 }
@@ -93,5 +96,6 @@ export function describeEnv(config: TreecloudEnv): string {
     `imageSize=${config.imageSize ?? "(默认)"}`,
     `ttsModel=${config.ttsModel ?? "(没配)"}`,
     `asrModel=${config.asrModel ?? "(没配)"}`,
+    `textModel=${config.textModel ?? "(没配)"}`,
   ].join(" ");
 }

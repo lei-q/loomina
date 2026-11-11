@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ConfigError,
+  TreecloudChatAdapter,
   TreecloudClient,
   TreecloudError,
   TreecloudImageAdapter,
@@ -445,6 +446,85 @@ describe("错误与状态映射", () => {
     expect(videoUriOf({ data: [{ url: "c" }] })).toBe("c");
     expect(videoUriOf({ outputs: [{ video_url: "d" }] })).toBe("d");
     expect(videoUriOf({ foo: 1 })).toBeUndefined();
+  });
+});
+
+describe("文本模型适配器（ADR-0088）", () => {
+  it("按 OpenAI 兼容格式发 messages，不传 temperature", async () => {
+    const { client, calls } = clientWith(
+      [
+        () =>
+          jsonResponse({
+            model: "claude-sonnet-5-5",
+            choices: [{ message: { role: "assistant", content: "{\"logline\":\"一句话\"}" } }],
+            usage: { prompt_tokens: 20, completion_tokens: 10 },
+          }),
+      ],
+      { textModel: "claude-sonnet-5-5" },
+    );
+
+    const adapter = new TreecloudChatAdapter(client);
+    const output = await adapter.complete({
+      messages: [
+        { role: "system", content: "只输出 JSON" },
+        { role: "user", content: "写一个故事" },
+      ],
+      maxTokens: 800,
+    });
+
+    expect(adapter.configured).toBe(true);
+    expect(calls[0]?.url).toBe("https://relay.test/v1/chat/completions");
+    expect(calls[0]?.body).toEqual({
+      model: "claude-sonnet-5-5",
+      messages: [
+        { role: "system", content: "只输出 JSON" },
+        { role: "user", content: "写一个故事" },
+      ],
+      max_tokens: 800,
+    });
+    expect(calls[0]?.body).not.toHaveProperty("temperature");
+    expect(output.text).toBe("{\"logline\":\"一句话\"}");
+    expect(output.provenance.modelId).toBe("claude-sonnet-5-5");
+    expect(output.usage).toEqual({ promptTokens: 20, completionTokens: 10 });
+  });
+
+  it("content 是分段数组时也能拼回文字", async () => {
+    const { client } = clientWith(
+      [
+        () =>
+          jsonResponse({
+            choices: [{ message: { content: [{ type: "text", text: "前半" }, { type: "text", text: "后半" }] } }],
+          }),
+      ],
+      { textModel: "m" },
+    );
+    const output = await new TreecloudChatAdapter(client).complete({
+      messages: [{ role: "user", content: "写" }],
+    });
+    expect(output.text).toBe("前半后半");
+  });
+
+  it("没配 TEXT_MODEL 时不发请求", async () => {
+    const { client, calls } = clientWith([() => jsonResponse({})]);
+    const adapter = new TreecloudChatAdapter(client);
+
+    expect(adapter.configured).toBe(false);
+    await expect(
+      adapter.complete({ messages: [{ role: "user", content: "写" }] }),
+    ).rejects.toMatchObject({ code: "text_not_configured", status: 500 });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("模型返回空内容时如实报错", async () => {
+    const { client } = clientWith(
+      [() => jsonResponse({ choices: [{ message: { content: "   " } }] })],
+      { textModel: "m" },
+    );
+    await expect(
+      new TreecloudChatAdapter(client).complete({
+        messages: [{ role: "user", content: "写" }],
+      }),
+    ).rejects.toMatchObject({ code: "chat_empty_text", status: 502 });
   });
 });
 

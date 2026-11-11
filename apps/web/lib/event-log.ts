@@ -21,7 +21,7 @@ import {
  * 本地日志的格式版本。**改动事件或项目结构时把它 +1**，并在 `migrateLog` 里补一段。
  * 没有版本号，一次 schema 改动就会让用户存下的项目整份判废。
  */
-export const LOG_VERSION = 1;
+export const LOG_VERSION = 2;
 
 export type StoredLog = {
   version: number;
@@ -121,10 +121,19 @@ export function migrateLog(stored: StoredLog): ProjectEvent[] | null {
 
   let events = stored.events;
 
-  // 迁移链：if (stored.version < 2) { events = v1ToV2(events); }
-  // 目前只有第 1 版，链是空的。
+  // 迁移链：
+  // 1 → 2：Project 增加 `story`（ADR-0088），zod 默认值会补齐，事件本身不用改。
+  // 目前没有需要改形状的迁移，链保持空实现。
+  if (stored.version < 2) {
+    events = v1ToV2(events);
+  }
 
   return parseEvents(events);
+}
+
+/** v1 的日志可以直接按当前 schema 解析：新增字段都有默认值（ADR-0088）。 */
+function v1ToV2(events: unknown[]): unknown[] {
+  return events;
 }
 
 /** 两次事件数组之间的差别：只追加就逐条写，重来一遍就整份覆盖。 */

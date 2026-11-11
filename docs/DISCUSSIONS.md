@@ -2705,3 +2705,31 @@ ADR-0009 把 animatic 定为视频生成前的闸门，但眼下没有任何地�
 - 断句是规则，不是语义理解：虚词、专有名词仍可能被硬切；不能手动改单条字幕或单独拖时间。
 - 识别结果不持久，刷新即丢；没有置信度与多候选。
 - 字幕样式仍只在播放器侧，不烧进画面；ASS 与 mp4 都还没做。
+
+## 第九十二次 · 2026-11-11 · 故事入口与 Story Bible（N5 · A1 / A3 / A4）
+
+**背景**
+项目一直从示例项目启动：用户没有一条「从想法开始」的路，要先在剧本页手建场次，再去定妆页建人物。A1（一句话 → 梗概）、A3（场次与分镜拆解）、A4（Story Bible 抽取）共享同一份输入与同一份产物，拆成三个对话框只会让同一个想法贴三遍。这一轮先确认供应商的文本模型能不能用，再把三段合成一个 `/story` 入口。
+
+**结论**
+- 文本模型可用但没计价：`GET /v1/models` 里 46 个 chat 模型，`qwen3.8-max` 回 403「分组未授权」，`claude-sonnet-5-5` / `claude-haiku-5-5` 正常。显式配置 `TEXT_MODEL=claude-sonnet-5-5`，不猜默认值；没配时 `/story` 禁用生成并如实说缺什么。
+- 一次调用产出三段产物（ADR-0088）：标题、logline、梗概、题材 / 受众 / 基调、人物（含 want / need / wound / flaw / secret / agency / arc）、关系张力、地点、道具、1–2 场、10–14 镜、初稿台词、开场 / 结尾钩子。草稿只留在页面内存，刷新即丢；「用它开工」→「确认开工」后才构造新项目并写一条新的 `project.created`，不自动改当前 IR。
+- Story Bible 第一刀进 IR：`Project.story` 收 `logline / synopsis / genre / audience / tone / hooks / arcs（按 characterId）/ relationships / provenance`。新增不变量 `REF_STORY_CHARACTER` 与 `STORY_ARC_UNIQUE`；旧日志由 zod 默认值补齐，`LOG_VERSION` 升到 2（v1 → v2 目前是恒等变换）。
+- 网关新增 `TreecloudChatAdapter`：`POST /v1/chat/completions`，只发 `model / messages / max_tokens`，**不传 temperature**（Anthropic 模型传了直接 400）。故事入口用 `max_tokens: 16000`、超时 150s；8000 会在 JSON 中途截断。
+- 草稿到项目是确定性映射：id 用固定前缀，台词 0.3 秒 / 字，镜头 = 台词估算 + 1000ms 表演余量，空镜 5 秒；匹配不上的名字不挂引用。构造后过 `assertValidProject`，不合法就拒绝开工。**1 秒余量是实测调整**：500ms 时一份 12 镜 18 句的草稿只有 54.8 秒，成片短于 60；改成 1 秒后同一量级的草稿 59.8 秒。
+- 提示词从「6–9 镜」收紧到「10–14 镜、台词 12–18 句、除最多 2 个空镜外每镜都有人说话」，否则模型只给 9 镜 10 句，成片约 35 秒。故事页的镜号改成跨场全局编号，预览时长与落项目用同一组常量。
+- UI：`/story` 有输入框、三条示例、四个题材、生成中 / 没配模型 / 失败三种状态；结果分段展示人物弧光、关系、地点道具、钩子、场次与分镜；底部写清「草稿只在内存里」，二次确认才换项目，成功后跳 `/script`。顶栏「故事」从死链改成 `/story`。
+
+**验证**
+- 测试：IR 110（新增 3：幽灵弧光、重复弧光、幽灵关系）、web 278（新增 2：开工写新项目、只读阻止）、gateway 28（新增 4：请求体无 temperature、数组 content、未配置不发请求、空内容 502）、pipeline 29（新增 6：围栏 JSON、未知引用丢弃、台词上限、坏 JSON、字段截断、映射与不变量），合计 445；`pnpm typecheck`、`pnpm test`、`pnpm --filter web build` 通过。
+- 接口：`GET /api/story` 回 `{"model":"claude-sonnet-5-5"}`；真实 `POST` 在 59.6s / 72.7s 两次返回合法草稿（3–4 人、2 场、8–9 镜），调整提示词后再探测两次：12 镜 18 句 / 59.8 秒 / 66s，13 镜 17 句 / 67s。
+- 真实页面（1440×900，无头 Chrome，先清 IndexedDB）：`/story` 初始 h1「故事」、模型名可见、生成按钮禁用、示例与题材可点；填想法后按钮启用，生成约 75s 后出现结果「送餐少主」（4 人、2 场、9 镜、10 句、估时 34.9s）；点「用它开工」→「确认开工」后跳到 `/script`，页头「场 2 / 镜 9 / 台词 10 / 时长 34.9s」，场次、镜头、台词与人物标签都在。验证完重置 IndexedDB，回到 5 场 / 12 镜的示例项目，`/story` 重新打开正常。
+- 截图：`/tmp/story-result.png`、`/tmp/story-applied-script.png`、`/tmp/story-initial-final.png`。
+
+**诚实地说**
+- 浏览器里完整走通的是提示词收紧前的那份草稿（9 镜 / 34.9s）；收紧后的 59.8s 只在 pipeline 探测里验到，没有再跑一遍 90 秒的页面生成。
+- 一次生成的质量上限受单次输出限制：没有逐段重生成、没有自动重试修复 JSON、没有草稿暂存；换一句想法就要整份重来。
+- Story Bible 只收了可引用字段：Beat、ScriptDoctorReport、OriginalityReport、服化道细节、逐场 SceneState 都没进 IR；A11 / A2 / A8 仍未做。
+- 开场钩子是从第一镜描述推的，不是评分过的 hook；A15 / A19 未做。
+- 文本模型单价未知，8–11k completion tokens 的成本只能看账单；预算条仍按图片 / 视频写，不含 token（R28）。
+- 无头环境放不了视频与音频；这一轮验的是页面结构、事件与文案，不是声音与画面。

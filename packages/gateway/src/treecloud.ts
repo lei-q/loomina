@@ -1,5 +1,8 @@
 import type { Id } from "@loomina/ir";
 import type {
+  ChatAdapter,
+  ChatInput,
+  ChatOutput,
   ImageAdapter,
   ImageInput,
   ImageOutput,
@@ -35,6 +38,8 @@ export interface TreecloudConfig {
   ttsVoice?: string;
   /** ASR 模型（ADR-0087）；没配就不识别，界面如实说 */
   asrModel?: string;
+  /** 文本模型（ADR-0088）；没配就不生成故事，界面如实说 */
+  textModel?: string;
   fetcher?: typeof fetch;
   now?: () => string;
   sleep?: (ms: number) => Promise<void>;
@@ -347,6 +352,102 @@ export class TreecloudSpeechAdapter implements SpeechAdapter {
       },
     };
   }
+}
+
+export interface TreecloudChatOptions {
+  /** 覆盖 env 里的 TEXT_MODEL */
+  model?: string;
+}
+
+/**
+ * 文本模型适配器（ADR-0088）。
+ *
+ * OpenAI 兼容：`POST /v1/chat/completions`，只带 `model / messages / max_tokens`。
+ * **不传 temperature**：实测代理对 Anthropic 模型只接受默认值，传了直接 400。
+ *
+ * 没配 TEXT_MODEL 时直接报 `text_not_configured`：这是配置问题，重试不会好。
+ */
+export class TreecloudChatAdapter implements ChatAdapter {
+  private readonly now: () => string;
+
+  constructor(
+    private readonly client: TreecloudClient,
+    private readonly options: TreecloudChatOptions = {},
+  ) {
+    this.now = client.config.now ?? (() => new Date().toISOString());
+  }
+
+  /** 现在有没有可用的文本模型；界面据此决定要不要露「生成」按钮。 */
+  get configured(): boolean {
+    return Boolean(this.options.model ?? this.client.config.textModel);
+  }
+
+  async complete(input: ChatInput): Promise<ChatOutput> {
+    const model = this.options.model ?? this.client.config.textModel;
+    if (!model) {
+      throw new TreecloudError(
+        500,
+        "text_not_configured",
+        "没有配文本模型：在 secrity.env 里加上 TEXT_MODEL（例如 claude-sonnet-5-5）之后才能生成",
+      );
+    }
+    if (input.messages.length === 0) {
+      throw new TreecloudError(400, "chat_empty_messages", "没有可发给模型的内容");
+    }
+
+    const payload = await this.client.request("/v1/chat/completions", {
+      method: "POST",
+      body: {
+        model,
+        messages: input.messages,
+        ...(input.maxTokens ? { max_tokens: input.maxTokens } : {}),
+      },
+    });
+
+    const text = contentOf(payload);
+    if (!text.trim()) {
+      throw new TreecloudError(502, "chat_empty_text", "文本模型返回了空内容");
+    }
+    const usage = payload.usage;
+    return {
+      text,
+      provenance: {
+        modelId: typeof payload.model === "string" ? payload.model : model,
+        referenceAssetIds: [],
+        createdAt: this.now(),
+      },
+      ...(isJson(usage)
+        ? {
+            usage: {
+              promptTokens: numberOrUndefined(usage.prompt_tokens),
+              completionTokens: numberOrUndefined(usage.completion_tokens),
+            },
+          }
+        : {}),
+    };
+  }
+}
+
+/** 有些代理把 content 回成 [{type:"text",text:"…"}]，两种都收。 */
+function contentOf(payload: Json): string {
+  const choices = payload.choices;
+  if (!Array.isArray(choices) || choices.length === 0) return "";
+  const first = choices[0];
+  if (!isJson(first)) return "";
+  const message = first.message;
+  if (!isJson(message)) return "";
+  const content = message.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => (isJson(part) && typeof part.text === "string" ? part.text : ""))
+      .join("");
+  }
+  return "";
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 export interface TreecloudTranscriptionOptions {

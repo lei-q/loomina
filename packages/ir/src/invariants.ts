@@ -18,7 +18,9 @@ export type InvariantCode =
   | "PUBLISH_AI_LABEL"
   | "REF_ASSET"
   | "APPROVAL_TARGET"
-  | "APPROVAL_LOCKED_ASSET";
+  | "APPROVAL_LOCKED_ASSET"
+  | "REF_STORY_CHARACTER"
+  | "STORY_ARC_UNIQUE";
 
 export interface Violation {
   code: InvariantCode;
@@ -275,6 +277,37 @@ export function validateProject(
           code: "APPROVAL_LOCKED_ASSET",
           path: `approvals.${approval.id}.lockedAssetIds`,
           message: `闸门 ${approval.id} 锁住了不存在的资产 ${id}`,
+        });
+      }
+    }
+  }
+
+  // 12. Story Bible 的弧光与关系必须指向存在的人物（ADR-0088）
+  const arcCharacterIds = new Set<string>();
+  for (const arc of project.story.arcs) {
+    if (!characterIds.has(arc.characterId)) {
+      violations.push({
+        code: "REF_STORY_CHARACTER",
+        path: `story.arcs.${arc.characterId}`,
+        message: `人物弧光引用了不存在的角色 ${arc.characterId}`,
+      });
+    }
+    if (arcCharacterIds.has(arc.characterId)) {
+      violations.push({
+        code: "STORY_ARC_UNIQUE",
+        path: `story.arcs.${arc.characterId}`,
+        message: `角色 ${arc.characterId} 有多条人物弧光`,
+      });
+    }
+    arcCharacterIds.add(arc.characterId);
+  }
+  for (const relation of project.story.relationships) {
+    for (const target of [relation.fromCharacterId, relation.toCharacterId]) {
+      if (!characterIds.has(target)) {
+        violations.push({
+          code: "REF_STORY_CHARACTER",
+          path: `story.relationships.${relation.fromCharacterId}->${relation.toCharacterId}`,
+          message: `关系张力引用了不存在的角色 ${target}`,
         });
       }
     }

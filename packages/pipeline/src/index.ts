@@ -13,6 +13,9 @@ import {
 } from "@loomina/ir";
 import type { ImageAdapter, VideoAdapter } from "@loomina/gateway";
 
+export * from "./dialogue";
+export * from "./story";
+
 export interface PriceTable {
   imageCny: number;
   videoPerSecondCny: number;

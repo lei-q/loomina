@@ -1,4 +1,5 @@
 import { rebuild, type ProjectEvent } from "@loomina/ir";
+import { parseStoryDraft } from "@loomina/pipeline";
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 import { setEventLog, type EventLog } from "./event-log";
 import { claimWriter, releaseWriter } from "./writer-lock";
@@ -2861,6 +2862,73 @@ describe("成片（ADR-0086）", () => {
     state().readOnly = true;
     expect(state().autoCutTimeline()).toBe(false);
     expect(state().events).toHaveLength(log);
+    state().readOnly = false;
+  });
+});
+
+describe("故事入口开工（ADR-0088）", () => {
+  const draft = parseStoryDraft(
+    JSON.stringify({
+      title: "少主归来",
+      logline: "外卖员送餐撞破董事会，才知道自己是被夺走人生的继承人。",
+      synopsis: "程野每天给顶层公寓送餐，暗中查父亲坠楼的真相。",
+      genre: "都市逆袭",
+      audience: "竖屏用户",
+      tone: "冷峻",
+      characters: [
+        { name: "程野", role: "外卖员", appearance: "旧骑手服，虎口有疤" },
+        { name: "沈岚", role: "董事长", appearance: "深灰西装" },
+      ],
+      locations: [{ name: "董事会", description: "顶层会议室，暴雨", space: "int", timeOfDay: "night" }],
+      scenes: [
+        {
+          locationName: "董事会",
+          space: "int",
+          timeOfDay: "night",
+          shots: [
+            {
+              description: "程野拎着餐盒推门。",
+              shotSize: "wide",
+              angle: "eye",
+              movement: "push",
+              focalMm: 35,
+              characterNames: ["程野", "沈岚"],
+              dialogue: [{ characterName: "沈岚", text: "你是谁？" }],
+            },
+          ],
+        },
+      ],
+    }),
+  );
+
+  it("在日志末尾写一条新的 project.created，界面换成新项目", () => {
+    state().reset();
+    const before = state().events.length;
+
+    expect(
+      state().startProjectFromStory(draft, { modelId: "claude-sonnet-5-5", idea: "外卖员" }),
+    ).toBe(true);
+
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)?.type).toBe("project.created");
+    expect(state().project.title).toBe("少主归来");
+    expect(state().project.story.logline).toContain("外卖员");
+    expect(state().project.story.arcs).toHaveLength(2);
+    expect(state().project.scenes).toHaveLength(1);
+    expect(state().currentShotId).toBe("shot-1-1");
+
+    // 回放整份日志：新的 project.created 从中间接管，结果与内存一致
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("只读时不换项目", () => {
+    state().reset();
+    const before = state().events.length;
+    const title = state().project.title;
+    state().readOnly = true;
+    expect(state().startProjectFromStory(draft, { modelId: "m", idea: "x" })).toBe(false);
+    expect(state().events).toHaveLength(before);
+    expect(state().project.title).toBe(title);
     state().readOnly = false;
   });
 });

@@ -8,7 +8,7 @@ import { ExportIcon, Logomark, PlayIcon } from "@/components/icons";
 
 /** 阶段是一列；还没做出来的阶段 href 为 null，点了不跳。 */
 const stages = [
-  { name: "故事", href: null },
+  { name: "故事", href: "/story" },
   { name: "剧本", href: "/script" },
   { name: "定妆", href: "/cast" },
   { name: "分镜", href: "/" },
@@ -91,20 +91,16 @@ export function TopBar({
           return (
             <span key={item.name} className="flex items-center gap-2.5">
               {i > 0 && <span className="text-line-2">·</span>}
-              {item.href ? (
-                <Link
-                  href={item.href}
-                  aria-current={active ? "page" : undefined}
-                  className={cn(
-                    "transition-colors duration-[var(--dur)] hover:text-text",
-                    active ? "text-text" : "text-muted",
-                  )}
-                >
-                  {item.name}
-                </Link>
-              ) : (
-                <span className={active ? "text-text" : "text-muted"}>{item.name}</span>
-              )}
+              <Link
+                href={item.href}
+                aria-current={active ? "page" : undefined}
+                className={cn(
+                  "transition-colors duration-[var(--dur)] hover:text-text",
+                  active ? "text-text" : "text-muted",
+                )}
+              >
+                {item.name}
+              </Link>
             </span>
           );
         })}

@@ -14,7 +14,8 @@
   },
   "dependencies": {
     "@loomina/gateway": "workspace:*",
-    "@loomina/ir": "workspace:*"
+    "@loomina/ir": "workspace:*",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

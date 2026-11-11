@@ -122,6 +122,28 @@ interface Relationship {
 }
 ```
 
+> **落地情况（ADR-0088，2026-11-11）**：故事入口先落了 Story Bible 里能被下游引用的那一刀，实际进 IR 的形状是 `Project.story`：
+>
+> ```ts
+> interface StoryBible {
+>   logline: string;        // 默认 ""
+>   synopsis: string;
+>   genre: string;
+>   audience: string;
+>   tone: string;
+>   hooks: { opening: string; ending: string };
+>   arcs: {                 // 按 characterId 引用，一人最多一条
+>     characterId: ID;
+>     want: string; need: string; wound: string;
+>     flaw: string; secret: string; agency: string; arc: string;
+>   }[];
+>   relationships: { fromCharacterId: ID; toCharacterId: ID; tension: string }[];
+>   provenance?: Provenance; // 文本模型与原始想法
+> }
+> ```
+>
+> 上面的 `themes` / `rules` / `styles`、`Character.role` / `wardrobe` / `voice`、独立 `Relationship.kind` 仍只在文档里；`arcs` 与 `relationships` 是这一刀新增的、可被故事入口写入的字段。Beat 与 ScriptDoctorReport 没有进 IR（A11 / A2 未做）。旧日志缺 `story` 时由 zod 默认值补齐；`LOG_VERSION` 升到 2，v1 → v2 迁移目前是恒等变换。
+
 ## 3. 分集 / 场 / 镜
 
 ```ts
@@ -701,6 +723,8 @@ interface AILabel {
 21. **定妆闸门**：有近景 / 特写镜头的角色，三视图四格未齐不得锁定；场景无主镜不得锁定（`cast.ts` 判定，`lockCast` 与界面各守一道，ADR-0028）。
 22. **锚点不齐不得生成**：`shotAnchors().missing` 非空时，必须在调用任何模型之前失败（ADR-0029）。
 23. **道具进入镜头即成为必锁项**：`Shot.propIds` 引用的道具必须有一张参考图，缺图不得锁定，也不得生成（`cast.ts` 与锚点两道，ADR-0030）。
+24. **`StoryBible.arcs` 只能引用存在的人物**（`REF_STORY_CHARACTER`）；`StoryBible.relationships` 的两端也必须是存在的人物。
+25. **每个 `characterId` 最多一条弧光**（`STORY_ARC_UNIQUE`）；重复时整份项目不合法。
 
 ## 8. 与 OTIO 的映射
 

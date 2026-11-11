@@ -19,7 +19,13 @@ import {
   type SheetView,
   type Shot,
 } from "@loomina/ir";
-import { parseInstruction, shotMaterial, type Frame } from "@loomina/pipeline";
+import {
+  parseInstruction,
+  projectFromStoryDraft,
+  shotMaterial,
+  type Frame,
+  type StoryDraft,
+} from "@loomina/pipeline";
 import { create } from "zustand";
 import { diffEvents, getEventLog, migrateLog } from "@/lib/event-log";
 import { estimateDialogueMs } from "@/lib/dialogue";
@@ -267,9 +273,13 @@ type WorkbenchState = {
   removeCharacter: (characterId: string) => boolean;
   /** 删一件道具：还有镜头用着它时拒绝（ADR-0073） */
   removeProp: (propId: string) => boolean;
+  /** 从故事草稿开一个新项目：写一条新的 `project.created`，旧日志仍在本地（ADR-0088） */
+  startProjectFromStory: (
+    draft: StoryDraft,
+    meta: { modelId: string; idea: string },
+  ) => boolean;
   /** 新建场次：一条 `scene.added`，加在末尾或指定场之后，沿用前一场的地点与日夜（ADR-0064 / 0068 / 0069） */
-  addScene: (locationId?: string, afterSceneId?: string) => string | undefined;
-  /** 新建镜头：一条 `shot.added`，加在这一场末尾或指定镜之后（ADR-0064 / ADR-0068） */
+  addScene: (locationId?: string, afterSceneId?: string) => string | undefined;  /** 新建镜头：一条 `shot.added`，加在这一场末尾或指定镜之后（ADR-0064 / ADR-0068） */
   addShot: (sceneId: string, afterShotId?: string) => string | undefined;
   /** 删一镜：一条 `shot.removed`，台词 / take / 时间线项一并摘掉（ADR-0067） */
   removeShot: (shotId: string) => boolean;
@@ -2558,6 +2568,46 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       project: applyEvent(project, event),
       events: [...events, event],
       castError: undefined,
+    });
+    return true;
+  },
+
+  startProjectFromStory: (draft, meta) => {
+    if (get().readOnly) {
+      set({ castError: "另一个标签页在编辑：这一页只读，开不了新项目。" });
+      return false;
+    }
+    const { project, events } = get();
+    const at = new Date().toISOString();
+    let next: Project;
+    try {
+      next = projectFromStoryDraft(draft, {
+        id: `proj-${Date.now().toString(36)}`,
+        at,
+        modelId: meta.modelId,
+        idea: meta.idea,
+        budgetCny: project.budgetCny,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "故事结构不合法";
+      set({ castError: `故事没能开工：${detail.slice(0, 240)}` });
+      return false;
+    }
+
+    // 开新项目 = 在日志末尾再写一条 project.created。旧事件仍留在本地，
+    // 但从这一条开始回放，界面只看到新项目（ADR-0088）。
+    const event: ProjectEvent = { type: "project.created", at, project: next };
+    const applied = applyEvent(project, event);
+    set({
+      project: applied,
+      events: [...events, event],
+      currentShotId: firstOpenShotId(applied),
+      jobs: {},
+      batch: undefined,
+      castError: undefined,
+      lastSwap: undefined,
+      asrResult: undefined,
+      editError: undefined,
     });
     return true;
   },

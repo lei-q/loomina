@@ -54,6 +54,63 @@ export const CharacterSchema = z.object({
 });
 export type Character = z.infer<typeof CharacterSchema>;
 
+/** 人物弧光（ADR-0017 / ADR-0088）：按 characterId 挂到 Story Bible 上，供下游引用。 */
+export const StoryArcSchema = z.object({
+  characterId: Id,
+  /** 表层欲望：他在这一集里想拿到什么 */
+  want: z.string().default(""),
+  /** 深层需要：他真正缺的是什么 */
+  need: z.string().default(""),
+  /** 创伤：过去留下的裂缝 */
+  wound: z.string().default(""),
+  /** 缺陷：让他做错选择的东西 */
+  flaw: z.string().default(""),
+  /** 秘密：观众或别人还不知道的事 */
+  secret: z.string().default(""),
+  /** 主动性：他主动做出的选择 */
+  agency: z.string().default(""),
+  /** 这一集的弧光：从哪走到哪 */
+  arc: z.string().default(""),
+});
+export type StoryArc = z.infer<typeof StoryArcSchema>;
+
+/** 关系张力：每对关系要回答「想要 / 害怕 / 隐瞒」里的至少一件（STORY.md 第五节）。 */
+export const StoryRelationshipSchema = z.object({
+  fromCharacterId: Id,
+  toCharacterId: Id,
+  tension: z.string().default(""),
+});
+export type StoryRelationship = z.infer<typeof StoryRelationshipSchema>;
+
+export const StoryHooksSchema = z.object({
+  /** 开场钩子：前 3 秒抓住注意力的那一句 / 那个动作 */
+  opening: z.string().default(""),
+  /** 结尾钩子：这一集结束时留下的悬念 */
+  ending: z.string().default(""),
+});
+export type StoryHooks = z.infer<typeof StoryHooksSchema>;
+
+/**
+ * Story Bible（ADR-0017 / ADR-0088）。
+ *
+ * 第一刀只收下游真正会引用的字段：logline、人物弧光、关系张力与钩子。
+ * Beat / ScriptDoctorReport / OriginalityReport 等有评分标定后再进 IR，
+ * 不先造没人读的空壳。
+ */
+export const StoryBibleSchema = z.object({
+  logline: z.string().default(""),
+  synopsis: z.string().default(""),
+  genre: z.string().default(""),
+  audience: z.string().default(""),
+  tone: z.string().default(""),
+  hooks: StoryHooksSchema.default({}),
+  arcs: z.array(StoryArcSchema).default([]),
+  relationships: z.array(StoryRelationshipSchema).default([]),
+  /** 这份故事由哪个文本模型、根据什么输入生成 */
+  provenance: ProvenanceSchema.optional(),
+});
+export type StoryBible = z.infer<typeof StoryBibleSchema>;
+
 export const PropSchema = z.object({
   id: Id,
   name: z.string().min(1),
@@ -214,6 +271,8 @@ export const ProjectSchema = z.object({
    * 换设备、刷新、重放事件日志之后还得是同一个数（准则 P14 / H10）。
    */
   budgetCny: z.number().positive().default(60),
+  /** 故事层（ADR-0017 / ADR-0088）：logline、人物弧光、关系与钩子 */
+  story: StoryBibleSchema.default({}),
   locations: z.array(LocationSchema).default([]),
   characters: z.array(CharacterSchema).default([]),
   props: z.array(PropSchema).default([]),
