@@ -11,6 +11,7 @@
 
 import { castReadiness, type GateStage, type Project } from "@loomina/ir";
 import { fnv1a } from "./fnv";
+import { analyzeScript } from "./script-doctor";
 import { analyzeStoryboard } from "./storyboard";
 
 export type StageKey = GateStage;
@@ -315,6 +316,13 @@ function readinessOf(project: Project, key: StageKey): {
       const missing: string[] = [];
       if (project.scenes.length === 0) missing.push("还没有场次");
       if (project.shots.length === 0) missing.push("场次里还没有镜头");
+      // 剧本医生的偏低项不是硬缺口：8/9 条触发条件是启发式，不该有否决权
+      // （ADR-0123 决策 3）。只在结构齐了之后提，免得重复拦。
+      const waivable: string[] = [];
+      if (missing.length === 0) {
+        const warn = analyzeScript(project).summary.warn;
+        if (warn > 0) waivable.push(`剧本医生：${warn} 项偏低`);
+      }
       const readiness: StageReadiness =
         missing.length === 0
           ? "ready"
@@ -325,7 +333,7 @@ function readinessOf(project: Project, key: StageKey): {
         readiness,
         summary: `${project.scenes.length} 场 · ${project.shots.length} 镜 · ${project.dialogue.length} 句台词`,
         missing,
-        waivable: [],
+        waivable,
       };
     }
 

@@ -934,6 +934,14 @@ interface OriginalityReport {
 - 12 维里 10 维本地可算，每维带 `source: "local" | "model" | "unmeasured"` 与 `score: number | null`：`emotionalPayoff` 标 `model`（未测），`originality` 标 `unmeasured`（等 A8）。**未测算出来写 `null`，不写 0 分**——0 分是「很差」，未测是「不知道」。
 - 改写建议分两档：本地建议（零成本）与 `POST /api/doctor`（一次一模式，返回建议不写事件）。作者点「采用」才落 `story.updated` / `dialogue.updated` / `shot.updated`。
 
+**落地细节（A18 第一档，2026-11-12）**
+
+- `apps/web/lib/script-doctor.ts` 的 `analyzeScript(project, { loglineScore? })` 返回 `ScriptDoctorReport`：`dims`（12 条，每条 `score: number | null`）、`overall`（**只按已测维度平均**，一位小数；一维都没测才是 `null`）、`measured` / `total`、`findings`（按 warn → info 排序）、`suggestions`（固定 6 条）、`seconds`、`shotNos`（镜 id → 全片镜号，抽屉跳转用）。
+- 空项目不是「未测」：钩子、结尾、可拍性这些维度**确实能判定为不合格**，给低分；只有 `emotionalPayoff`（要模型）与 `originality`（要 A8）保持 `null`。「没有台词」同样是 `dialogueEfficiency: null`，理由写「没有可算的内容」，不按 0 分处理。
+- `hook` 是**结构代理**：只回答「开场是不是钩子拍、够不够短、前 15 秒有没有升级 / 转折」，回答不了「这个钩子抓不抓人」。这句原话写在维度的 `reason` 里。
+- 触发条件只出 `warn` / `info` 两级发现，没有 `block`；`stage-flow.ts` 的 `readinessOf("script")` 在结构缺口为空时把 warn 数写成 `剧本医生：N 项偏低` 进 `waivable`，确认弹层复用 ADR-0118 的「我知道」勾选，**不新增事件**。
+- 6 种改写模式的第一档只给 `target` + `direction`（改哪里、往哪个方向），**不改字**：第二档的 `/api/doctor` 与「采用」未做。减人物 / 减场景明写「工具不会替你删——删角色会牵动镜头、台词与 take」。
+
 
 ## 11. 表演层（ADR-0019 / PERFORMANCE.md）
 

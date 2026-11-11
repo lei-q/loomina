@@ -43,11 +43,12 @@ type StageTool =
   | "check"
   | "performance"
   | "consistency"
-  | "blocking";
+  | "blocking"
+  | "doctor";
 
 const STAGE_TOOLS: Record<StageName, StageTool[]> = {
   故事: [],
-  剧本: ["export"],
+  剧本: ["export", "doctor"],
   定妆: ["ledger", "budget"],
   分镜: ["ledger", "budget", "export", "preview", "check", "performance", "consistency", "blocking"],
   关键帧: ["ledger", "budget", "preview"],
@@ -95,6 +96,10 @@ export type TopBarProps = {
   onBlocking?: () => void;
   /** 越轴的镜头对数，显示在按钮右上 */
   blockingCount?: number;
+  /** 打开剧本医生（A18 / ADR-0123）；给了才出现「医生」 */
+  onDoctor?: () => void;
+  /** 剧本医生里偏低的项数，显示在按钮右上 */
+  doctorCount?: number;
 };
 
 function Money({ value }: { value?: number }) {
@@ -124,6 +129,8 @@ export function TopBar({
   consistencyCount,
   onBlocking,
   blockingCount,
+  onDoctor,
+  doctorCount,
 }: TopBarProps) {
   const [draftBudget, setDraftBudget] = useState<string>("");
   const [ledgerOpen, setLedgerOpen] = useState(false);
@@ -461,6 +468,19 @@ export function TopBar({
               )}
             </div>
           </details>
+        )}
+        {shows("doctor") && onDoctor && (
+          <button
+            type="button"
+            onClick={onDoctor}
+            title="按十二维读一遍剧本：结构诊断与改写方向，不花钱"
+            className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            医生
+            {doctorCount !== undefined && doctorCount > 0 && (
+              <span className="tnum text-[9px] text-pick">{doctorCount}</span>
+            )}
+          </button>
         )}
         {shows("consistency") && onConsistency && (
           <button

@@ -252,8 +252,23 @@ describe("A12 覆盖率硬闸门", () => {
   });
 
   it("其他阶段没有可豁免缺口", () => {
-    for (const key of ["story", "script", "cast", "keyframes", "voice", "edit"] as const) {
+    for (const key of ["story", "cast", "keyframes", "voice", "edit"] as const) {
       expect(stageStateOf(sampleProject, key).waivable).toEqual([]);
     }
+  });
+
+  it("剧本阶段把剧本医生的偏低项列成可豁免缺口，不挡确认", () => {
+    const state = stageStateOf(sampleProject, "script");
+    expect(state.missing).toEqual([]);
+    expect(state.canConfirm).toBe(true);
+    expect(state.waivable.some((item) => item.startsWith("剧本医生："))).toBe(true);
+  });
+
+  it("结构缺口还在时，不重复报剧本医生", () => {
+    const empty: Project = { ...sampleProject, scenes: [], shots: [] };
+    const state = stageStateOf(empty, "script");
+    expect(state.missing).toContain("还没有场次");
+    expect(state.waivable).toEqual([]);
+    expect(state.canConfirm).toBe(false);
   });
 });

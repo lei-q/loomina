@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { StageGate } from "@/components/stage-gate";
 import { TopBar } from "@/components/top-bar";
+import { DoctorPanel } from "@/components/doctor-panel";
+import { analyzeScript } from "@/lib/script-doctor";
 import {
   actionHistory,
   dialogueHistory,
@@ -88,6 +90,7 @@ export function ScriptScreen() {
   const [addSpeaker, setAddSpeaker] = useState("");
   const [addText, setAddText] = useState("");
   const [note, setNote] = useState<string | undefined>();
+  const [doctorOpen, setDoctorOpen] = useState(false);
 
   useEffect(() => {
     void hydrate();
@@ -117,6 +120,7 @@ export function ScriptScreen() {
   }, [editingCode]);
 
   const view = useMemo(() => toScriptView(project), [project]);
+  const doctor = useMemo(() => analyzeScript(project), [project]);
   const removal = useMemo(() => undoableRemoval(events, project), [events, project]);
   /** 撤销只在剧本页管场次与镜头：人物 / 道具 / 地点的撤销在定妆页 */
   const pageRemoval =
@@ -303,6 +307,8 @@ export function ScriptScreen() {
         onBudgetChange={setBudget}
         onExport={exportScript}
         exportLabel="把剧本导出成纯文本（.txt）"
+        onDoctor={() => setDoctorOpen(true)}
+        doctorCount={doctor.summary.warn}
       />
 
       <main className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
@@ -700,7 +706,7 @@ export function ScriptScreen() {
 
                 <ol className="mt-4 space-y-5">
                   {scene.shots.map((shot) => (
-                    <li key={shot.id} className="grid grid-cols-[42px_1fr] gap-3">
+                    <li key={shot.id} id={`shot-${shot.id}`} className="grid grid-cols-[42px_1fr] gap-3">
                       <span className="tnum pt-[3px] text-[9px] text-muted-2">
                         {shotLabel(shot.no)}
                       </span>
@@ -1549,6 +1555,21 @@ export function ScriptScreen() {
           )}
         </div>
       </main>
+      {doctorOpen && (
+        <DoctorPanel
+          project={project}
+          onSelectShot={(shotId) => {
+            setDoctorOpen(false);
+            // 等抽屉关掉再滚，否则 fixed 遮罩还在
+            window.setTimeout(() => {
+              document
+                .getElementById(`shot-${shotId}`)
+                ?.scrollIntoView({ block: "center", behavior: "smooth" });
+            }, 0);
+          }}
+          onClose={() => setDoctorOpen(false)}
+        />
+      )}
       <StageGate stage="script" />
     </div>
   );
