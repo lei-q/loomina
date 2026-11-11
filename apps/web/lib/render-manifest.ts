@@ -21,9 +21,15 @@ export const RENDER_MAX_TOTAL_BYTES = 200 * 1024 * 1024;
 
 export type RenderClip = {
   durationMs: number;
-  /** data:video/... 或 data:image/...；两者都没有就是占位 */
+  /** data:video/... 或 data:image/...；两者都没有就是 remote / 占位 */
   media?: string;
   mediaKind?: "video" | "image";
+  /** 受控下载的远端素材；域名必须在 RENDER_ALLOWED_HOSTS 里 */
+  remote?: string;
+  /** 远端被跳过时用的静态图（data:image/…） */
+  fallback?: string;
+  /** 这一段的画面本身就是占位图，不是真实素材 */
+  placeholder?: boolean;
   /** 占位图的文案，例如「SH-01 还没有画面」 */
   label?: string;
 };
@@ -37,7 +43,9 @@ export type RenderOverlay = {
 
 export type RenderAudio = {
   /** data:audio/... */
-  audio: string;
+  audio?: string;
+  /** 受控下载的远端音轨；域名同样走白名单 */
+  remote?: string;
   startMs: number;
 };
 
@@ -94,6 +102,15 @@ function integer(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
+function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function assetBytes(uri: string): number {
   return parseDataUri(uri)?.bytes ?? 0;
 }
@@ -140,35 +157,57 @@ export function validateRenderManifest(
     if (cursor + clip.durationMs > RENDER_MAX_MS) {
       return { ok: false, error: `第 ${index + 1} 段超出全长上限` };
     }
+    const kind = clip.mediaKind === "video" ? "video" : clip.mediaKind === "image" ? "image" : null;
+    if (!kind) return { ok: false, error: `第 ${index + 1} 段缺少 mediaKind` };
+
+    const remote = typeof clip.remote === "string" ? clip.remote.trim() : "";
+    if (remote && !isHttpUrl(remote)) {
+      return { ok: false, error: `第 ${index + 1} 段的远端地址不是 http(s)` };
+    }
+    if (remote && remote.length > 2048) {
+      return { ok: false, error: `第 ${index + 1} 段的远端地址太长` };
+    }
+    if (remote && !clip.fallback) {
+      return { ok: false, error: `第 ${index + 1} 段的远端素材需要一张兜底图` };
+    }
+    if (typeof clip.fallback === "string") {
+      const fallback = parseDataUri(clip.fallback);
+      if (!fallback || !isImageMime(fallback.mime)) {
+        return { ok: false, error: `第 ${index + 1} 段的兜底图必须是图片 data URI` };
+      }
+      if (fallback.bytes > RENDER_MAX_ASSET_BYTES) {
+        return { ok: false, error: `第 ${index + 1} 段的兜底图超过 30 MB` };
+      }
+    }
+
     if (clip.media !== undefined) {
       if (typeof clip.media !== "string") return { ok: false, error: "媒体不是字符串" };
       const parts = parseDataUri(clip.media);
       if (!parts) {
-        return { ok: false, error: `第 ${index + 1} 段的媒体不是 data URI（远端视频暂不渲染）` };
+        return { ok: false, error: `第 ${index + 1} 段的媒体不是 data URI` };
       }
       if (parts.bytes > RENDER_MAX_ASSET_BYTES) {
         return { ok: false, error: `第 ${index + 1} 段的媒体超过 30 MB` };
       }
-      const kind = clip.mediaKind === "video" ? "video" : clip.mediaKind === "image" ? "image" : null;
-      if (!kind) return { ok: false, error: `第 ${index + 1} 段缺少 mediaKind` };
       if (kind === "video" && !isVideoMime(parts.mime)) {
         return { ok: false, error: `第 ${index + 1} 段标成视频但不是视频格式` };
       }
       if (kind === "image" && !isImageMime(parts.mime)) {
         return { ok: false, error: `第 ${index + 1} 段标成图片但不是图片格式` };
       }
-      checkedClips.push({
-        durationMs: clip.durationMs,
-        media: clip.media,
-        mediaKind: kind,
-        label: typeof clip.label === "string" ? clip.label.slice(0, 60) : undefined,
-      });
-    } else {
-      checkedClips.push({
-        durationMs: clip.durationMs,
-        label: typeof clip.label === "string" ? clip.label.slice(0, 60) : undefined,
-      });
+    } else if (!remote) {
+      return { ok: false, error: `第 ${index + 1} 段既没有媒体也没有远端地址` };
     }
+
+    checkedClips.push({
+      durationMs: clip.durationMs,
+      media: typeof clip.media === "string" ? clip.media : undefined,
+      mediaKind: kind,
+      remote: remote || undefined,
+      fallback: typeof clip.fallback === "string" ? clip.fallback : undefined,
+      placeholder: clip.placeholder === true,
+      label: typeof clip.label === "string" ? clip.label.slice(0, 60) : undefined,
+    });
     cursor += clip.durationMs;
     if (cursor > raw.totalMs) return { ok: false, error: "片段总时长超过全长" };
   }
@@ -213,24 +252,41 @@ export function validateRenderManifest(
   for (const [index, item] of audio.entries()) {
     if (!item || typeof item !== "object") return { ok: false, error: `音轨 ${index + 1} 不是对象` };
     const track = item as Record<string, unknown>;
-    if (typeof track.audio !== "string") return { ok: false, error: "音轨不是音频" };
-    const parts = parseDataUri(track.audio);
-    if (!parts || !isAudioMime(parts.mime)) {
-      return { ok: false, error: `音轨 ${index + 1} 必须是音频 data URI` };
+    const remote = typeof track.remote === "string" ? track.remote.trim() : "";
+    if (remote && !isHttpUrl(remote)) {
+      return { ok: false, error: `音轨 ${index + 1} 的远端地址不是 http(s)` };
     }
-    if (parts.bytes > RENDER_MAX_ASSET_BYTES) {
-      return { ok: false, error: `音轨 ${index + 1} 超过 30 MB` };
+    if (typeof track.audio === "string") {
+      const parts = parseDataUri(track.audio);
+      if (!parts || !isAudioMime(parts.mime)) {
+        return { ok: false, error: `音轨 ${index + 1} 必须是音频 data URI` };
+      }
+      if (parts.bytes > RENDER_MAX_ASSET_BYTES) {
+        return { ok: false, error: `音轨 ${index + 1} 超过 30 MB` };
+      }
+    } else if (!remote) {
+      return { ok: false, error: `音轨 ${index + 1} 既没有音频也没有远端地址` };
     }
     if (!integer(track.startMs) || track.startMs > raw.totalMs) {
       return { ok: false, error: `音轨 ${index + 1} 的起点不合法` };
     }
-    checkedAudio.push({ audio: track.audio, startMs: track.startMs });
+    checkedAudio.push({
+      audio: typeof track.audio === "string" ? track.audio : undefined,
+      remote: remote || undefined,
+      startMs: track.startMs,
+    });
   }
 
   const totalBytes =
-    checkedClips.reduce((sum, clip) => sum + (clip.media ? assetBytes(clip.media) : 0), 0) +
+    checkedClips.reduce(
+      (sum, clip) =>
+        sum +
+        (clip.media ? assetBytes(clip.media) : 0) +
+        (clip.fallback ? assetBytes(clip.fallback) : 0),
+      0,
+    ) +
     checkedOverlays.reduce((sum, overlay) => sum + assetBytes(overlay.image), 0) +
-    checkedAudio.reduce((sum, track) => sum + assetBytes(track.audio), 0);
+    checkedAudio.reduce((sum, track) => sum + (track.audio ? assetBytes(track.audio) : 0), 0);
   if (totalBytes > RENDER_MAX_TOTAL_BYTES) {
     return { ok: false, error: "素材总量超过 200 MB，先删掉一些片段再渲染" };
   }

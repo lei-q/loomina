@@ -23,9 +23,7 @@ import {
 
 export type RenderBuild = {
   manifest: RenderManifest;
-  /** 远端视频 / 音轨没有进成片：交给界面如实说 */
-  remoteSkipped: number;
-  /** 用占位图顶上的片段数 */
+  /** 用占位图顶上的片段数（远端是否取到由服务端决定） */
   placeholders: number;
 };
 
@@ -46,24 +44,30 @@ function canvas(): HTMLCanvasElement {
   return el;
 }
 
-function dataUriOf(clip: EditClip): { media?: string; mediaKind?: "video" | "image" } {
+type Visual = {
+  media?: string;
+  mediaKind?: "video" | "image";
+  remote?: string;
+  /** 远端被白名单拒绝时用的图 */
+  fallback?: string;
+};
+
+function visualOf(clip: EditClip): Visual {
   const candidates: { uri?: string; kind: "video" | "image" }[] = [
     { uri: clip.uri, kind: "video" },
     { uri: clip.stillUri, kind: "image" },
   ];
   for (const { uri, kind } of candidates) {
     if (!uri) continue;
+    if (/^https?:\/\//i.test(uri)) {
+      return { remote: uri, mediaKind: kind };
+    }
     const parts = parseDataUri(uri);
     if (!parts) continue;
     if (kind === "video" && isVideoMime(parts.mime)) return { media: uri, mediaKind: "video" };
     if (kind === "image" && isImageMime(parts.mime)) return { media: uri, mediaKind: "image" };
   }
   return {};
-}
-
-function hasRemoteVisual(clip: EditClip): boolean {
-  const uri = clip.uri ?? clip.stillUri;
-  return Boolean(uri && /^https?:\/\//i.test(uri));
 }
 
 /** 占位画面：没有视频也没有首尾帧时，至少让成片里看得出这是哪一镜 */
@@ -149,33 +153,43 @@ export function buildRenderManifest(
   styleId: SubtitleStyleId,
 ): RenderBuild {
   const ordered = [...view.clips].sort((a, b) => a.startMs - b.startMs);
-  let remoteSkipped = 0;
   let placeholders = 0;
 
   const clips: RenderClip[] = ordered.map((clip) => {
-    const visual = dataUriOf(clip);
-    if (!visual.media) {
-      placeholders += 1;
-      if (hasRemoteVisual(clip)) remoteSkipped += 1;
+    const visual = visualOf(clip);
+    const label = `SH-${String(clip.shotNo).padStart(2, "0")}`;
+    if (visual.remote) {
       return {
         durationMs: clip.durationMs,
-        media: drawPlaceholder(clip),
-        mediaKind: "image" as const,
-        label: `SH-${String(clip.shotNo).padStart(2, "0")}`,
+        remote: visual.remote,
+        mediaKind: visual.mediaKind ?? "video",
+        fallback: drawPlaceholder(clip),
+        label,
       };
     }
-    return { durationMs: clip.durationMs, media: visual.media, mediaKind: visual.mediaKind };
+    if (visual.media) {
+      return { durationMs: clip.durationMs, media: visual.media, mediaKind: visual.mediaKind };
+    }
+    placeholders += 1;
+    return {
+      durationMs: clip.durationMs,
+      media: drawPlaceholder(clip),
+      mediaKind: "image" as const,
+      placeholder: true,
+      label,
+    };
   });
 
   const audio: RenderAudio[] = [];
   for (const clip of ordered) {
     for (const line of clip.lines) {
       if (!line.audioUri) continue;
-      const parts = parseDataUri(line.audioUri);
-      if (!parts || !isAudioMime(parts.mime)) {
-        if (/^https?:\/\//i.test(line.audioUri)) remoteSkipped += 1;
+      if (/^https?:\/\//i.test(line.audioUri)) {
+        audio.push({ remote: line.audioUri, startMs: line.startMs });
         continue;
       }
+      const parts = parseDataUri(line.audioUri);
+      if (!parts || !isAudioMime(parts.mime)) continue;
       audio.push({ audio: line.audioUri, startMs: line.startMs });
     }
   }
@@ -193,7 +207,6 @@ export function buildRenderManifest(
       audio,
       aiLabel: { explicit: true, implicit: true, standard: "AI生成" },
     },
-    remoteSkipped,
     placeholders,
   };
 }
@@ -219,7 +232,7 @@ export async function exportMp4(
   onStage?: (stage: string) => void,
 ): Promise<RenderResult> {
   onStage?.("正在排版字幕与占位画面…");
-  const { manifest, remoteSkipped, placeholders } = buildRenderManifest(view, styleId);
+  const { manifest, placeholders } = buildRenderManifest(view, styleId);
 
   onStage?.("正在渲染 1080×1920（通常 20–90 秒）…");
   const response = await fetch("/api/render", {
@@ -239,8 +252,12 @@ export async function exportMp4(
     throw new Error(message);
   }
 
+  const remoteSkipped = Number(response.headers.get("x-loomina-remote-skipped") ?? 0);
+  const usedPlaceholders = Number(
+    response.headers.get("x-loomina-placeholders") ?? placeholders,
+  );
   const blob = await response.blob();
   const fileName = renderFileName(view.title);
   download(blob, fileName);
-  return { bytes: blob.size, fileName, remoteSkipped, placeholders };
+  return { bytes: blob.size, fileName, remoteSkipped, placeholders: usedPlaceholders };
 }

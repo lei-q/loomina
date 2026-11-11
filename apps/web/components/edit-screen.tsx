@@ -716,8 +716,8 @@ export function EditScreen() {
 
                   <p className="mt-3 text-[9.5px] leading-[1.7] text-muted-2">
                     成片 MP4 由本机 ffmpeg 渲染：1080×1920、H.264、带字幕与「AI 生成」角标，
-                    通常 20–90 秒。远端视频暂不下载，先用首帧或占位图顶上；发布包仍是清单，
-                    不含视频文件。
+                    通常 20–90 秒。远端素材只从白名单域名下载，取不到时用首帧或占位图顶上并计数；
+                    发布包仍是清单，不含视频文件。
                   </p>
                   <p className="mt-2 text-[9.5px] leading-[1.7] text-muted-2">
                     AI 标识不是可选项：预览画面右下角的「AI 生成」角标、HTML 元数据、OTIO

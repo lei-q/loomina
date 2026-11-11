@@ -44,17 +44,51 @@ describe("成片渲染清单（E6）", () => {
     expect(ok.manifest.aiLabel.standard).toBe("AI生成");
   });
 
-  it("拒绝远端媒体，不悄悄跳过", () => {
-    const bad = validateRenderManifest(
+  it("接受带兜底图的远端片段，但要求 remote 是 http(s) 且必须有兜底图", () => {
+    const ok = validateRenderManifest(
       manifest({
         clips: [
-          { durationMs: 1000, media: "https://example.com/a.mp4", mediaKind: "video" },
+          {
+            durationMs: 1000,
+            remote: "https://cdn.example.com/a.mp4",
+            mediaKind: "video",
+            fallback: PNG,
+          },
         ],
       }),
     );
-    expect(bad.ok).toBe(false);
-    if (bad.ok) return;
-    expect(bad.error).toContain("远端视频暂不渲染");
+    expect(ok.ok).toBe(true);
+    if (!ok.ok) return;
+    expect(ok.manifest.clips[0]!.remote).toBe("https://cdn.example.com/a.mp4");
+    expect(ok.manifest.clips[0]!.fallback).toBe(PNG);
+
+    const noFallback = validateRenderManifest(
+      manifest({
+        clips: [
+          { durationMs: 1000, remote: "https://cdn.example.com/a.mp4", mediaKind: "video" },
+        ],
+      }),
+    );
+    expect(noFallback.ok).toBe(false);
+    if (!noFallback.ok) expect(noFallback.error).toContain("兜底图");
+
+    const badScheme = validateRenderManifest(
+      manifest({
+        clips: [
+          { durationMs: 1000, remote: "file:///etc/passwd", mediaKind: "video", fallback: PNG },
+        ],
+      }),
+    );
+    expect(badScheme.ok).toBe(false);
+    if (!badScheme.ok) expect(badScheme.error).toContain("不是 http(s)");
+  });
+
+  it("接受远端音轨", () => {
+    const ok = validateRenderManifest(
+      manifest({ audio: [{ remote: "https://cdn.example.com/a.mp3", startMs: 0 }] }),
+    );
+    expect(ok.ok).toBe(true);
+    if (ok.ok) expect(ok.manifest.audio[0]!.remote).toBe("https://cdn.example.com/a.mp3");
   });
 
   it("拒绝有缺口的片段，也拒绝总时长对不上", () => {
