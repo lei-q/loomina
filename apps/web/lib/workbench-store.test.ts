@@ -483,6 +483,149 @@ describe("视频与多 take（ADR-0083）", () => {
     vi.unstubAllGlobals();
   });
 
+  it("超时不自动重交：任务可能还在跑，别多花一笔（B6）", async () => {
+    let videoCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).endsWith("/api/video")) {
+          videoCalls += 1;
+          return new Response(
+            JSON.stringify({
+              error: "等了 240 秒还没出片（running）。任务可能还在跑",
+              code: "timeout",
+              retryable: false,
+            }),
+            { status: 502, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({ uri: "data:image/png;base64,RkFLRQ==", model: "gpt-image-2-c", cny: 0.12 }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+    await state().generateKeyframe("s-03");
+    const before = state().project.shots.find((item) => item.id === "s-03")!.takeIds.length;
+
+    const ok = await state().generateVideo("s-03");
+
+    expect(ok).toBe(false);
+    expect(videoCalls).toBe(1);
+    expect(state().castError).toContain("任务可能还在跑");
+    expect(state().project.shots.find((item) => item.id === "s-03")!.takeIds).toHaveLength(before);
+    vi.unstubAllGlobals();
+  });
+
+  it("服务端说可重试时自动重交一次，成功后只留一拍新 take（B6）", async () => {
+    let videoCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).endsWith("/api/video")) {
+          videoCalls += 1;
+          if (videoCalls === 1) {
+            return new Response(
+              JSON.stringify({ error: "上游忙", code: "submit", retryable: true }),
+              { status: 502, headers: { "Content-Type": "application/json" } },
+            );
+          }
+          return new Response(
+            JSON.stringify({
+              uri: "data:video/mp4;base64,QUJD",
+              model: "seedance",
+              prompt: "从首帧起势",
+              durationMs: 3000,
+              cny: 1.8,
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({ uri: "data:image/png;base64,RkFLRQ==", model: "gpt-image-2-c", cny: 0.12 }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+    await state().generateKeyframe("s-03");
+    const before = state().project.shots.find((item) => item.id === "s-03")!.takeIds.length;
+
+    vi.useFakeTimers();
+    const pending = state().generateVideo("s-03");
+    await vi.runAllTimersAsync();
+    const ok = await pending;
+    vi.useRealTimers();
+
+    expect(ok).toBe(true);
+    expect(videoCalls).toBe(2);
+    expect(state().project.shots.find((item) => item.id === "s-03")!.takeIds).toHaveLength(before + 1);
+    expect(state().castError).toBeUndefined();
+    vi.unstubAllGlobals();
+  });
+
+  it("可重试的错误最多试 3 次，第 3 次失败就停（B6）", async () => {
+    let videoCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).endsWith("/api/video")) {
+          videoCalls += 1;
+          return new Response(
+            JSON.stringify({ error: "上游忙", code: "submit", retryable: true }),
+            { status: 502, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({ uri: "data:image/png;base64,RkFLRQ==", model: "gpt-image-2-c", cny: 0.12 }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+    await state().generateKeyframe("s-03");
+    const before = state().project.takes.length;
+
+    vi.useFakeTimers();
+    const pending = state().generateVideo("s-03");
+    await vi.runAllTimersAsync();
+    const ok = await pending;
+    vi.useRealTimers();
+
+    expect(ok).toBe(false);
+    expect(videoCalls).toBe(3);
+    expect(state().project.takes).toHaveLength(before);
+    expect(state().castError).toContain("试了 3 次");
+    expect(state().jobs["s-03:video"]).toBeUndefined();
+    vi.unstubAllGlobals();
+  });
+
+  it("配置错误不重交：重试三次也不会变好（B6）", async () => {
+    let videoCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).endsWith("/api/video")) {
+          videoCalls += 1;
+          return new Response(
+            JSON.stringify({ error: "视频模型还没配置", code: "config", retryable: false }),
+            { status: 500, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({ uri: "data:image/png;base64,RkFLRQ==", model: "gpt-image-2-c", cny: 0.12 }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+    await state().generateKeyframe("s-03");
+
+    const ok = await state().generateVideo("s-03");
+
+    expect(ok).toBe(false);
+    expect(videoCalls).toBe(1);
+    expect(state().castError).toContain("视频模型还没配置");
+    vi.unstubAllGlobals();
+  });
+
   it("锁定的镜头不出视频，也不收地址", async () => {
     const calls = stub();
     expect(await state().generateVideo("s-08")).toBe(false);

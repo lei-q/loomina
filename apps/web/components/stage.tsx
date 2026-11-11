@@ -34,6 +34,7 @@ function Current({
   subtitle,
   generating,
   generatingVideo,
+  videoAttempt,
   quoteCny,
   videoCnyPerSecond,
   characters,
@@ -55,6 +56,8 @@ function Current({
   generating: Frame | null;
   /** 这一镜正在出视频（ADR-0083） */
   generatingVideo: boolean;
+  /** 第几次尝试；服务端说可重试时才会出现（B6） */
+  videoAttempt?: number;
   /** 生成一张要多少钱；价目不知道就不给（ADR-0035） */
   quoteCny?: number;
   /** 出视频一秒钟要多少钱；不知道就不给（ADR-0083） */
@@ -316,7 +319,11 @@ function Current({
 
         {videoShown ? (
           generatingVideo ? (
-            <span className="tnum text-[10px] text-muted">出片中 · 一两分钟</span>
+            <span className="tnum text-[10px] text-muted">
+              {videoAttempt && videoAttempt > 1
+                ? `出片中 · 第 ${videoAttempt} 次尝试`
+                : "出片中 · 一两分钟"}
+            </span>
           ) : shot.locked ? (
             <span className="tnum text-[10px] text-muted-2">镜头已锁定 · 只读</span>
           ) : (
@@ -612,6 +619,8 @@ export type StageProps = {
   generating: Frame | null;
   /** 当前镜正在出视频（ADR-0083） */
   generatingVideo: boolean;
+  /** 第几次尝试（B6） */
+  videoAttempt?: number;
   /** 生成一张要多少钱；价目不知道就不给 */
   quoteCny?: number;
   /** 出一秒视频要多少钱；价目不知道就不给 */
@@ -631,6 +640,7 @@ export function Stage({
   view,
   generating,
   generatingVideo,
+  videoAttempt,
   quoteCny,
   videoCnyPerSecond,
   readOnly,
@@ -665,6 +675,7 @@ export function Stage({
           subtitle={view.subtitle}
           generating={generating}
           generatingVideo={generatingVideo}
+          videoAttempt={videoAttempt}
           quoteCny={quoteCny}
           videoCnyPerSecond={videoCnyPerSecond}
           characters={view.characters}

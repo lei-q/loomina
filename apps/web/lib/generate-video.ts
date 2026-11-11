@@ -1,5 +1,6 @@
 import {
   TreecloudClient,
+  TreecloudError,
   TreecloudVideoAdapter,
   videoCostCny,
   videoPrice,
@@ -57,6 +58,36 @@ export type ShotVideoRequest = {
 const POLL_INTERVAL_MS = 4000;
 const POLL_TIMEOUT_MS = 240_000;
 
+export type VideoFailureCode =
+  | "submit"
+  | "poll"
+  | "provider_failed"
+  | "timeout";
+
+/**
+ * B6：只对「确定没有在跑、重交是安全的」失败标记 retryable。
+ *
+ * - 提交阶段 429 / 5xx：任务没建立，重交安全；
+ * - 供应商明确 failed：这一条已经结束，重交不会覆盖一个还在跑的任务；
+ * - 轮询超时：任务可能还在跑，自动重交会多花一笔，所以不重试；
+ * - 提交成功后轮询报错：任务已经在了，重交同样会多花一笔。
+ */
+export class VideoGenerationError extends Error {
+  constructor(
+    message: string,
+    readonly code: VideoFailureCode,
+    readonly retryable: boolean,
+  ) {
+    super(message);
+    this.name = "VideoGenerationError";
+  }
+}
+
+function submitRetryable(error: unknown): boolean {
+  if (!(error instanceof TreecloudError)) return false;
+  return error.status === 429 || error.status >= 500;
+}
+
 export async function generateShotVideo(
   request: ShotVideoRequest,
   modelId?: string,
@@ -72,24 +103,53 @@ export async function generateShotVideo(
   const adapter = new TreecloudVideoAdapter(client);
   const prompt = buildVideoPrompt(request.shot);
 
-  const { jobId } = await adapter.submit({
-    // 这一镜在服务端已经是"某一镜的 take"，用语义 id 占位只为溯源
-    shotId: "video" as Id,
-    prompt,
-    durationMs: request.durationMs,
-    imageUri: request.firstFrame,
-    ...(config.videoResolution ? { resolution: config.videoResolution } : {}),
-  });
+  const { jobId } = await adapter
+    .submit({
+      // 这一镜在服务端已经是"某一镜的 take"，用语义 id 占位只为溯源
+      shotId: "video" as Id,
+      prompt,
+      durationMs: request.durationMs,
+      imageUri: request.firstFrame,
+      ...(config.videoResolution ? { resolution: config.videoResolution } : {}),
+    })
+    .catch((error: unknown) => {
+      throw new VideoGenerationError(
+        error instanceof Error ? error.message : "提交任务失败",
+        "submit",
+        submitRetryable(error),
+      );
+    });
 
-  const job = await adapter.wait(jobId);
+  const job = await adapter.wait(jobId).catch((error: unknown) => {
+    throw new VideoGenerationError(
+      error instanceof Error ? error.message : "等片时连接断了",
+      "poll",
+      false,
+    );
+  });
   if (job.status !== "succeeded") {
-    throw new Error(
-      job.status === "failed"
-        ? `供应商生成失败：${job.error ?? "未说明原因"}`
-        : `等了 ${Math.round(POLL_TIMEOUT_MS / 1000)} 秒还没出片（${job.status}），稍后重试`,
+    if (job.status === "failed") {
+      throw new VideoGenerationError(
+        `供应商生成失败：${job.error ?? "未说明原因"}`,
+        "provider_failed",
+        true,
+      );
+    }
+    throw new VideoGenerationError(
+      `等了 ${Math.round(POLL_TIMEOUT_MS / 1000)} 秒还没出片（${job.status}）。任务可能还在跑，先别急着重交，免得多花一笔。`,
+      "timeout",
+      false,
     );
   }
-  const output = job.output ?? (await adapter.fetch(jobId));
+  const output =
+    job.output ??
+    (await adapter.fetch(jobId).catch((error: unknown) => {
+      throw new VideoGenerationError(
+        error instanceof Error ? error.message : "取片失败",
+        "poll",
+        false,
+      );
+    }));
 
   return {
     uri: output.uri,

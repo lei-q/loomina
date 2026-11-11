@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { ConfigError, TreecloudError } from "@loomina/gateway";
-import { generateShotVideo } from "@/lib/generate-video";
+import { ConfigError } from "@loomina/gateway";
+import { VideoGenerationError, generateShotVideo } from "@/lib/generate-video";
 import { parseShotMaterial } from "@/lib/request-shape";
 
 /**
@@ -54,12 +54,21 @@ export async function POST(request: Request) {
   } catch (error) {
     // 适配器已经做过 <redacted>；这里只补一句人话 + 原始原因
     const message =
-      error instanceof TreecloudError || error instanceof ConfigError
-        ? error.message
-        : error instanceof Error
-          ? error.message.slice(0, 300)
-          : "生成失败";
+      error instanceof Error ? error.message.slice(0, 300) : "生成失败";
     const status = error instanceof ConfigError ? 500 : 502;
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json(
+      {
+        error: message,
+        code:
+          error instanceof VideoGenerationError
+            ? error.code
+            : error instanceof ConfigError
+              ? "config"
+              : "unknown",
+        // 只有「确定没在跑」的失败才让客户端自动重交（B6）
+        retryable: error instanceof VideoGenerationError ? error.retryable : false,
+      },
+      { status },
+    );
   }
 }

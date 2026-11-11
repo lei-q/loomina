@@ -2,12 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AnimaticOverlay } from "@/components/animatic";
+import { ConsistencyPanel } from "@/components/consistency-panel";
 import { ReelBar } from "@/components/reel-bar";
 import { Stage } from "@/components/stage";
 import { StoryboardPanel } from "@/components/storyboard-panel";
 import { TopBar } from "@/components/top-bar";
 import { toAnimaticView, toStageView } from "@/lib/read-model";
 import { fetchPrice } from "@/lib/image-price";
+import { analyzeConsistency } from "@/lib/consistency";
 import { analyzeStoryboard } from "@/lib/storyboard";
 import { useWorkbench } from "@/lib/workbench-store";
 
@@ -67,10 +69,15 @@ export function Workbench() {
       }),
     [project, view.requoteAll.totalCny],
   );
+  // 一致性体检（ADR-0097）：只看结构化锚点与溯源
+  const [consistencyOpen, setConsistencyOpen] = useState(false);
+  const consistency = useMemo(() => analyzeConsistency(project), [project]);
+  const currentShot = view.shots[view.current];
+  const videoJob = currentShot ? jobs[`${currentShot.id}:video`] : undefined;
 
   // 键盘：← → 换格，⌘⏎ 留用；输入框里只让 ⌘⏎ 生效；预演 / 检查打开时让给它们
   useEffect(() => {
-    if (previewOpen || checkOpen) return;
+    if (previewOpen || checkOpen || consistencyOpen) return;
     function onKeyDown(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
       const typing =
@@ -96,7 +103,7 @@ export function Workbench() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [view, select, decide, previewOpen, checkOpen]);
+  }, [view, select, decide, previewOpen, checkOpen, consistencyOpen]);
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg text-text">
@@ -112,8 +119,24 @@ export function Workbench() {
         readOnly={readOnly}
         onBudgetChange={setBudget}
         allRequote={view.requoteAll}
-        onCheck={view.shots.length > 0 ? () => setCheckOpen(true) : undefined}
+        onCheck={
+          view.shots.length > 0
+            ? () => {
+                setConsistencyOpen(false);
+                setCheckOpen(true);
+              }
+            : undefined
+        }
         checkCount={storyboard.summary.errors + storyboard.summary.warnings}
+        onConsistency={
+          view.shots.length > 0
+            ? () => {
+                setCheckOpen(false);
+                setConsistencyOpen(true);
+              }
+            : undefined
+        }
+        consistencyCount={consistency.summary.review + consistency.summary.fail}
         onPreview={view.shots.length > 0 ? () => setPreviewOpen(true) : undefined}
       />
       {castError && (
@@ -136,6 +159,7 @@ export function Workbench() {
                   : null
             }
             generatingVideo={jobs[`${view.shots[view.current]!.id}:video`]?.kind === "video"}
+            videoAttempt={videoJob?.kind === "video" ? videoJob.attempt : undefined}
             quoteCny={imageCny}
             videoCnyPerSecond={videoCnyPerSecond}
             readOnly={readOnly ?? false}
@@ -176,6 +200,14 @@ export function Workbench() {
           onSelect={select}
           onPlanChange={(patch) => setShotPlan(view.shots[view.current]!.id, patch)}
           onClose={() => setCheckOpen(false)}
+        />
+      )}
+      {consistencyOpen && view.shots.length > 0 && (
+        <ConsistencyPanel
+          project={project}
+          currentShotId={view.shots[view.current]!.id}
+          onSelect={select}
+          onClose={() => setConsistencyOpen(false)}
         />
       )}
     </div>

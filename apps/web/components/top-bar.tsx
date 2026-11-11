@@ -57,6 +57,10 @@ export type TopBarProps = {
   onCheck?: () => void;
   /** 检查里要看的条数（错误 + 提示），显示在按钮右上 */
   checkCount?: number;
+  /** 打开一致性体检（ADR-0097）；给了才出现「体检」 */
+  onConsistency?: () => void;
+  /** 待复核 + 不达标的镜头数，显示在按钮右上 */
+  consistencyCount?: number;
 };
 
 function Money({ value }: { value?: number }) {
@@ -80,6 +84,8 @@ export function TopBar({
   onPreview,
   onCheck,
   checkCount,
+  onConsistency,
+  consistencyCount,
 }: TopBarProps) {
   const [draftBudget, setDraftBudget] = useState<string>("");
   const budget = budgetCny ?? 60;
@@ -254,6 +260,19 @@ export function TopBar({
               )}
             </div>
           </details>
+        )}
+        {onConsistency && (
+          <button
+            type="button"
+            onClick={onConsistency}
+            title="查定妆锚点、场景主镜、道具参考与 take 溯源：不花钱"
+            className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            体检
+            {consistencyCount !== undefined && consistencyCount > 0 && (
+              <span className="tnum text-[9px] text-pick">{consistencyCount}</span>
+            )}
+          </button>
         )}
         {onCheck && (
           <button

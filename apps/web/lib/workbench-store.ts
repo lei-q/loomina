@@ -46,13 +46,28 @@ import { sampleProject } from "@/lib/sample-project";
 
 export type Decision = "approved" | "rejected";
 
+/**
+ * B6: 视频失败重试。只重试服务端明确说「没在跑、重交安全」的失败；
+ * 路由决定 retryable，客户端不做更聪明的猜测。
+ */
+const VIDEO_MAX_ATTEMPTS = 3;
+const VIDEO_RETRY_DELAYS_MS = [1200, 3000];
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function clipReason(reason: string): string {
+  return reason.length > 240 ? `${reason.slice(0, 240)}…` : reason;
+}
+
 /** 正在生成哪一张：定妆台的三类资产共用一条进度记录（视频按 `${shotId}:video` 记）。 */
 export type GenerateJob =
   | { kind: "sheet"; angle: SheetView }
   | { kind: "master" }
   | { kind: "prop" }
   | { kind: "keyframe"; frame: Frame }
-  | { kind: "video" }
+  | { kind: "video"; attempt?: number }
   | { kind: "voice" }
   | { kind: "asr" };
 
@@ -1227,28 +1242,57 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       set({ jobs: { ...get().jobs, [jobKey]: value } });
 
     set({ castError: undefined });
-    setJob({ kind: "video" });
-    try {
-      const response = await fetch("/api/video", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          shot: shotMaterial(project, shot),
-          firstFrame: firstFrame.uri,
-          durationMs: shot.durationMs,
-          modelId: getModelChoice("video"),
-        }),
-      });
-      const payload = (await response.json()) as {
+    let lastFailure = "";
+    for (let attempt = 1; attempt <= VIDEO_MAX_ATTEMPTS; attempt += 1) {
+      setJob({ kind: "video", attempt });
+      let response: Response;
+      try {
+        response = await fetch("/api/video", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            shot: shotMaterial(project, shot),
+            firstFrame: firstFrame.uri,
+            durationMs: shot.durationMs,
+            modelId: getModelChoice("video"),
+          }),
+        });
+      } catch (error) {
+        // 连接断在提交前后无法判断任务是否已经建立：不自动重交，避免重复计费
+        setJob(undefined);
+        const reason = error instanceof Error ? error.message : "连接断了";
+        set({
+          castError: `「${label}」没出片：${clipReason(reason)}。请求可能已经到了供应商，先去后台确认有没有任务，再决定要不要重试，免得多花一笔。`,
+        });
+        return false;
+      }
+
+      const payload = (await response.json().catch(() => ({}))) as {
         uri?: string;
         model?: string;
         prompt?: string;
         durationMs?: number;
         cny?: number;
         error?: string;
+        /** 服务端判定「重交安全」才为 true（B6） */
+        retryable?: boolean;
+        code?: string;
       };
       if (!response.ok || !payload.uri) {
-        throw new Error(payload.error ?? `生成失败（${response.status}）`);
+        const reason = payload.error ?? `生成失败（${response.status}）`;
+        if (payload.retryable === true && attempt < VIDEO_MAX_ATTEMPTS) {
+          lastFailure = reason;
+          set({
+            castError: `「${label}」第 ${attempt} 次没出片：${clipReason(reason)}。正在重试（${attempt + 1}/${VIDEO_MAX_ATTEMPTS}）…`,
+          });
+          await wait(VIDEO_RETRY_DELAYS_MS[attempt - 1] ?? 3000);
+          continue;
+        }
+        setJob(undefined);
+        set({
+          castError: `「${label}」${attempt > 1 ? `试了 ${attempt} 次` : ""}没出片：${clipReason(reason)}。可以先「贴视频地址导入」顶上。`,
+        });
+        return false;
       }
 
       // 每拍一条就新占一个资产位，不覆盖旧 take：多 Take 的意义就是能比
@@ -1302,17 +1346,13 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       });
       setJob(undefined);
       return true;
-    } catch (error) {
-      setJob(undefined);
-      const reason =
-        error instanceof Error ? error.message : "原因没说";
-      // 供应商原文可能很长：截断保留可判断的部分，前面补一句人话（ADR-0083）
-      const clipped = reason.length > 240 ? `${reason.slice(0, 240)}…` : reason;
-      set({
-        castError: `「${label}」没出片：${clipped}。可以先「贴视频地址导入」顶上，或稍后再试。`,
-      });
-      return false;
     }
+
+    setJob(undefined);
+    set({
+      castError: `「${label}」试了 ${VIDEO_MAX_ATTEMPTS} 次没出片：${clipReason(lastFailure || "原因没说")}。`,
+    });
+    return false;
   },
 
   attachVideo: (shotId, rawUri) => {
