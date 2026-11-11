@@ -285,6 +285,8 @@ export type ProjectEvent =
       signature: string;
       /** 作者备注，最多 240 字 */
       note?: string;
+      /** 带条件确认（A12）：明知还有可豁免缺口仍然确认 */
+      override?: boolean;
     }
   | {
       /**
@@ -1061,6 +1063,7 @@ function applyEventCore(
         signature: event.signature,
         at: event.at,
         note,
+        override: event.override === true,
       };
       const exists = current.gates.some((gate) => gate.stage === event.stage);
       const gates = exists

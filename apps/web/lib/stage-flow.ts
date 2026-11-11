@@ -11,6 +11,7 @@
 
 import { castReadiness, type GateStage, type Project } from "@loomina/ir";
 import { fnv1a } from "./fnv";
+import { analyzeStoryboard } from "./storyboard";
 
 export type StageKey = GateStage;
 
@@ -29,6 +30,11 @@ export type StageState = {
   summary: string;
   /** 还不能确认的原因；空数组表示可确认 */
   missing: string[];
+  /**
+   * 可以勾选「我知道」之后确认的缺口（A12）。
+   * 与 `missing` 的区别：`missing` 是「还没做」，这里是「做了但不达标准」。
+   */
+  waivable: string[];
   canConfirm: boolean;
   confirmedAt?: string;
   note?: string;
@@ -278,6 +284,7 @@ function readinessOf(project: Project, key: StageKey): {
   readiness: StageReadiness;
   summary: string;
   missing: string[];
+  waivable: string[];
 } {
   switch (key) {
     case "story": {
@@ -300,6 +307,7 @@ function readinessOf(project: Project, key: StageKey): {
         readiness,
         summary: `${filled} / 7 项填写 · ${story.arcs.length} 条人物弧光 · ${story.relationships.length} 对关系`,
         missing,
+        waivable: [],
       };
     }
 
@@ -317,6 +325,7 @@ function readinessOf(project: Project, key: StageKey): {
         readiness,
         summary: `${project.scenes.length} 场 · ${project.shots.length} 镜 · ${project.dialogue.length} 句台词`,
         missing,
+        waivable: [],
       };
     }
 
@@ -337,14 +346,28 @@ function readinessOf(project: Project, key: StageKey): {
         readiness,
         summary: `${cast.lockedCount} / ${cast.totalRequired} 个必锁锚点已锁定 · ${project.characters.length} 个角色`,
         missing,
+        waivable: [],
       };
     }
 
     case "storyboard": {
       const noDescription = project.shots.filter((shot) => !shot.description.trim()).length;
       const missing: string[] = [];
+      const waivable: string[] = [];
       if (project.shots.length === 0) missing.push("还没有镜头");
       else if (noDescription > 0) missing.push(`${noDescription} 镜还没有动作描述`);
+
+      // A12 覆盖率硬闸门：有空缺的拍时不能直接确认，要么补镜，要么明说「就这样」。
+      // 没描述的镜头本来就不可确认，覆盖率再拦一遍只是重复，所以只在 missing 为空时查。
+      if (missing.length === 0) {
+        const report = analyzeStoryboard(project);
+        const open = report.summary.beats - report.summary.coveredBeats;
+        if (open > 0) {
+          waivable.push(
+            `${open} / ${report.summary.beats} 拍缺信息镜或情绪镜（覆盖率 ${report.summary.coveragePct}%）`,
+          );
+        }
+      }
       const seconds =
         project.timeline.items.length > 0
           ? project.timeline.items.reduce(
@@ -357,6 +380,7 @@ function readinessOf(project: Project, key: StageKey): {
           project.shots.length === 0 ? "empty" : missing.length === 0 ? "ready" : "partial",
         summary: `${project.shots.length} 镜 · 约 ${seconds.toFixed(1)} 秒`,
         missing,
+        waivable,
       };
     }
 
@@ -377,6 +401,7 @@ function readinessOf(project: Project, key: StageKey): {
               : "partial",
         summary: `${withFirst} / ${project.shots.length} 镜有首帧 · ${withLast} 有尾帧 · ${project.takes.length} 段视频`,
         missing,
+        waivable: [],
       };
     }
 
@@ -402,6 +427,7 @@ function readinessOf(project: Project, key: StageKey): {
               : "partial",
         summary: `${voiced} / ${project.dialogue.length} 句有声 · ${speakers.size} 个说话角色`,
         missing,
+        waivable: [],
       };
     }
 
@@ -415,6 +441,7 @@ function readinessOf(project: Project, key: StageKey): {
         readiness: items.length === 0 ? "empty" : "ready",
         summary: `${items.length} 段 · ${seconds.toFixed(1)} 秒 · ${project.timeline.music.length} 条配乐`,
         missing,
+        waivable: [],
       };
     }
   }
@@ -429,7 +456,7 @@ export function stageStateOf(project: Project, key: StageKey): StageState {
     : record.signature === signature
       ? "confirmed"
       : "stale";
-  const { readiness, summary, missing } = readinessOf(project, key);
+  const { readiness, summary, missing, waivable } = readinessOf(project, key);
   const nextMeta = STAGE_META[STAGE_META.findIndex((item) => item.key === key) + 1];
   return {
     ...meta,
@@ -438,8 +465,10 @@ export function stageStateOf(project: Project, key: StageKey): StageState {
     signature,
     summary,
     missing,
+    waivable,
     // 闸门是「这一段做完了」的标记：没达到可确认条件时按钮是灰的，
     // 但导航不受限——作者仍然可以直接点去下一阶段，只是那里会显示未确认。
+    // 可豁免的缺口（A12 覆盖率）不挡确认：勾一下就能过，事件里留 override 痕。
     canConfirm: readiness === "ready",
     confirmedAt: record?.at,
     note: record?.note,

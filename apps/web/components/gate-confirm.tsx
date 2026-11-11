@@ -18,11 +18,15 @@ export function GateConfirm({
 }: {
   state: StageState;
   onClose: () => void;
-  /** 返回 true 表示写进去了，弹层随后关闭 */
-  onConfirm: (note: string) => boolean;
+  /** 返回 true 表示写进去了，弹层随后关闭。`override` 是带条件确认（A12） */
+  onConfirm: (note: string, override: boolean) => boolean;
   onReopen?: () => void;
 }) {
   const [note, setNote] = useState(state.note ?? "");
+  // A12：覆盖率不满也能确认，但要先勾一下「我知道」
+  const [override, setOverride] = useState(false);
+  const needsOverride = state.waivable.length > 0;
+  const blocked = !state.canConfirm || (needsOverride && !override);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -87,6 +91,27 @@ export function GateConfirm({
               </dd>
             </div>
           )}
+          {needsOverride && (
+            <div>
+              <dt className="text-[9px] tracking-[.14em] text-muted-2">可以带条件确认</dt>
+              <dd className="mt-1 space-y-1.5">
+                <p className="text-[10.5px] leading-[1.75] text-muted">
+                  {state.waivable.join("；")}
+                </p>
+                <label className="flex items-start gap-2 text-[10px] leading-[1.6] text-muted-2">
+                  <input
+                    type="checkbox"
+                    checked={override}
+                    onChange={(event) => setOverride(event.target.checked)}
+                    className="mt-0.5 accent-current"
+                  />
+                  <span>
+                    我知道这些缺口：先往下做，之后回分镜页补镜再重新确认。确认记录里会标明是带条件确认。
+                  </span>
+                </label>
+              </dd>
+            </div>
+          )}
         </dl>
 
         <label className="mt-4 block">
@@ -127,13 +152,23 @@ export function GateConfirm({
             type="button"
             autoFocus
             onClick={() => {
-              if (onConfirm(note)) onClose();
+              if (onConfirm(note, override)) onClose();
             }}
-            disabled={!state.canConfirm}
-            title={state.canConfirm ? undefined : state.missing.join("；")}
+            disabled={blocked}
+            title={
+              state.canConfirm
+                ? needsOverride && !override
+                  ? "先勾选上面的「我知道」"
+                  : undefined
+                : state.missing.join("；")
+            }
             className="rounded-token border border-text bg-text px-3 py-1 text-[10.5px] text-bg transition-opacity duration-[var(--dur)] hover:opacity-85 disabled:pointer-events-none disabled:opacity-35"
           >
-            {stale ? "按现在的内容重新确认" : state.confirmLabel}
+            {stale
+              ? "按现在的内容重新确认"
+              : needsOverride
+                ? `${state.confirmLabel}（带条件）`
+                : state.confirmLabel}
           </button>
         </div>
       </div>

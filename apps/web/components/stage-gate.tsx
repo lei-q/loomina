@@ -128,8 +128,8 @@ export function StageGate({ stage }: { stage: StageKey }) {
         <GateConfirm
           state={stageState}
           onClose={() => setOpen(false)}
-          onConfirm={(note) => {
-            const ok = confirmGate(stage, note);
+          onConfirm={(note, override) => {
+            const ok = confirmGate(stage, note, override);
             if (ok && stageState.next) router.push(stageState.next.href);
             return ok;
           }}

@@ -225,6 +225,11 @@ export function StoryboardPanel({
                   )}
                 </p>
                 <p className="mt-0.5 break-words">{digest.arc}</p>
+                {digest.covered < digest.count && (
+                  <p className="mt-1 text-pick">
+                    确认分镜前要么补镜，要么在闸门里勾「我知道」带条件确认（A12）。
+                  </p>
+                )}
               </div>
             )}
             <ul className="mt-1.5 border-t border-line">

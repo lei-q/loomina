@@ -218,7 +218,8 @@ type WorkbenchState = {
    * 确认一个阶段（F8 / F9）：按当前内容算签名，写一条 `gate.confirmed`。
    * 已确认的阶段再确认一次就是更新签名，不新增第二条记录。
    */
-  confirmGate: (stage: GateStage, note?: string) => boolean;
+  /** 确认阶段闸门；`override` 用于带条件确认（A12：明知覆盖率不满仍然确认） */
+  confirmGate: (stage: GateStage, note?: string, override?: boolean) => boolean;
   /** 回退阶段确认：写一条 `gate.reopened`，删除这一阶段的记录 */
   reopenGate: (stage: GateStage) => boolean;
   /** 切工作台模式（F8）：阶段式会锁住已确认阶段，自由工作台全部展开 */
@@ -1078,7 +1079,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     return true;
   },
 
-  confirmGate: (stage, note) => {
+  confirmGate: (stage, note, override) => {
     if (get().readOnly) return false;
     const { project, events } = get();
     const meta = stageMetaOf(stage);
@@ -1088,6 +1089,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       stage,
       signature: stageSignature(project, stage),
       note: (note ?? "").trim().slice(0, 240),
+      ...(override ? { override: true } : {}),
     };
     try {
       set({

@@ -3562,6 +3562,25 @@ describe("阶段闸门与单镜预算（F8 / F9 / H10）", () => {
     expect(project.gates).toHaveLength(0);
   });
 
+  it("带条件确认把 override 记进记录与事件（A12）", () => {
+    expect(state().confirmGate("storyboard", "覆盖率先这样", true)).toBe(true);
+    const record = state().project.gates.find((gate) => gate.stage === "storyboard");
+    expect(record?.override).toBe(true);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "gate.confirmed",
+      stage: "storyboard",
+      override: true,
+    });
+    expect(rebuild(state().events).gates).toEqual(state().project.gates);
+  });
+
+  it("不带 override 时记录里是 false，不是 undefined", () => {
+    state().confirmGate("storyboard");
+    const record = state().project.gates.find((gate) => gate.stage === "storyboard");
+    expect(record?.override).toBe(false);
+    expect(state().events.at(-1)).not.toHaveProperty("override");
+  });
+
   it("回退阶段删掉记录并留一条 gate.reopened", () => {
     state().confirmGate("script");
     expect(state().reopenGate("script")).toBe(true);

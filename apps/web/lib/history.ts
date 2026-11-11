@@ -194,7 +194,7 @@ export function describeEvent(before: Project, event: ProjectEvent): string {
     case "timeline.music.updated":
       return `配乐：${event.music.length} 段`;
     case "gate.confirmed":
-      return `确认「${stageMetaOf(event.stage).name}」阶段`;
+      return `确认「${stageMetaOf(event.stage).name}」阶段${event.override ? "（带条件）" : ""}`;
     case "gate.reopened":
       return `回退「${stageMetaOf(event.stage).name}」阶段`;
     case "publish.recorded":

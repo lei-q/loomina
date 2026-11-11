@@ -201,3 +201,59 @@ describe("声音确认（A9）", () => {
     expect(stageStateOf(project, "voice").gate).toBe("stale");
   });
 });
+
+describe("A12 覆盖率硬闸门", () => {
+  it("分镜阶段给出可豁免缺口：覆盖率不满时不直接挡确认", () => {
+    const state = stageStateOf(sampleProject, "storyboard");
+    // 示例项目每镜都有描述 → 硬缺口为空
+    expect(state.missing).toEqual([]);
+    expect(state.canConfirm).toBe(true);
+    // 但覆盖率不满，缺口进 waivable 而不是 missing
+    expect(state.waivable.length).toBeGreaterThan(0);
+    expect(state.waivable[0]).toContain("覆盖率");
+  });
+
+  it("覆盖率满时没有可豁免缺口", () => {
+    // 同一场里相邻两镜交替信息 / 情绪，每一拍就都齐了。
+    // 单镜的场（sc-3）永远凑不出一拍两镜，这里把它去掉，只验证「齐了就不报」。
+    const seenInScene = new Map<string, number>();
+    const multiShotScenes = new Set(
+      ["sc-1", "sc-2", "sc-4", "sc-5"],
+    );
+    const covered: Project = {
+      ...sampleProject,
+      shots: sampleProject.shots
+        .filter((shot) => multiShotScenes.has(shot.sceneId))
+        .map((shot) => {
+        const at = seenInScene.get(shot.sceneId) ?? 0;
+        seenInScene.set(shot.sceneId, at + 1);
+          return {
+            ...shot,
+            beat: "setup" as const,
+            purpose: at % 2 === 0 ? ("information" as const) : ("emotion" as const),
+          };
+        }),
+    };
+    const state = stageStateOf(covered, "storyboard");
+    expect(state.waivable).toEqual([]);
+  });
+
+  it("还有没描述的镜头时，只报硬缺口，不重复报覆盖率", () => {
+    const blank: Project = {
+      ...sampleProject,
+      shots: sampleProject.shots.map((shot, index) =>
+        index === 0 ? { ...shot, description: "" } : shot,
+      ),
+    };
+    const state = stageStateOf(blank, "storyboard");
+    expect(state.missing.join()).toContain("动作描述");
+    expect(state.waivable).toEqual([]);
+    expect(state.canConfirm).toBe(false);
+  });
+
+  it("其他阶段没有可豁免缺口", () => {
+    for (const key of ["story", "script", "cast", "keyframes", "voice", "edit"] as const) {
+      expect(stageStateOf(sampleProject, key).waivable).toEqual([]);
+    }
+  });
+});

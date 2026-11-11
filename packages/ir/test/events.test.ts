@@ -1826,7 +1826,7 @@ describe("阶段闸门与单镜预算（F8 / F9 / H10）", () => {
       note: "故事定了",
     });
     expect(first.gates).toEqual([
-      { stage: "story", signature: "1a2b3c4d", at: AT, note: "故事定了" },
+      { stage: "story", signature: "1a2b3c4d", at: AT, note: "故事定了", override: false },
     ]);
 
     const second = applyEvent(first, {
@@ -1870,6 +1870,26 @@ describe("阶段闸门与单镜预算（F8 / F9 / H10）", () => {
         note: "长".repeat(241),
       }),
     ).toThrow(/240/);
+  });
+
+  it("带条件确认记下 override，缺省是 false（A12）", () => {
+    const project = load();
+    const plain = applyEvent(project, {
+      type: "gate.confirmed",
+      at: AT,
+      stage: "storyboard",
+      signature: "1a2b3c4d",
+    });
+    expect(plain.gates[0]!.override).toBe(false);
+
+    const overridden = applyEvent(project, {
+      type: "gate.confirmed",
+      at: AT,
+      stage: "storyboard",
+      signature: "1a2b3c4d",
+      override: true,
+    });
+    expect(overridden.gates[0]!.override).toBe(true);
   });
 
   it("单镜预算必须是正数；可以清空回默认", () => {

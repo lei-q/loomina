@@ -188,6 +188,11 @@ export const GateRecordSchema = z.object({
   at: z.string().min(1),
   /** 作者留下的一句话；不写就空着 */
   note: z.string().max(240).default(""),
+  /**
+   * 带条件确认（A12）：确认时明知还有可豁免的缺口（例如覆盖率不满），
+   * 勾了「我知道」才写进这一条。缺省 false，旧日志读出来也是 false。
+   */
+  override: z.boolean().default(false),
 });
 export type GateRecord = z.infer<typeof GateRecordSchema>;
 
