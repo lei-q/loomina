@@ -27,6 +27,7 @@ import {
   type Shot,
   type ShotPurpose,
   type StagingMark,
+  type TimelineItem,
 } from "@loomina/ir";
 import {
   parseInstruction,
@@ -321,6 +322,13 @@ type WorkbenchState = {
   /** 换某一镜用的 take：一条 `timeline.updated` 整条替换（ADR-0086） */
   setTimelineTake: (itemId: string, takeId: string) => boolean;
   /**
+   * 从时间线删掉一段（E1）：后面的片段整体前移，保持首尾相接。
+   * 只动时间线，不删 take——镜头还在，重新初剪能再排回来。
+   */
+  removeTimelineItem: (itemId: string) => boolean;
+  /** 把一段往前 / 往后挪一位（E1）：与相邻段交换位置，起点重新排，不留空隙 */
+  moveTimelineItem: (itemId: string, delta: -1 | 1) => boolean;
+  /**
    * 加一条配乐床（C4）：音频文件先落成资产，再写一条 `timeline.music.updated`。
    * 必须给授权备注；没有备注的音乐不进项目。
    */
@@ -518,9 +526,23 @@ const initialView = toStageView(sampleProject);
 const initialShotId =
   initialView.shots[initialView.current]?.id ?? sampleProject.shots[0]?.id ?? "";
 
+/**
+ * 按顺序重排起点，保持首尾相接（E1）。
+ *
+ * 渲染清单要求「片段累计时长 = 全长」，留空隙会让导出直接失败；
+ * 所以时间线上的一切改动都走这里，起点永远由顺序推出来，不由用户拖。
+ */
+function restack(items: TimelineItem[]): TimelineItem[] {
+  let cursor = 0;
+  return items.map((item) => {
+    const next = { ...item, startMs: cursor };
+    cursor += item.durationMs;
+    return next;
+  });
+}
+
 /** 当前镜之后第一格还没定的；到末尾就回到开头找；全定完了就原地不动。 */
-function nextOpenShotId(project: Project, fromId: string): string {
-  const { shots } = toStageView(project);
+function nextOpenShotId(project: Project, fromId: string): string {  const { shots } = toStageView(project);
   const from = shots.findIndex((shot) => shot.id === fromId);
   if (from < 0) return fromId;
 
@@ -2464,6 +2486,71 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       set({
         editError: error instanceof Error ? error.message : "换 take 失败",
       });
+      return false;
+    }
+    return true;
+  },
+
+  removeTimelineItem: (itemId) => {
+    if (get().readOnly) {
+      set({ editError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    const { project, events } = get();
+    if (!project.timeline.items.some((entry) => entry.id === itemId)) {
+      set({ editError: "找不到这个片段。" });
+      return false;
+    }
+
+    // 摘掉这一段，后面的整体前移：渲染清单要求首尾相接，不能留空
+    const kept = project.timeline.items.filter((entry) => entry.id !== itemId);
+    const event: ProjectEvent = {
+      type: "timeline.updated",
+      at: stamp(),
+      items: restack(kept),
+    };
+    try {
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        editError: undefined,
+      });
+    } catch (error) {
+      set({ editError: error instanceof Error ? error.message : "删片段失败" });
+      return false;
+    }
+    return true;
+  },
+
+  moveTimelineItem: (itemId, delta) => {
+    if (get().readOnly) {
+      set({ editError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    const { project, events } = get();
+    const ordered = [...project.timeline.items].sort((a, b) => a.startMs - b.startMs);
+    const from = ordered.findIndex((entry) => entry.id === itemId);
+    if (from < 0) return false;
+    const to = from + delta;
+    if (to < 0 || to >= ordered.length) return false;
+
+    const reordered = [...ordered];
+    const [moved] = reordered.splice(from, 1);
+    reordered.splice(to, 0, moved!);
+
+    const event: ProjectEvent = {
+      type: "timeline.updated",
+      at: stamp(),
+      items: restack(reordered),
+    };
+    try {
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        editError: undefined,
+      });
+    } catch (error) {
+      set({ editError: error instanceof Error ? error.message : "挪片段失败" });
       return false;
     }
     return true;

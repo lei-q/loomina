@@ -159,11 +159,28 @@ function badgeOverlay(totalMs: number, width: number, height: number): RenderOve
   return { image: el.toDataURL("image/png"), startMs: 0, endMs: totalMs };
 }
 
-/** 导出选项：目前只有「要不要字幕」。角标永远带（H5 的显式标识不能关）。 */
+/** 导出选项：字幕开关，以及拿到任务号之后的回调（界面用它提供「取消」）。 */
 export type RenderOptions = {
   /** 默认带字幕；关掉只去掉字幕叠加层，AI 角标仍在 */
   subtitles?: boolean;
+  /** 任务提交成功、拿到任务号时回调；界面据此显示「取消渲染」 */
+  onJob?: (jobId: string) => void;
 };
+
+/**
+ * 取消一条渲染任务（H2）：排队中直接摘掉，正在跑就杀掉 ffmpeg。
+ * 失败不该影响界面：取消失败只说明任务可能已经结束。
+ */
+export async function cancelRender(jobId: string): Promise<boolean> {
+  try {
+    const response = await fetch(`/api/render?job=${encodeURIComponent(jobId)}`, {
+      method: "DELETE",
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
 
 export function buildRenderManifest(
   view: EditView,
@@ -326,6 +343,7 @@ export async function exportMp4(
     throw new Error(await errorOf(submit, `提交渲染失败（${submit.status}）`));
   }
   const job = (await submit.json()) as JobState;
+  options.onJob?.(job.jobId);
 
   const deadline = Date.now() + JOB_TIMEOUT_MS;
   let state = job;

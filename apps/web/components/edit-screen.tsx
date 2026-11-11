@@ -29,7 +29,7 @@ import {
   type ComplianceCheck,
 } from "@/lib/compliance";
 import { shotLabel, spendOf, toStageView } from "@/lib/read-model";
-import { exportMp4 } from "@/lib/render-client";
+import { cancelRender, exportMp4 } from "@/lib/render-client";
 import { RENDER_PROFILES, type RenderQuality } from "@/lib/render-manifest";
 import { stageStateOf } from "@/lib/stage-flow";
 import type { LoudnessReport } from "@/lib/render-audio";
@@ -189,6 +189,8 @@ export function EditScreen() {
   const editError = useWorkbench((state) => state.editError);
   const autoCutTimeline = useWorkbench((state) => state.autoCutTimeline);
   const setTimelineTake = useWorkbench((state) => state.setTimelineTake);
+  const removeTimelineItem = useWorkbench((state) => state.removeTimelineItem);
+  const moveTimelineItem = useWorkbench((state) => state.moveTimelineItem);
   const addMusic = useWorkbench((state) => state.addMusic);
   const updateMusic = useWorkbench((state) => state.updateMusic);
   const removeMusic = useWorkbench((state) => state.removeMusic);
@@ -202,6 +204,8 @@ export function EditScreen() {
   const [elapsed, setElapsed] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [selectedId, setSelectedId] = useState<string>();
+  // 删片段要两步：时间线上的一段背后是一整条 take（E1）
+  const [deletingClip, setDeletingClip] = useState<string | null>(null);
   const [showSafe, setShowSafe] = useState(true);
   const [styleId, setStyleId] = useState<SubtitleStyleId>("default");
   const [maxChars, setMaxChars] = useState<SubtitleChars>(DEFAULT_SUBTITLE_CHARS);
@@ -212,6 +216,8 @@ export function EditScreen() {
   const [notice, setNotice] = useState("");
   const [rendering, setRendering] = useState(false);
   const [renderStage, setRenderStage] = useState("");
+  /** 正在跑的渲染任务号：有它才能取消（H2） */
+  const [renderJobId, setRenderJobId] = useState<string>();
   const [quality, setQuality] = useState<RenderQuality>("draft");
   /** 要不要把字幕烧进画面。默认带；关掉导出一版无字幕的，给要自己加字幕的平台 */
   const [burnSubtitles, setBurnSubtitles] = useState(true);
@@ -292,6 +298,9 @@ export function EditScreen() {
     ) ?? view.clips.at(-1);
   const selected =
     view.clips.find((clip) => clip.id === selectedId) ?? current ?? view.clips[0];
+  const selectedIndex = selected
+    ? view.clips.findIndex((clip) => clip.id === selected.id)
+    : -1;
   const currentCue = view.cues.find(
     (cue) =>
       elapsed >= cue.startMs && elapsed < cue.startMs + cue.durationMs,
@@ -447,7 +456,7 @@ export function EditScreen() {
         renderComplianceOf(report, acknowledged),
         quality,
         setRenderStage,
-        { subtitles: burnSubtitles },
+        { subtitles: burnSubtitles, onJob: setRenderJobId },
       );
       const mb = formatSize(result.bytes);
       const notes: string[] = [];
@@ -471,7 +480,18 @@ export function EditScreen() {
     } finally {
       setRendering(false);
       setRenderStage("");
+      setRenderJobId(undefined);
     }
+  };
+
+  const cancelRenderJob = async () => {
+    if (!renderJobId) return;
+    const ok = await cancelRender(renderJobId);
+    setNotice(
+      ok
+        ? "已取消这一条渲染：没有交付半成品，重新点导出即可。"
+        : "这条任务可能已经结束了，刷新一下状态。",
+    );
   };
 
   const exportOtio = () => {
@@ -880,6 +900,63 @@ export function EditScreen() {
                       </h2>
                       <span className="text-[9.5px] text-muted-2">
                         {fmtSec(selected.durationMs)} · 起点 {timecode(selected.startMs)}
+                      </span>
+                    </div>
+                    {/* 挪位置 / 删片段（E1）：起点永远由顺序推出，不留空隙 */}
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[9px]">
+                      <button
+                        type="button"
+                        disabled={Boolean(readOnly) || selectedIndex <= 0}
+                        onClick={() => moveTimelineItem(selected.id, -1)}
+                        title="与上一段换位置：起点重新排，不留空隙"
+                        className="rounded-token border border-line px-1.5 py-px text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        ← 前移
+                      </button>
+                      <button
+                        type="button"
+                        disabled={Boolean(readOnly) || selectedIndex >= view.clips.length - 1}
+                        onClick={() => moveTimelineItem(selected.id, 1)}
+                        title="与下一段换位置：起点重新排，不留空隙"
+                        className="rounded-token border border-line px-1.5 py-px text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        后移 →
+                      </button>
+                      {deletingClip === selected.id ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              removeTimelineItem(selected.id);
+                              setDeletingClip(null);
+                              setSelectedId(undefined);
+                              seekTo(0);
+                            }}
+                            className="rounded-token border border-pick/70 px-1.5 py-px text-pick transition-colors duration-[var(--dur)] hover:border-pick"
+                          >
+                            确认删这一段
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeletingClip(null)}
+                            className="rounded-token border border-line px-1.5 py-px text-muted-2 transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                          >
+                            取消
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={Boolean(readOnly)}
+                          onClick={() => setDeletingClip(selected.id)}
+                          title="只从时间线摘掉这一段（take 还在，重新初剪能排回来）"
+                          className="rounded-token border border-line px-1.5 py-px text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          删这一段
+                        </button>
+                      )}
+                      <span className="text-muted-2">
+                        第 {selectedIndex + 1} / {view.clips.length} 段
                       </span>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-2">
@@ -1428,6 +1505,16 @@ export function EditScreen() {
                     >
                       {rendering ? "正在渲染 MP4…" : `导出${profile.label} MP4`}
                     </button>
+                    {rendering && renderJobId && (
+                      <button
+                        type="button"
+                        onClick={() => void cancelRenderJob()}
+                        title="排队中会直接摘掉；正在编码就停掉 ffmpeg，不留半成品"
+                        className="rounded-token border border-line px-3 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                      >
+                        取消渲染
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={exportPreview}

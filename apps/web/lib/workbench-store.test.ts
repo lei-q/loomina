@@ -106,6 +106,55 @@ describe("审片台 store", () => {
     expect(state().removeTake("t-nope")).toBe(false);
   });
 
+  it("删片段：后面的整体前移，起点不留空隙（E1）", () => {
+    state().autoCutTimeline();
+    const items = state().project.timeline.items;
+    expect(items.length).toBeGreaterThan(1);
+    const removed = items[0]!;
+    const before = state().events.length;
+
+    expect(state().removeTimelineItem(removed.id)).toBe(true);
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)?.type).toBe("timeline.updated");
+
+    const after = [...state().project.timeline.items].sort((a, b) => a.startMs - b.startMs);
+    expect(after.some((item) => item.id === removed.id)).toBe(false);
+    expect(after[0]!.startMs).toBe(0);
+    // 首尾相接：每一段的起点等于上一段的终点
+    let cursor = 0;
+    for (const item of after) {
+      expect(item.startMs).toBe(cursor);
+      cursor += item.durationMs;
+    }
+  });
+
+  it("挪片段：交换顺序后起点重排，仍首尾相接（E1）", () => {
+    state().autoCutTimeline();
+    const ordered = [...state().project.timeline.items].sort((a, b) => a.startMs - b.startMs);
+    const first = ordered[0]!;
+    const second = ordered[1]!;
+    expect(state().moveTimelineItem(first.id, 1)).toBe(true);
+
+    const after = [...state().project.timeline.items].sort((a, b) => a.startMs - b.startMs);
+    expect(after[0]!.id).toBe(second.id);
+    expect(after[1]!.id).toBe(first.id);
+    expect(after[0]!.startMs).toBe(0);
+    expect(after[1]!.startMs).toBe(after[0]!.durationMs);
+  });
+
+  it("挪到边界外不写事件", () => {
+    state().autoCutTimeline();
+    const ordered = [...state().project.timeline.items].sort((a, b) => a.startMs - b.startMs);
+    const before = state().events.length;
+    expect(state().moveTimelineItem(ordered[0]!.id, -1)).toBe(false);
+    expect(state().moveTimelineItem(ordered.at(-1)!.id, 1)).toBe(false);
+    expect(state().events).toHaveLength(before);
+  });
+
+  it("删不存在的片段返回 false", () => {
+    expect(state().removeTimelineItem("ti-nope")).toBe(false);
+  });
+
   it("锁定定妆写一条闸门事件，锁住四格与参考图", () => {
     state().lockCast("character", "c-lin");
 

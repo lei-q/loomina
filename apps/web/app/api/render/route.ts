@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -86,6 +86,10 @@ type RenderJob = {
 const jobs = new Map<string, RenderJob>();
 const queue: string[] = [];
 let activeJobId: string | null = null;
+/** 正在跑的 ffmpeg 进程：取消时直接杀掉，不等它自己失败 */
+let activeChild: ChildProcess | null = null;
+/** 主动取消的任务：失败分支要写「已取消」，不能冒充 ffmpeg 报错 */
+const cancelled = new Set<string>();
 
 /** 落盘串行化：慢磁盘也不能让两次快照交错写坏文件。 */
 let persistChain: Promise<void> = Promise.resolve();
@@ -392,6 +396,7 @@ function runFfmpeg(
 ): Promise<{ code: number; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] });
+    activeChild = child;
     let stderr = "";
     let stdoutBuffer = "";
     child.stdout.on("data", (chunk: Buffer) => {
@@ -413,12 +418,17 @@ function runFfmpeg(
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
     }, RENDER_TIMEOUT_MS);
+    const done = () => {
+      if (activeChild === child) activeChild = null;
+    };
     child.on("error", (error) => {
       clearTimeout(timer);
+      done();
       resolve({ code: -1, stderr: `${stderr}\n${error.message}` });
     });
     child.on("close", (code) => {
       clearTimeout(timer);
+      done();
       resolve({ code: code ?? -1, stderr });
     });
   });
@@ -660,9 +670,14 @@ async function runJob(job: RenderJob): Promise<void> {
     persistJobs();
     scheduleCleanup(job);
   } catch (error) {
+    const wasCancelled = cancelled.delete(job.id);
     job.status = "error";
-    job.stage = "失败";
-    job.error = error instanceof Error ? error.message : "未知错误";
+    job.stage = wasCancelled ? "已取消" : "失败";
+    job.error = wasCancelled
+      ? "这一条已经取消：没有交付半成品。要的话重新点导出。"
+      : error instanceof Error
+        ? error.message
+        : "未知错误";
     job.finishedAt = Date.now();
     if (job.dir) await rm(job.dir, { recursive: true, force: true });
     persistJobs();
@@ -733,6 +748,48 @@ export async function POST(request: Request) {
   persistJobs();
   pump();
   return NextResponse.json(publicJob(job), { status: 202 });
+}
+
+/**
+ * 取消一条渲染任务（H2）。
+ *
+ * - 排队中：直接从队列摘掉，状态记「已取消」。
+ * - 正在跑：杀掉 ffmpeg，失败分支认 `cancelled` 标记，不把「取消」写成「渲染失败」。
+ * - 已完成 / 已失败：返回 409，取消一个已经结束的任务没有意义。
+ */
+export async function DELETE(request: Request) {
+  await ensureJobsLoaded();
+  const url = new URL(request.url);
+  const jobId = url.searchParams.get("job");
+  if (!jobId) return NextResponse.json({ error: "缺少任务号" }, { status: 400 });
+  const job = jobs.get(jobId);
+  if (!job) return NextResponse.json({ error: "任务不存在或已过期" }, { status: 404 });
+
+  if (job.status === "done" || job.status === "error") {
+    return NextResponse.json(
+      { error: "这条任务已经结束了，取消不了。", ...publicJob(job) },
+      { status: 409 },
+    );
+  }
+
+  const wasQueued = job.status === "queued";
+  if (wasQueued) {
+    const at = queue.indexOf(job.id);
+    if (at >= 0) queue.splice(at, 1);
+  } else {
+    // 正在跑：先标记再杀，失败分支才知道这是取消而不是渲染出错
+    cancelled.add(job.id);
+    activeChild?.kill("SIGKILL");
+  }
+
+  job.status = "error";
+  job.stage = "已取消";
+  job.error = "这一条已经取消：没有交付半成品。要的话重新点导出。";
+  job.finishedAt = Date.now();
+  if (job.dir) await rm(job.dir, { recursive: true, force: true });
+  persistJobs();
+  scheduleCleanup(job);
+  return NextResponse.json(publicJob(job));
 }
 
 export async function GET(request: Request) {
