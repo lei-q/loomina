@@ -533,6 +533,105 @@ describe("V3 精确越轴（B13.1 / ADR-0126）：有坐标时不再说「像」
   });
 });
 
+describe("V12 立面与遮挡（B13.2 / ADR-0126）", () => {
+  function withGeometry(
+    shots: ShotPatch[],
+    space: { dimensions: [number, number, number]; anchors: unknown[] },
+  ): Project {
+    const project = makeProject(shots);
+    project.locations[0]!.space = space as never;
+    return project;
+  }
+
+  it("视线被家具挡住：点名那一镜与被挡的东西", () => {
+    const project = withGeometry(
+      [
+        {
+          characterIds: ["c-a"],
+          camera: {
+            angle: "eye",
+            movement: "static",
+            focalMm: 35,
+            placement: { position: [-2, 1.2, 0], target: [2, 1.2, 0] },
+          },
+        },
+      ],
+      {
+        dimensions: [5, 4, 2.8],
+        anchors: [
+          {
+            id: "shelf",
+            kind: "furniture",
+            label: "书架",
+            position: [0, 1.8, 0],
+            facingRad: 0,
+            capacity: 0,
+          },
+        ],
+      },
+    );
+    const v12 = analyzeStoryboard(project).issues.filter((issue) => issue.rule === "V12");
+    expect(v12).toHaveLength(1);
+    expect(v12[0]!.message).toContain("视线被挡住");
+    expect(v12[0]!.message).toContain("书架");
+    expect(v12[0]!.shotIds).toEqual(["s-1"]);
+  });
+
+  it("挡的东西比视线矮：不报遮挡", () => {
+    const project = withGeometry(
+      [
+        {
+          camera: {
+            angle: "eye",
+            movement: "static",
+            focalMm: 35,
+            placement: { position: [-2, 1.2, 0], target: [2, 1.2, 0] },
+          },
+        },
+      ],
+      {
+        dimensions: [5, 4, 2.8],
+        anchors: [
+          {
+            id: "table",
+            kind: "furniture",
+            label: "茶几",
+            position: [0, 0.4, 0],
+            facingRad: 0,
+            capacity: 0,
+          },
+        ],
+      },
+    );
+    expect(analyzeStoryboard(project).issues.some((issue) => issue.rule === "V12")).toBe(false);
+  });
+
+  it("机位高度与角度档位对不上：点名两边的说法", () => {
+    const project = withGeometry(
+      [
+        {
+          camera: {
+            angle: "eye",
+            movement: "static",
+            focalMm: 35,
+            placement: { position: [0, 2.2, 2], target: [0, 1.2, 0] },
+          },
+        },
+      ],
+      { dimensions: [5, 4, 2.8], anchors: [] },
+    );
+    const v12 = analyzeStoryboard(project).issues.filter((issue) => issue.rule === "V12");
+    expect(v12).toHaveLength(1);
+    expect(v12[0]!.message).toContain("平视");
+    expect(v12[0]!.message).toContain("俯拍");
+  });
+
+  it("没有机位坐标：V12 一个字都不说", () => {
+    const project = makeProject([{ characterIds: ["c-a"] }]);
+    expect(analyzeStoryboard(project).issues.some((issue) => issue.rule === "V12")).toBe(false);
+  });
+});
+
 describe("V7 切率（ADR-0108）", () => {
   it("该碎的拍只有一镜 4 秒以上，提示补反应镜", () => {
     const project = makeProject([

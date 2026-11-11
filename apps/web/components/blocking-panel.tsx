@@ -2,8 +2,18 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { Blocking, CameraPlacement, Project, Shot, Vec3 } from "@loomina/ir";
-import { blockingOf, checkAxis, hasGeometry, suggestBlocking } from "@loomina/pipeline";
+import {
+  blockingOf,
+  checkAxis,
+  elevationOf,
+  elevationExtent,
+  hasGeometry,
+  occlusionsOf,
+  SHOT_ANGLE_CN,
+  suggestBlocking,
+} from "@loomina/pipeline";
 import { BlockingBoard, type BoardActor, type BoardCamera } from "@/components/blocking-board";
+import { ElevationBoard, type ElevationActor } from "@/components/elevation-board";
 import { cn } from "@/lib/utils";
 
 function shotLabel(no: number): string {
@@ -127,6 +137,25 @@ export function BlockingPanel({
           },
         ]
       : [],
+  );
+  // 立面与遮挡（B13.2）：只对当前选中的那一镜算，没有机位坐标就没有可看的
+  const elevationShot = activeShot?.camera.placement ? activeShot : undefined;
+  const elevation = elevationShot && space ? elevationOf(project, elevationShot) : undefined;
+  const occlusions = elevationShot && space ? occlusionsOf(project, elevationShot, space) : [];
+  const elevationActors: ElevationActor[] = (elevationShot?.blocking?.actors ?? []).flatMap(
+    (actor) => {
+      const character = project.characters.find((item) => item.id === actor.characterId);
+      return character
+        ? [
+            {
+              characterId: actor.characterId,
+              name: character.name,
+              position: actor.position,
+              facingRad: actor.facingRad,
+            },
+          ]
+        : [];
+    },
   );
   const placements = cameras.length;
   const suggestedCameras: BoardCamera[] =
@@ -263,6 +292,64 @@ export function BlockingPanel({
 
               <section className="mt-4">
                 <div className="flex items-baseline justify-between gap-2">
+                  <h3 className="text-[10.5px] tracking-[.06em] text-text">立面与遮挡</h3>
+                  <span className="tnum text-[9px] text-muted-2">
+                    {activeShot ? shotLabel(scene!.shots.indexOf(activeShot) + 1) : "先选一镜"}
+                  </span>
+                </div>
+                {!elevation ? (
+                  <p className="mt-1 text-[9.5px] leading-[1.7] text-muted-2">
+                    {activeShot
+                      ? "这一镜还没有机位坐标：用自动摆位写一次，或拖动俯视图里的机位之后才有立面可看。"
+                      : "先在俯视图里点一镜。"}
+                  </p>
+                ) : (
+                  <>
+                    <div className="mt-2">
+                      <ElevationBoard
+                        space={space}
+                        placement={elevationShot!.camera.placement!}
+                        actors={elevationActors}
+                        occlusions={occlusions}
+                        spanM={elevation.groundDistanceM}
+                        heightM={space.dimensions[2]}
+                      />
+                    </div>
+                    <p className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[9px] leading-[1.6] text-muted-2">
+                      <span className="tnum text-muted">{elevation.summary}</span>
+                      <span>
+                        写下的档位「{SHOT_ANGLE_CN[elevation.declaredAngle]}」
+                        {elevation.agrees ? "与坐标一致" : "与坐标不一致"}
+                      </span>
+                    </p>
+                    {occlusions.length > 0 ? (
+                      <ul className="mt-1.5 border-t border-line">
+                        {occlusions.map((item) => (
+                          <li
+                            key={`${item.kind}-${item.id}`}
+                            className="flex items-baseline justify-between gap-2 border-b border-line py-1 text-[9px]"
+                          >
+                            <span className="text-muted">
+                              {item.kind === "actor" ? "人" : "陈设"}「{item.label}」挡在
+                              {Math.round(item.at * 100)}% 处
+                            </span>
+                            <span className="tnum shrink-0 text-muted-2">
+                              {item.heightM.toFixed(2)} m &gt; 视线 {item.sightHeightM.toFixed(2)} m
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-1 text-[9px] leading-[1.6] text-muted-2">
+                        视线没有穿过比它高的东西。只判这一镜在场的人物与模板锚点，不知道椅背、灯架这类没建模的东西。
+                      </p>
+                    )}
+                  </>
+                )}
+              </section>
+
+              <section className="mt-4">
+                <div className="flex items-baseline justify-between gap-2">
                   <h3 className="text-[10.5px] tracking-[.06em] text-text">自动摆位</h3>
                   <span className="text-[9px] text-muted-2">
                     {suggested ? "只建议，不自动写" : "不可用"}
@@ -394,7 +481,8 @@ export function BlockingPanel({
           )}
 
           <p className="mt-4 border-t border-line pt-3 text-[9px] leading-[1.7] text-muted-2">
-            这是俯视走位图，不是最终画面：它只有房间平面、人物位置与机位方向，没有相机高度、遮挡与光线。
+            俯视图说「谁在左谁在右」，立面说「谁挡住谁」：两张都不是最终画面。高度取自模板锚点坐标
+            （家具高度是估的），人物按 1.68 m 算；没有建模的椅背、灯架、吊灯挡不住也看不见。
             坐标单位米，原点在房间中心地面；拖动人物只改位置，不改镜头角度。
           </p>
         </div>

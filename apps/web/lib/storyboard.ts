@@ -4,13 +4,14 @@
  * 三件事共用一份读模型：
  * - A11 Beat 分析：每镜归到哪一拍；没有显式标注的旧项目按镜序推断；
  * - A12 覆盖率：每一拍有没有信息镜头与情绪 / 反应镜头；
- * - A13 分镜校验：V1 / V2 / V3 / V4 / V5 / V6 / V7 / V8 / V9 / V10 / V11。
+ * - A13 分镜校验：V1 / V2 / V3 / V4 / V5 / V6 / V7 / V8 / V9 / V10 / V11 / V12。
  *
  * 推断只在读模型里发生，不写回 IR；作者在检查面板里改过的值才落 `shot.updated`。
  * V3 用 B17 的左右调度做近似：只看同一场相邻两镜，没有 3D 坐标就不声称精确；
  * V7 用每拍平均镜长与全片平均对比，查「该碎不碎」的拍；
  * V9 只查尾帧：当前网关没有尾帧字段，运镜本身只作为提示词提交。
- * V10 查表演设计（B16 / B17）；V11 查节拍顺序（A11）。
+ * V10 查表演设计（B16 / B17）；V11 查节拍顺序（A11）；
+ * V12 查立面与遮挡（B13.2）：视线被谁挡住、机位高度与写下的角度档位对不上。
  * 「不拦生成」是这一轮的有意取舍（ADR-0103 / ADR-0108）。
  */
 
@@ -20,7 +21,7 @@ import type {
   Shot,
   ShotPurpose,
 } from "@loomina/ir";
-import { SHOT_SIZE_CN, checkAxis } from "@loomina/pipeline";
+import { SHOT_ANGLE_CN, SHOT_SIZE_CN, checkAxis, elevationOf, occlusionsOf } from "@loomina/pipeline";
 
 export const BEAT_ORDER: BeatKind[] = [
   "hook",
@@ -182,7 +183,8 @@ export type StoryboardRule =
   | "V8"
   | "V9"
   | "V10"
-  | "V11";
+  | "V11"
+  | "V12";
 
 export type StoryboardIssue = {
   rule: StoryboardRule;
@@ -578,6 +580,54 @@ export function validateStoryboard(
       severity: "warning",
       message: `${shown}${tail}还没有表演设计：补上 objective 与视线，首尾帧与视频提示词才会写到表情和看谁。`,
       shotIds: missingPerformance.map((plan) => plan.shotId),
+    });
+  }
+
+  // V12：立面与遮挡（B13.2）。只在有机位坐标时判；没坐标的项目一个字都不说，
+  // 免得把「没画走位」说成「有遮挡」。两条都是提示，不拦生成。
+  const occluded: { no: number; shotId: string; names: string[] }[] = [];
+  const angleDrift: { no: number; shotId: string; said: string; geometry: string }[] = [];
+  for (const plan of plans) {
+    const shot = shotById.get(plan.shotId);
+    if (!shot?.camera.placement) continue;
+    const found = occlusionsOf(project, shot);
+    if (found.length > 0) {
+      occluded.push({
+        no: plan.no,
+        shotId: shot.id,
+        names: found.map((item) => item.label),
+      });
+    }
+    const elevation = elevationOf(project, shot);
+    if (elevation && !elevation.agrees) {
+      angleDrift.push({
+        no: plan.no,
+        shotId: shot.id,
+        said: SHOT_ANGLE_CN[elevation.declaredAngle],
+        geometry: SHOT_ANGLE_CN[elevation.angleFromGeometry],
+      });
+    }
+  }
+  if (occluded.length > 0) {
+    const shown = occluded.slice(0, 5).map((item) => `第 ${item.no} 镜（${item.names.slice(0, 2).join("、")}）`);
+    const tail = occluded.length > 5 ? ` 等 ${occluded.length} 镜` : "";
+    issues.push({
+      rule: "V12",
+      severity: "warning",
+      message: `${shown.join("、")}${tail}的视线被挡住了：挪开挡在前面的人或家具，或者把机位抬高、换一个机位。`,
+      shotIds: occluded.map((item) => item.shotId),
+    });
+  }
+  if (angleDrift.length > 0) {
+    const shown = angleDrift
+      .slice(0, 5)
+      .map((item) => `第 ${item.no} 镜写的「${item.said}」、坐标算出来是「${item.geometry}」`);
+    const tail = angleDrift.length > 5 ? ` 等 ${angleDrift.length} 镜` : "";
+    issues.push({
+      rule: "V12",
+      severity: "warning",
+      message: `${shown.join("；")}${tail}：机位高度与角度档位对不上，提示词会同时说两件事。改高度或改档位。`,
+      shotIds: angleDrift.map((item) => item.shotId),
     });
   }
 

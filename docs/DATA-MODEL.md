@@ -1045,6 +1045,19 @@ interface CameraPlacement {
 46. **走位里的角色必须在这一镜出场**（`BLOCKING_ACTOR_IN_SHOT`）；`camera.placement` 的 `position` 与 `target` 不得重合。
 47. **空间坐标不得越出地点尺寸**（`SPACE_OUT_OF_BOUNDS`）；越界拒绝，不夹取。
 
+**落地细节（B13.2 立面与遮挡，2026-11-12）**
+
+- **不加字段**。相机高度就是 `camera.placement.position[1]`，朝向就是 `blocking.actors[].facingRad`，家具高度就是锚点 `position[1]`；立面与遮挡全是派生结论，和剧本医生、音乐曲线同一口径——**不进 IR**。
+- `elevationOf(project, shot)` → `{ distanceM, groundDistanceM, pitchDeg, cameraHeightM, targetHeightM, angleFromGeometry, declaredAngle, agrees, summary }`。`angleFromGeometry` 由俯仰角换档（≥60° `top`、≥10° `high`、≤−10° `low`、其余 `eye`）；`agrees` 是它与 `camera.angle` 是否同档。**几何不改写 `angle`**：档位是摄影意图，坐标只是事实（与 §11.5 同一条）。
+- `occlusionsOf(project, shot, space?)` → `{ kind: "anchor" | "actor", id, label, at, heightM, sightHeightM }[]`，按离机位由近到远排。`at` 是视线上的比例（0 机位、1 目标）。
+- 判定口径：XZ 平面上最近距离 ≤ 半径，且遮挡物高度 ≥ 该处视线高度（容差 2 cm），且 `at` 不在两端 0.15 m 以内。
+- **房间边界的墙跳过**：模板里的 `wall` 锚点都贴着边界（`|x| ≈ 半宽` 或 `|z| ≈ 半深`，0.2 m 容差），屋里两个人之间穿不过去；只有立在屋里的隔断按整面墙算，高度取 `dimensions[2]`。
+- 被摄者本人不算遮挡（目标点站在谁身上，谁就不挡自己）。
+
+**新增不变量**
+
+无。立面与遮挡是提示，不是事实：同一份坐标下结论可以随锚点高度估计变化，所以不进不变量、不拦生成（R51 / R56）。
+
 ## 12. 声音层（ADR-0020 / SOUND.md）
 
 ```ts
