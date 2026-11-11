@@ -5,6 +5,8 @@ import {
   treecloudEnvFrom,
 } from "@loomina/gateway";
 import {
+  SOURCE_MAX_CHARS,
+  importStoryMessages,
   parseStoryDraft,
   storyMessages,
   type StoryDraft,
@@ -36,14 +38,32 @@ export type StoryResult = {
 const IDEA_MAX = 2000;
 const GENRE_MAX = 20;
 
-export async function generateStory(request: {
-  idea: string;
+export type StoryRequest = {
+  idea?: string;
+  source?: string;
   genre?: string;
-}): Promise<StoryResult> {
-  const idea = request.idea.trim();
-  if (!idea) throw new Error("先写一句想法或一段大纲。");
+};
+
+export async function generateStory(request: StoryRequest): Promise<StoryResult> {
+  const idea = request.idea?.trim() ?? "";
+  const source = request.source?.trim() ?? "";
+  if (idea && source) {
+    throw new Error("想法和剧本文本只能给一个：从想法开始，或导入 txt。");
+  }
+  if (!idea && !source) {
+    throw new Error(
+      source === "" && request.source !== undefined
+        ? "导入的剧本是空的，先选一个 txt 或粘贴文字。"
+        : "先写一句想法或一段大纲。",
+    );
+  }
   if (idea.length > IDEA_MAX) {
     throw new Error(`想法太长了（超过 ${IDEA_MAX} 字），先压缩成一段大纲。`);
+  }
+  if (source.length > SOURCE_MAX_CHARS) {
+    throw new Error(
+      `剧本太长了（超过 ${SOURCE_MAX_CHARS} 字），先截取一段，或拆成几集分别导入。`,
+    );
   }
   const genre = request.genre?.trim().slice(0, GENRE_MAX) || undefined;
 
@@ -51,7 +71,9 @@ export async function generateStory(request: {
   const client = new TreecloudClient({ ...config, timeoutMs: 150_000 });
   const adapter = new TreecloudChatAdapter(client);
   const output = await adapter.complete({
-    messages: storyMessages(idea, genre),
+    messages: source
+      ? importStoryMessages(source, genre)
+      : storyMessages(idea, genre),
     // 实测 claude-sonnet-5-5 生成一份完整草稿约 1 万 completion tokens，
     // 其中一半是推理；8000 会在 JSON 中途截断（ADR-0088）。
     maxTokens: 16_000,

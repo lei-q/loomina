@@ -7,6 +7,7 @@ import {
   SHOT_MIN_MS,
   SHOT_PADDING_MS,
   SHOT_SIZE_CN,
+  SOURCE_MAX_CHARS,
   type StoryDraft,
 } from "@loomina/pipeline";
 import { TopBar } from "@/components/top-bar";
@@ -42,7 +43,21 @@ const SPACE_CN: Record<StoryDraft["scenes"][number]["space"], string> = {
   ext: "外景",
 };
 
-type StoryResult = { draft: StoryDraft; model: string };
+type StoryOrigin = "idea" | "import";
+type StoryResult = { draft: StoryDraft; model: string; origin: StoryOrigin };
+
+const MODES: { key: StoryOrigin; label: string; note: string }[] = [
+  {
+    key: "idea",
+    label: "从想法开始",
+    note: "写一句想法或一段大纲，模型把它长成一条 60–90 秒的短剧。",
+  },
+  {
+    key: "import",
+    label: "导入剧本 txt",
+    note: "选一个 txt 或粘贴原文，模型把它改成一条 60–90 秒单集。会保留人物关系、核心冲突与结局，允许合并次要人物与场次；不是逐字导入。",
+  },
+];
 
 export function StoryScreen() {
   const router = useRouter();
@@ -55,7 +70,12 @@ export function StoryScreen() {
 
   const [info, setInfo] = useState<{ model?: string }>({});
   const [infoError, setInfoError] = useState<string>();
+  const [mode, setMode] = useState<StoryOrigin>("idea");
   const [idea, setIdea] = useState("");
+  const [source, setSource] = useState("");
+  const [fileName, setFileName] = useState<string>();
+  const [rights, setRights] = useState(false);
+  const [reading, setReading] = useState(false);
   const [genre, setGenre] = useState<string>("都市逆袭");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -76,7 +96,11 @@ export function StoryScreen() {
     })();
   }, [hydrate]);
 
-  const canGenerate = Boolean(info.model) && idea.trim().length > 0 && !busy;
+  const inputReady =
+    mode === "idea"
+      ? idea.trim().length > 0
+      : source.trim().length > 0 && source.length <= SOURCE_MAX_CHARS && rights;
+  const canGenerate = Boolean(info.model) && inputReady && !busy && !reading;
 
   const stats = useMemo(() => {
     if (!result) return undefined;
@@ -88,7 +112,10 @@ export function StoryScreen() {
         (total, line) => total + estimateDialogueMs(line.text),
         0,
       );
-      return sum + (shot.dialogue.length > 0 ? dialogueMs + 500 : 2500);
+      return (
+        sum +
+        (shot.dialogue.length > 0 ? dialogueMs + SHOT_PADDING_MS : SHOT_MIN_MS)
+      );
     }, 0);
     return {
       characters: draft.characters.length,
@@ -100,6 +127,43 @@ export function StoryScreen() {
     };
   }, [result]);
 
+  function switchMode(next: StoryOrigin) {
+    if (next === mode) return;
+    setMode(next);
+    setError(undefined);
+    setResult(undefined);
+    setConfirming(false);
+  }
+
+  async function readFile(file: File) {
+    setError(undefined);
+    setReading(true);
+    try {
+      const isText =
+        file.type === "text/plain" || /\.txt$/i.test(file.name);
+      if (!isText) throw new Error("只收 .txt 纯文本。");
+      if (file.size > 2 * 1024 * 1024) {
+        throw new Error("文件超过 2 MB，先截取一段再导入。");
+      }
+      const buffer = await file.arrayBuffer();
+      let text: string;
+      try {
+        text = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+      } catch {
+        // 国内 txt 常见 GBK / GB18030，UTF-8 解不出时再试一次
+        text = new TextDecoder("gb18030").decode(buffer);
+      }
+      setSource(text.replace(/^﻿/, ""));
+      setFileName(file.name);
+      setResult(undefined);
+      setConfirming(false);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "读不了这个文件");
+    } finally {
+      setReading(false);
+    }
+  }
+
   async function generate() {
     if (!canGenerate) return;
     setBusy(true);
@@ -110,14 +174,16 @@ export function StoryScreen() {
       const response = await fetch("/api/story", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idea, genre }),
+        body: JSON.stringify(
+          mode === "import" ? { source, genre } : { idea, genre },
+        ),
       });
       const payload = (await response.json().catch(() => null)) as
-        | (StoryResult & { error?: string })
+        | (Omit<StoryResult, "origin"> & { error?: string })
         | null;
       if (!response.ok) throw new Error(payload?.error || "生成失败");
       if (!payload?.draft) throw new Error("服务端没有返回故事草稿");
-      setResult({ draft: payload.draft, model: payload.model });
+      setResult({ draft: payload.draft, model: payload.model, origin: mode });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "生成失败");
     } finally {
@@ -127,7 +193,11 @@ export function StoryScreen() {
 
   function startProject() {
     if (!result) return;
-    if (startProjectFromStory(result.draft, { modelId: result.model, idea })) {
+    const prompt =
+      result.origin === "import"
+        ? `导入剧本${fileName ? `（${fileName}）` : ""}（${source.length} 字）：${source.slice(0, 300)}`
+        : idea;
+    if (startProjectFromStory(result.draft, { modelId: result.model, idea: prompt })) {
       router.push("/script");
     } else {
       setError(useWorkbench.getState().castError ?? "故事没能开工");
@@ -154,7 +224,7 @@ export function StoryScreen() {
             <div>
               <h1 className="text-[20px] leading-none tracking-[.02em] text-text">故事</h1>
               <p className="mt-2.5 max-w-[62ch] text-[12px] leading-[1.7] text-muted">
-                写一句想法或一段大纲。一次生成会同时给出 logline、人物弧光、地点、场次与分镜初稿；
+                一次生成会同时给出 logline、人物弧光、地点、场次与分镜初稿；
                 看过之后再决定要不要拿它开工。生成不写项目，确认才写。
               </p>
             </div>
@@ -174,34 +244,124 @@ export function StoryScreen() {
             </dl>
           </header>
 
-          <section className="mt-6 rounded-token border border-line bg-surface p-4 sm:p-5">
-            <label htmlFor="story-idea" className="text-[11px] tracking-[.06em] text-muted">
-              一句话 / 大纲
-            </label>
-            <textarea
-              id="story-idea"
-              value={idea}
-              onChange={(event) => setIdea(event.target.value)}
-              rows={5}
-              maxLength={2000}
-              placeholder="例：外卖员每天给顶层公寓送餐，直到董事长当众喊他「少主」——他白天送餐，晚上查父亲坠楼的真相。"
-              className="mt-2 w-full resize-y rounded-token border border-line bg-bg px-3 py-2.5 text-[12.5px] leading-[1.8] text-text placeholder:text-muted-2 focus:border-line-2 focus:outline-none"
-            />
-            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap gap-1.5">
-                {IDEAS.map((sample) => (
-                  <button
-                    key={sample}
-                    type="button"
-                    onClick={() => setIdea(sample)}
-                    className="rounded-token border border-line px-2 py-1 text-left text-[9.5px] leading-[1.5] text-muted-2 transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-muted"
+          <div className="mt-5 flex flex-wrap items-center gap-1.5">
+            {MODES.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => switchMode(item.key)}
+                aria-pressed={mode === item.key}
+                className={
+                  mode === item.key
+                    ? "rounded-token border border-line-2 bg-line px-3 py-1.5 text-[11px] text-text"
+                    : "rounded-token border border-line px-3 py-1.5 text-[11px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                }
+              >
+                {item.label}
+              </button>
+            ))}
+            <span className="text-[10px] leading-[1.7] text-muted-2">
+              {MODES.find((item) => item.key === mode)?.note}
+            </span>
+          </div>
+
+          <section className="mt-3 rounded-token border border-line bg-surface p-4 sm:p-5">
+            {mode === "idea" ? (
+              <>
+                <label htmlFor="story-idea" className="text-[11px] tracking-[.06em] text-muted">
+                  一句话 / 大纲
+                </label>
+                <textarea
+                  id="story-idea"
+                  value={idea}
+                  onChange={(event) => setIdea(event.target.value)}
+                  rows={5}
+                  maxLength={2000}
+                  placeholder="例：外卖员每天给顶层公寓送餐，直到董事长当众喊他「少主」——他白天送餐，晚上查父亲坠楼的真相。"
+                  className="mt-2 w-full resize-y rounded-token border border-line bg-bg px-3 py-2.5 text-[12.5px] leading-[1.8] text-text placeholder:text-muted-2 focus:border-line-2 focus:outline-none"
+                />
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap gap-1.5">
+                    {IDEAS.map((sample) => (
+                      <button
+                        key={sample}
+                        type="button"
+                        onClick={() => setIdea(sample)}
+                        className="rounded-token border border-line px-2 py-1 text-left text-[9.5px] leading-[1.5] text-muted-2 transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-muted"
+                      >
+                        {sample}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="tnum text-[9px] text-muted-2">{idea.length} / 2000</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label htmlFor="story-source" className="text-[11px] tracking-[.06em] text-muted">
+                    剧本文本（txt）
+                  </label>
+                  <label className="cursor-pointer rounded-token border border-line px-2.5 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text">
+                    {reading ? "正在读…" : fileName ? `已选：${fileName}` : "选择 txt 文件"}
+                    <input
+                      id="story-file"
+                      type="file"
+                      accept=".txt,text/plain"
+                      className="sr-only"
+                      disabled={reading || busy}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        event.target.value = "";
+                        if (file) void readFile(file);
+                      }}
+                    />
+                  </label>
+                </div>
+                <textarea
+                  id="story-source"
+                  value={source}
+                  onChange={(event) => {
+                    setSource(event.target.value);
+                    setFileName(undefined);
+                    setResult(undefined);
+                    setConfirming(false);
+                  }}
+                  rows={10}
+                  placeholder="把小说或剧本贴到这里，或选一个 txt。UTF-8 / GBK 都行；一次最多 2 万字，超过先截一段。"
+                  className="mt-2 w-full resize-y rounded-token border border-line bg-bg px-3 py-2.5 text-[12px] leading-[1.8] text-text placeholder:text-muted-2 focus:border-line-2 focus:outline-none"
+                />
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[9.5px] leading-[1.6] text-muted-2">
+                    目标是 60–90 秒单集：会压缩与合并，原文不会原样保存。文字会作为一次模型请求的输入发给文本供应商。
+                  </span>
+                  <span
+                    className={
+                      source.length > SOURCE_MAX_CHARS
+                        ? "tnum text-[9px] text-pick"
+                        : "tnum text-[9px] text-muted-2"
+                    }
                   >
-                    {sample}
-                  </button>
-                ))}
-              </div>
-              <span className="tnum text-[9px] text-muted-2">{idea.length} / 2000</span>
-            </div>
+                    {source.length} / {SOURCE_MAX_CHARS}
+                  </span>
+                </div>
+                <label className="mt-3 flex cursor-pointer items-center gap-2 border-t border-line pt-3 text-[10px] leading-[1.7] text-muted">
+                  <input
+                    id="story-rights"
+                    type="checkbox"
+                    checked={rights}
+                    onChange={(event) => setRights(event.target.checked)}
+                    className="accent-pick"
+                  />
+                  我确认有权使用这段文字（原创或已获授权）。
+                </label>
+                {source.length > SOURCE_MAX_CHARS && (
+                  <p className="mt-2 text-[10px] text-pick">
+                    超过 {SOURCE_MAX_CHARS} 字：先截一段，或拆成几集分别导入。
+                  </p>
+                )}
+              </>
+            )}
 
             <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-4">
               <span className="text-[10px] text-muted-2">题材</span>
@@ -227,13 +387,25 @@ export function StoryScreen() {
                 title={
                   !info.model
                     ? "还没配文本模型：服务端加上 TEXT_MODEL 之后才能生成"
-                    : !idea.trim()
-                      ? "先写一句想法或一段大纲"
-                      : "生成故事骨架，不写项目"
+                    : mode === "import"
+                      ? !source.trim()
+                        ? "先粘贴或选择一个 txt"
+                        : source.length > SOURCE_MAX_CHARS
+                          ? `超过 ${SOURCE_MAX_CHARS} 字，先截一段`
+                          : !rights
+                            ? "先确认你有权使用这段文字"
+                            : "把原文改成一条 60–90 秒单集，不写项目"
+                      : !idea.trim()
+                        ? "先写一句想法或一段大纲"
+                        : "生成故事骨架，不写项目"
                 }
                 className="ml-auto rounded-token border border-line-2 px-3.5 py-1.5 text-[11.5px] text-text transition-colors duration-[var(--dur)] hover:border-text disabled:cursor-not-allowed disabled:border-line disabled:text-muted-2"
               >
-                {busy ? "正在生成…" : "生成故事"}
+                {busy
+                  ? "正在生成…"
+                  : mode === "import"
+                    ? "改编成剧本"
+                    : "生成故事"}
               </button>
             </div>
 
@@ -246,7 +418,9 @@ export function StoryScreen() {
             )}
             {info.model && busy && (
               <p className="mt-3 border-t border-line pt-3 text-[10px] leading-[1.7] text-muted-2">
-                正在让 {info.model} 写故事、拆场次与分镜，通常要 40–90 秒。不要关页面。
+                {mode === "import"
+                  ? `正在让 ${info.model} 读剧本、合并场次并拆成分镜，通常要 40–100 秒。不要关页面。`
+                  : `正在让 ${info.model} 写故事、拆场次与分镜，通常要 40–100 秒。不要关页面。`}
               </p>
             )}
             {error && (
@@ -265,8 +439,13 @@ export function StoryScreen() {
                       {result.draft.title}
                     </h2>
                     <span className="tnum text-[9px] text-muted-2">
-                      由 {result.model} 生成
+                      由 {result.model} {result.origin === "import" ? "改编" : "生成"}
                     </span>
+                    {result.origin === "import" && (
+                      <span className="rounded-token border border-line px-1.5 py-0.5 text-[9px] text-muted-2">
+                        改编稿 · 原文 {source.length} 字
+                      </span>
+                    )}
                   </div>
                   <p className="mt-2 max-w-[58ch] text-[13px] leading-[1.8] text-text">
                     {result.draft.logline}

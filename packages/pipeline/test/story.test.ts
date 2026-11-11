@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { validateProject } from "@loomina/ir";
 import {
+  importStoryMessages,
   parseStoryDraft,
   projectFromStoryDraft,
   StoryDraftError,
@@ -164,5 +165,18 @@ describe("草稿 → 项目（ADR-0088）", () => {
     expect(messages[0]?.content).toContain("extreme-close");
     expect(messages[0]?.content).toContain("前 3 秒必须是钩子");
     expect(messages[1]?.content).toContain("都市逆袭");
+  });
+
+  it("导入提示词要求保留关系与结局，并说明是改编", () => {
+    const messages = importStoryMessages(
+      "第一场 夜 咖啡馆\n林夏：你早就知道，对吧？\n周野：知道什么？",
+      "悬疑",
+    );
+    expect(messages[0]?.content).toContain("改写成");
+    expect(messages[0]?.content).toContain("不新增原文没有的主要人物");
+    expect(messages[0]?.content).toContain("结局意思");
+    expect(messages[0]?.content).toContain("只输出 JSON");
+    expect(messages[1]?.content).toContain("悬疑");
+    expect(messages[1]?.content).toContain("林夏：你早就知道");
   });
 });

@@ -367,6 +367,9 @@ export interface StoryToProjectOptions {
 export const SHOT_PADDING_MS = 1000;
 export const SHOT_MIN_MS = 5000;
 
+/** 导入 txt 的一次上限（ADR-0089）：约 2 万字，超过先截一段 */
+export const SOURCE_MAX_CHARS = 20_000;
+
 /**
  * 草稿 → 新项目。确定性地生成 id、时长与双向引用，最后过 `assertValidProject`。
  *
@@ -547,16 +550,70 @@ export function projectFromStoryDraft(
 }
 
 export function storyMessages(idea: string, genre?: string): { role: "system" | "user"; content: string }[] {
-  const system = [
-    "你是《织光机》的短剧策划与分镜师。你只输出 JSON，不输出 Markdown、解释或注释。",
+  const system = storySystem(
     "目标：把一句话或一段大纲变成一条 60–90 秒的竖屏短剧骨架，可直接进入分镜。",
+    [],
+  );
+  const user = [
+    genre?.trim() ? `题材偏好：${genre.trim()}` : "",
+    "想法 / 大纲：",
+    idea.trim(),
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ];
+}
+
+/**
+ * 导入 txt（F6，ADR-0089）。
+ *
+ * 与一句话生成共用同一份 `StoryDraft` 与落项目映射；区别只在提示词：
+ * 原文必须保留人物关系、核心冲突与结局意思，但允许合并次要人物与场次，
+ * 因为目标仍是一条 60–90 秒的单集。不是逐字导入，界面要说清楚。
+ */
+export function importStoryMessages(
+  source: string,
+  genre?: string,
+): { role: "system" | "user"; content: string }[] {
+  const system = storySystem(
+    "目标：把用户给的小说 / 剧本文字改写成一条 60–90 秒的竖屏短剧骨架，可直接进入分镜。",
+    [
+      "改编约束：",
+      "7. 忠实保留原文的人物关系、核心冲突与结局意思；可以合并次要人物与场次，不新增原文没有的主要人物。",
+      "8. 删除旁白、说明性叙述与无法拍摄的内心描写，把信息改成动作、物件或台词。",
+      "9. 不照抄大段原文；台词可以精简，但不能改变人物立场与结局。",
+    ],
+  );
+  const user = [
+    genre?.trim() ? `题材偏好：${genre.trim()}` : "",
+    "原文（小说 / 剧本）：",
+    source.trim(),
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ];
+}
+
+function storySystem(task: string, extraRules: string[]): string {
+  return [
+    "你是《织光机》的短剧策划与分镜师。你只输出 JSON，不输出 Markdown、解释或注释。",
+    task,
     "硬约束：",
     "1. 1–2 场；主要人物 3–5 个；地点 1–2 个；总镜头 10–14 个（每场 4–8 镜）。",
     "2. 成片 60–90 秒；前 3 秒必须是钩子；结尾必须留钩。",
-    "3. 每镜最多 2 句台词；单句不超过 15 个汉字；除最多 2 个空镜（只拍动作或道具），每镜都要有人说话；台词总量 12–18 句。",
+    "3. 每镜最多 2 句台词；单句不超过 15 个汉字；除最多 2 个空镜（只拍动作或道具），每镜都要有人说话；台词总量 20–24 句。",
     "4. 只写能拍出来的动作，不写内心独白与抽象情绪；用动作和物件透露信息。台词要短、狠、能截图。",
     "5. 人物要有一个当场做出的选择，不能只是被剧情推着走。",
     "6. 镜头之间要有景别变化，不要连续三个同景别。",
+    ...extraRules,
     "枚举值（必须原样使用）：",
     "shotSize: wide | medium | close | extreme-close",
     "angle: eye | low | high | top",
@@ -616,17 +673,4 @@ export function storyMessages(idea: string, genre?: string): { role: "system" | 
     ),
     "只输出这个 JSON 对象本身。",
   ].join("\n");
-
-  const user = [
-    genre?.trim() ? `题材偏好：${genre.trim()}` : "",
-    "想法 / 大纲：",
-    idea.trim(),
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  return [
-    { role: "system", content: system },
-    { role: "user", content: user },
-  ];
 }

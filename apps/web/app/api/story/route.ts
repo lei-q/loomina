@@ -26,17 +26,19 @@ export async function GET() {
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as {
     idea?: unknown;
+    source?: unknown;
     genre?: unknown;
   } | null;
   if (!body) {
     return NextResponse.json({ error: "请求体不是 JSON" }, { status: 400 });
   }
 
-  const idea = typeof body.idea === "string" ? body.idea : "";
+  const idea = typeof body.idea === "string" ? body.idea : undefined;
+  const source = typeof body.source === "string" ? body.source : undefined;
   const genre = typeof body.genre === "string" ? body.genre : undefined;
 
   try {
-    return NextResponse.json(await generateStory({ idea, genre }));
+    return NextResponse.json(await generateStory({ idea, source, genre }));
   } catch (error) {
     const message =
       error instanceof TreecloudError ||
