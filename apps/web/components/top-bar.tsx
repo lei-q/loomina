@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { ProjectRequote } from "@/lib/pricing";
+import { buildHistory, nextUndo } from "@/lib/history";
 import { ExportIcon, Logomark, PlayIcon } from "@/components/icons";
+import { HistoryPanel } from "@/components/history-panel";
 import { ModelPicker } from "@/components/model-picker";
 import { SpendLedger } from "@/components/spend-ledger";
 import type { Modality } from "@/lib/config-types";
@@ -98,9 +100,34 @@ export function TopBar({
 }: TopBarProps) {
   const [draftBudget, setDraftBudget] = useState<string>("");
   const [ledgerOpen, setLedgerOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const project = useWorkbench((state) => state.project);
+  const events = useWorkbench((state) => state.events);
+  const undo = useWorkbench((state) => state.undo);
   const setRetryLimit = useWorkbench((state) => state.setRetryLimit);
   const setOnBudgetExceed = useWorkbench((state) => state.setOnBudgetExceed);
+  // 撤销一步是哪一步：按钮 title 与历史抽屉用同一份判断（F2 / ADR-0109）
+  const step = useMemo(() => nextUndo(events, buildHistory(events)), [events]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!(event.metaKey || event.ctrlKey) || event.shiftKey) return;
+      if (event.key.toLowerCase() !== "z") return;
+      const target = event.target as HTMLElement | null;
+      // 输入框里的撤销交给浏览器：那里撤的是刚打的字，不是项目
+      if (
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      event.preventDefault();
+      void undo();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [undo]);
   const gateStates = stageStates(project);
   const nextStage = nextOpenStage(gateStates);
   const budget = budgetCny ?? 60;
@@ -196,6 +223,29 @@ export function TopBar({
           className="text-[10px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
         >
           记账
+        </button>
+        <button
+          type="button"
+          onClick={() => void undo()}
+          disabled={readOnly || !step}
+          title={
+            readOnly
+              ? "另一个标签页在编辑，这里不能撤销"
+              : step
+                ? `撤销：${step.label}（⌘Z / Ctrl+Z）`
+                : "没有更早的改动可撤销"
+          }
+          className="text-[10px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-45"
+        >
+          撤销
+        </button>
+        <button
+          type="button"
+          onClick={() => setHistoryOpen(true)}
+          title="看每一步，回到任何一步；删掉的东西在回收站里"
+          className="text-[10px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
+        >
+          历史
         </button>
         {readOnly && (
           <span
@@ -424,6 +474,7 @@ export function TopBar({
         open={ledgerOpen}
         onClose={() => setLedgerOpen(false)}
       />
+      <HistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />
     </header>
   );
 }

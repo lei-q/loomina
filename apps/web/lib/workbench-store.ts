@@ -39,15 +39,19 @@ import { create } from "zustand";
 import { diffEvents, getEventLog, migrateLog } from "@/lib/event-log";
 import { estimateDialogueMs } from "@/lib/dialogue";
 import { autoCut, timelineEquals } from "@/lib/edit";
+import { buildHistory, historyPosition, nextUndo } from "@/lib/history";
 import { claimWriter } from "@/lib/writer-lock";
 import {
   latestTake,
+  removalAlive,
+  removalTargetOf,
   removedLines,
   shotLabel,
   shotSpendOf,
   spendOf,
   toStageView,
   undoableRemoval,
+  type RemovalKind,
 } from "@/lib/read-model";
 import { getModelChoice } from "@/lib/model-choice";
 import { sampleProject } from "@/lib/sample-project";
@@ -68,6 +72,21 @@ function wait(ms: number): Promise<void> {
 
 function clipReason(reason: string): string {
   return reason.length > 240 ? `${reason.slice(0, 240)}…` : reason;
+}
+
+/**
+ * 每次操作一个时间戳，并且严格递增。
+ *
+ * 历史按「同一时间戳」把一次操作的几条事件归成一组，撤销时整组退：
+ * 删一场会写「逐镜删除 + 删场」，只退最后一条会留下半场空镜头。
+ * 同一毫秒里连点两次（测试里尤其常见）会被误认成一组，所以这里往后挪 1ms。
+ */
+let lastStamp = 0;
+function stamp(): string {
+  const now = Date.now();
+  const next = now > lastStamp ? now : lastStamp + 1;
+  lastStamp = next;
+  return new Date(next).toISOString();
 }
 
 /** 正在生成哪一张：定妆台的三类资产共用一条进度记录（视频按 `${shotId}:video` 记）。 */
@@ -94,6 +113,8 @@ type WorkbenchState = {
   /** 正在生成哪一张：人物 / 场景 / 道具的 id → 任务。出图是分钟级，界面要如实显示进度 */
   jobs: Record<string, GenerateJob | undefined>;
   castError?: string;
+  /** 历史抽屉的一句话：刚撤销了什么 / 回滚到了哪一步（F2 / ADR-0109） */
+  historyNotice?: string;
   /** 本地写入失败（配额、隐私模式）：不能让用户以为已经存住了 */
   storageError?: string;
   /** 另一个标签页在编辑：这里只读，改了也存不下 */
@@ -374,6 +395,12 @@ type WorkbenchState = {
   removeLocation: (locationId: string, moveToId?: string) => boolean;
   /** 撤销最近一次删除：按前缀重放取回快照，再写补偿事件（ADR-0076） */
   undoLastRemoval: () => boolean;
+  /** 回收站里恢复某一条删除：与撤销删除走同一条补偿逻辑（F2 / ADR-0109） */
+  restoreRemovalAt: (index: number) => boolean;
+  /** 多步撤销：退回上一步操作之前（F2 / ADR-0109），一次退一整组同毫秒事件 */
+  undo: () => boolean;
+  /** 版本回滚：把项目恢复到日志第 `toEventCount` 条之后的样子（F2 / ADR-0109） */
+  restoreTo: (toEventCount: number, label?: string) => boolean;
   /** 划掉一条补充要求：同样写一条 shot.updated（ADR-0039 附记） */
   removeNote: (shotId: string, note: string) => void;
   reset: () => void;
@@ -559,7 +586,7 @@ async function generateOne(
       throw new Error(payload.error ?? `生成失败（${response.status}）`);
     }
 
-    const at = new Date().toISOString();
+    const at = stamp();
     const event: ProjectEvent = {
       type: "asset.updated",
       at,
@@ -618,6 +645,108 @@ function firstOpenShotId(project: Project): string {
 }
 
 /**
+ * 把一次删除补回来：用「删除之前」的那一份项目写补偿事件（ADR-0076）。
+ *
+ * 撤销最近一次删除（页头那个按钮）与回收站里恢复早先的删除，
+ * 走的是同一条逻辑——区别只在挑哪一条删除事件。
+ */
+function removalUndoEvents(
+  before: Project,
+  project: Project,
+  target: { kind: RemovalKind; id: string },
+  at: string,
+): { written: ProjectEvent[]; focusShotId?: string } {
+  const written: ProjectEvent[] = [];
+  let focusShotId: string | undefined;
+
+  switch (target.kind) {
+    case "character": {
+      const character = before.characters.find((item) => item.id === target.id);
+      if (!character) throw new Error("找不到被删的人物。");
+      written.push({ type: "character.added", at, character });
+      break;
+    }
+    case "prop": {
+      const prop = before.props.find((item) => item.id === target.id);
+      if (!prop) throw new Error("找不到被删的道具。");
+      written.push({ type: "prop.added", at, prop });
+      break;
+    }
+    case "location": {
+      const location = before.locations.find((item) => item.id === target.id);
+      if (!location) throw new Error("找不到被删的地点。");
+      written.push({ type: "location.added", at, location });
+      break;
+    }
+    case "scene": {
+      const scene = before.scenes.find((item) => item.id === target.id);
+      if (!scene) throw new Error("找不到被删的场次。");
+      // 场次先回来，镜头随后一次一步地撤（ADR-0067 是逐镜删、再删场）
+      written.push({
+        type: "scene.added",
+        at,
+        scene: { ...scene, index: Math.min(scene.index, project.scenes.length), shotIds: [] },
+      });
+      break;
+    }
+    case "shot": {
+      const shot = before.shots.find((item) => item.id === target.id);
+      if (!shot) throw new Error("找不到被删的镜头。");
+      const scene = project.scenes.find((item) => item.id === shot.sceneId);
+      if (!scene) {
+        const sceneBefore = before.scenes.find((item) => item.id === shot.sceneId);
+        throw new Error(
+          `这一镜原来在${sceneBefore ? `第 ${sceneBefore.index + 1} 场` : "已删的场次"}，那一场也删了：先撤销那一场。`,
+        );
+      }
+      const lines = shot.dialogueIds.flatMap((id) => {
+        const line = before.dialogue.find((item) => item.id === id);
+        return line ? [line] : [];
+      });
+      const takes = shot.takeIds.flatMap((id) => {
+        const take = before.takes.find((item) => item.id === id);
+        return take ? [take] : [];
+      });
+      // 镜头先回来（台词、take 各自再补：shot.added 不收这两样）
+      written.push({
+        type: "shot.added",
+        at,
+        shot: {
+          ...shot,
+          index: Math.min(shot.index, scene.shotIds.length),
+          dialogueIds: [],
+          takeIds: [],
+        },
+      });
+      for (const line of lines) {
+        // 这一句可能已经被「恢复」回别的镜头：不重复添加
+        if (!project.dialogue.some((item) => item.id === line.id)) {
+          written.push({ type: "dialogue.added", at, shotId: shot.id, line });
+        }
+      }
+      for (const take of takes) {
+        if (!project.takes.some((item) => item.id === take.id)) {
+          written.push({ type: "take.added", at, take });
+        }
+      }
+      // 台词顺序按删之前的样子写一遍（已有同 id 的句子也排进来）
+      const order = shot.dialogueIds.filter(
+        (id) =>
+          project.dialogue.some((item) => item.id === id) ||
+          lines.some((item) => item.id === id),
+      );
+      if (order.length > 0) {
+        written.push({ type: "shot.updated", at, shotId: shot.id, patch: { dialogueIds: order } });
+      }
+      focusShotId = shot.id;
+      break;
+    }
+  }
+
+  return focusShotId ? { written, focusShotId } : { written };
+}
+
+/**
  * 台词落库（ADR-0044）：一条 `dialogue.updated`，时长变了再一条 `shot.updated`
  * 让所属镜头挪同样的量（不动别人写进去的表演余量）。
  *
@@ -658,7 +787,7 @@ function commitDialogue(
     return false;
   }
 
-  const at = new Date().toISOString();
+  const at = stamp();
   const next: ProjectEvent[] = [
     { type: "dialogue.updated", at, lineId: input.lineId, patch: { text, durationMs } },
   ];
@@ -736,7 +865,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
     const event: ProjectEvent = {
       type: "project.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       budgetCny,
     };
     set({ project: applyEvent(project, event), events: [...events, event] });
@@ -756,7 +885,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
     const event: ProjectEvent = {
       type: "shot.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       shotId: shot.id,
       // undefined 在落盘时会消失，回读就是「没有上限」，与清空同义
       patch: { budgetCny },
@@ -777,7 +906,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
     const event: ProjectEvent = {
       type: "project.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       maxAttemptsPerShot: attempts,
     };
     set({ project: applyEvent(project, event), events: [...events, event] });
@@ -790,7 +919,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
     const event: ProjectEvent = {
       type: "project.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       onBudgetExceed: mode,
     };
     set({ project: applyEvent(project, event), events: [...events, event] });
@@ -804,7 +933,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       return false;
     }
     const { project, events } = get();
-    const recordedAt = new Date().toISOString();
+    const recordedAt = stamp();
     // id 只要在这一份项目里唯一即可：时间 + 随机后缀，便于日志里认人
     const id = `pub-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const pack: PublishPackage = {
@@ -829,7 +958,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     const meta = stageMetaOf(stage);
     const event: ProjectEvent = {
       type: "gate.confirmed",
-      at: new Date().toISOString(),
+      at: stamp(),
       stage,
       signature: stageSignature(project, stage),
       note: (note ?? "").trim().slice(0, 240),
@@ -855,7 +984,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     if (!project.gates.some((gate) => gate.stage === stage)) return false;
     const event: ProjectEvent = {
       type: "gate.reopened",
-      at: new Date().toISOString(),
+      at: stamp(),
       stage,
     };
     set({ project: applyEvent(project, event), events: [...events, event] });
@@ -878,7 +1007,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
     const event: ProjectEvent = {
       type: "take.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       takeId: take.id,
       patch: { status },
     };
@@ -907,7 +1036,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
     const event: ProjectEvent = {
       type: "shot.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       shotId: shot.id,
       patch: { locked },
     };
@@ -941,7 +1070,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
     const event: ProjectEvent = {
       type: "shot.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       shotId: shot.id,
       patch: changed,
     };
@@ -992,7 +1121,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
     const event: ProjectEvent = {
       type: "shot.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       shotId: shot.id,
       patch: { performance: next },
     };
@@ -1047,7 +1176,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
     const event: ProjectEvent = {
       type: "shot.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       shotId: shot.id,
       patch: { staging: parsed.data },
     };
@@ -1095,7 +1224,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       : [...shot.characterIds, characterId];
     const event: ProjectEvent = {
       type: "shot.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       shotId,
       patch: { characterIds },
     };
@@ -1136,7 +1265,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       if (!characterIds.includes(next)) characterIds.push(next);
     }
 
-    const at = new Date().toISOString();
+    const at = stamp();
     const written: ProjectEvent[] = [
       { type: "shot.updated", at, shotId, patch: { characterIds } },
     ];
@@ -1186,7 +1315,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       return false;
     }
 
-    const at = new Date().toISOString();
+    const at = stamp();
     const written: ProjectEvent[] = [
       {
         type: "shot.updated",
@@ -1236,7 +1365,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       : [...shot.propIds, propId];
     const event: ProjectEvent = {
       type: "shot.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       shotId,
       patch: { propIds },
     };
@@ -1268,7 +1397,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     [characterIds[at], characterIds[to]] = [characterIds[to]!, characterIds[at]!];
     const event: ProjectEvent = {
       type: "shot.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       shotId,
       patch: { characterIds },
     };
@@ -1300,7 +1429,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     [propIds[at], propIds[to]] = [propIds[to]!, propIds[at]!];
     const event: ProjectEvent = {
       type: "shot.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       shotId,
       patch: { propIds },
     };
@@ -1329,14 +1458,14 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     if (take.status !== "approved") {
       next.push({
         type: "take.updated",
-        at: new Date().toISOString(),
+        at: stamp(),
         takeId: take.id,
         patch: { status: "approved" },
       });
     }
     next.push({
       type: "shot.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       shotId: shot.id,
       patch: { locked: true },
     });
@@ -1365,7 +1494,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     // 缺资产、缺角度的不许锁：闸门的意义就在这里
     if (!item || item.status === "incomplete") return;
 
-    const at = new Date().toISOString();
+    const at = stamp();
     const event: ProjectEvent = {
       type: "approval.updated",
       at,
@@ -1391,7 +1520,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
     const event: ProjectEvent = {
       type: "approval.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       approval: {
         id: existing.id,
         targetType,
@@ -1627,7 +1756,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         n += 1;
         assetId = `a-video-${shot.id}-${n}`;
       }
-      const at = new Date().toISOString();
+      const at = stamp();
       const mime = /^data:(video\/[a-z0-9.+-]+)[;,]/i.exec(payload.uri)?.[1];
       const provenance = {
         modelId: payload.model ?? "unknown",
@@ -1723,7 +1852,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       n += 1;
       assetId = `a-video-${shot.id}-${n}`;
     }
-    const at = new Date().toISOString();
+    const at = stamp();
     const mime = /^data:(video\/[a-z0-9.+-]+)[;,]/i.exec(uri)?.[1];
     const provenance = {
       modelId: "import",
@@ -1818,7 +1947,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
       // 一句台词一个资产位：重配就换掉这一句的旧音轨，不累积成 take
       const assetId = `a-voice-${lineId}`;
-      const at = new Date().toISOString();
+      const at = stamp();
       const mime = /^data:(audio\/[a-z0-9.+-]+)[;,]/i.exec(payload.uri)?.[1];
       const written: ProjectEvent[] = [
         {
@@ -1893,7 +2022,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     }
 
     const assetId = `a-voice-${lineId}`;
-    const at = new Date().toISOString();
+    const at = stamp();
     const mime = /^data:(audio\/[a-z0-9.+-]+)[;,]/i.exec(uri)?.[1];
     const written: ProjectEvent[] = [
       {
@@ -1943,7 +2072,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     // 差得太小就不折腾：每次挂音轨都写两条事件，日志会被无意义的抖动塞满
     if (Math.abs(delta) < 40) return false;
 
-    const at = new Date().toISOString();
+    const at = stamp();
     const written: ProjectEvent[] = [
       { type: "dialogue.updated", at, lineId, patch: { durationMs } },
     ];
@@ -2023,7 +2152,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
           text: payload.text,
           model: payload.model ?? "unknown",
           segments: payload.segments ?? [],
-          createdAt: new Date().toISOString(),
+          createdAt: stamp(),
         },
         castError: undefined,
       });
@@ -2065,7 +2194,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
     const event: ProjectEvent = {
       type: "dialogue.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       lineId,
       // 只改文字：时长以音轨为准，识别不替它重新估
       patch: { text },
@@ -2098,7 +2227,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     }
     if ((character.voiceProfileId ?? "") === voice) return false;
 
-    const at = new Date().toISOString();
+    const at = stamp();
     const event: ProjectEvent = {
       type: "character.updated",
       at,
@@ -2135,7 +2264,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
     const event: ProjectEvent = {
       type: "timeline.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       items: cut.items,
     };
     try {
@@ -2185,7 +2314,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     );
     const event: ProjectEvent = {
       type: "timeline.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       items,
     };
     try {
@@ -2231,7 +2360,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       set({ editError: "读不出这条音乐的时长：换一个文件再试。" });
       return false;
     }
-    const at = new Date().toISOString();
+    const at = stamp();
     let assetId = `a-music-${Date.now().toString(36)}`;
     while (project.assets.some((asset) => asset.id === assetId)) assetId += "x";
     const asset: Asset = {
@@ -2301,7 +2430,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     };
     const event: ProjectEvent = {
       type: "timeline.music.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       music: [next],
     };
     try {
@@ -2326,7 +2455,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     if (project.timeline.music.length === 0) return false;
     const event: ProjectEvent = {
       type: "timeline.music.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       music: [],
     };
     set({
@@ -2403,7 +2532,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       set({ castError: "动作没改。" });
       return false;
     }
-    const at = new Date().toISOString();
+    const at = stamp();
     const next: ProjectEvent[] = [
       { type: "shot.updated", at, shotId, patch: { description: text } },
     ];
@@ -2433,7 +2562,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       set({ castError: "这一镜已锁定：要挪台词先解锁。" });
       return false;
     }
-    const at = new Date().toISOString();
+    const at = stamp();
     const written: ProjectEvent[] = [
       {
         type: "shot.updated",
@@ -2484,7 +2613,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       return false;
     }
 
-    const at = new Date().toISOString();
+    const at = stamp();
     const written: ProjectEvent[] = [
       {
         type: "dialogue.added",
@@ -2533,7 +2662,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       set({ castError: "顺序没改。" });
       return false;
     }
-    const at = new Date().toISOString();
+    const at = stamp();
     const written: ProjectEvent[] = [
       { type: "shot.updated", at, shotId, patch: { dialogueIds: [...lineIds] } },
     ];
@@ -2566,7 +2695,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       set({ castError: "场头没改。" });
       return false;
     }
-    const at = new Date().toISOString();
+    const at = stamp();
     const written: ProjectEvent[] = [{ type: "scene.updated", at, sceneId, patch: next }];
     set({
       project: written.reduce(applyEvent, project),
@@ -2597,7 +2726,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       set({ castError: `已经有「${code}」这一场了。` });
       return false;
     }
-    const at = new Date().toISOString();
+    const at = stamp();
     const written: ProjectEvent[] = [
       { type: "scene.updated", at, sceneId, patch: { code } },
     ];
@@ -2637,7 +2766,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     };
     const event: ProjectEvent = {
       type: "location.added",
-      at: new Date().toISOString(),
+      at: stamp(),
       location,
     };
     set({
@@ -2688,7 +2817,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     }
     const event: ProjectEvent = {
       type: "location.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       locationId,
       patch: next,
     };
@@ -2729,7 +2858,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     };
     const event: ProjectEvent = {
       type: "character.added",
-      at: new Date().toISOString(),
+      at: stamp(),
       character,
     };
     set({
@@ -2777,7 +2906,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     }
     const event: ProjectEvent = {
       type: "character.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       characterId,
       patch: next,
     };
@@ -2818,7 +2947,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     }
     const event: ProjectEvent = {
       type: "character.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       characterId,
       patch: { mustNotChange: [...character.mustNotChange, text] },
     };
@@ -2841,7 +2970,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     if (!character.mustNotChange.includes(text)) return false;
     const event: ProjectEvent = {
       type: "character.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       characterId,
       patch: { mustNotChange: character.mustNotChange.filter((item) => item !== text) },
     };
@@ -2865,7 +2994,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       set({ castError: `参考图最多 ${REFERENCE_IMAGES_MAX} 张：再多会把提示词挤爆。` });
       return false;
     }
-    const at = new Date().toISOString();
+    const at = stamp();
     const { asset, error } = makeReferenceAsset(rawUri, project.assets, at);
     if (!asset) {
       set({ castError: error ?? "这张图挂不上。" });
@@ -2900,7 +3029,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     if (!character || !character.referenceImages.includes(assetId)) return false;
     const event: ProjectEvent = {
       type: "character.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       characterId,
       patch: { referenceImages: character.referenceImages.filter((id) => id !== assetId) },
     };
@@ -2924,7 +3053,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       set({ castError: `参考图最多 ${REFERENCE_IMAGES_MAX} 张：再多会把提示词挤爆。` });
       return false;
     }
-    const at = new Date().toISOString();
+    const at = stamp();
     const { asset, error } = makeReferenceAsset(rawUri, project.assets, at);
     if (!asset) {
       set({ castError: error ?? "这张图挂不上。" });
@@ -2959,7 +3088,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     if (!prop || !prop.referenceImages.includes(assetId)) return false;
     const event: ProjectEvent = {
       type: "prop.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       propId,
       patch: { referenceImages: prop.referenceImages.filter((id) => id !== assetId) },
     };
@@ -2998,7 +3127,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     };
     const event: ProjectEvent = {
       type: "prop.added",
-      at: new Date().toISOString(),
+      at: stamp(),
       prop,
     };
     set({
@@ -3046,7 +3175,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     }
     const event: ProjectEvent = {
       type: "prop.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       propId,
       patch: next,
     };
@@ -3080,7 +3209,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     }
     const event: ProjectEvent = {
       type: "character.removed",
-      at: new Date().toISOString(),
+      at: stamp(),
       characterId,
     };
     set({
@@ -3108,7 +3237,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     }
     const event: ProjectEvent = {
       type: "prop.removed",
-      at: new Date().toISOString(),
+      at: stamp(),
       propId,
     };
     set({
@@ -3125,7 +3254,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       return false;
     }
     const { project, events } = get();
-    const at = new Date().toISOString();
+    const at = stamp();
     let next: Project;
     try {
       next = projectFromStoryDraft(draft, {
@@ -3197,7 +3326,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     };
     const event: ProjectEvent = {
       type: "scene.added",
-      at: new Date().toISOString(),
+      at: stamp(),
       scene,
     };
     set({
@@ -3244,7 +3373,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     };
     const event: ProjectEvent = {
       type: "shot.added",
-      at: new Date().toISOString(),
+      at: stamp(),
       shot,
     };
     set({
@@ -3274,7 +3403,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     const neighbour = at >= 0 ? (ordered[at + 1] ?? ordered[at - 1])?.id : undefined;
     const event: ProjectEvent = {
       type: "shot.removed",
-      at: new Date().toISOString(),
+      at: stamp(),
       shotId,
     };
     set({
@@ -3307,7 +3436,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     }
 
     // 先逐镜删、再删场：回放到任一前缀都不会留下挂在不存在的场上的镜头
-    const at = new Date().toISOString();
+    const at = stamp();
     const written: ProjectEvent[] = [
       ...shots.map(
         (item): ProjectEvent => ({ type: "shot.removed", at, shotId: item.id }),
@@ -3365,7 +3494,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     }
     const event: ProjectEvent = {
       type: "scene.moved",
-      at: new Date().toISOString(),
+      at: stamp(),
       sceneId,
       toIndex,
     };
@@ -3399,7 +3528,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         set({ castError: "搬不到这个地点。" });
         return false;
       }
-      const at = new Date().toISOString();
+      const at = stamp();
       const written: ProjectEvent[] = [
         ...used.map(
           (scene): ProjectEvent => ({
@@ -3420,7 +3549,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     }
     const event: ProjectEvent = {
       type: "location.removed",
-      at: new Date().toISOString(),
+      at: stamp(),
       locationId,
     };
     set({
@@ -3433,7 +3562,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
   undoLastRemoval: () => {
     if (get().readOnly) return false;
-    const { project, events, currentShotId } = get();
+    const { project, events } = get();
     const target = undoableRemoval(events, project);
     if (!target) {
       set({ castError: "没有可撤销的删除。" });
@@ -3441,93 +3570,16 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     }
     // 删除之前的那一份项目：被删对象与它的从属物都还在里面
     const before = rebuild(events.slice(0, target.index));
-    const at = new Date().toISOString();
-    const written: ProjectEvent[] = [];
-    let focusShotId: string | undefined;
 
     try {
-      switch (target.kind) {
-        case "character": {
-          const character = before.characters.find((item) => item.id === target.id);
-          if (!character) throw new Error("找不到被删的人物。");
-          written.push({ type: "character.added", at, character });
-          break;
-        }
-        case "prop": {
-          const prop = before.props.find((item) => item.id === target.id);
-          if (!prop) throw new Error("找不到被删的道具。");
-          written.push({ type: "prop.added", at, prop });
-          break;
-        }
-        case "location": {
-          const location = before.locations.find((item) => item.id === target.id);
-          if (!location) throw new Error("找不到被删的地点。");
-          written.push({ type: "location.added", at, location });
-          break;
-        }
-        case "scene": {
-          const scene = before.scenes.find((item) => item.id === target.id);
-          if (!scene) throw new Error("找不到被删的场次。");
-          // 场次先回来，镜头随后一次一步地撤（ADR-0067 是逐镜删、再删场）
-          written.push({
-            type: "scene.added",
-            at,
-            scene: { ...scene, index: Math.min(scene.index, project.scenes.length), shotIds: [] },
-          });
-          break;
-        }
-        case "shot": {
-          const shot = before.shots.find((item) => item.id === target.id);
-          if (!shot) throw new Error("找不到被删的镜头。");
-          const scene = project.scenes.find((item) => item.id === shot.sceneId);
-          if (!scene) {
-            const sceneBefore = before.scenes.find((item) => item.id === shot.sceneId);
-            throw new Error(
-              `这一镜原来在${sceneBefore ? `第 ${sceneBefore.index + 1} 场` : "已删的场次"}，那一场也删了：先撤销那一场。`,
-            );
-          }
-          const lines = shot.dialogueIds.flatMap((id) => {
-            const line = before.dialogue.find((item) => item.id === id);
-            return line ? [line] : [];
-          });
-          const takes = shot.takeIds.flatMap((id) => {
-            const take = before.takes.find((item) => item.id === id);
-            return take ? [take] : [];
-          });
-          // 镜头先回来（台词、take 各自再补：shot.added 不收这两样）
-          written.push({
-            type: "shot.added",
-            at,
-            shot: { ...shot, index: Math.min(shot.index, scene.shotIds.length), dialogueIds: [], takeIds: [] },
-          });
-          for (const line of lines) {
-            // 这一句可能已经被「恢复」回别的镜头：不重复添加
-            if (!project.dialogue.some((item) => item.id === line.id)) {
-              written.push({ type: "dialogue.added", at, shotId: shot.id, line });
-            }
-          }
-          for (const take of takes) {
-            if (!project.takes.some((item) => item.id === take.id)) {
-              written.push({ type: "take.added", at, take });
-            }
-          }
-          // 台词顺序按删之前的样子写一遍（已有同 id 的句子也排进来）
-          const order = shot.dialogueIds.filter(
-            (id) =>
-              project.dialogue.some((item) => item.id === id) ||
-              lines.some((item) => item.id === id),
-          );
-          if (order.length > 0) {
-            written.push({ type: "shot.updated", at, shotId: shot.id, patch: { dialogueIds: order } });
-          }
-          focusShotId = shot.id;
-          break;
-        }
-      }
-
-      const next = written.reduce(applyEvent, project);
+      const { written, focusShotId } = removalUndoEvents(
+        before,
+        project,
+        target,
+        stamp(),
+      );
       set({
-        project: next,
+        project: written.reduce(applyEvent, project),
         events: [...events, ...written],
         castError: undefined,
         ...(focusShotId ? { currentShotId: focusShotId } : {}),
@@ -3537,6 +3589,101 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       set({
         castError:
           error instanceof Error ? `撤销不了这次删除：${error.message}` : "撤销不了这次删除。",
+      });
+      return false;
+    }
+  },
+
+  restoreRemovalAt: (index) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const event = events[index];
+    const target = event ? removalTargetOf(event) : undefined;
+    if (!target) {
+      set({ historyNotice: "这一步不是删除，回收站只能放回删掉的东西。" });
+      return false;
+    }
+    if (removalAlive(project, target.kind, target.id)) {
+      set({ historyNotice: "它已经在项目里了。" });
+      return false;
+    }
+    const before = rebuild(events.slice(0, index));
+    try {
+      const { written, focusShotId } = removalUndoEvents(
+        before,
+        project,
+        target,
+        stamp(),
+      );
+      set({
+        project: written.reduce(applyEvent, project),
+        events: [...events, ...written],
+        castError: undefined,
+        historyNotice: "已从回收站放回。",
+        ...(focusShotId ? { currentShotId: focusShotId } : {}),
+      });
+      return true;
+    } catch (error) {
+      set({
+        historyNotice:
+          error instanceof Error ? `放不回来：${error.message}` : "放不回来。",
+      });
+      return false;
+    }
+  },
+
+  undo: () => {
+    if (get().readOnly) return false;
+    const { events } = get();
+    const step = nextUndo(events, buildHistory(events));
+    if (!step) {
+      set({ historyNotice: "已经退到最早，没有更早的改动可撤。" });
+      return false;
+    }
+    return get().restoreTo(step.toEventCount, `撤销：${step.label}`);
+  },
+
+  restoreTo: (toEventCount, label) => {
+    if (get().readOnly) return false;
+    const { events } = get();
+    if (
+      !Number.isInteger(toEventCount) ||
+      toEventCount < 1 ||
+      toEventCount > events.length
+    ) {
+      set({ historyNotice: "回滚的位置不在日志里。" });
+      return false;
+    }
+    // 已经在这一步：不写多余的回滚事件。最后一条是回滚时，它指向的位置就是当前
+    if (toEventCount === historyPosition(events) && events.at(-1)?.type !== "project.restored") {
+      set({ historyNotice: "已经是这一步了。" });
+      return false;
+    }
+
+    const event: ProjectEvent = {
+      type: "project.restored",
+      at: stamp(),
+      toEventCount,
+      ...(label ? { label } : {}),
+    };
+    const nextEvents = [...events, event];
+    try {
+      const restored = rebuild(nextEvents);
+      set({
+        project: restored,
+        events: nextEvents,
+        currentShotId: restored.shots.some((shot) => shot.id === get().currentShotId)
+          ? get().currentShotId
+          : firstOpenShotId(restored),
+        lastSwap: undefined,
+        castError: undefined,
+        historyNotice: label ?? `回到第 ${toEventCount} 条事件之后`,
+      });
+      return true;
+    } catch (error) {
+      set({
+        historyNotice:
+          error instanceof Error ? `回滚失败：${error.message}` : "回滚失败。",
       });
       return false;
     }
@@ -3561,7 +3708,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       return false;
     }
 
-    const at = new Date().toISOString();
+    const at = stamp();
     const line = {
       id: `d-${shotId}-${crypto.randomUUID().slice(0, 8)}`,
       characterId,
@@ -3596,7 +3743,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       return false;
     }
 
-    const at = new Date().toISOString();
+    const at = stamp();
     const next: ProjectEvent[] = [{ type: "dialogue.removed", at, lineId }];
     if (shot) {
       next.push({
@@ -3632,7 +3779,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
     const event: ProjectEvent = {
       type: "dialogue.speaker.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       lineId,
       characterId,
     };
@@ -3664,7 +3811,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
     const event: ProjectEvent = {
       type: "shot.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       shotId: shot.id,
       patch: { dialogueIds: ids },
     };
@@ -3708,7 +3855,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
     const event: ProjectEvent = {
       type: "shot.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       shotId: shot.id,
       patch,
     };
@@ -3729,7 +3876,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
     const event: ProjectEvent = {
       type: "shot.updated",
-      at: new Date().toISOString(),
+      at: stamp(),
       shotId: shot.id,
       patch: { promptNotes: shot.promptNotes.filter((item) => item !== note) },
     };

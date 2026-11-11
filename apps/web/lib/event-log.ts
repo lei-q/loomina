@@ -73,6 +73,7 @@ const EVENT_TYPES: Record<ProjectEvent["type"], true> = {
   "gate.confirmed": true,
   "gate.reopened": true,
   "publish.recorded": true,
+  "project.restored": true,
 };
 
 /**

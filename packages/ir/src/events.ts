@@ -289,6 +289,24 @@ export type ProjectEvent =
       type: "publish.recorded";
       at: string;
       package: PublishPackage;
+    }
+  | {
+      /**
+       * 全局回滚（F2 / ADR-0109）：把项目恢复到「前 `toEventCount` 条事件之后」的样子。
+       *
+       * 不携带快照：日志只追加、前缀的回放结果永远相同，存一个位置就够了。
+       * 带快照的话，每撤销一次就会把整份项目（含图片 data URI）再抄一遍，
+       * 一个正常项目几十兆，撤销几次就把本地库撑爆了。
+       *
+       * 因为它必须看得到前面的日志，`applyEvent` 单条应用不了——
+       * 回放交给 `rebuild`，见那里的注释。
+       */
+      type: "project.restored";
+      at: string;
+      /** 前缀长度：1 表示只留下 `project.created`。必须 ≤ 本条事件之前的条数 */
+      toEventCount: number;
+      /** 给用户看的说明：回到了哪一步（历史抽屉里原样显示） */
+      label?: string;
     };
 
 /** 时间线项的公共校验：id 唯一、时长合法、take 属于该镜、片段不重叠 */
@@ -1016,13 +1034,53 @@ export function applyEvent(
         publishPackages: [...current.publishPackages, clone(pack)],
       };
     }
+
+    case "project.restored": {
+      // 这一条的目标是「日志前缀」，单条 applyEvent 看不到前缀，猜不得：
+      // 静默返回 current 会让增量应用悄悄跑偏，只能让调用方换成 rebuild。
+      throw new Error(
+        "project.restored 需要整条日志才能定位到前缀：请用 rebuild 回放，不要逐条 applyEvent",
+      );
+    }
   }
 }
 
-export function rebuild(events: ProjectEvent[]): Project {
+/**
+ * 从头回放整条日志，返回「每一步之后」的项目。
+ *
+ * `project.restored` 是唯一不能靠 `applyEvent` 单条应用的事件：它指向日志前缀，
+ * 所以这里逐条记下每个位置跑出来的项目（结构共享，数组本身占用很小），
+ * 遇到回滚就直接取前缀那一步的结果。前缀永远回放得出同一个结果，
+ * 因为日志只追加、从不删改（ADR-0011 / ADR-0109）。
+ *
+ * 历史抽屉与回收站要显示「当时它叫什么」，也靠这份数组。
+ */
+export function rebuildStates(events: ProjectEvent[]): Project[] {
   if (events.length === 0) throw new Error("事件日志为空");
-  return events.reduce<Project | null>(
-    (project, event) => applyEvent(project, event),
-    null,
-  ) as Project;
+
+  const states: Project[] = [];
+  for (const [index, event] of events.entries()) {
+    const previous = index > 0 ? states[index - 1]! : null;
+    if (event.type === "project.restored") {
+      const target = event.toEventCount;
+      if (!Number.isInteger(target) || target < 1 || target > index) {
+        throw new Error(
+          `project.restored 的目标不合法：${target}（要落在 1–${index} 之间）`,
+        );
+      }
+      // 回滚只指向前面的日志，所以这一步一定已经算过
+      states.push(states[target - 1]!);
+      continue;
+    }
+    if (!previous && event.type !== "project.created") {
+      throw new Error(`${event.type} 之前必须有 project.created`);
+    }
+    states.push(applyEvent(previous, event));
+  }
+  return states;
+}
+
+/** 当前项目：整条日志回放的最后一步。 */
+export function rebuild(events: ProjectEvent[]): Project {
+  return rebuildStates(events).at(-1)!;
 }

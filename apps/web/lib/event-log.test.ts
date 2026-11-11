@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ProjectEvent } from "@loomina/ir";
+import { rebuild, type ProjectEvent } from "@loomina/ir";
 import { diffEvents, LOG_VERSION, migrateLog, parseEvents } from "./event-log";
 import { sampleProject } from "./sample-project";
 
@@ -139,6 +139,31 @@ describe("阶段闸门事件（F8 / F9）", () => {
   it("签名不合法的事件整份丢掉", () => {
     expect(
       parseEvents([created(), { type: "gate.confirmed", at: AT, stage: "story", signature: "x" }]),
+    ).toBeNull();
+  });
+});
+
+describe("全局回滚事件（F2 / ADR-0109）", () => {
+  it("认得 project.restored，读回来按前缀回放", () => {
+    const events = parseEvents([
+      created(),
+      { type: "project.updated", at: AT, budgetCny: 120 },
+      { type: "project.restored", at: AT, toEventCount: 1, label: "回到起点" },
+    ]);
+    expect(events?.map((event) => event.type)).toEqual([
+      "project.created",
+      "project.updated",
+      "project.restored",
+    ]);
+    expect(rebuild(events!).budgetCny).toBe(sampleProject.budgetCny);
+  });
+
+  it("回滚目标越界的日志整份判废", () => {
+    expect(
+      parseEvents([
+        created(),
+        { type: "project.restored", at: AT, toEventCount: 7 },
+      ]),
     ).toBeNull();
   });
 });

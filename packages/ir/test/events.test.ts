@@ -1903,3 +1903,75 @@ describe("阶段闸门与单镜预算（F8 / F9 / H10）", () => {
     ).toThrow(/大于 0/);
   });
 });
+
+describe("全局回滚（F2 / ADR-0109）", () => {
+  it("rebuild 回到前缀那一步，预算跟着回去", () => {
+    const project = load();
+    const original = project.budgetCny;
+    const events: ProjectEvent[] = [
+      created(project),
+      { type: "project.updated", at: AT, budgetCny: 120 },
+      { type: "project.restored", at: AT, toEventCount: 1, label: "回到起点" },
+    ];
+    expect(rebuild(events).budgetCny).toBe(original);
+  });
+
+  it("回滚之后还能继续改：新事件写在新状态上，再回滚还能回到中间那一步", () => {
+    const project = load();
+    const events: ProjectEvent[] = [
+      created(project),
+      { type: "project.updated", at: AT, budgetCny: 120 },
+      { type: "project.restored", at: AT, toEventCount: 1 },
+      { type: "project.updated", at: AT, budgetCny: 90 },
+      // 回滚到「第 3 条之后」＝ 已经回滚过的那个状态
+      { type: "project.restored", at: AT, toEventCount: 3 },
+    ];
+    expect(rebuild(events).budgetCny).toBe(project.budgetCny);
+
+    const reopened: ProjectEvent[] = events.slice(0, 3);
+    expect(rebuild(reopened).budgetCny).toBe(project.budgetCny);
+    const latest: ProjectEvent[] = [...events.slice(0, 4)];
+    expect(rebuild(latest).budgetCny).toBe(90);
+  });
+
+  it("回滚之后按镜头改的东西一并回去，镜头数不变", () => {
+    const project = load();
+    const before = project.shots[0]!;
+    const events: ProjectEvent[] = [
+      created(project),
+      { type: "shot.updated", at: AT, shotId: "sh-1", patch: { description: "改过的动作" } },
+      { type: "project.restored", at: AT, toEventCount: 1 },
+    ];
+    const restored = rebuild(events);
+    expect(restored.shots).toHaveLength(project.shots.length);
+    expect(restored.shots[0]!.description).toBe(before.description);
+  });
+
+  it("目标越界或指向未来都直接报错", () => {
+    const project = load();
+    expect(() =>
+      rebuild([
+        created(project),
+        { type: "project.restored", at: AT, toEventCount: 0 },
+      ]),
+    ).toThrow(/目标不合法/);
+    expect(() =>
+      rebuild([
+        created(project),
+        { type: "project.restored", at: AT, toEventCount: 2 },
+      ]),
+    ).toThrow(/目标不合法/);
+    expect(() =>
+      rebuild([
+        created(project),
+        { type: "project.restored", at: AT, toEventCount: 1.5 },
+      ]),
+    ).toThrow(/目标不合法/);
+  });
+
+  it("单条 applyEvent 应用不了回滚：必须整条日志", () => {
+    expect(() =>
+      applyEvent(load(), { type: "project.restored", at: AT, toEventCount: 1 }),
+    ).toThrow(/rebuild/);
+  });
+});

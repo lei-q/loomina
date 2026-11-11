@@ -3431,3 +3431,91 @@ describe("阶段闸门与单镜预算（F8 / F9 / H10）", () => {
     expect(state().events).toHaveLength(before);
   });
 });
+
+describe("多步撤销与历史回滚（F2 / ADR-0109）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("撤销退一步：留用的 take 回到草稿，日志只多一条回滚事件", () => {
+    state().select("s-03");
+    state().decide("approved");
+    const before = state().events.length;
+
+    expect(state().undo()).toBe(true);
+
+    expect(statusOf("t-03")).toBe("draft");
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "project.restored",
+      toEventCount: 1,
+    });
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("连撤两步：每一步都真的往回走，不会停在同一个地方", () => {
+    state().select("s-03");
+    state().decide("approved");
+    state().select("s-04");
+    state().decide("approved");
+
+    expect(state().undo()).toBe(true);
+    expect(statusOf("t-03")).toBe("approved");
+    expect(statusOf("t-04")).toBe("draft");
+
+    expect(state().undo()).toBe(true);
+    expect(statusOf("t-03")).toBe("draft");
+    // 退到最早之后没有可撤的了
+    expect(state().undo()).toBe(false);
+    expect(state().historyNotice).toContain("最早");
+  });
+
+  it("回到某一步：预算回到当时那个数，之后的改动不再生效", () => {
+    state().setBudget(100);
+    const afterBudget = state().events.length;
+    state().setBudget(200);
+    expect(state().project.budgetCny).toBe(200);
+
+    expect(state().restoreTo(afterBudget, "回到预算 ¥100")).toBe(true);
+    expect(state().project.budgetCny).toBe(100);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "project.restored",
+      toEventCount: afterBudget,
+      label: "回到预算 ¥100",
+    });
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("已经在最新一步时不再写多余的回滚事件", () => {
+    state().setBudget(100);
+    const before = state().events.length;
+    expect(state().restoreTo(before)).toBe(false);
+    expect(state().events).toHaveLength(before);
+    expect(state().historyNotice).toContain("已经是这一步");
+  });
+
+  it("回收站按任意一条删除放回：不顺手撤掉之后的改动", () => {
+    expect(state().removeShot("s-03")).toBe(true);
+    const removedAt = state().events.findIndex((event) => event.type === "shot.removed");
+    expect(removedAt).toBeGreaterThan(0);
+    state().setBudget(120);
+
+    expect(state().restoreRemovalAt(removedAt)).toBe(true);
+    expect(state().project.shots.some((shot) => shot.id === "s-03")).toBe(true);
+    // 删完之后改的预算还在：回收站只放回这一条
+    expect(state().project.budgetCny).toBe(120);
+    expect(state().currentShotId).toBe("s-03");
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("只读时撤销与回滚都不写事件", () => {
+    state().setBudget(100);
+    const before = state().events.length;
+    useWorkbench.setState({ readOnly: true });
+
+    expect(state().undo()).toBe(false);
+    expect(state().restoreTo(1)).toBe(false);
+    expect(state().events).toHaveLength(before);
+  });
+});

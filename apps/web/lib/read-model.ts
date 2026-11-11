@@ -1,6 +1,7 @@
 import {
   castReadiness,
   rebuild,
+  rebuildStates,
   shotAnchors,
   SHEET_ANGLES,
   SHEET_LABELS,
@@ -842,7 +843,7 @@ export type UndoableRemoval = {
   at: string;
 };
 
-function removalTarget(
+export function removalTargetOf(
   event: ProjectEvent,
 ): { kind: RemovalKind; id: string } | undefined {
   switch (event.type) {
@@ -861,6 +862,48 @@ function removalTarget(
   }
 }
 
+export function removalAlive(
+  project: Project,
+  kind: RemovalKind,
+  id: string,
+): boolean {
+  switch (kind) {
+    case "character":
+      return project.characters.some((item) => item.id === id);
+    case "prop":
+      return project.props.some((item) => item.id === id);
+    case "location":
+      return project.locations.some((item) => item.id === id);
+    case "shot":
+      return project.shots.some((item) => item.id === id);
+    case "scene":
+      return project.scenes.some((item) => item.id === id);
+  }
+}
+
+/** 界面上怎么称呼它：人物 / 道具 / 地点用名字，镜头用 SH-xx，场次用第 N 场 */
+function removalLabel(
+  project: Project,
+  target: { kind: RemovalKind; id: string },
+): string {
+  switch (target.kind) {
+    case "character":
+      return project.characters.find((item) => item.id === target.id)?.name ?? target.id;
+    case "prop":
+      return project.props.find((item) => item.id === target.id)?.name ?? target.id;
+    case "location":
+      return project.locations.find((item) => item.id === target.id)?.name ?? target.id;
+    case "shot": {
+      const no = toStageView(project).shots.findIndex((item) => item.id === target.id);
+      return no >= 0 ? shotLabel(no + 1) : target.id;
+    }
+    case "scene": {
+      const scene = project.scenes.find((item) => item.id === target.id);
+      return scene ? `第 ${scene.code || scene.index + 1} 场` : target.id;
+    }
+  }
+}
+
 /**
  * 下一次「撤销删除」会撤销哪一条（ADR-0076）。
  *
@@ -872,40 +915,51 @@ export function undoableRemoval(
   project: Project,
 ): UndoableRemoval | undefined {
   for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index]!;
-    const target = removalTarget(event);
-    if (!target) continue;
-    const alive =
-      target.kind === "character"
-        ? project.characters.some((item) => item.id === target.id)
-        : target.kind === "prop"
-          ? project.props.some((item) => item.id === target.id)
-          : target.kind === "location"
-            ? project.locations.some((item) => item.id === target.id)
-            : target.kind === "shot"
-              ? project.shots.some((item) => item.id === target.id)
-              : project.scenes.some((item) => item.id === target.id);
-    if (alive) continue;
+    const target = removalTargetOf(events[index]!);
+    if (!target || removalAlive(project, target.kind, target.id)) continue;
 
     // 被删时它叫什么：用删除之前的那份项目算
     const before = rebuild(events.slice(0, index));
-    let label = target.id;
-    if (target.kind === "character") {
-      label = before.characters.find((item) => item.id === target.id)?.name ?? label;
-    } else if (target.kind === "prop") {
-      label = before.props.find((item) => item.id === target.id)?.name ?? label;
-    } else if (target.kind === "location") {
-      label = before.locations.find((item) => item.id === target.id)?.name ?? label;
-    } else if (target.kind === "shot") {
-      const no = toStageView(before).shots.findIndex((item) => item.id === target.id);
-      label = no >= 0 ? shotLabel(no + 1) : label;
-    } else {
-      const scene = before.scenes.find((item) => item.id === target.id);
-      label = scene ? `第 ${scene.code || scene.index + 1} 场` : label;
-    }
-    return { index, kind: target.kind, id: target.id, label, at: event.at };
+    return {
+      index,
+      kind: target.kind,
+      id: target.id,
+      label: removalLabel(before, target),
+      at: events[index]!.at,
+    };
   }
   return undefined;
+}
+
+/**
+ * 回收站（F2 / ADR-0109）：日志里所有「删掉了、现在还没回来」的对象，最新在前。
+ *
+ * 一次回放拿到每一步的项目，逐条登记时用「删除之前」的那一份取名字——
+ * 这样早先删掉的东西也还能按当时的叫法显示，不会变成一串 id。
+ */
+export function recycleBin(
+  events: ProjectEvent[],
+  project: Project,
+): UndoableRemoval[] {
+  const states = rebuildStates(events);
+  const seen = new Set<string>();
+  const bin: UndoableRemoval[] = [];
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const target = removalTargetOf(events[index]!);
+    if (!target || removalAlive(project, target.kind, target.id)) continue;
+    const key = `${target.kind}:${target.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const before = states[index - 1] ?? project;
+    bin.push({
+      index,
+      kind: target.kind,
+      id: target.id,
+      label: removalLabel(before, target),
+      at: events[index]!.at,
+    });
+  }
+  return bin;
 }
 
 // ── 关键帧页（ADR-0042）───────────────────────────────────────────
