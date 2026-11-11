@@ -18,11 +18,11 @@ const AI_LABEL: AILabel = {
   standard: "AI生成",
 };
 
-// 导出（E6 / D3 / G1，ADR-0086）
+// 导出（E6 / D2 / D3 / G1，ADR-0086 / ADR-0087）
 //
 // 这里只产出「自包含文件」：预览 HTML、OTIO 时间线、发布包 JSON、SRT。
-// ffmpeg 的 mp4 渲染不在这里——本机 ffmpeg 缺 dylib、服务端渲染也还没做，
-// 界面与文档都如实说明，不假装已经能出片。
+// 本机 ffmpeg 已可用（9.0.2），但服务端渲染 mp4 还没做——界面与文档都如实说明，
+// 不假装已经能出片。
 
 function escapeHtml(text: string): string {
   return text
@@ -52,17 +52,15 @@ function srtTime(ms: number): string {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")},${String(millis).padStart(3, "0")}`;
 }
 
-/** 字幕轨：按台词顺序、绝对时间，一条一句 */
+/** 字幕轨：断句后的每一条，绝对时间，一条一行 */
 export function buildSrt(view: EditView): string {
-  const cues = view.clips.flatMap((clip) =>
-    clip.lines
-      .filter((line) => line.text.trim().length > 0)
-      .map((line) => ({
-        startMs: line.startMs,
-        endMs: line.startMs + line.durationMs,
-        text: line.text.trim(),
-      })),
-  );
+  const cues = view.cues
+    .filter((cue) => cue.text.trim().length > 0)
+    .map((cue) => ({
+      startMs: cue.startMs,
+      endMs: cue.startMs + cue.durationMs,
+      text: cue.text.trim(),
+    }));
   cues.sort((a, b) => a.startMs - b.startMs);
   return cues
     .map(
@@ -193,13 +191,13 @@ export function previewClips(view: EditView): PreviewClip[] {
     durationMs: clip.durationMs,
     video: clip.uri,
     still: clip.stillUri,
-    subtitles: clip.lines
-      .filter((line) => line.text.trim())
-      .map((line) => ({
-        startMs: line.startMs - clip.startMs,
-        endMs: line.startMs - clip.startMs + line.durationMs,
-        text: line.text.trim(),
+    subtitles: clip.lines.flatMap((line) =>
+      line.cues.map((cue) => ({
+        startMs: cue.startMs - clip.startMs,
+        endMs: cue.startMs - clip.startMs + cue.durationMs,
+        text: cue.text,
       })),
+    ),
     audio: clip.lines.flatMap((line) =>
       line.audioUri
         ? [{ startMs: line.startMs - clip.startMs, uri: line.audioUri, text: line.text }]

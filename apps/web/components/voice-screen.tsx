@@ -132,6 +132,12 @@ export function VoiceScreen() {
   const jobs = useWorkbench((state) => state.jobs);
   const voiceInfo = useWorkbench((state) => state.voiceInfo);
   const setVoiceInfo = useWorkbench((state) => state.setVoiceInfo);
+  const asrInfo = useWorkbench((state) => state.asrInfo);
+  const asrResult = useWorkbench((state) => state.asrResult);
+  const setAsrInfo = useWorkbench((state) => state.setAsrInfo);
+  const transcribeLine = useWorkbench((state) => state.transcribeLine);
+  const applyAsrText = useWorkbench((state) => state.applyAsrText);
+  const dismissAsrResult = useWorkbench((state) => state.dismissAsrResult);
   const generateVoice = useWorkbench((state) => state.generateVoice);
   const attachVoice = useWorkbench((state) => state.attachVoice);
   const fitLineToAudio = useWorkbench((state) => state.fitLineToAudio);
@@ -150,13 +156,23 @@ export function VoiceScreen() {
         // 读不到配置不是致命事：页面照常能贴音轨
         if (alive) setVoiceInfo({});
       });
+    void fetch("/api/transcribe")
+      .then((response) => response.json())
+      .then((payload: { model?: string }) => {
+        if (alive) setAsrInfo(payload ?? {});
+      })
+      .catch(() => {
+        // 同上：没有识别模型，仍然可以出声与贴音轨
+        if (alive) setAsrInfo({});
+      });
     return () => {
       alive = false;
     };
-  }, [hydrate, setVoiceInfo]);
+  }, [hydrate, setVoiceInfo, setAsrInfo]);
 
   const view = useMemo(() => toVoiceView(project), [project]);
   const canSpeak = Boolean(voiceInfo?.model);
+  const canTranscribe = Boolean(asrInfo?.model);
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg text-text">
@@ -230,10 +246,19 @@ export function VoiceScreen() {
           </section>
 
           <section aria-label="台词与音轨" className="mt-6">
-            <h2 className="text-[11px] tracking-[.06em] text-text">一句一句配</h2>
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="text-[11px] tracking-[.06em] text-text">一句一句配</h2>
+              <p className="text-[9.5px] text-muted-2">
+                {canTranscribe
+                  ? `用 ${asrInfo?.model} 识别：结果先看一眼，再决定要不要替换台词`
+                  : "还没配识别模型：服务端加上 ASR_MODEL 后才能识别音轨"}
+              </p>
+            </div>
             <ul className="mt-2 border-t border-line">
               {view.lines.map((line) => {
                 const busy = jobs[`${line.id}:voice`]?.kind === "voice";
+                const busyAsr = jobs[`${line.id}:asr`]?.kind === "asr";
+                const result = asrResult?.lineId === line.id ? asrResult : undefined;
                 const role = view.roles.find((item) => item.id === line.characterId);
                 return (
                   <li key={line.id} className="border-b border-line py-3">
@@ -274,27 +299,82 @@ export function VoiceScreen() {
                           />
                         )}
 
+                        {result && (
+                          <div className="mt-1.5 border border-dashed border-line-2 px-2 py-1.5">
+                            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                              <span className="text-[8.5px] tracking-[.06em] text-muted-2">
+                                识别结果
+                              </span>
+                              <span className="text-[8.5px] text-muted-2">
+                                {result.model}
+                                {result.segments.length > 0
+                                  ? ` · ${result.segments.length} 段`
+                                  : ""}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-[11px] leading-[1.7] text-text">
+                              {result.text}
+                            </p>
+                            <div className="mt-1.5 flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => applyAsrText(line.id, result.text)}
+                                disabled={Boolean(readOnly)}
+                                className="rounded-token border border-pick bg-pick px-2 py-0.5 text-[9.5px] text-white transition-opacity duration-[var(--dur)] hover:opacity-90 disabled:opacity-40"
+                              >
+                                用这句替换
+                              </button>
+                              <button
+                                type="button"
+                                onClick={dismissAsrResult}
+                                className="rounded-token border border-line px-2 py-0.5 text-[9.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                              >
+                                忽略
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
                         <AttachBox
                           readOnly={Boolean(readOnly)}
                           onAttach={(uri) => attachVoice(line.id, uri)}
                         />
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => void generateVoice(line.id)}
-                        disabled={Boolean(readOnly) || busy || !canSpeak}
-                        title={
-                          !canSpeak
-                            ? "还没配配音模型：加上 TTS_MODEL 之后才能出声"
-                            : line.state === "voiced"
-                              ? "重新念一遍：换掉这一句的旧音轨"
-                              : "让供应商念这一句"
-                        }
-                        className="shrink-0 rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:pointer-events-none disabled:opacity-40"
-                      >
-                        {busy ? "出声中…" : line.state === "voiced" ? "重配" : "出声"}
-                      </button>
+                      <div className="flex shrink-0 flex-col items-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() => void generateVoice(line.id)}
+                          disabled={Boolean(readOnly) || busy || !canSpeak}
+                          title={
+                            !canSpeak
+                              ? "还没配配音模型：加上 TTS_MODEL 之后才能出声"
+                              : line.state === "voiced"
+                                ? "重新念一遍：换掉这一句的旧音轨"
+                                : "让供应商念这一句"
+                          }
+                          className="rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:pointer-events-none disabled:opacity-40"
+                        >
+                          {busy ? "出声中…" : line.state === "voiced" ? "重配" : "出声"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void transcribeLine(line.id)}
+                          disabled={
+                            Boolean(readOnly) || busyAsr || !canTranscribe || !line.audioUri
+                          }
+                          title={
+                            !canTranscribe
+                              ? "还没配识别模型：加上 ASR_MODEL 之后才能识别"
+                              : !line.audioUri
+                                ? "这一句还没有音轨可识别"
+                                : "听这一句，把文字校回来"
+                          }
+                          className="rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:pointer-events-none disabled:opacity-40"
+                        >
+                          {busyAsr ? "识别中…" : "识别"}
+                        </button>
+                      </div>
                     </div>
                   </li>
                 );

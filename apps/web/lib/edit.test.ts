@@ -88,6 +88,22 @@ describe("成片读模型（ADR-0086）", () => {
     expect(timecode(0)).toBe("00:00.000");
     expect(timecode(65_200)).toBe("01:05.200");
   });
+
+  it("台词按字数断成多条字幕，时间首尾相接、总和不变（D2）", () => {
+    const view = toEditView(sampleProject, { maxChars: 6 });
+    const line = view.clips[0]!.lines[0]!;
+    expect(line.cues.length).toBeGreaterThan(1);
+    expect(line.cues[0]!.startMs).toBe(line.startMs);
+    const last = line.cues.at(-1)!;
+    expect(last.startMs + last.durationMs).toBe(line.startMs + line.durationMs);
+    // 读模型里的字幕是拍平的、按时间排好
+    expect(view.cues.every((cue) => cue.lineId === "d-01")).toBe(true);
+    for (let index = 1; index < view.cues.length; index += 1) {
+      expect(view.cues[index]!.startMs).toBeGreaterThanOrEqual(
+        view.cues[index - 1]!.startMs,
+      );
+    }
+  });
 });
 
 describe("导出（E6 / D3 / G1）", () => {
@@ -95,6 +111,13 @@ describe("导出（E6 / D3 / G1）", () => {
     const srt = buildSrt(toEditView(sampleProject));
     expect(srt).toContain("1\n00:00:00,000 --> 00:00:02,600\n你早就知道，对吧。");
     expect(srt.trim().split("\n\n")).toHaveLength(1);
+  });
+
+  it("SRT 按断句后的字幕出，一条一行（D2）", () => {
+    const view = toEditView(sampleProject, { maxChars: 6 });
+    const blocks = buildSrt(view).trim().split("\n\n");
+    expect(blocks).toHaveLength(view.cues.length);
+    expect(blocks[0]).toContain(view.cues[0]!.text);
   });
 
   it("预览 HTML 自包含，带字幕与安全区样式", () => {

@@ -3,10 +3,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { TopBar } from "@/components/top-bar";
 import {
+  DEFAULT_SUBTITLE_CHARS,
   SAFE_AREA,
+  SUBTITLE_CHARS,
   SUBTITLE_STYLES,
   timecode,
   toEditView,
+  type SubtitleChars,
   type SubtitleStyleId,
 } from "@/lib/edit";
 import {
@@ -51,15 +54,12 @@ export function EditScreen() {
     void hydrate();
   }, [hydrate]);
 
-  const view = useMemo(() => toEditView(project), [project]);
-  const stage = useMemo(() => toStageView(project), [project]);
-  const spend = useMemo(() => spendOf(project), [project]);
-
   const [elapsed, setElapsed] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [selectedId, setSelectedId] = useState<string>();
   const [showSafe, setShowSafe] = useState(true);
   const [styleId, setStyleId] = useState<SubtitleStyleId>("default");
+  const [maxChars, setMaxChars] = useState<SubtitleChars>(DEFAULT_SUBTITLE_CHARS);
   const [title, setTitle] = useState(project.title);
   const [description, setDescription] = useState("");
   const [topics, setTopics] = useState("短剧,AI创作");
@@ -67,6 +67,10 @@ export function EditScreen() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const fired = useRef<Set<string>>(new Set());
+
+  const view = useMemo(() => toEditView(project, { maxChars }), [project, maxChars]);
+  const stage = useMemo(() => toStageView(project), [project]);
+  const spend = useMemo(() => spendOf(project), [project]);
 
   const style = SUBTITLE_STYLES[styleId];
   const current =
@@ -76,9 +80,9 @@ export function EditScreen() {
     ) ?? view.clips.at(-1);
   const selected =
     view.clips.find((clip) => clip.id === selectedId) ?? current ?? view.clips[0];
-  const currentLine = current?.lines.find(
-    (line) =>
-      elapsed >= line.startMs && elapsed < line.startMs + line.durationMs,
+  const currentCue = view.cues.find(
+    (cue) =>
+      elapsed >= cue.startMs && elapsed < cue.startMs + cue.durationMs,
   );
   const progress = view.totalMs > 0 ? (elapsed / view.totalMs) * 100 : 0;
 
@@ -225,6 +229,10 @@ export function EditScreen() {
                 <dd className="text-muted">{view.clips.length}</dd>
               </div>
               <div className="flex items-baseline gap-1.5">
+                <dt className="text-muted-2">字幕</dt>
+                <dd className="text-muted">{view.cues.length} 条</dd>
+              </div>
+              <div className="flex items-baseline gap-1.5">
                 <dt className="text-muted-2">没画面</dt>
                 <dd className={view.noPicture > 0 ? "text-pick" : "text-muted"}>
                   {view.noPicture}
@@ -314,7 +322,7 @@ export function EditScreen() {
                     </div>
                   )}
 
-                  {currentLine && (
+                  {currentCue && (
                     <p
                       className="absolute text-center font-semibold text-white"
                       style={{
@@ -327,7 +335,7 @@ export function EditScreen() {
                         textShadow: `0 0 ${style.strokeCqw}cqw #000, 0 0 ${style.strokeCqw}cqw #000, 0 ${style.strokeCqw * 0.5}cqw ${style.strokeCqw * 1.2}cqw #000`,
                       }}
                     >
-                      {currentLine.text}
+                      {currentCue.text}
                     </p>
                   )}
 
@@ -439,6 +447,57 @@ export function EditScreen() {
                     <span className="tnum">{view.totalSec.toFixed(1)}s</span>
                   </div>
 
+                  <div className="mt-4 flex flex-wrap items-baseline justify-between gap-2">
+                    <h2 className="text-[11px] tracking-[.06em] text-text">字幕</h2>
+                    <label className="flex items-center gap-2 text-[9.5px] text-muted-2">
+                      每行字数
+                      <select
+                        value={maxChars}
+                        onChange={(event) =>
+                          setMaxChars(Number(event.target.value) as SubtitleChars)
+                        }
+                        className="rounded-token border border-line bg-transparent px-1.5 py-0.5 text-[10px] text-text focus:border-line-2 focus:outline-none"
+                      >
+                        {SUBTITLE_CHARS.map((count) => (
+                          <option key={count} value={count} className="bg-surface">
+                            {count} 字
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <div className="mt-2 flex h-[26px] w-full overflow-hidden rounded-token border border-line bg-surface">
+                    {view.cues.map((cue) => (
+                      <button
+                        key={cue.id}
+                        type="button"
+                        onClick={() => seekTo(cue.startMs)}
+                        title={`${timecode(cue.startMs)} · ${cue.characterName}：${cue.text}`}
+                        style={{
+                          width: `${(cue.durationMs / Math.max(1, view.totalMs)) * 100}%`,
+                          minWidth: cue.text.length > 0 ? 2 : 0,
+                        }}
+                        className={cn(
+                          "flex min-w-[2px] items-center justify-center overflow-hidden border-r border-bg px-0.5 text-[8px] transition-colors duration-[var(--dur)] last:border-r-0",
+                          elapsed >= cue.startMs &&
+                            elapsed < cue.startMs + cue.durationMs
+                            ? "bg-text/20 text-text"
+                            : "bg-line/50 text-muted hover:bg-line-2",
+                        )}
+                      >
+                        <span className="truncate">{cue.text}</span>
+                      </button>
+                    ))}
+                    {view.cues.length === 0 && (
+                      <span className="flex flex-1 items-center px-2 text-[9px] text-muted-2">
+                        时间线里还没有台词
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1 text-[8.5px] leading-[1.6] text-muted-2">
+                    按标点断句，时间按字数分；改字数档位，断句会立刻重排。点一条字幕跳到那一句。
+                  </p>
+
                   {view.missing > 0 && (
                     <p className="mt-1 text-[9.5px] text-muted-2">
                       剧本里还有 {view.missing} 镜没进时间线（多半是没有可用 take）。
@@ -511,6 +570,11 @@ export function EditScreen() {
                             </span>
                             <span className="w-[46px] shrink-0 text-muted">{line.characterName}</span>
                             <span className="min-w-0 flex-1 text-text">{line.text}</span>
+                            {line.cues.length > 1 && (
+                              <span className="shrink-0 text-[8.5px] text-muted-2">
+                                {line.cues.length} 行
+                              </span>
+                            )}
                             <span
                               className={cn(
                                 "shrink-0 text-[8.5px]",
@@ -610,8 +674,9 @@ export function EditScreen() {
 
                   <p className="mt-3 text-[9.5px] leading-[1.7] text-muted-2">
                     预览 HTML 是自包含的：画面、字幕、音轨都在文件里，双击就能看。
-                    <span className="text-muted"> mp4 还没做</span>——本机 ffmpeg 缺组件、服务端渲染也没接，
-                    所以发布包里的视频位先空着，拿 OTIO 去剪辑软件出片是现在能走通的路。
+                    <span className="text-muted"> mp4 还没做</span>——本机 ffmpeg 已装好，
+                    但服务端渲染管线还没接，所以发布包里的视频位先空着，
+                    拿 OTIO 去剪辑软件出片是现在能走通的路。
                   </p>
                 </section>
               </div>

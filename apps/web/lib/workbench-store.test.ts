@@ -1,5 +1,5 @@
 import { rebuild, type ProjectEvent } from "@loomina/ir";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 import { setEventLog, type EventLog } from "./event-log";
 import { claimWriter, releaseWriter } from "./writer-lock";
 import { toScriptView, toStageView } from "./read-model";
@@ -2702,6 +2702,106 @@ describe("配音（ADR-0085）", () => {
       state().project.characters.find((item) => item.id === "c-zhou"),
     ).not.toHaveProperty("voiceProfileId");
     expect(rebuild(state().events)).toEqual(state().project);
+  });
+});
+
+describe("识别（ADR-0087）", () => {
+  beforeEach(() => {
+    state().reset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("识别这一句的音轨：结果先放一边，不改台词、不写事件", async () => {
+    state().attachVoice("d-01", "data:audio/mpeg;base64,SUQz");
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push(`${url} ${String(init?.body ?? "")}`);
+        return new Response(
+          JSON.stringify({
+            text: "你早就知道了，对吧？",
+            model: "qwen-audio-3.0-asr-flash",
+            segments: [{ text: "你早就知道了，对吧？", startMs: 0, endMs: 2600 }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+
+    const before = state().events.length;
+    const ok = await state().transcribeLine("d-01");
+
+    expect(ok).toBe(true);
+    expect(calls[0]).toContain("/api/transcribe");
+    expect(state().asrResult).toMatchObject({
+      lineId: "d-01",
+      text: "你早就知道了，对吧？",
+      model: "qwen-audio-3.0-asr-flash",
+    });
+    expect(state().events).toHaveLength(before);
+    expect(state().project.dialogue.find((line) => line.id === "d-01")?.text).toBe(
+      "你早就知道，对吧。",
+    );
+  });
+
+  it("没有音轨就不送识别，也不发请求", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await state().transcribeLine("d-02")).toBe(false);
+    expect(state().castError).toContain("还没有音轨");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("识别失败如实报，不留下半条结果", async () => {
+    state().attachVoice("d-01", "data:audio/mpeg;base64,SUQz");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ error: "No authorized bound group supports this request" }),
+          { status: 502, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+
+    expect(await state().transcribeLine("d-01")).toBe(false);
+    expect(state().asrResult).toBeUndefined();
+    expect(state().castError).toContain("没识别出来");
+    expect(state().castError).toContain("No authorized bound group");
+  });
+
+  it("用识别结果替换台词：只改文字，时长与镜头不动", () => {
+    const before = state().project.dialogue.find((line) => line.id === "d-01")!;
+    const shotBefore = state().project.shots.find((shot) => shot.id === "s-01")!;
+    const count = state().events.length;
+
+    expect(state().applyAsrText("d-01", " 你早就知道了，对吧？ ")).toBe(true);
+
+    const after = state().project.dialogue.find((line) => line.id === "d-01")!;
+    expect(after.text).toBe("你早就知道了，对吧？");
+    expect(after.durationMs).toBe(before.durationMs);
+    expect(state().project.shots.find((shot) => shot.id === "s-01")?.durationMs).toBe(
+      shotBefore.durationMs,
+    );
+    expect(state().events.slice(count).map((event) => event.type)).toEqual([
+      "dialogue.updated",
+    ]);
+    expect(state().events.at(-1)).toMatchObject({ patch: { text: "你早就知道了，对吧？" } });
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("空结果、原句、锁定镜头都不替换", () => {
+    expect(state().applyAsrText("d-01", "   ")).toBe(false);
+    expect(state().applyAsrText("d-01", "你早就知道，对吧。")).toBe(false);
+    expect(state().castError).toContain("一样");
+    // d-04 在锁定的 s-08 里
+    expect(state().applyAsrText("d-04", "换一句")).toBe(false);
+    expect(state().castError).toContain("已锁定");
   });
 });
 

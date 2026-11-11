@@ -1,5 +1,6 @@
 import type { Project, Take, TimelineItem } from "@loomina/ir";
 import { toStageView, type SceneKind } from "./read-model";
+import { subtitleCues } from "./subtitle";
 
 // ── 字幕样式（D3）───────────────────────────────────────────────
 
@@ -126,6 +127,23 @@ export type EditTakeOption = {
   hasVideo: boolean;
 };
 
+/** 每行字数的几档（D2）：竖屏 12 偏密、16 默认、20 偏疏 */
+export const SUBTITLE_CHARS = [12, 16, 20] as const;
+export type SubtitleChars = (typeof SUBTITLE_CHARS)[number];
+export const DEFAULT_SUBTITLE_CHARS: SubtitleChars = 16;
+
+/** 一条实际显示的字幕：一句台词可能断成几条 */
+export type EditCue = {
+  id: string;
+  lineId: string;
+  shotId: string;
+  characterName: string;
+  text: string;
+  /** 绝对时间：从整条片子的 0 点算起 */
+  startMs: number;
+  durationMs: number;
+};
+
 export type EditLine = {
   id: string;
   text: string;
@@ -136,6 +154,8 @@ export type EditLine = {
   durationMs: number;
   /** 这一句的音轨（data URI 或 http(s)） */
   audioUri?: string;
+  /** 断句后的显示单元；时间加起来等于整句 */
+  cues: EditCue[];
 };
 
 export type EditClip = {
@@ -165,6 +185,10 @@ export type EditView = {
   title: string;
   version: number;
   clips: EditClip[];
+  /** 全部字幕，按时间排好；SRT、预览与导出都用这一份 */
+  cues: EditCue[];
+  /** 断句用的每行字数 */
+  maxChars: number;
   totalMs: number;
   totalSec: number;
   /** 时间线里有几镜完全没有画面 */
@@ -183,7 +207,11 @@ export type EditView = {
  * 时间线是事实，台词与音轨按片段起点换算成绝对时间；画面先看这一 take 的视频，
  * 没有就看首帧 / 尾帧。三样都没有时仍保留片段，让缺口在时间线上看得见。
  */
-export function toEditView(project: Project): EditView {
+export function toEditView(
+  project: Project,
+  options: { maxChars?: number } = {},
+): EditView {
+  const maxChars = Math.max(6, Math.round(options.maxChars ?? DEFAULT_SUBTITLE_CHARS));
   const stage = toStageView(project);
   const stageById = new Map(stage.shots.map((shot) => [shot.id, shot]));
   const shotById = new Map(project.shots.map((shot) => [shot.id, shot]));
@@ -219,16 +247,35 @@ export function toEditView(project: Project): EditView {
         const voice = line.audioAssetId
           ? assetById.get(line.audioAssetId)
           : undefined;
+        const characterName =
+          characterById.get(line.characterId)?.name ?? line.characterId;
+        const cues: EditCue[] = subtitleCues(line.text, line.durationMs, {
+          maxChars,
+        }).flatMap((cue, index) => {
+          const text = cue.text.trim();
+          if (!text) return [];
+          return [
+            {
+              id: `${line.id}-${index + 1}`,
+              lineId: line.id,
+              shotId: item.shotId,
+              characterName,
+              text,
+              startMs: startMs + cue.startMs,
+              durationMs: cue.durationMs,
+            },
+          ];
+        });
         return [
           {
             id: line.id,
             text: line.text,
             characterId: line.characterId,
-            characterName:
-              characterById.get(line.characterId)?.name ?? line.characterId,
+            characterName,
             startMs,
             durationMs: line.durationMs,
             audioUri: voice?.uri,
+            cues,
           },
         ];
       });
@@ -265,11 +312,16 @@ export function toEditView(project: Project): EditView {
     0,
   );
   const inTimeline = new Set(clips.map((clip) => clip.shotId));
+  const cues = clips
+    .flatMap((clip) => clip.lines.flatMap((line) => line.cues))
+    .sort((a, b) => a.startMs - b.startMs);
 
   return {
     title: project.title,
     version: project.version,
     clips,
+    cues,
+    maxChars,
     totalMs,
     totalSec: Math.round(totalMs / 100) / 10,
     noPicture: clips.filter((clip) => !clip.hasPicture).length,

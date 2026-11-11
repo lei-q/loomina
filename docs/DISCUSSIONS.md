@@ -2678,3 +2678,30 @@ ADR-0009 把 animatic 定为视频生成前的闸门，但眼下没有任何地�
 - 不能删片段、拖起点、改顺序；初剪顺序完全由剧本决定。
 - 发布包只导出成文件，不写回 IR 的 `publishPackages`，也没有合规检查。
 - OTIO 里的素材仍是 data URI，带真视频时文件会很大；对象存储（H3）接上后要改成地址。
+
+## 第九十一次 · 2026-11-11 · 字幕断句与识别（N4 · D1 / D2）
+
+**背景**
+成片页能排出整条片子，但字幕还是「一句一条」：长台词铺满竖屏，短台词一闪而过。D2 要按语义停顿断句、按字数分时间；D1 要识别配音、帮用户校回文字。同时本机 ffmpeg 在上一轮结束时仍是坏的（`libx265.216.dylib` 缺失）。供应商那边的 ASR 配额也还没确认。
+
+**结论**
+- ffmpeg 已修好：`brew reinstall ffmpeg` 装到 9.0.2，用 `lavfi color + sine` 编码 H.264 + AAC、再用 `ffprobe` 读时长都通过。ADR-0086 的「ffmpeg 起不来」只描述当时，已加附记；服务端渲染仍未实现，mp4 仍没有。
+- 识别探测：模型目录里有 `qwen-audio-3.0-asr-flash` / `-filetrans` / `-streaming`，用本地生成的语音请求 `/v1/audio/transcriptions`，两种模型都返回 `403 No authorized bound group supports this request`——和 TTS 同一配额状态。因此这一轮把链路搭通，但不假装能识别。
+- D2 断句（ADR-0087）：`apps/web/lib/subtitle.ts` 做标点整理、按标点切小句（引号 / 括号内不切）、按可见字数合并到 12 / 16 / 20 字（默认 16）、超长优先停在停顿后、小尾句并回上一句。时间按可见字数分，每条至少 600ms，总和严格等于台词 `durationMs`。断句是读模型现算的，不落 IR；成片页有字幕 lane 与字数下拉，切档即时重排。
+- 导出统一用 cue：SRT、预览 HTML 的逐条字幕、发布包的 `subtitles` 都改成断句后的结果；OTIO 仍按 take / 台词本体，不做字幕轨。
+- D1 识别链路：网关新增 `TreecloudTranscriptionAdapter`（multipart + `ASR_MODEL`，未配抛 `asr_not_configured`，segments 缺失不猜）；web 新增 `/api/transcribe`（GET 只报配置，POST 只收 `data:audio/…;base64`、上限 8 MB，400 / 500 / 502 分清）与 `transcribe-line.ts`；store 把结果放在内存 `asrResult`，声音页显示「识别结果 + 模型 + 段数」与 `用这句替换` / `忽略`。替换只写一条 `dialogue.updated { text }`，**不带 `durationMs`**，时长与镜头不动（准则 P5）。
+- 文档：ADR-0087；`FEATURES.md` D1 / D2 / D4 / E1；`DATA-MODEL.md` 5.2；`UX.md` 5.11 / 5.12；`RISKS.md` R27；`ROADMAP.md` S5；ADR-0086 附记。
+
+**验证**
+- 测试：IR 107、web 276（新增 18：断句 11、读模型 cue 1、SRT cue 1、store 识别 5）、gateway 24（新增 4：multipart、未配置、空音轨、403 透传）、pipeline 23，合计 430；`pnpm typecheck`、`pnpm test`、`pnpm --filter web build` 通过。
+- 接口：`GET /api/transcribe` 在没配 `ASR_MODEL` 时回 `{}`；`POST` 内嵌音轨回 500「没有配识别模型：在 secrity.env 里加上 ASR_MODEL……之后才能识别」；`POST` http(s) 地址回 400「识别只收内嵌音轨……」。错误里不含密钥。
+- 真实页面（1440×900，先清 IndexedDB）：
+  - 往日志注入一条长台词后打开 `/edit`，页头「全长 5.5s / 片段 2 / 字幕 2 条 / 没画面 2 / 有配音 1 镜」，字幕 lane 两条；切到「12 字」后变成 3 条（「你早就知道，对吧。」「可你为什么还要回来。」「灯是我关的，门也是我锁的。」），下方台词行标「3 行」。点第三条字幕，时钟跳到 `00:01.541 / 00:05.500`。
+  - `/voice`：带音轨的 SH-01 行显示「有声」和「识别」按钮；没配模型时每行「识别」禁用，悬停写「还没配识别模型：加上 ASR_MODEL 之后才能识别」，页头提示「还没配识别模型：服务端加上 ASR_MODEL 后才能识别音轨」。没有音轨的行同样禁用。
+  - 验证完重置 IndexedDB，回到初始示例。
+
+**诚实地说**
+- 识别只验到配置缺失与请求形状，**没有识别出一句真话**：供应商两种 ASR 模型都回 403。
+- 断句是规则，不是语义理解：虚词、专有名词仍可能被硬切；不能手动改单条字幕或单独拖时间。
+- 识别结果不持久，刷新即丢；没有置信度与多候选。
+- 字幕样式仍只在播放器侧，不烧进画面；ASS 与 mp4 都还没做。

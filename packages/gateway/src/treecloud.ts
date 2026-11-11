@@ -6,6 +6,10 @@ import type {
   SpeechAdapter,
   SpeechInput,
   SpeechOutput,
+  TranscriptionAdapter,
+  TranscriptionInput,
+  TranscriptionOutput,
+  TranscriptionSegment,
   VideoAdapter,
   VideoApiName,
   VideoInput,
@@ -29,6 +33,8 @@ export interface TreecloudConfig {
   ttsModel?: string;
   /** 默认音色；角色没单独指定时用它 */
   ttsVoice?: string;
+  /** ASR 模型（ADR-0087）；没配就不识别，界面如实说 */
+  asrModel?: string;
   fetcher?: typeof fetch;
   now?: () => string;
   sleep?: (ms: number) => Promise<void>;
@@ -173,6 +179,8 @@ export class TreecloudClient {
     const method = init.method ?? "GET";
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    // 表单上传（ASR）不能自带 Content-Type：boundary 由运行时生成
+    const form = init.body instanceof FormData;
 
     let response: Response;
     try {
@@ -180,9 +188,14 @@ export class TreecloudClient {
         method,
         headers: {
           Authorization: `Bearer ${this.config.apiKey}`,
-          ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
+          ...(init.body === undefined || form ? {} : { "Content-Type": "application/json" }),
         },
-        body: init.body === undefined ? undefined : JSON.stringify(init.body),
+        body:
+          init.body === undefined
+            ? undefined
+            : form
+              ? (init.body as FormData)
+              : JSON.stringify(init.body),
         signal: controller.signal,
       });
     } catch (error) {
@@ -329,6 +342,105 @@ export class TreecloudSpeechAdapter implements SpeechAdapter {
       provenance: {
         modelId: model,
         prompt: text,
+        referenceAssetIds: [],
+        createdAt: this.now(),
+      },
+    };
+  }
+}
+
+export interface TreecloudTranscriptionOptions {
+  /** 覆盖 env 里的 ASR_MODEL */
+  model?: string;
+  /** 默认 zh */
+  language?: string;
+}
+
+/**
+ * 语音识别适配器（ADR-0087）。
+ *
+ * 契约按 OpenAI 兼容写法：`POST /v1/audio/transcriptions`，
+ * multipart 字段 `file / model / language / response_format`。
+ * 用 `verbose_json` 拿分段时间轴；供应商不给 segments 就返回空数组，不猜。
+ *
+ * 没配 ASR_MODEL 时直接报 `asr_not_configured`：这是配置问题，重试不会好。
+ */
+export class TreecloudTranscriptionAdapter implements TranscriptionAdapter {
+  private readonly now: () => string;
+
+  constructor(
+    private readonly client: TreecloudClient,
+    private readonly options: TreecloudTranscriptionOptions = {},
+  ) {
+    this.now = client.config.now ?? (() => new Date().toISOString());
+  }
+
+  get configured(): boolean {
+    return Boolean(this.options.model ?? this.client.config.asrModel);
+  }
+
+  async transcribe(input: TranscriptionInput): Promise<TranscriptionOutput> {
+    const model = input.model ?? this.options.model ?? this.client.config.asrModel;
+    if (!model) {
+      throw new TreecloudError(
+        500,
+        "asr_not_configured",
+        "没有配识别模型：在 secrity.env 里加上 ASR_MODEL（例如 qwen-audio-3.0-asr-flash）之后才能识别",
+      );
+    }
+    if (input.bytes.length === 0) {
+      throw new TreecloudError(400, "asr_empty_audio", "这条音轨是空的");
+    }
+
+    const form = new FormData();
+    // 复制一份到普通的 ArrayBuffer：Uint8Array 的底层也可能是 SharedArrayBuffer，
+    // 那种类型不能直接交给 Blob（TS 会拦，浏览器也不认）。
+    const bytes = new Uint8Array(input.bytes);
+    form.append(
+      "file",
+      new Blob([bytes], { type: input.mime }),
+      input.filename ?? "line",
+    );
+    form.append("model", model);
+    form.append("language", input.language ?? this.options.language ?? "zh");
+    form.append("response_format", "verbose_json");
+
+    const payload = await this.client.request("/v1/audio/transcriptions", {
+      method: "POST",
+      body: form,
+    });
+
+    const text = typeof payload.text === "string" ? payload.text.trim() : "";
+    if (!text) {
+      throw new TreecloudError(
+        502,
+        "transcript_empty",
+        "识别接口没有返回文字（音轨可能是静音或格式不支持）",
+      );
+    }
+
+    const rawSegments = Array.isArray(payload.segments) ? payload.segments : [];
+    const segments: TranscriptionSegment[] = rawSegments.flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const segment = item as { text?: unknown; start?: unknown; end?: unknown };
+      const segmentText = typeof segment.text === "string" ? segment.text.trim() : "";
+      const start = typeof segment.start === "number" ? segment.start : 0;
+      const end = typeof segment.end === "number" ? segment.end : start;
+      if (!segmentText) return [];
+      return [
+        {
+          text: segmentText,
+          startMs: Math.max(0, Math.round(start * 1000)),
+          endMs: Math.max(0, Math.round(end * 1000)),
+        },
+      ];
+    });
+
+    return {
+      text,
+      segments,
+      provenance: {
+        modelId: model,
         referenceAssetIds: [],
         createdAt: this.now(),
       },

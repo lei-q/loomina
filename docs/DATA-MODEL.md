@@ -632,9 +632,12 @@ interface TimelineItem {
 
 - 画面：take 的 `kind === "video"` 资产 uri → take 的图片资产 uri → 镜头的首帧 / 尾帧 → 空。
 - 字幕与音轨：同一镜的 `dialogueIds` 从片段起点依次累加 `durationMs`；`audioAssetId` 指向的音频 uri 就是这一句的音轨。
+- 断句（ADR-0087）：每句台词按标点切小句、合并到每行不超过 `maxChars`（12 / 16 / 20，默认 16）个可见字，再按可见字数把 `durationMs` 分给各条 cue（每条至少 600ms，总和严格等于台词时长）。cue 是由读模型现算的，**不落 IR**：改字数档位只重算显示，不写事件。
 - 总数：全长 = 最晚片段终点；`missing` = 没进时间线的镜头数。
 
 **导出**（不写回 IR）：预览 HTML、OTIO、SRT、发布包 JSON 都是本地生成的文件。IR 里的 `PublishPackage` schema 仍在，尚没有写入它的事件；视频渲染未做，发布包的视频位为空。
+
+**识别（ADR-0087）不新增 IR 字段。** ASR 结果只放在 store 的内存里（`asrResult`，只留最近一条），刷新即丢；用户确认后写一条 `dialogue.updated { text }`，**不带 `durationMs`**——时长仍以音轨为准（准则 P5）。服务端只收 `data:audio/…;base64`（上限 8 MB），不抓外部地址。
 
 ## 6. 风格 / 发布
 

@@ -44,7 +44,8 @@ export type GenerateJob =
   | { kind: "prop" }
   | { kind: "keyframe"; frame: Frame }
   | { kind: "video" }
-  | { kind: "voice" };
+  | { kind: "voice" }
+  | { kind: "asr" };
 
 /**
  * 审片台的本地状态（ADR-0027）。
@@ -86,10 +87,25 @@ type WorkbenchState = {
    * 没配时这里就是空对象，界面如实说「还没配配音模型」。
    */
   voiceInfo?: { model?: string; voice?: string };
+  /**
+   * 识别模型（ADR-0087）：服务端配了 ASR_MODEL 才给 model；
+   * 没配时这里是空对象，声音页如实说「还没配识别模型」。
+   */
+  asrInfo?: { model?: string };
+  /** 刚识别出来的一句：只留最近一条，等用户决定用不用 */
+  asrResult?: {
+    lineId: string;
+    text: string;
+    model: string;
+    segments: { text: string; startMs: number; endMs: number }[];
+    createdAt: string;
+  };
   /** 成片页的错误：初剪没得剪、换 take 不合规，都写在这里（ADR-0086） */
   editError?: string;
   /** 登记配音模型：声音页进页面时问一次服务端 */
   setVoiceInfo: (info: { model?: string; voice?: string }) => void;
+  /** 登记识别模型：声音页进页面时问一次服务端 */
+  setAsrInfo: (info: { model?: string }) => void;
   /** 登记价目：定妆台进页面时问一次服务端 */
   setImagePrice: (price: { model: string; cny?: number }) => void;
   setVideoPrice: (price: { model: string; cnyPerSecond?: number }) => void;
@@ -153,6 +169,18 @@ type WorkbenchState = {
    * + 一条 `shot.updated`，音轨资产上补记 `durationMs`。
    */
   fitLineToAudio: (lineId: string, durationMs: number) => boolean;
+  /**
+   * 识别这一句的音轨（ADR-0087）：结果先放进 `asrResult` 让人确认，
+   * 不直接改台词。没配识别模型时服务端会明说。
+   */
+  transcribeLine: (lineId: string) => Promise<boolean>;
+  /**
+   * 用识别结果替换台词（ADR-0087）：一条 `dialogue.updated { text }`，
+   * 时长不动——音轨才是时长的准，文字只是把它写下来。
+   */
+  applyAsrText: (lineId: string, text: string) => boolean;
+  /** 不要这条识别结果：直接收起（ADR-0087） */
+  dismissAsrResult: () => void;
   /** 给一个角色指定音色：一条 `character.updated`；空串表示用回默认音色（ADR-0085） */
   setCharacterVoice: (characterId: string, voice: string) => boolean;
   /**
@@ -1320,6 +1348,10 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     set({ voiceInfo: info });
   },
 
+  setAsrInfo: (info) => {
+    set({ asrInfo: info });
+  },
+
   generateVoice: async (lineId) => {
     if (get().readOnly) return false;
     const { project } = get();
@@ -1516,6 +1548,116 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       events: [...get().events, ...written],
     });
     return true;
+  },
+
+  transcribeLine: async (lineId) => {
+    if (get().readOnly) {
+      set({ castError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    const { project } = get();
+    const line = project.dialogue.find((item) => item.id === lineId);
+    if (!line) return false;
+    const shot = project.shots.find((item) => item.dialogueIds.includes(lineId));
+    const character = project.characters.find((item) => item.id === line.characterId);
+    const no = shot
+      ? toStageView(project).shots.find((item) => item.id === shot.id)?.no
+      : undefined;
+    const label = `${no === undefined ? "这一句" : shotLabel(no)}${character ? ` · ${character.name}` : ""}`;
+
+    const asset = line.audioAssetId
+      ? project.assets.find((item) => item.id === line.audioAssetId)
+      : undefined;
+    if (!asset?.uri) {
+      set({ castError: `「${label}」还没有音轨：先出声或贴一条，才有得识别。` });
+      return false;
+    }
+
+    const jobKey = `${lineId}:asr`;
+    const setJob = (value: GenerateJob | undefined) =>
+      set({ jobs: { ...get().jobs, [jobKey]: value } });
+
+    set({ castError: undefined });
+    setJob({ kind: "asr" });
+    try {
+      const response = await fetch("/api/transcribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ uri: asset.uri }),
+      });
+      const payload = (await response.json()) as {
+        text?: string;
+        model?: string;
+        segments?: { text: string; startMs: number; endMs: number }[];
+        error?: string;
+      };
+      if (!response.ok || !payload.text) {
+        throw new Error(payload.error ?? `识别失败（${response.status}）`);
+      }
+      set({
+        asrResult: {
+          lineId,
+          text: payload.text,
+          model: payload.model ?? "unknown",
+          segments: payload.segments ?? [],
+          createdAt: new Date().toISOString(),
+        },
+        castError: undefined,
+      });
+      setJob(undefined);
+      return true;
+    } catch (error) {
+      setJob(undefined);
+      const reason = error instanceof Error ? error.message : "原因没说";
+      const clipped = reason.length > 240 ? `${reason.slice(0, 240)}…` : reason;
+      set({
+        castError: `「${label}」这句没识别出来：${clipped}。`,
+      });
+      return false;
+    }
+  },
+
+  applyAsrText: (lineId, rawText) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const line = project.dialogue.find((item) => item.id === lineId);
+    if (!line) {
+      set({ castError: "找不到这句台词。" });
+      return false;
+    }
+    const shot = project.shots.find((item) => item.dialogueIds.includes(lineId));
+    if (shot?.locked) {
+      set({ castError: "这一镜已锁定：要改台词先解锁。" });
+      return false;
+    }
+    const text = rawText.trim();
+    if (!text) {
+      set({ castError: "识别结果是空的，替换不了。" });
+      return false;
+    }
+    if (text === line.text) {
+      set({ castError: "识别结果和现在这句一样，不用替换。", asrResult: undefined });
+      return false;
+    }
+
+    const event: ProjectEvent = {
+      type: "dialogue.updated",
+      at: new Date().toISOString(),
+      lineId,
+      // 只改文字：时长以音轨为准，识别不替它重新估
+      patch: { text },
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+      asrResult: undefined,
+    });
+    return true;
+  },
+
+  dismissAsrResult: () => {
+    set({ asrResult: undefined });
   },
 
   setCharacterVoice: (characterId, rawVoice) => {
@@ -3043,6 +3185,8 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       batch: undefined,
       castError: undefined,
       lastSwap: undefined,
+      asrResult: undefined,
+      editError: undefined,
     });
   },
 }));

@@ -5,6 +5,7 @@ import {
   TreecloudError,
   TreecloudImageAdapter,
   TreecloudSpeechAdapter,
+  TreecloudTranscriptionAdapter,
   TreecloudVideoAdapter,
   imageUriOf,
   mapVideoStatus,
@@ -38,7 +39,12 @@ function fakeFetch(responses: Array<() => Response>) {
       url: String(input),
       method: init?.method ?? "GET",
       headers: (init?.headers ?? {}) as Record<string, string>,
-      body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      body:
+        init?.body instanceof FormData
+          ? init.body
+          : init?.body
+            ? JSON.parse(String(init.body))
+            : undefined,
     });
     const next = responses[Math.min(index, responses.length - 1)];
     index += 1;
@@ -303,6 +309,86 @@ describe("配音适配器", () => {
       status: 403,
       message: "No authorized bound group supports this request",
     });
+  });
+});
+
+describe("识别适配器（ADR-0087）", () => {
+  it("multipart 发音频，收文字与分段时间轴", async () => {
+    const { client, calls } = clientWith(
+      [
+        () =>
+          jsonResponse({
+            text: "你早就知道，对吧。",
+            segments: [
+              { text: "你早就知道，", start: 0, end: 1.4 },
+              { text: "对吧。", start: 1.4, end: 2.6 },
+            ],
+          }),
+      ],
+      { asrModel: "qwen-audio-3.0-asr-flash" },
+    );
+
+    const adapter = new TreecloudTranscriptionAdapter(client);
+    const output = await adapter.transcribe({
+      bytes: new Uint8Array([1, 2, 3]),
+      mime: "audio/wav",
+      filename: "line.wav",
+    });
+
+    expect(adapter.configured).toBe(true);
+    expect(calls[0]?.url).toBe("https://relay.test/v1/audio/transcriptions");
+    expect(calls[0]?.headers["content-type"]).toBeUndefined();
+    const form = calls[0]?.body as FormData;
+    expect(form.get("model")).toBe("qwen-audio-3.0-asr-flash");
+    expect(form.get("language")).toBe("zh");
+    expect(form.get("response_format")).toBe("verbose_json");
+    expect((form.get("file") as File).name).toBe("line.wav");
+    expect(output.text).toBe("你早就知道，对吧。");
+    expect(output.segments).toEqual([
+      { text: "你早就知道，", startMs: 0, endMs: 1400 },
+      { text: "对吧。", startMs: 1400, endMs: 2600 },
+    ]);
+    expect(output.provenance.modelId).toBe("qwen-audio-3.0-asr-flash");
+  });
+
+  it("没配 ASR_MODEL 时不发请求", async () => {
+    const { client, calls } = clientWith([() => jsonResponse({})]);
+    const adapter = new TreecloudTranscriptionAdapter(client);
+
+    expect(adapter.configured).toBe(false);
+    await expect(
+      adapter.transcribe({ bytes: new Uint8Array([1]), mime: "audio/wav" }),
+    ).rejects.toMatchObject({ code: "asr_not_configured", status: 500 });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("空音轨直接拒绝，不拿空文件去问供应商", async () => {
+    const { client, calls } = clientWith([() => jsonResponse({})], {
+      asrModel: "qwen-audio-3.0-asr-flash",
+    });
+    const adapter = new TreecloudTranscriptionAdapter(client);
+
+    await expect(
+      adapter.transcribe({ bytes: new Uint8Array(), mime: "audio/wav" }),
+    ).rejects.toMatchObject({ code: "asr_empty_audio", status: 400 });
+    expect(calls).toHaveLength(0);
+  });
+
+  it("供应商 403 分组未授权时如实抛出", async () => {
+    const { client } = clientWith(
+      [
+        () =>
+          jsonResponse(
+            { error: { code: "403", message: "No authorized bound group supports this request" } },
+            403,
+          ),
+      ],
+      { asrModel: "qwen-audio-3.0-asr-flash" },
+    );
+    const adapter = new TreecloudTranscriptionAdapter(client);
+    await expect(
+      adapter.transcribe({ bytes: new Uint8Array([1]), mime: "audio/wav" }),
+    ).rejects.toMatchObject({ status: 403, code: "403" });
   });
 });
 

@@ -55,6 +55,30 @@ export interface SpeechOutput {
   costCny?: number;
 }
 
+export interface TranscriptionInput {
+  bytes: Uint8Array;
+  mime: string;
+  filename?: string;
+  /** 默认 zh */
+  language?: string;
+  /** 覆盖默认 ASR 模型 */
+  model?: string;
+}
+
+export interface TranscriptionSegment {
+  text: string;
+  startMs: number;
+  endMs: number;
+}
+
+export interface TranscriptionOutput {
+  text: string;
+  /** 供应商给的分段时间轴；没给就是空数组，不猜（ADR-0087） */
+  segments: TranscriptionSegment[];
+  provenance: Provenance;
+  costCny?: number;
+}
+
 export type VideoJobStatus = "queued" | "running" | "succeeded" | "failed";
 
 /** 视频接口路由家族。不同中转站路由不同，见 docs/MODEL-GATEWAY.md。 */
@@ -85,4 +109,8 @@ export interface VideoAdapter {
 
 export interface SpeechAdapter {
   speak(input: SpeechInput): Promise<SpeechOutput>;
+}
+
+export interface TranscriptionAdapter {
+  transcribe(input: TranscriptionInput): Promise<TranscriptionOutput>;
 }
