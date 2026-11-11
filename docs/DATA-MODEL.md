@@ -562,7 +562,7 @@ interface ConsistencyReport {
 interface Asset {
   id: ID;
   kind: "image" | "video" | "audio" | "font" | "lut";
-  uri: string;              // 对象存储地址
+  uri: string;              // 资产地址：`loomina://assets/<sha256>.<ext>`（本机资产库）或 `data:` / `https://`（存量）
   mime: string;
   width?: number;
   height?: number;
@@ -575,6 +575,14 @@ interface Asset {
 }
 
 type AssetSource = "upload" | "generated" | "library" | "imported";
+
+/**
+ * 资产地址的三种形态（H3 / ADR-0128）：
+ * - `loomina://assets/<sha256>.<ext>`：本机资产库，内容寻址，浏览器经 `GET /api/asset/<hash>.<ext>` 读；
+ * - `data:`：存量项目与迁移前的素材，继续可用；
+ * - `https://`：供应商直接回的地址（生成的图 / 视频）。
+ * IR 只存字符串，换实现（本地 → S3）不影响任何引用方。
+ */
 
 interface AudioClip {
   id: ID;
@@ -630,6 +638,14 @@ interface AudioTrack {
 
 **落地位置**：事件日志存在浏览器 IndexedDB（库 `loomina`，仓 `events`，`seq` 自增），按条追加、回放重建；`parseEvents` 是硬闸门，任何一条不像话就整份丢弃、回到示例项目（ADR-0034）。
 
+**资产地址的落地口径（H3 / ADR-0128，2026-11-11）**：`uri` 仍是字符串，但有了三种形态与一个存储边界——
+
+- `loomina://assets/<sha256>.<ext>`：本机资产库（`.loomina/assets/`，0700 / 0600，内容寻址、同一段字节只存一份、单文件上限 200 MB）。浏览器经 `GET /api/asset/<hash>.<ext>` 读（immutable 缓存）；渲染路由直接拿到本地路径，不再 base64 解码。
+- `data:`：存量项目与迁移前的素材，继续可用。
+- `https://`：供应商直接回的地址。
+
+`AssetStore` 接口（`read` / `put` / `remove`）与 `LOOMINA_ASSET_STORE=local|s3` 是切换点；`S3AssetStore` 只做 SigV4 预签名 PUT / GET，**依赖方案待确认**，不引 `@aws-sdk/client-s3`。迁移是设置页的显式动作，旧事件里的 data URI 不动（日志只追加，后写的 `asset.updated` 覆盖前面的）；回收**只列不删**。
+
 ```ts
 interface Asset {
   id: ID;
@@ -672,6 +688,11 @@ interface Approval {
 - 三视图内部是否像同一个人（intra-sheet 一致性）还没有验收，当前只保证"四格都填了"。
 
 **每镜参考图不落库。** 生成前由 `shotAnchors(project, shot)` 现算（ADR-0029 / ADR-0030）：人物按景别取格（单人选正面 + 3/4，多人每人正面），场景带主镜，道具各取第一张参考图，顺序为**人物 → 场景 → 道具**，总数不超过 4 张，超了先丢道具；有已通过的 `Approval` 时只用 `lockedAssetIds`。缺锚点时链路拒绝生成，`ShotRunResult.anchorAssetIds` 只用于核对，不写回 IR。
+
+**新增不变量**
+
+51. **资产库按内容寻址**（H3 / ADR-0128）：同一段字节只存一份，`uri` 里的 hash 与内容一致。
+52. **资产回收只列不删**：未被任何引用方指向的资产标记为「未引用」，清理必须是显式动作。
 
 ### 5.2 时间线的落地（ADR-0086）
 
@@ -818,6 +839,8 @@ interface AILabel {
 24. **`StoryBible.arcs` 只能引用存在的人物**（`REF_STORY_CHARACTER`）；`StoryBible.relationships` 的两端也必须是存在的人物。
 25. **每个 `characterId` 最多一条弧光**（`STORY_ARC_UNIQUE`）；重复时整份项目不合法。
 
+> 本节只收跨层的结构不变量（1–25）。各层自己的不变量写在该层末尾，编号不重排：表演 21–24（§11）、声音 25–29（§12）、发布 30–35（§13）、成本 36–41（§14）、配置 42–45（§15）、本次新增的空间 46–47（§11.5）、声音 48–50（§12）与资产 51–52（§5.1）。
+
 ## 8. 与 OTIO 的映射
 
 | Project IR | OpenTimelineIO |
@@ -896,10 +919,17 @@ interface OriginalityReport {
 
 **新增不变量**
 
-17. **每个项目必须有一个已评分的 `logline`**，总分低于阈值不得进入分镜。
-18. **`ScriptDoctorReport` 中任何 `block` 级 finding 未处理，不得进入分镜**。
+17. **每个项目必须有一个已评分的 `logline`**，总分低于阈值不得进入分镜。*落地口径（ADR-0123）：不硬拦，warn 级发现并入 `script` 阶段的可豁免缺口。*
+18. **`ScriptDoctorReport` 中任何 `block` 级 finding 未处理，不得进入分镜**。*落地口径（ADR-0123）：`block` 只留给真正的结构错误（没有场次 / 没有镜头），由分镜闸门的 `missing` 承担；12 维分数不设否决权。*
 19. **`OriginalityReport.action === "block"` 时不得发布**；`review` 时必须有人工确认记录。
 20. **`CharacterArc` 必须属于 `StoryBible` 中的人物**。
+
+**落地形态（A18 / ADR-0123，2026-11-11）**
+
+- `ScriptDoctorReport` **不进 IR**：它是 `analyzeScript(project)` 的返回值，与 `analyzeStoryboard` / `analyzeConsistency` 同类——只读、可单测、不写事件。分数是当前剧本的函数，改一句台词就该变，存下来要配失效机制而它没有跨会话引用价值。
+- 12 维里 10 维本地可算，每维带 `source: "local" | "model" | "unmeasured"` 与 `score: number | null`：`emotionalPayoff` 标 `model`（未测），`originality` 标 `unmeasured`（等 A8）。**未测算出来写 `null`，不写 0 分**——0 分是「很差」，未测是「不知道」。
+- 改写建议分两档：本地建议（零成本）与 `POST /api/doctor`（一次一模式，返回建议不写事件）。作者点「采用」才落 `story.updated` / `dialogue.updated` / `shot.updated`。
+
 
 ## 11. 表演层（ADR-0019 / PERFORMANCE.md）
 
@@ -943,6 +973,45 @@ interface GazeTarget {
 - `Shot` 同时新增 `staging: StagingMark[]`（默认 `[]`）：一条只挂 `characterId` 或 `propId`（二选一），带 `side`（左/中/右）、`depth`（前/中/后景）与 `note`。
 - 写入走 `shot.updated { performance? , staging? }`，`applyEvent` 做 zod 校验并把默认值补进事件，保证实时与回放逐字段一致。
 - `performance` 是可选的：存量项目不受影响；不变量 21 / 22 目前由分镜检查 V10 warning 提示，不阻断生成（见 ADR-0103 决策 6）。
+
+## 11.5 空间层（B13 / ADR-0126，2026-11-11）
+
+```ts
+type Vec3 = [number, number, number];
+
+interface LocationSpace {
+  dimensions: Vec3;                     // 宽 × 深 × 高（米）
+  anchors: {
+    id: ID;
+    kind: "door" | "window" | "furniture" | "prop" | "light" | "mirror" | "wall";
+    position: Vec3;
+    facingRad: number;
+    capacity: number;                   // 可站 / 坐人数；0 = 不可承载
+  }[];
+}
+
+interface Blocking {
+  actors: { characterId: ID; position: Vec3; facingRad: number }[];
+  props: { propId: ID; position: Vec3 }[];
+}
+
+interface CameraPlacement {
+  position: Vec3;
+  target: Vec3;
+}
+```
+
+- 挂载：`Location.space?`、`Shot.blocking?`、`Shot.camera.placement?`；全部可选，存量项目不受影响。
+- 坐标系：地点局部坐标，原点在房间中心地面，单位米，右手系，Y 向上。坐标必须落在 `dimensions` 内（0.1 m 容差），越界**拒绝**而不是夹取。
+- `blocking.actors[].characterId` 必须是这一镜的 `characterIds` 之一；不在场的人不能有走位。
+- `camera.angle` 不从几何反推：角度是摄影意图，几何只是执行（ADR-0126 决策 2）。
+- `suggestBlocking()` / `checkAxis()` 是纯函数，只给建议、不写事件。越轴检查在**有坐标时用精确版**，没有坐标时退回 ADR-0108 的调度近似版，文案区分「越轴」与「像越轴」。
+- depth / edge 导出（B13.3）需要 WebGL 渲染器，依赖未确认；`DepthExporter` 接口先定，实现留空。
+
+**新增不变量**
+
+46. **走位里的角色必须在这一镜出场**（`BLOCKING_ACTOR_IN_SHOT`）；`camera.placement` 的 `position` 与 `target` 不得重合。
+47. **空间坐标不得越出地点尺寸**（`SPACE_OUT_OF_BOUNDS`）；越界拒绝，不夹取。
 
 ## 12. 声音层（ADR-0020 / SOUND.md）
 
@@ -1002,11 +1071,58 @@ interface MixSpec {
 
 **新增不变量**
 
-25. **每条对白必须有 `VoiceProfile` 与 `LinePerformance`**，否则不得生成配音。
+25. **每条对白必须有 `VoiceProfile` 与 `LinePerformance`**，否则不得生成配音。*落地口径（ADR-0124）：两者都是可选字段，缺失时按默认值处理；参数影响下一次出声，不阻断既有音轨的使用。*
 26. **台词期间音乐必须 ducking**；未经 ducking 的音乐不得进入混音。
 27. **成片必须通过响度与真峰值检查**（≈ −14 LUFS / ≤ −1 dBTP）。
 28. **所有音乐/音色资产必须有授权引用**；无授权不得发布。
 29. **静音观看时字幕必须能独立传达剧情信息**。
+
+**落地形态（C2 / C9 / C10，ADR-0124 / ADR-0125，2026-11-11）**
+
+```ts
+interface VoicePerformance {
+  rate: number;          // 0.5–2.0
+  pitch: number;         // -12–+12 半音
+  volume: number;        // 0.25–2.0 线性
+  breathiness: number;   // 0–1
+  emphasis: { start: number; end: number; strength: 1 | 2 | 3 }[];
+  pauses: { afterChar: number; ms: number }[];
+  emotion: string;
+  ending: "rise" | "flat" | "fall";
+}
+
+interface VoiceTake {
+  id: ID;
+  lineId: ID;
+  assetId: ID;
+  performance: VoicePerformance;
+  provenance: Provenance;
+  createdAt: ISODate;
+}
+
+interface Motif {
+  id: ID;
+  label: string;
+  targetKind: "character" | "relationship" | "location";
+  targetId: ID;          // 关系用 `${from}->${to}`
+  assetId: ID;
+  licenseRef: string;
+  note: string;
+}
+```
+
+- `DialogueLine.performance?: VoicePerformance`：走既有 `dialogue.updated` 的 patch，不新增事件类型。重音与停顿**按字符区间**定位；`end` 超过字数时拒绝写入，文本改短后越界项被确定性丢弃（不抛错）。
+- `Project.voiceTakes: VoiceTake[]`：配音的多版本试听台。`DialogueLine.audioAssetId` 语义不变，仍是「当前采用的那条」；采用某版 = 一条 `dialogue.updated { audioAssetId }`。事件 `voice.take.added` / `voice.take.removed`。
+- `MusicCue` 新增 `role`（`bed` / `hit` / `transition`，缺省 `bed`）与 `motifId?`；**不新增 `silence` 角色**，留白就是没有 cue。
+- `Project.motifs: Motif[]`：主题动机。同一目标只许一个动机；`motif.removed` 清掉引用它的 cue 的 `motifId` 但保留 cue。
+- 情绪曲线（`analyzeMusicCurve`）**不进 IR**，与剧本医生同一口径。
+
+**新增不变量**
+
+48. **重音与停顿的字符区间不得越出当前台词**（`VOICE_RANGE_OUT_OF_BOUNDS`）；文本改短时越界项被丢弃而非报错。
+49. **配音 Take 的 `assetId` 必须是 `kind: "audio"` 且存在的资产**（`VOICE_TAKE_ASSET`）。
+50. **同一个动机目标只能有一个动机**（`MOTIF_TARGET_UNIQUE`）；动机的 `licenseRef` 不得为空。
+
 
 ## 13. 发布与合规层（ADR-0021 / PUBLISHING.md）
 

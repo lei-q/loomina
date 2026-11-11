@@ -240,11 +240,21 @@ interface MixSpec {
 
 **新增不变量**
 
-25. **每条对白必须有 `VoiceProfile` 与 `LinePerformance`**，否则不得生成配音。
+25. **每条对白必须有 `VoiceProfile` 与 `LinePerformance`**，否则不得生成配音。*落地口径（ADR-0124）：两者都是可选字段，缺失按默认值处理；参数影响下一次出声，不阻断既有音轨的使用。*
 26. **台词期间音乐必须 ducking**；未经 ducking 的音乐不得进入混音。
 27. **成片必须通过响度与真峰值检查**（≈ −14 LUFS / ≤ −1 dBTP）。
 28. **所有音乐/音色资产必须有授权引用**；无授权不得发布。
 29. **静音观看时字幕必须能独立传达剧情信息**。
+
+**落地形态（C2 / C9 / C10，ADR-0124 / ADR-0125，2026-11-11）**
+
+- 逐句表演参数是 `DialogueLine.performance?: VoicePerformance`（rate / pitch / volume / breathiness / emphasis / pauses / emotion / ending），走既有 `dialogue.updated`。重音与停顿**按字符区间**定位，不按文本匹配——重复词有歧义，改一个字会让按文本定位的重音静默失效。
+- 多 Take 走独立试听台 `Project.voiceTakes`，`audioAssetId` 仍是「当前采用的那条」；配音 Take 不进 `DialogueLine`，避开 ADR-0085 担心的语义混淆。
+- **不假设供应商支持 SSML**：`rate` 映射请求体 `speed`，情绪类拼进 `instructions`；`emphasis` 与 `breathiness` 第一版只进 IR 与提示词，不承诺生效，界面如实标注。
+- 音乐曲线（`analyzeMusicCurve`）是派生的，不进 IR；`MusicCue` 新增 `role` / `motifId`；主题动机 `Project.motifs` 进 IR（同一目标只许一个）。
+- 留白不建实体：没有 cue 就是留白，不新增 `silence` 角色——空 cue 会让「忘了铺」与「故意留白」看起来一样。
+- **仍受 TTS 403 阻塞**：参数能存、能编辑、能回放，出声路径待分组授权后才能端到端验证。
+
 
 ---
 

@@ -223,6 +223,9 @@ interface CharacterArc {
 - 减人物/减场景（降成本、提清晰度）；
 - 重写结尾（留钩而不泄气）。
 
+**落地口径（A18 / ADR-0123，2026-11-11）**：报告是 `analyzeScript(project)` 的返回值，不进 IR。12 维里 10 维本地可算，`emotionalPayoff` 标「模型未测」、`originality` 等 A8，**未测写 `null` 不写 0 分**。9 条触发条件不设硬闸门，warn 级发现并入 `script` 阶段的可豁免缺口（ADR-0118）。6 种改写模式分两档：本地建议（零成本）与模型改写（一次一模式，返回建议不写事件）；减人物 / 减场景只建议、不自动执行。
+
+
 ---
 
 ## 八、原创性与版权
@@ -278,7 +281,7 @@ interface CharacterArc {
 | 人物弧光 | `CharacterArc` |
 | Beat | `Beat` |
 | 钩子 | `Hook` |
-| 剧本医生报告 | `ScriptDoctorReport` |
+| 剧本医生报告 | `ScriptDoctorReport`（**派生的**，不进 IR；见 ADR-0123） |
 | 原创性报告 | `OriginalityReport` |
 | 故事圣经 | `StoryBible` |
 

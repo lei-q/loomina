@@ -67,6 +67,8 @@ loomina/
 | 字幕渲染 | libass（服务端）+ Canvas（预览） | 样式能力强、行业标准 | 纯 FFmpeg drawtext | 高 |
 | 图片处理 | sharp | 快、稳定 | ImageMagick | 高 |
 | 对象存储 | S3 兼容（OSS / COS） | 国内合规、CDN 成熟 | MinIO（本地） | 高 |
+
+> **落地口径（H3 / ADR-0128，2026-11-11）**：先定边界再换实现。`AssetStore` 接口 + `LOOMINA_ASSET_STORE=local|s3`；第一刀 `LocalAssetStore` 零依赖（`.loomina/assets/`，内容寻址，单文件 200 MB），立刻把素材从事件日志里拿出来。S3 适配器只做 SigV4 预签名 PUT / GET，**不引 `@aws-sdk/client-s3`**；签名自写（约 100 行）还是用 `aws4`（约 3 KB）需单独确认。
 | 数据库 | Postgres（托管） | JSONB 适合 IR，生态成熟 | — | 高 |
 | 缓存 | Redis（托管） | 限流/会话/缓存 | — | 高 |
 | 日志/追踪 | Pino + OpenTelemetry | 结构化、可观测 | — | 中高 |
@@ -84,6 +86,8 @@ loomina/
 - C 端获客不能有安装门槛；Web 更新即时。
 - 重活（渲染、视频生成）本来就在云端，浏览器只做预览与编辑。
 - 风险：WebCodecs/WebGPU 兼容性与大文件处理。用 540p 代理 + 降级到 `<video>` 兜底。
+
+> **落地口径（E7 / ADR-0127，2026-11-11）**：分三级。**E7.1 时间轴预览零依赖**（`<video>` + Canvas，到镜准确、镜内近似）；**E7.2 帧级找点需要 mp4box.js（约 100 KB，MIT，依赖待确认）**，WebCodecs 是平台 API 不算依赖；**E7.3 WebGPU 合成暂不做**——当前时间线只有硬切，Canvas 2D 够用，等 E1 支持转场时再与 B13.3 的 depth 渲染一起选型。上表「WebCodecs + WebGPU」的选型意向仍然成立，只是分阶段落地。
 - 若后期预览性能不够，用 **Tauri** 包一层（复用同一套 Web 代码）；不选 Electron（体积/内存大）。
 
 ### 2. 单体还是微服务？
