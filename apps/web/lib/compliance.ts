@@ -239,6 +239,8 @@ export type PreflightOptions = {
   height?: number;
   fps?: number;
   codec?: string;
+  /** 已导出的成片体积（字节）：有它才核得了文件大小与码率 */
+  fileBytes?: number;
   at?: string;
 };
 
@@ -427,6 +429,7 @@ export function preflightProject(
     codec: options.codec ?? "H.264",
     title: options.title ?? project.title,
     topics: (options.topics ?? "").split(/[,，\s]+/).filter(Boolean),
+    ...(options.fileBytes !== undefined ? { fileBytes: options.fileBytes } : {}),
   });
   const specOk = durationMs > 0 && durationMs <= 180_000 && validation.ok;
   const specCheck: ComplianceCheck = {

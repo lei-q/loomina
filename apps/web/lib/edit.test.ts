@@ -236,6 +236,29 @@ describe("导出（E6 / D3 / G1）", () => {
     ).toBe(false);
   });
 
+  it("发布包按实际成片体积核码率与文件大小", () => {
+    const pack = buildPublishPackage(toEditView(sampleProject), {
+      title: "夜班",
+      description: "两个人的夜班。",
+      topics: [],
+      style: "default",
+      kind: "final",
+      platform: "douyin",
+      video: {
+        fileName: "夜班-成片.mp4",
+        bytes: 90 * 1024 * 1024,
+        quality: "final",
+        renderedAt: "2026-11-11T10:00:00+08:00",
+      },
+    });
+    const bitrate = pack.platformChecks.find((check) => check.id === "bitrate")!;
+    expect(bitrate.reference).toBe(true);
+    expect(bitrate.detail).toContain("Mbps");
+    expect(pack.platformChecks.find((check) => check.id === "file-size")!.detail).toContain(
+      "90.0 MB",
+    );
+  });
+
   it("发布包默认按抖音规格校验，短于下限时如实警告", () => {
     const pack = buildPublishPackage(toEditView(sampleProject), {
       title: "夜班",

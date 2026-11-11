@@ -211,7 +211,16 @@ export function aspectRatioOf(width: number, height: number): string {
 }
 
 export type PlatformCheck = {
-  id: "aspect" | "resolution" | "duration" | "codec" | "fps" | "file-size" | "title" | "hashtags";
+  id:
+    | "aspect"
+    | "resolution"
+    | "duration"
+    | "codec"
+    | "fps"
+    | "bitrate"
+    | "file-size"
+    | "title"
+    | "hashtags";
   label: string;
   status: "pass" | "review" | "block";
   detail: string;
@@ -239,6 +248,28 @@ export type PlatformInput = {
 };
 
 const formatSeconds = (ms: number) => `${(ms / 1000).toFixed(1)} 秒`;
+
+/** 体积写成人读的：不到 1 MB 用 KB，别把 48 KB 写成 0.0 MB */
+export function formatSize(fileBytes: number): string {
+  if (!Number.isFinite(fileBytes) || fileBytes <= 0) return "0 KB";
+  if (fileBytes < 1024 * 1024) return `${Math.max(1, Math.round(fileBytes / 1024))} KB`;
+  return `${(fileBytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/**
+ * 实际码率（Mbps）：字节 × 8 ÷ 秒。
+ *
+ * 渲染用 CRF，不给目标码率，所以码率只有一个来源——导出后的文件体积。
+ * 没有文件就没有码率，别拿档位去猜。
+ */
+export function bitrateMbpsOf(
+  fileBytes: number | undefined,
+  durationMs: number,
+): number | undefined {
+  if (fileBytes === undefined || !Number.isFinite(fileBytes) || fileBytes <= 0) return undefined;
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return undefined;
+  return (fileBytes * 8) / (durationMs / 1000) / 1_000_000;
+}
 
 /** 按平台规格校验一条成片；只有画幅 / 时长上限 / 编码 / 帧率能硬拦 */
 export function validatePlatform(
@@ -302,13 +333,44 @@ export function validatePlatform(
     detail: `${input.fps}fps${input.fps === spec.fps ? "" : `：${spec.name} 的参考帧率是 ${spec.fps}`}`,
   });
 
+  // 码率只有导出后才知道：用实际体积算，超出参考区间只提醒（平台会二次压缩）
+  const actualMbps = bitrateMbpsOf(input.fileBytes, input.durationMs);
+  if (spec.bitrateMbps) {
+    const [low, high] = spec.bitrateMbps;
+    const measured =
+      actualMbps === undefined
+        ? `导出后按实际体积核算；${spec.name} 的参考区间 ${low}–${high} Mbps`
+        : `${actualMbps.toFixed(1)} Mbps（${formatSize(input.fileBytes!)} / ${formatSeconds(input.durationMs)}）· 参考 ${low}–${high} Mbps`;
+    const outside = actualMbps !== undefined && (actualMbps < low || actualMbps > high);
+    checks.push({
+      id: "bitrate",
+      label: "码率",
+      status: outside ? "review" : "pass",
+      detail: outside
+        ? `${measured}：超出参考区间，上传后平台多半会再压一次`
+        : measured,
+      reference: true,
+    });
+  } else {
+    checks.push({
+      id: "bitrate",
+      label: "码率",
+      status: "pass",
+      detail:
+        actualMbps === undefined
+          ? `${spec.name} 没有可引用的公开码率区间；导出后看实际码率`
+          : `${actualMbps.toFixed(1)} Mbps；${spec.name} 没有可引用的公开码率区间`,
+      reference: true,
+    });
+  }
+
   if (spec.maxFileBytes !== undefined && input.fileBytes !== undefined) {
     const ok = input.fileBytes <= spec.maxFileBytes;
     checks.push({
       id: "file-size",
       label: "文件大小",
       status: ok ? "pass" : "block",
-      detail: `${(input.fileBytes / 1024 / 1024).toFixed(1)} MB · 上限 ${(spec.maxFileBytes / 1024 / 1024).toFixed(0)} MB`,
+      detail: `${formatSize(input.fileBytes)} · 上限 ${formatSize(spec.maxFileBytes)}`,
     });
   } else {
     checks.push({
@@ -317,7 +379,9 @@ export function validatePlatform(
       status: "pass",
       detail:
         spec.maxFileBytes === undefined
-          ? "平台没有可引用的公开上限（未核验）；导出后看实际体积"
+          ? input.fileBytes !== undefined
+            ? `${formatSize(input.fileBytes)}；${spec.name} 没有可引用的公开上限（未核验）`
+            : `${spec.name} 没有可引用的公开上限（未核验）；导出后看实际体积`
           : "导出后按实际文件大小再核对",
       reference: spec.maxFileBytes === undefined,
     });

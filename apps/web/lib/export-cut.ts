@@ -475,6 +475,7 @@ export function buildPublishPackage(
     codec: "H.264",
     title,
     topics,
+    ...(options.video ? { fileBytes: options.video.bytes } : {}),
   });
   if (!validation.ok) {
     warnings.push(

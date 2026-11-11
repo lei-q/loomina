@@ -35,6 +35,7 @@ import type { LoudnessReport } from "@/lib/render-audio";
 import {
   PLATFORM_SPECS,
   PLATFORM_SPEC_VERSION,
+  formatSize,
   platformSpecOf,
   validatePlatform,
   type PlatformCheck,
@@ -250,8 +251,9 @@ export function EditScreen() {
         topics,
         durationMs: view.totalMs,
         platform,
+        ...(lastRender ? { fileBytes: lastRender.bytes } : {}),
       }),
-    [project, title, description, topics, view.totalMs, platform],
+    [project, title, description, topics, view.totalMs, platform, lastRender],
   );
   const platformValidation = useMemo(
     () =>
@@ -263,8 +265,10 @@ export function EditScreen() {
         codec: "H.264",
         title,
         topics: topics.split(/[,，\s]+/).filter(Boolean),
+        // 导出过才有实际体积与码率；没有就是「导出后再核」
+        ...(lastRender ? { fileBytes: lastRender.bytes } : {}),
       }),
-    [platform, view.totalMs, title, topics],
+    [platform, view.totalMs, title, topics, lastRender],
   );
   const acknowledged = report.review > 0 && ackSignature === report.signature;
   const gateOpen = report.ok && (report.review === 0 || acknowledged);
@@ -441,7 +445,7 @@ export function EditScreen() {
         quality,
         setRenderStage,
       );
-      const mb = (result.bytes / 1024 / 1024).toFixed(1);
+      const mb = formatSize(result.bytes);
       const notes: string[] = [];
       if (result.placeholders > 0) notes.push(`${result.placeholders} 个片段用占位图`);
       if (result.remoteSkipped > 0) notes.push(`${result.remoteSkipped} 个远端素材没下载`);
@@ -1218,8 +1222,8 @@ export function EditScreen() {
                       ))}
                     </ul>
                     <p className="mt-1.5 text-[8.5px] leading-[1.6] text-muted-2">
-                      {platformValidation.spec.note} 只有画幅、时长上限、编码与帧率会硬拦；
-                      标题字数、话题数量、码率与封面是参考值，平台随时会改。
+                      {platformValidation.spec.note} 只有画幅、时长上限、编码与已知上限的文件大小会硬拦；
+                      帧率、码率、标题字数、话题数量与封面是参考值，平台随时会改。
                     </p>
                   </div>
 
@@ -1431,7 +1435,7 @@ export function EditScreen() {
 
                   <p className="mt-2 text-[9.5px] leading-[1.7] text-muted-2">
                     {lastRender
-                      ? `这一版成片：${lastRender.fileName} · ${(lastRender.bytes / 1024 / 1024).toFixed(1)} MB · ${RENDER_PROFILES[lastRender.quality].label}。打发布包会带上它，并记进项目发布记录（已有 ${project.publishPackages.length} 份）。`
+                      ? `这一版成片：${lastRender.fileName} · ${formatSize(lastRender.bytes)} · ${RENDER_PROFILES[lastRender.quality].label}。打发布包会带上它，并记进项目发布记录（已有 ${project.publishPackages.length} 份）。`
                       : `还没有导出过成片：先导出草稿或定稿 MP4，发布包的视频位才有内容。项目里已有 ${project.publishPackages.length} 份发布记录。`}
                   </p>
 

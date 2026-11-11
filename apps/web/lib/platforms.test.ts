@@ -3,6 +3,8 @@ import {
   PLATFORM_SPECS,
   PLATFORM_SPEC_VERSION,
   aspectRatioOf,
+  bitrateMbpsOf,
+  formatSize,
   platformCheckDetail,
   platformSpecOf,
   validatePlatform,
@@ -126,5 +128,82 @@ describe("平台规格（G7）", () => {
     expect(detail).toContain("5.0 秒");
     expect(detail).toContain("HEVC");
     expect(platformCheckDetail(douyin())).toContain("参考值只提示");
+  });
+});
+
+describe("码率与文件大小（G7 补全）", () => {
+  it("码率只从实际体积算：字节 × 8 ÷ 秒", () => {
+    expect(bitrateMbpsOf(60 * 1024 * 1024, 60_000)).toBeCloseTo(8.389, 2);
+    expect(bitrateMbpsOf(undefined, 60_000)).toBeUndefined();
+    expect(bitrateMbpsOf(1024, 0)).toBeUndefined();
+    expect(bitrateMbpsOf(-1, 60_000)).toBeUndefined();
+  });
+
+  it("还没导出时只给参考区间，不假装知道", () => {
+    const check = douyin().checks.find((item) => item.id === "bitrate")!;
+    expect(check.status).toBe("pass");
+    expect(check.reference).toBe(true);
+    expect(check.detail).toContain("2–8 Mbps");
+    expect(check.detail).toContain("导出后");
+  });
+
+  it("实际码率落在参考区间内就过，并写出测得的数", () => {
+    // 32 MB / 60 秒 ≈ 4.5 Mbps
+    const check = douyin({ fileBytes: 32 * 1024 * 1024 }).checks.find(
+      (item) => item.id === "bitrate",
+    )!;
+    expect(check.status).toBe("pass");
+    expect(check.detail).toContain("4.5 Mbps");
+    expect(check.detail).toContain("32.0 MB");
+  });
+
+  it("码率高出参考区间只提醒，不拦导出", () => {
+    // 90 MB / 60 秒 = 12.6 Mbps
+    const validation = douyin({ fileBytes: 90 * 1024 * 1024 });
+    const check = validation.checks.find((item) => item.id === "bitrate")!;
+    expect(check.status).toBe("review");
+    expect(check.detail).toContain("超出参考区间");
+    expect(validation.blocked).toBe(0);
+  });
+
+  it("码率低出参考区间同样只是提醒", () => {
+    // 6 MB / 60 秒 = 0.8 Mbps
+    const check = douyin({ fileBytes: 6 * 1024 * 1024 }).checks.find(
+      (item) => item.id === "bitrate",
+    )!;
+    expect(check.status).toBe("review");
+    expect(check.detail).toContain("0.8 Mbps");
+  });
+
+  it("平台没有参考区间时如实说没有，不拿别的平台顶替", () => {
+    const generic = validatePlatform(platformSpecOf("generic"), {
+      durationMs: 60_000,
+      width: 1080,
+      height: 1920,
+      fps: 30,
+      title: "夜班",
+      topics: [],
+      fileBytes: 30 * 1024 * 1024,
+    });
+    const check = generic.checks.find((item) => item.id === "bitrate")!;
+    expect(check.status).toBe("pass");
+    expect(check.detail).toContain("没有可引用的公开码率区间");
+  });
+
+  it("有体积时文件大小写出实测值，上限未核验照实说", () => {
+    const check = douyin({ fileBytes: 42 * 1024 * 1024 }).checks.find(
+      (item) => item.id === "file-size",
+    )!;
+    expect(check.status).toBe("pass");
+    expect(check.detail).toContain("42.0 MB");
+    expect(check.detail).toContain("未核验");
+  });
+});
+
+describe("体积写法", () => {
+  it("不到 1 MB 用 KB，别把 48 KB 写成 0.0 MB", () => {
+    expect(formatSize(48 * 1024)).toBe("48 KB");
+    expect(formatSize(0)).toBe("0 KB");
+    expect(formatSize(32 * 1024 * 1024)).toBe("32.0 MB");
   });
 });
