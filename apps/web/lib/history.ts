@@ -150,6 +150,25 @@ export function describeEvent(before: Project, event: ProjectEvent): string {
       return `改道具「${before.props.find((item) => item.id === event.propId)?.name ?? event.propId}」：${fieldsCn(PROP_FIELD_CN, event.patch)}`;
     case "prop.removed":
       return `删道具「${before.props.find((item) => item.id === event.propId)?.name ?? event.propId}」`;
+    case "story.updated": {
+      const parts: string[] = [];
+      for (const [key, label] of [
+        ["logline", "logline"],
+        ["synopsis", "梗概"],
+        ["genre", "类型"],
+        ["audience", "受众"],
+        ["tone", "调性"],
+        ["openingHook", "开场钩子"],
+        ["endingHook", "结尾钩子"],
+      ] as const) {
+        if (event.patch[key] !== undefined) parts.push(label);
+      }
+      if (event.patch.arcs !== undefined) parts.push(`${event.patch.arcs.length} 条人物弧光`);
+      if (event.patch.relationships !== undefined) {
+        parts.push(`${event.patch.relationships.length} 对关系`);
+      }
+      return `改故事：${parts.join(" / ") || "无变化"}`;
+    }
     case "dialogue.updated":
       return `改一句台词：${fieldsCn(DIALOGUE_FIELD_CN, event.patch)}`;
     case "dialogue.speaker.updated":

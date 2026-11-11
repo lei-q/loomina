@@ -27,6 +27,8 @@ import {
   type Shot,
   type ShotPurpose,
   type StagingMark,
+  type StoryArc,
+  type StoryRelationship,
   type TimelineItem,
 } from "@loomina/ir";
 import {
@@ -86,6 +88,9 @@ function persistMode(mode: WorkbenchMode): void {
 }
 
 export type Decision = "approved" | "rejected";
+
+/** 故事层可改的字段（A16）；与 `story.updated` 的 patch 同一形状 */
+export type StoryPatch = Extract<ProjectEvent, { type: "story.updated" }>["patch"];
 
 /**
  * B6: 视频失败重试。只重试服务端明确说「没在跑、重交安全」的失败；
@@ -437,6 +442,19 @@ type WorkbenchState = {
   startProjectFromStory: (
     draft: StoryDraft,
     meta: { modelId: string; idea: string },
+  ) => boolean;
+  /**
+   * 改故事层文字（A16）：一条 `story.updated`。
+   * 只改传进来的字段；没改的字段与 `provenance` 都不动。
+   */
+  editStory: (patch: StoryPatch) => boolean;
+  /** 改某个角色的一条弧光字段（A16）：整组弧光替换，只动这一条 */
+  editArc: (characterId: string, patch: Partial<Omit<StoryArc, "characterId">>) => boolean;
+  /** 改一对关系张力（A16）；`tension` 为空表示删掉这条关系 */
+  editRelationship: (
+    fromCharacterId: string,
+    toCharacterId: string,
+    tension: string,
   ) => boolean;
   /** 新建场次：一条 `scene.added`，加在末尾或指定场之后，沿用前一场的地点与日夜（ADR-0064 / 0068 / 0069） */
   addScene: (locationId?: string, afterSceneId?: string) => string | undefined;  /** 新建镜头：一条 `shot.added`，加在这一场末尾或指定镜之后（ADR-0064 / ADR-0068） */
@@ -3558,6 +3576,95 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       editError: undefined,
     });
     return true;
+  },
+
+  editStory: (patch) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const story = project.story;
+    // 没有实质变化就不写：历史里塞满「改故事：梗概」而内容没动，等于噪音
+    const same =
+      (patch.logline === undefined || patch.logline.trim() === story.logline) &&
+      (patch.synopsis === undefined || patch.synopsis.trim() === story.synopsis) &&
+      (patch.genre === undefined || patch.genre.trim() === story.genre) &&
+      (patch.audience === undefined || patch.audience.trim() === story.audience) &&
+      (patch.tone === undefined || patch.tone.trim() === story.tone) &&
+      (patch.openingHook === undefined ||
+        patch.openingHook.trim() === story.hooks.opening) &&
+      (patch.endingHook === undefined || patch.endingHook.trim() === story.hooks.ending);
+    if (same && patch.arcs === undefined && patch.relationships === undefined) {
+      set({ castError: "故事没改。" });
+      return false;
+    }
+    const event: ProjectEvent = { type: "story.updated", at: stamp(), patch };
+    try {
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        castError: undefined,
+      });
+      return true;
+    } catch (error) {
+      set({
+        castError: error instanceof Error ? error.message : "故事没改成。",
+      });
+      return false;
+    }
+  },
+
+  editArc: (characterId, patch) => {
+    if (get().readOnly) return false;
+    const { project } = get();
+    const arcs = project.story.arcs;
+    const index = arcs.findIndex((arc) => arc.characterId === characterId);
+    if (index < 0) {
+      set({ castError: "这个角色还没有弧光。" });
+      return false;
+    }
+    const current = arcs[index]!;
+    const changed = (Object.keys(patch) as (keyof typeof patch)[]).some(
+      (key) => patch[key] !== undefined && patch[key] !== current[key],
+    );
+    if (!changed) {
+      set({ castError: "弧光没改。" });
+      return false;
+    }
+    const next = arcs.map((arc, at) =>
+      at === index ? { ...arc, ...patch } : arc,
+    );
+    return get().editStory({ arcs: next });
+  },
+
+  editRelationship: (fromCharacterId, toCharacterId, rawTension) => {
+    if (get().readOnly) return false;
+    const { project } = get();
+    const tension = rawTension.trim();
+    const relations = project.story.relationships;
+    const index = relations.findIndex(
+      (relation) =>
+        relation.fromCharacterId === fromCharacterId &&
+        relation.toCharacterId === toCharacterId,
+    );
+    if (tension.length === 0) {
+      if (index < 0) {
+        set({ castError: "没有这条关系。" });
+        return false;
+      }
+      return get().editStory({
+        relationships: relations.filter((_, at) => at !== index),
+      });
+    }
+    if (index >= 0 && relations[index]!.tension === tension) {
+      set({ castError: "关系没改。" });
+      return false;
+    }
+    const next =
+      index >= 0
+        ? relations.map((relation, at) =>
+            at === index ? { ...relation, tension } : relation,
+          )
+        : [...relations, { fromCharacterId, toCharacterId, tension }];
+    return get().editStory({ relationships: next });
   },
 
   addScene: (locationId, afterSceneId) => {

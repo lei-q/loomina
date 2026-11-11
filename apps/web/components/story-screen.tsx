@@ -21,6 +21,7 @@ import { TopBar } from "@/components/top-bar";
 import { StageGate } from "@/components/stage-gate";
 import { ModelPicker } from "@/components/model-picker";
 import { LoglineScoreCard, LoglineWorkshop } from "@/components/logline-score";
+import { StoryBiblePanel } from "@/components/story-bible-panel";
 import { estimateDialogueMs } from "@/lib/dialogue";
 import { useModelCatalog, useModelChoice } from "@/lib/model-choice";
 import { useWorkbench } from "@/lib/workbench-store";
@@ -507,6 +508,8 @@ export function StoryScreen() {
 
               <LoglineWorkshop genreId={genre} />
             </div>
+
+            <StoryBiblePanel />
 
             <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-4">
               <span className="text-[9.5px] leading-[1.6] text-muted-2">

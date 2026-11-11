@@ -2213,3 +2213,122 @@ describe("手改断句（D2）", () => {
     expect(after.subtitleOverrides).toHaveLength(0);
   });
 });
+
+describe("故事层改写（A16）", () => {
+  it("只改传进来的字段，hooks 的另一个钩子不动", () => {
+    const project = load();
+    const seeded = applyEvent(project, {
+      type: "story.updated",
+      at: AT,
+      patch: { openingHook: "灯灭了。", endingHook: "他还在。" },
+    });
+    const next = applyEvent(seeded, {
+      type: "story.updated",
+      at: AT,
+      patch: { logline: "两个夜班保安互相试探。", openingHook: "灯又亮了。" },
+    });
+    expect(next.story.logline).toBe("两个夜班保安互相试探。");
+    expect(next.story.hooks.opening).toBe("灯又亮了。");
+    expect(next.story.hooks.ending).toBe("他还在。");
+  });
+
+  it("弧光整组替换；同一角色写两份被拒", () => {
+    const project = load();
+    const characterId = project.characters[0]!.id;
+    const next = applyEvent(project, {
+      type: "story.updated",
+      at: AT,
+      patch: {
+        arcs: [
+          {
+            characterId,
+            want: "拿到监控",
+            need: "被看见",
+            wound: "",
+            flaw: "",
+            secret: "",
+            agency: "",
+            arc: "",
+          },
+        ],
+      },
+    });
+    expect(next.story.arcs).toHaveLength(1);
+    expect(next.story.arcs[0]!.want).toBe("拿到监控");
+
+    expect(() =>
+      applyEvent(project, {
+        type: "story.updated",
+        at: AT,
+        patch: {
+          arcs: [
+            { characterId, want: "a", need: "", wound: "", flaw: "", secret: "", agency: "", arc: "" },
+            { characterId, want: "b", need: "", wound: "", flaw: "", secret: "", agency: "", arc: "" },
+          ],
+        },
+      }),
+    ).toThrow(/两份弧光/);
+  });
+
+  it("关系两端必须是不同且存在的角色，同一对不能写两遍", () => {
+    const project = load();
+    const [a, b] = [project.characters[0]!.id, project.characters[1]!.id];
+    const relation = (from: string, to: string) => ({
+      fromCharacterId: from,
+      toCharacterId: to,
+      tension: "互相试探",
+    });
+
+    expect(() =>
+      applyEvent(project, {
+        type: "story.updated",
+        at: AT,
+        patch: { relationships: [relation(a, a)] },
+      }),
+    ).toThrow(/同一个人/);
+    expect(() =>
+      applyEvent(project, {
+        type: "story.updated",
+        at: AT,
+        patch: { relationships: [relation(a, "nope")] },
+      }),
+    ).toThrow(/不存在的角色/);
+    expect(() =>
+      applyEvent(project, {
+        type: "story.updated",
+        at: AT,
+        patch: { relationships: [relation(a, b), relation(a, b)] },
+      }),
+    ).toThrow(/两遍/);
+  });
+
+  it("没有要改的字段时拒绝；provenance 不被抹掉", () => {
+    const project = load();
+    expect(() =>
+      applyEvent(project, { type: "story.updated", at: AT, patch: {} }),
+    ).toThrow(/没有要改的字段/);
+
+    const withProvenance = applyEvent(project, {
+      type: "story.updated",
+      at: AT,
+      patch: { genre: "悬疑" },
+    });
+    expect(withProvenance.story.provenance).toEqual(project.story.provenance);
+  });
+
+  it("文字字段会去掉首尾空白，空串表示清空", () => {
+    const project = load();
+    const filled = applyEvent(project, {
+      type: "story.updated",
+      at: AT,
+      patch: { tone: "  冷峻  " },
+    });
+    expect(filled.story.tone).toBe("冷峻");
+    const cleared = applyEvent(filled, {
+      type: "story.updated",
+      at: AT,
+      patch: { tone: "" },
+    });
+    expect(cleared.story.tone).toBe("");
+  });
+});

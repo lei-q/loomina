@@ -149,6 +149,8 @@ interface Relationship {
 > ```
 >
 > 上面的 `themes` / `rules` / `styles`、`Character.role` / `wardrobe` / `voice`、独立 `Relationship.kind` 仍只在文档里；`arcs` 与 `relationships` 是这一刀新增的、可被故事入口写入的字段。Beat 与 ScriptDoctorReport 没有进 IR（A11 / A2 未做）。旧日志缺 `story` 时由 zod 默认值补齐；`LOG_VERSION` 升到 2，v1 → v2 迁移目前是恒等变换。
+>
+> **故事层单独编辑（A16 / ADR-0121）**：`story.updated` 只收白名单字段——`logline` / `synopsis` / `genre` / `audience` / `tone`、`openingHook` / `endingHook`、整组 `arcs`、整组 `relationships`。**不整块替换 `story`**：`provenance` 记的是这份故事从哪来，作者改字不该把它抹掉。文字字段写入前 `trim()`，空串表示清空；`patch` 一个字段都没有时拒绝。校验在 `applyEvent` 里：弧光的 `characterId` 必须存在且不重复；关系两端必须是不同且存在的角色，同一对（有向）不能写两遍。`arcs` / `relationships` 整组替换是事件层形状，store 另给 `editArc(characterId, patch)` 与 `editRelationship(from, to, tension)` 两个语义化入口（张力写空即删）。
 
 ## 3. 分集 / 场 / 镜
 

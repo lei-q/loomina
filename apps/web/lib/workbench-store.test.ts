@@ -3341,6 +3341,112 @@ describe("故事入口开工（ADR-0088）", () => {
   });
 });
 
+describe("故事层单独编辑（A16）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  const seedArc = () => {
+    const characterId = state().project.characters[0]!.id;
+    state().editStory({
+      arcs: [
+        {
+          characterId,
+          want: "拿到监控",
+          need: "被看见",
+          wound: "父亲坠楼那晚他不在",
+          flaw: "不肯先开口",
+          secret: "他早就看过录像",
+          agency: "把灯关上",
+          arc: "从躲着到承认",
+        },
+      ],
+    });
+    return characterId;
+  };
+
+  it("改一条弧光只写一条 story.updated，别的字段不动", () => {
+    const characterId = seedArc();
+    const before = state().project.story;
+    expect(state().editArc(characterId, { want: "拿到监控录像" })).toBe(true);
+
+    const after = state().project.story;
+    expect(after.arcs[0]!.want).toBe("拿到监控录像");
+    // 弧光里其他字段与故事的其余部分都没动
+    expect(after.arcs[0]!.need).toBe(before.arcs[0]!.need);
+    expect(after.logline).toBe(before.logline);
+    expect(after.relationships).toEqual(before.relationships);
+    expect(state().events.at(-1)).toMatchObject({ type: "story.updated" });
+    expect(rebuild(state().events).story).toEqual(after);
+  });
+
+  it("没改动的弧光不写事件", () => {
+    const characterId = seedArc();
+    const want = state().project.story.arcs[0]!.want;
+    const snapshot = state().events.length;
+    expect(state().editArc(characterId, { want })).toBe(false);
+    expect(state().castError).toContain("没改");
+    expect(state().events).toHaveLength(snapshot);
+  });
+
+  it("没有弧光的角色不能直接改", () => {
+    const snapshot = state().events.length;
+    expect(state().editArc("c-nope", { want: "x" })).toBe(false);
+    expect(state().castError).toContain("还没有弧光");
+    expect(state().events).toHaveLength(snapshot);
+  });
+
+  it("改关系：已有就改、没有就加、张力写空就删", () => {
+    const [a, b] = [state().project.characters[0]!.id, state().project.characters[1]!.id];
+
+    // 加一对
+    expect(state().editRelationship(a, b, "互相试探")).toBe(true);
+    expect(state().project.story.relationships).toHaveLength(1);
+
+    // 改同一对
+    expect(state().editRelationship(a, b, "谁先承认灯是谁关的")).toBe(true);
+    expect(state().project.story.relationships).toHaveLength(1);
+    expect(state().project.story.relationships[0]!.tension).toBe("谁先承认灯是谁关的");
+
+    // 写空 → 删
+    expect(state().editRelationship(a, b, "   ")).toBe(true);
+    expect(state().project.story.relationships).toHaveLength(0);
+    expect(rebuild(state().events).story.relationships).toHaveLength(0);
+  });
+
+  it("关系两端相同或角色不存在时不写事件", () => {
+    const a = state().project.characters[0]!.id;
+    const snapshot = state().events.length;
+    expect(state().editRelationship(a, a, "自己跟自己")).toBe(false);
+    expect(state().castError).toContain("同一个人");
+    expect(state().editRelationship(a, "c-nope", "不存在")).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+  });
+
+  it("文字字段没改不写事件；改了才写", () => {
+    const before = state().project.story.logline;
+    const snapshot = state().events.length;
+    expect(state().editStory({ logline: before })).toBe(false);
+    expect(state().castError).toContain("没改");
+    expect(state().events).toHaveLength(snapshot);
+
+    expect(state().editStory({ logline: "两个夜班保安互相试探。" })).toBe(true);
+    expect(state().project.story.logline).toBe("两个夜班保安互相试探。");
+  });
+
+  it("只读时全部拒绝", () => {
+    const characterId = seedArc();
+    const snapshot = state().events.length;
+    useWorkbench.setState({ readOnly: true });
+    expect(state().editStory({ genre: "悬疑" })).toBe(false);
+    expect(state().editArc(characterId, { want: "x" })).toBe(false);
+    expect(state().editRelationship(characterId, characterId, "x")).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+    useWorkbench.setState({ readOnly: false });
+  });
+});
+
 describe("分镜节拍与镜头目的（ADR-0096）", () => {
   beforeEach(() => {
     state().reset();

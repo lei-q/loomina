@@ -15,6 +15,9 @@ import type {
   PublishPackage,
   Scene,
   Shot,
+  StoryArc,
+  StoryBible,
+  StoryRelationship,
   Take,
   TimelineItem,
 } from "./schema";
@@ -54,6 +57,29 @@ export type ProjectEvent =
       budgetCny?: number;
       maxAttemptsPerShot?: number;
       onBudgetExceed?: "block" | "keep";
+    }
+  | {
+      /**
+       * 故事层改写（A16）：只允许改这几样文字字段。
+       *
+       * 不整块替换 `story`：`provenance` 记的是这份故事从哪来，作者改字不该把它抹掉。
+       * 传 undefined 的字段不动；传空串表示清空。
+       */
+      type: "story.updated";
+      at: string;
+      patch: Partial<
+        Pick<
+          StoryBible,
+          "logline" | "synopsis" | "genre" | "audience" | "tone"
+        >
+      > & {
+        openingHook?: string;
+        endingHook?: string;
+        /** 整组替换人物弧光；`characterId` 必须存在 */
+        arcs?: StoryArc[];
+        /** 整组替换关系张力；两端角色必须存在且不相同 */
+        relationships?: StoryRelationship[];
+      };
     }
   | { type: "shot.updated"; at: string; shotId: Id; patch: Partial<Shot> }
   | {
@@ -474,6 +500,65 @@ function applyEventCore(
       }
       if (touched === 0) throw new Error("project.updated 没有要改的字段");
       return next;
+    }
+
+    case "story.updated": {
+      if (!current) throw new Error("story.updated 之前必须有 project.created");
+      const { patch } = event;
+      const story = current.story;
+      const next = { ...story, hooks: { ...story.hooks } };
+      let touched = 0;
+
+      for (const key of ["logline", "synopsis", "genre", "audience", "tone"] as const) {
+        const value = patch[key];
+        if (value === undefined) continue;
+        next[key] = value.trim();
+        touched += 1;
+      }
+      if (patch.openingHook !== undefined) {
+        next.hooks.opening = patch.openingHook.trim();
+        touched += 1;
+      }
+      if (patch.endingHook !== undefined) {
+        next.hooks.ending = patch.endingHook.trim();
+        touched += 1;
+      }
+      if (patch.arcs !== undefined) {
+        const ids = new Set<string>();
+        for (const arc of patch.arcs) {
+          if (ids.has(arc.characterId)) {
+            throw new Error(`story.updated 里同一个角色有两份弧光: ${arc.characterId}`);
+          }
+          if (!current.characters.some((item) => item.id === arc.characterId)) {
+            throw new Error(`story.updated 的弧光指向不存在的角色: ${arc.characterId}`);
+          }
+          ids.add(arc.characterId);
+        }
+        next.arcs = patch.arcs.map((arc) => ({ ...arc }));
+        touched += 1;
+      }
+      if (patch.relationships !== undefined) {
+        const seen = new Set<string>();
+        for (const relation of patch.relationships) {
+          if (relation.fromCharacterId === relation.toCharacterId) {
+            throw new Error("story.updated 的关系两端不能是同一个人");
+          }
+          for (const id of [relation.fromCharacterId, relation.toCharacterId]) {
+            if (!current.characters.some((item) => item.id === id)) {
+              throw new Error(`story.updated 的关系指向不存在的角色: ${id}`);
+            }
+          }
+          const key = `${relation.fromCharacterId}->${relation.toCharacterId}`;
+          if (seen.has(key)) {
+            throw new Error(`story.updated 里同一对关系写了两遍: ${key}`);
+          }
+          seen.add(key);
+        }
+        next.relationships = patch.relationships.map((relation) => ({ ...relation }));
+        touched += 1;
+      }
+      if (touched === 0) throw new Error("story.updated 没有要改的字段");
+      return { ...current, story: next };
     }
 
     case "shot.updated": {
