@@ -271,8 +271,35 @@ export const TimelineItemSchema = z.object({
 });
 export type TimelineItem = z.infer<typeof TimelineItemSchema>;
 
+/**
+ * 配乐床（C4 / C12）。
+ *
+ * 一条音乐铺在时间线上，台词出现时按 `duckDb` 压下去；音乐文件必须先落成
+ * `kind: "audio"` 的资产。`licenseRef` 不是饰品：没有它就不该加进来。
+ */
+export const MusicCueSchema = z.object({
+  id: Id,
+  assetId: Id,
+  title: z.string().min(1).max(120),
+  /** 情绪标签，用于选曲与复盘；空串表示没标 */
+  mood: z.string().max(40).default(""),
+  startMs: z.number().int().nonnegative(),
+  durationMs: z.number().int().positive(),
+  /** 音乐相对对白的基准增益；响度归一化在总线上做 */
+  gainDb: z.number().min(-40).max(0).default(-18),
+  /** 台词下压低多少 dB；准则要求 12–18 */
+  duckDb: z.number().min(12).max(18).default(15),
+  ducking: z.boolean().default(true),
+  /** 音乐比片子短时是否循环铺满这一段 */
+  loop: z.boolean().default(true),
+  /** 授权来源备注：文件名 / 曲库 / 授权书编号，不允许空 */
+  licenseRef: z.string().min(1).max(240),
+});
+export type MusicCue = z.infer<typeof MusicCueSchema>;
+
 export const TimelineSchema = z.object({
   items: z.array(TimelineItemSchema).default([]),
+  music: z.array(MusicCueSchema).default([]),
 });
 export type Timeline = z.infer<typeof TimelineSchema>;
 

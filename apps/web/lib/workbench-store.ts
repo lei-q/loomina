@@ -13,6 +13,7 @@ import {
   type BeatKind,
   type Character,
   type Location,
+  type MusicCue,
   type Project,
   type Prop,
   type ProjectEvent,
@@ -219,6 +220,24 @@ type WorkbenchState = {
   autoCutTimeline: () => boolean;
   /** 换某一镜用的 take：一条 `timeline.updated` 整条替换（ADR-0086） */
   setTimelineTake: (itemId: string, takeId: string) => boolean;
+  /**
+   * 加一条配乐床（C4）：音频文件先落成资产，再写一条 `timeline.music.updated`。
+   * 必须给授权备注；没有备注的音乐不进项目。
+   */
+  addMusic: (input: {
+    uri: string;
+    mime: string;
+    title: string;
+    mood: string;
+    durationMs: number;
+    licenseRef: string;
+  }) => boolean;
+  /** 调配乐：增益 / ducking 深度 / 开关 / 情绪；写一条 `timeline.music.updated` */
+  updateMusic: (
+    patch: Partial<Pick<MusicCue, "gainDb" | "duckDb" | "ducking" | "mood">>,
+  ) => boolean;
+  /** 移掉配乐床：写一条空的 `timeline.music.updated`，资产留在项目里 */
+  removeMusic: () => boolean;
   /** 批量补缺：按镜号顺序一帧一帧生成，跳过锁定，失败即停（ADR-0042 附记） */
   generateMissingFrames: (frame?: Frame) => Promise<void>;
   /** 批量补帧的进度；`stop` 置上后当前这一张结束就停 */
@@ -1875,6 +1894,140 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       });
       return false;
     }
+    return true;
+  },
+
+  addMusic: ({ uri: rawUri, mime, title, mood, durationMs, licenseRef }) => {
+    if (get().readOnly) {
+      set({ editError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    const { project, events } = get();
+    if (project.timeline.music.length > 0) {
+      set({ editError: "现在只支持一条配乐床：先移掉旧的再加。" });
+      return false;
+    }
+    const uri = rawUri.trim();
+    if (!/^data:audio\//i.test(uri)) {
+      set({ editError: "配乐要先读成本地音频（data:audio/…）。" });
+      return false;
+    }
+    // 约 18 MB 的音频；base64 后约 24 MB，再大 IndexedDB 与渲染清单都吃不消
+    if (uri.length > 24_000_000) {
+      set({ editError: "这条音乐太大了（超过约 18 MB）：换一条短一点的。" });
+      return false;
+    }
+    if (!licenseRef.trim()) {
+      set({ editError: "配乐必须写授权来源：曲库名、授权书编号或「自己录制」。" });
+      return false;
+    }
+    if (!Number.isFinite(durationMs) || durationMs < 500) {
+      set({ editError: "读不出这条音乐的时长：换一个文件再试。" });
+      return false;
+    }
+    const at = new Date().toISOString();
+    let assetId = `a-music-${Date.now().toString(36)}`;
+    while (project.assets.some((asset) => asset.id === assetId)) assetId += "x";
+    const asset: Asset = {
+      id: assetId,
+      kind: "audio",
+      source: "upload",
+      uri,
+      mime: mime || "audio/mpeg",
+      durationMs: Math.round(durationMs),
+      createdAt: at,
+    };
+    let cueId = `music-${Date.now().toString(36)}`;
+    while (project.timeline.music.some((cue) => cue.id === cueId)) cueId += "x";
+    const timelineMs = project.timeline.items.reduce(
+      (end, item) => Math.max(end, item.startMs + item.durationMs),
+      0,
+    );
+    const cue: MusicCue = {
+      id: cueId,
+      assetId,
+      title: title.trim().slice(0, 120) || "配乐",
+      mood: mood.trim().slice(0, 40),
+      startMs: 0,
+      // 默认循环铺满全片；音乐文件本身多长记在资产上
+      durationMs: timelineMs || Math.round(durationMs),
+      gainDb: -18,
+      duckDb: 15,
+      ducking: true,
+      loop: true,
+      licenseRef: licenseRef.trim().slice(0, 240),
+    };
+    const written: ProjectEvent[] = [
+      { type: "asset.updated", at, asset },
+      { type: "timeline.music.updated", at, music: [cue] },
+    ];
+    try {
+      set({
+        project: written.reduce(applyEvent, project),
+        events: [...events, ...written],
+        editError: undefined,
+      });
+    } catch (error) {
+      set({ editError: error instanceof Error ? error.message : "配乐加不上" });
+      return false;
+    }
+    return true;
+  },
+
+  updateMusic: (patch) => {
+    if (get().readOnly) {
+      set({ editError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    const { project, events } = get();
+    const cue = project.timeline.music[0];
+    if (!cue) return false;
+    const next: MusicCue = {
+      ...cue,
+      ...(patch.gainDb !== undefined
+        ? { gainDb: Math.max(-40, Math.min(0, Math.round(patch.gainDb))) }
+        : {}),
+      ...(patch.duckDb !== undefined
+        ? { duckDb: Math.max(12, Math.min(18, Math.round(patch.duckDb))) }
+        : {}),
+      ...(patch.ducking !== undefined ? { ducking: patch.ducking } : {}),
+      ...(patch.mood !== undefined ? { mood: patch.mood.slice(0, 40) } : {}),
+    };
+    const event: ProjectEvent = {
+      type: "timeline.music.updated",
+      at: new Date().toISOString(),
+      music: [next],
+    };
+    try {
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        editError: undefined,
+      });
+    } catch (error) {
+      set({ editError: error instanceof Error ? error.message : "配乐改不动" });
+      return false;
+    }
+    return true;
+  },
+
+  removeMusic: () => {
+    if (get().readOnly) {
+      set({ editError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    const { project, events } = get();
+    if (project.timeline.music.length === 0) return false;
+    const event: ProjectEvent = {
+      type: "timeline.music.updated",
+      at: new Date().toISOString(),
+      music: [],
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      editError: undefined,
+    });
     return true;
   },
 

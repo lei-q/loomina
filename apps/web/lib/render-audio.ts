@@ -1,0 +1,318 @@
+/**
+ * 混音与响度（C12）。
+ *
+ * 这一层只做三件事，而且都可核对：
+ * 1. 对白按时间落到一条总线上；
+ * 2. 音乐按 `duckDb` 在台词窗里压低（12–18 dB，默认 15）；
+ * 3. 整片走两遍 loudnorm：先量，再按量到的值线性归一到 −14 LUFS。
+ *
+ * 不在这里猜「听起来怎么样」。输出后还会量一次集成响度、真峰值与反相时长，
+ * 结果原样交给界面；量不到就写「未测」。
+ */
+
+export const LOUDNESS_TARGET = {
+  integratedLufs: -14,
+  /** 编码成 AAC 会抬一点真峰值，留 0.5 dB 余量，保证成片仍 ≤ −1 dBTP */
+  loudnormTruePeakDb: -1.5,
+  ceilingDb: -1,
+  toleranceLu: 1,
+} as const;
+
+export type MixDialogue = {
+  path: string;
+  startMs: number;
+  durationMs: number;
+};
+
+export type MixMusic = {
+  path: string;
+  startMs: number;
+  endMs: number;
+  gainDb: number;
+  duckDb: number;
+  ducking: boolean;
+  loop: boolean;
+};
+
+export type LoudnessMeasurement = {
+  inputI: number | null;
+  inputTp: number | null;
+  inputLra: number | null;
+  inputThresh: number | null;
+  targetOffset: number | null;
+};
+
+export type LoudnessReport = {
+  integratedLufs: number | null;
+  truePeakDb: number | null;
+  rangeLu: number | null;
+  /** 反相（单声道折叠会抵消）的总时长；null 表示没量到 */
+  outOfPhaseMs: number | null;
+  /** 检测到的单声道段总时长；null 表示没量到 */
+  monoMs: number | null;
+  checkedAt: string;
+  verdict: "pass" | "review" | "fail" | "unmeasured";
+  detail: string;
+};
+
+function seconds(ms: number): string {
+  return (ms / 1000).toFixed(3);
+}
+
+function dbToLinear(db: number): number {
+  return Math.pow(10, db / 20);
+}
+
+/** 合并重叠的台词窗；两段只隔一口气时不来回抬音乐 */
+export function mergeIntervals(
+  intervals: { startMs: number; endMs: number }[],
+): { startMs: number; endMs: number }[] {
+  const sorted = intervals
+    .filter((item) => Number.isFinite(item.startMs) && Number.isFinite(item.endMs))
+    .filter((item) => item.endMs > item.startMs)
+    .sort((a, b) => a.startMs - b.startMs);
+  const merged: { startMs: number; endMs: number }[] = [];
+  for (const item of sorted) {
+    const last = merged.at(-1);
+    if (!last || item.startMs > last.endMs + 500) {
+      merged.push({ ...item });
+      continue;
+    }
+    last.endMs = Math.max(last.endMs, item.endMs);
+  }
+  return merged;
+}
+
+/**
+ * 音乐增益 + ducking 的 volume 表达式。
+ *
+ * 用确定的台词窗而不是 sidechain 压缩：压多少 dB 是写死的，界面说 15 dB
+ * 就是 15 dB，不随对白电平漂。两侧各留 200 / 300 ms 斜坡，避免咔哒声。
+ */
+export function duckVolumeExpression(
+  intervals: { startMs: number; endMs: number }[],
+  gainDb: number,
+  duckDb: number,
+  ducking = true,
+): string {
+  const base = dbToLinear(gainDb).toFixed(6);
+  if (!ducking) return base;
+  const merged = mergeIntervals(intervals);
+  if (merged.length === 0) return base;
+  const duck = dbToLinear(-Math.abs(duckDb)).toFixed(6);
+  const factors = merged.map(({ startMs, endMs }) => {
+    const start = (startMs / 1000).toFixed(3);
+    const end = (endMs / 1000).toFixed(3);
+    const rampIn = (Number(start) - 0.2).toFixed(3);
+    const rampOut = (Number(end) + 0.3).toFixed(3);
+    return (
+      `if(lt(t,${rampIn}),1,` +
+      `if(lt(t,${start}),1-(1-${duck})*(t-${rampIn})/0.2,` +
+      `if(lt(t,${end}),${duck},` +
+      `if(lt(t,${rampOut}),${duck}+(1-${duck})*(t-${end})/0.3,1))))`
+    );
+  });
+  return `${base}*${factors.join("*")}`;
+}
+
+/**
+ * 音频混音命令：对白 + 配乐 → PCM wav。
+ *
+ * 单独跑一遍而不是塞进最终命令，是为了先拿到混音文件量 loudnorm，
+ * 再让视频编码用第二遍的 measured_* 参数；同时视频失败重试也不用重新混音。
+ */
+export function buildAudioMixCommand(input: {
+  dialogue: MixDialogue[];
+  music: MixMusic[];
+  totalMs: number;
+  outFile: string;
+}): string[] {
+  const args: string[] = ["-hide_banner", "-y", "-nostats"];
+  input.dialogue.forEach((track) => args.push("-i", track.path));
+  input.music.forEach((track) => {
+    if (track.loop) args.push("-stream_loop", "-1");
+    args.push("-i", track.path);
+  });
+
+  const filters: string[] = [];
+  const dialogueLabels: string[] = [];
+  input.dialogue.forEach((track, index) => {
+    filters.push(
+      `[${index}:a]aresample=48000,` +
+        `adelay=${track.startMs}|${track.startMs},` +
+        `atrim=duration=${seconds(input.totalMs)},asetpts=PTS-STARTPTS[dlg${index}]`,
+    );
+    dialogueLabels.push(`[dlg${index}]`);
+  });
+
+  const duckWindows = input.dialogue.map((track) => ({
+    startMs: track.startMs,
+    endMs: Math.min(input.totalMs, track.startMs + track.durationMs),
+  }));
+  const musicLabels: string[] = [];
+  input.music.forEach((track, index) => {
+    const inputIndex = input.dialogue.length + index;
+    const length = seconds(track.endMs - track.startMs);
+    const expression = duckVolumeExpression(
+      duckWindows,
+      track.gainDb,
+      track.duckDb,
+      track.ducking,
+    );
+    filters.push(
+      `[${inputIndex}:a]aresample=48000,` +
+        `atrim=duration=${length},asetpts=PTS-STARTPTS,` +
+        `adelay=${track.startMs}|${track.startMs},` +
+        `volume=volume='${expression}':eval=frame[mus${index}]`,
+    );
+    musicLabels.push(`[mus${index}]`);
+  });
+
+  const mix = (labels: string[], name: string) => {
+    if (labels.length === 1) {
+      filters.push(`${labels[0]}anull[${name}]`);
+      return;
+    }
+    filters.push(
+      `${labels.join("")}amix=inputs=${labels.length}:duration=longest:normalize=0[${name}]`,
+    );
+  };
+
+  if (dialogueLabels.length > 0) mix(dialogueLabels, "dlgmix");
+  if (musicLabels.length > 0) mix(musicLabels, "musmix");
+
+  if (dialogueLabels.length > 0 && musicLabels.length > 0) {
+    filters.push(
+      `[dlgmix][musmix]amix=inputs=2:duration=longest:normalize=0,` +
+        `apad,atrim=duration=${seconds(input.totalMs)},asetpts=PTS-STARTPTS[aout]`,
+    );
+  } else if (dialogueLabels.length > 0) {
+    filters.push(
+      `[dlgmix]apad,atrim=duration=${seconds(input.totalMs)},asetpts=PTS-STARTPTS[aout]`,
+    );
+  } else if (musicLabels.length > 0) {
+    filters.push(
+      `[musmix]apad,atrim=duration=${seconds(input.totalMs)},asetpts=PTS-STARTPTS[aout]`,
+    );
+  } else {
+    const silentIndex = 0;
+    args.push("-f", "lavfi", "-t", seconds(input.totalMs), "-i", "anullsrc=r=48000:cl=stereo");
+    filters.push(
+      `[${silentIndex}:a]atrim=duration=${seconds(input.totalMs)},asetpts=PTS-STARTPTS[aout]`,
+    );
+  }
+
+  args.push(
+    "-filter_complex",
+    filters.join(";"),
+    "-map",
+    "[aout]",
+    "-c:a",
+    "pcm_s16le",
+    "-ar",
+    "48000",
+    "-ac",
+    "2",
+    input.outFile,
+  );
+  return args;
+}
+
+/** loudnorm 第二遍参数：拿第一遍量到的值做线性归一 */
+export function loudnormFilter(
+  measured: LoudnessMeasurement | null,
+  target = LOUDNESS_TARGET,
+): string {
+  const base = `loudnorm=I=${target.integratedLufs}:TP=${target.loudnormTruePeakDb}:LRA=11`;
+  if (
+    !measured ||
+    measured.inputI === null ||
+    measured.inputTp === null ||
+    measured.inputLra === null ||
+    measured.inputThresh === null
+  ) {
+    return base;
+  }
+  return (
+    `${base}:measured_I=${measured.inputI}:measured_TP=${measured.inputTp}` +
+    `:measured_LRA=${measured.inputLra}:measured_thresh=${measured.inputThresh}` +
+    `:offset=${measured.targetOffset ?? 0}:linear=true`
+  );
+}
+
+/** ffmpeg 的 loudnorm JSON 输出夹在 stderr 里；取最后一个完整对象 */
+export function parseLoudnessJson(stderr: string): LoudnessMeasurement | null {
+  const blocks = stderr.match(/\{[\s\S]*?\}/g);
+  if (!blocks) return null;
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    try {
+      const parsed = JSON.parse(blocks[index]!) as Record<string, unknown>;
+      if (!("input_i" in parsed) && !("input_tp" in parsed)) continue;
+      const number = (value: unknown): number | null => {
+        const parsedNumber = typeof value === "string" ? Number(value) : value;
+        return typeof parsedNumber === "number" && Number.isFinite(parsedNumber)
+          ? parsedNumber
+          : null;
+      };
+      return {
+        inputI: number(parsed.input_i),
+        inputTp: number(parsed.input_tp),
+        inputLra: number(parsed.input_lra),
+        inputThresh: number(parsed.input_thresh),
+        targetOffset: number(parsed.target_offset),
+      };
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+/** aphasemeter 的 phasing 日志：反相与单声道各持续多久 */
+export function parsePhaseMeter(stderr: string): {
+  outOfPhaseMs: number | null;
+  monoMs: number | null;
+} {
+  const duration = (name: string): number | null => {
+    const match = new RegExp(`${name}_duration:\\s*([0-9.]+)`).exec(stderr);
+    if (!match) return null;
+    const value = Number(match[1]);
+    return Number.isFinite(value) ? Math.round(value * 1000) : null;
+  };
+  return { outOfPhaseMs: duration("out_phase"), monoMs: duration("mono") };
+}
+
+/** 集成响度、真峰值与反相的验收口径：量不到不冒充通过 */
+export function loudnessVerdict(input: {
+  integratedLufs: number | null;
+  truePeakDb: number | null;
+  outOfPhaseMs: number | null;
+}): { status: LoudnessReport["verdict"]; detail: string } {
+  if (input.integratedLufs === null) {
+    return { status: "unmeasured", detail: "没有量到集成响度：成片可能没有可测的音频" };
+  }
+  const loudnessOk =
+    Math.abs(input.integratedLufs - LOUDNESS_TARGET.integratedLufs) <=
+    LOUDNESS_TARGET.toleranceLu;
+  const peakOk =
+    input.truePeakDb !== null && input.truePeakDb <= LOUDNESS_TARGET.ceilingDb + 0.05;
+  if (!loudnessOk || !peakOk) {
+    const parts = [
+      `集成响度 ${input.integratedLufs.toFixed(1)} LUFS（目标 ${LOUDNESS_TARGET.integratedLufs}±${LOUDNESS_TARGET.toleranceLu}）`,
+      input.truePeakDb === null
+        ? "真峰值未测"
+        : `真峰值 ${input.truePeakDb.toFixed(1)} dBTP（上限 ${LOUDNESS_TARGET.ceilingDb}）`,
+    ];
+    return { status: "fail", detail: parts.join("；") };
+  }
+  if (input.outOfPhaseMs !== null && input.outOfPhaseMs > 500) {
+    return {
+      status: "review",
+      detail: `响度与真峰值达标；检出 ${(input.outOfPhaseMs / 1000).toFixed(1)} 秒反相，单声道折叠可能抵消`,
+    };
+  }
+  return {
+    status: "pass",
+    detail: `集成响度 ${input.integratedLufs.toFixed(1)} LUFS、真峰值 ${input.truePeakDb?.toFixed(1) ?? "未测"} dBTP`,
+  };
+}

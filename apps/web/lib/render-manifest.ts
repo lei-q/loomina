@@ -49,6 +49,22 @@ export type RenderAudio = {
   /** 受控下载的远端音轨；域名同样走白名单 */
   remote?: string;
   startMs: number;
+  /** 这一句多长；ducking 的时间窗靠它，不知道就不压 */
+  durationMs?: number;
+};
+
+/** 配乐床（C4 / C12）：音乐在台词下按 duckDb 自动压低 */
+export type RenderMusic = {
+  /** data:audio/... */
+  audio?: string;
+  /** 受控下载的远端音轨；域名同样走白名单 */
+  remote?: string;
+  startMs: number;
+  endMs: number;
+  gainDb: number;
+  duckDb: number;
+  ducking: boolean;
+  loop: boolean;
 };
 
 export type RenderManifest = {
@@ -60,6 +76,7 @@ export type RenderManifest = {
   clips: RenderClip[];
   overlays: RenderOverlay[];
   audio: RenderAudio[];
+  music: RenderMusic[];
   aiLabel: { explicit: true; implicit: true; standard: "AI生成" };
   /** 成片页的合规预检证据（G8）；服务端会再扫一遍清单文案 */
   compliance: RenderCompliance;
@@ -274,10 +291,70 @@ export function validateRenderManifest(
     if (!integer(track.startMs) || track.startMs > raw.totalMs) {
       return { ok: false, error: `音轨 ${index + 1} 的起点不合法` };
     }
+    if (
+      track.durationMs !== undefined &&
+      (!integer(track.durationMs) || track.durationMs <= 0)
+    ) {
+      return { ok: false, error: `音轨 ${index + 1} 的时长不合法` };
+    }
     checkedAudio.push({
       audio: typeof track.audio === "string" ? track.audio : undefined,
       remote: remote || undefined,
       startMs: track.startMs,
+      ...(track.durationMs !== undefined ? { durationMs: track.durationMs } : {}),
+    });
+  }
+
+  const musicRaw = raw.music ?? [];
+  if (!Array.isArray(musicRaw) || musicRaw.length > 4) {
+    return { ok: false, error: "配乐床最多 4 条" };
+  }
+  const checkedMusic: RenderMusic[] = [];
+  for (const [index, item] of musicRaw.entries()) {
+    if (!item || typeof item !== "object") {
+      return { ok: false, error: `配乐 ${index + 1} 不是对象` };
+    }
+    const track = item as Record<string, unknown>;
+    const remote = typeof track.remote === "string" ? track.remote.trim() : "";
+    if (remote && !isHttpUrl(remote)) {
+      return { ok: false, error: `配乐 ${index + 1} 的远端地址不是 http(s)` };
+    }
+    if (typeof track.audio === "string") {
+      const parts = parseDataUri(track.audio);
+      if (!parts || !isAudioMime(parts.mime)) {
+        return { ok: false, error: `配乐 ${index + 1} 必须是音频 data URI` };
+      }
+      if (parts.bytes > RENDER_MAX_ASSET_BYTES) {
+        return { ok: false, error: `配乐 ${index + 1} 超过 30 MB` };
+      }
+    } else if (!remote) {
+      return { ok: false, error: `配乐 ${index + 1} 既没有音频也没有远端地址` };
+    }
+    if (
+      !integer(track.startMs) ||
+      !integer(track.endMs) ||
+      track.endMs <= track.startMs ||
+      track.endMs > raw.totalMs
+    ) {
+      return { ok: false, error: `配乐 ${index + 1} 的时间不合法` };
+    }
+    const gainDb = typeof track.gainDb === "number" ? track.gainDb : -18;
+    const duckDb = typeof track.duckDb === "number" ? track.duckDb : 15;
+    if (!Number.isFinite(gainDb) || gainDb < -40 || gainDb > 0) {
+      return { ok: false, error: `配乐 ${index + 1} 的增益超出 -40–0 dB` };
+    }
+    if (!Number.isFinite(duckDb) || duckDb < 12 || duckDb > 18) {
+      return { ok: false, error: `配乐 ${index + 1} 的 ducking 深度超出 12–18 dB` };
+    }
+    checkedMusic.push({
+      audio: typeof track.audio === "string" ? track.audio : undefined,
+      remote: remote || undefined,
+      startMs: track.startMs,
+      endMs: track.endMs,
+      gainDb,
+      duckDb,
+      ducking: track.ducking !== false,
+      loop: track.loop !== false,
     });
   }
 
@@ -290,7 +367,8 @@ export function validateRenderManifest(
       0,
     ) +
     checkedOverlays.reduce((sum, overlay) => sum + assetBytes(overlay.image), 0) +
-    checkedAudio.reduce((sum, track) => sum + (track.audio ? assetBytes(track.audio) : 0), 0);
+    checkedAudio.reduce((sum, track) => sum + (track.audio ? assetBytes(track.audio) : 0), 0) +
+    checkedMusic.reduce((sum, track) => sum + (track.audio ? assetBytes(track.audio) : 0), 0);
   if (totalBytes > RENDER_MAX_TOTAL_BYTES) {
     return { ok: false, error: "素材总量超过 200 MB，先删掉一些片段再渲染" };
   }
@@ -348,6 +426,7 @@ export function validateRenderManifest(
       clips: checkedClips,
       overlays: checkedOverlays,
       audio: checkedAudio,
+      music: checkedMusic,
       aiLabel: {
         explicit: true,
         implicit: true,

@@ -638,6 +638,7 @@ IR 里的时间线目前是窄实现：**只有画面轨**，音频与字幕不�
 ```ts
 interface Timeline {
   items: TimelineItem[];   // 按 startMs 排；事件里允许乱序，读模型自己排
+  music: MusicCue[];       // 配乐床（ADR-0099）；旧日志缺省为 []
 }
 
 interface TimelineItem {
@@ -649,7 +650,27 @@ interface TimelineItem {
 }
 ```
 
-**写入方式**：只有一种事件 `timeline.updated { items }`，整条替换。applyEvent 当场校验与 `validateProject` 同口径：id 不重复、镜头存在、take 存在且属于该镜、起点 / 时长合法、片段不重叠。`shot.removed` 会顺手摘掉属于该镜的片段与 take。
+**写入方式**：画面轨只有一种事件 `timeline.updated { items }`，整条替换；配乐只有一种事件 `timeline.music.updated { music }`，同样整条替换。两条事件分开，换 take 不该顺手重写音乐。applyEvent 当场校验与 `validateProject` 同口径：id 不重复、镜头存在、take 存在且属于该镜、起点 / 时长合法、片段不重叠。`timeline.updated` 与 `shot.removed` 都保留现有 `music`。
+
+`MusicCue`（ADR-0099）当前形状：
+
+```ts
+interface MusicCue {
+  id: string;
+  assetId: string;         // 必须是 kind === "audio" 的资产
+  title: string;
+  mood: string;            // 作者标的情绪，不参与自动选曲
+  startMs: number;         // 非负整数
+  durationMs: number;      // 正整数
+  gainDb: number;          // -40–0，默认 -18
+  duckDb: number;          // 12–18，默认 15
+  ducking: boolean;        // 默认 true
+  loop: boolean;           // 默认 true
+  licenseRef: string;      // 必填；空串拒绝写入（不变量 28）
+}
+```
+
+校验：资产存在且是音频、授权备注非空、起点在成片之内、增益与 ducking 深度在范围内。
 
 **初剪规则**：场次顺序 → 场内镜序；每镜优先最后一条 `approved`，否则最后一条非 `rejected`；没有可用 take 的镜头跳过，store 把镜号写进 `editError`。时长读 `shot.durationMs`，起点累计。
 
@@ -874,6 +895,9 @@ interface LinePerformance {
   takes: ID[];
 }
 
+// 设计目标（未全部落地）。当前 IR 只实现配乐床一条，
+// 形状见 5.2：Asset 引用 + title / startMs / durationMs / gainDb / duckDb / ducking / loop / licenseRef。
+// role / motifId / endMs / 多 cue 编排仍未做。
 interface MusicCue {
   id: ID;
   startMs: number;
@@ -913,19 +937,27 @@ interface MixSpec {
 ## 13. 发布与合规层（ADR-0021 / PUBLISHING.md）
 
 ```ts
+// 当前实现（ADR-0099）：PLATFORM_SPEC_VERSION = "2026-11"，
+// 9 份规格；durationMs 的 min / max 可缺省，maxFileBytes 可缺省；
+// 标题字数、话题数、码率、封面列在 reference 里，只提示不硬拦。
 interface PlatformSpec {
-  platform: PlatformId;
-  version: string;
+  id: PlatformId;
+  name: string;
+  version: string;         // 表级版本，发布包记 specVersion
   aspectRatios: string[];
   resolution: { width: number; height: number };
-  durationMs: { min: number; max: number };
-  maxFileBytes: number;
-  codec: string;
-  cover: { ratio: string; safeArea: string };
-  titleMaxChars: number;
-  hashtagMax: number;
+  durationMs: { min?: number; max?: number };
+  maxFileBytes?: number;
+  codec: "H.264";
+  fps: number;
+  coverRatio: string;
+  titleMaxChars?: number;
+  hashtagMax?: number;
+  bitrateMbps?: [number, number];
   subtitleMode: "burn-in" | "sidecar" | "both";
   publishMode: "api" | "share" | "export-only";
+  reference: string[];     // 未逐条复核的字段
+  note: string;
 }
 
 interface ComplianceCheck {

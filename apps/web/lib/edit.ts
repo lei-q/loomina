@@ -181,10 +181,30 @@ export type EditClip = {
   lines: EditLine[];
 };
 
+export type EditMusic = {
+  id: string;
+  assetId: string;
+  title: string;
+  mood: string;
+  /** 音乐文件地址（data URI 或 http(s)）；资产丢了就没有 */
+  uri?: string;
+  /** 音乐文件本身的时长；循环铺满时与时间线跨度不同 */
+  assetDurationMs?: number;
+  startMs: number;
+  durationMs: number;
+  gainDb: number;
+  duckDb: number;
+  ducking: boolean;
+  loop: boolean;
+  licenseRef: string;
+};
+
 export type EditView = {
   title: string;
   version: number;
   clips: EditClip[];
+  /** 配乐床（C4）：目前一条，按台词自动 ducking */
+  music: EditMusic[];
   /** 全部字幕，按时间排好；SRT、预览与导出都用这一份 */
   cues: EditCue[];
   /** 断句用的每行字数 */
@@ -315,11 +335,33 @@ export function toEditView(
   const cues = clips
     .flatMap((clip) => clip.lines.flatMap((line) => line.cues))
     .sort((a, b) => a.startMs - b.startMs);
+  const music: EditMusic[] = project.timeline.music.flatMap((cue) => {
+    const asset = assetById.get(cue.assetId);
+    if (!asset || asset.kind !== "audio") return [];
+    return [
+      {
+        id: cue.id,
+        assetId: cue.assetId,
+        title: cue.title,
+        mood: cue.mood,
+        uri: asset.uri,
+        assetDurationMs: asset.durationMs,
+        startMs: cue.startMs,
+        durationMs: cue.durationMs,
+        gainDb: cue.gainDb,
+        duckDb: cue.duckDb,
+        ducking: cue.ducking,
+        loop: cue.loop,
+        licenseRef: cue.licenseRef,
+      },
+    ];
+  });
 
   return {
     title: project.title,
     version: project.version,
     clips,
+    music,
     cues,
     maxChars,
     totalMs,

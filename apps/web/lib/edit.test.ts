@@ -9,6 +9,7 @@ import {
   safeFileName,
 } from "./export-cut";
 import { sampleProject } from "./sample-project";
+import { PLATFORM_SPEC_VERSION } from "./platforms";
 
 const AT = "2026-11-11T10:00:00+08:00";
 
@@ -186,6 +187,7 @@ describe("导出（E6 / D3 / G1）", () => {
       topics: ["短剧", " ", "夜班"],
       style: "default",
       kind: "draft",
+      platform: "generic",
     });
     expect(pack.title).toBe("夜班");
     expect(pack.topics).toEqual(["短剧", "夜班"]);
@@ -202,6 +204,25 @@ describe("导出（E6 / D3 / G1）", () => {
       "整条片子还没有配音",
       "剧本里还有 10 镜没进时间线",
     ]);
+  });
+
+  it("发布包默认按抖音规格校验，短于下限时如实警告", () => {
+    const pack = buildPublishPackage(toEditView(sampleProject), {
+      title: "夜班",
+      description: "两个人的夜班。",
+      topics: [],
+      style: "default",
+      kind: "draft",
+    });
+    expect(pack.platform).toBe("douyin");
+    expect(pack.platformName).toBe("抖音");
+    expect(pack.specVersion).toBe(PLATFORM_SPEC_VERSION);
+    expect(pack.platformChecks.some((check) => check.id === "duration")).toBe(true);
+    expect(
+      pack.warnings.some(
+        (warning) => warning.includes("抖音") && warning.includes("下限"),
+      ),
+    ).toBe(true);
   });
 
   it("文件名去掉路径分隔符与空白", () => {

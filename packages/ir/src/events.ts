@@ -6,6 +6,7 @@ import type {
   DialogueLine,
   Id,
   Location,
+  MusicCue,
   Project,
   Prop,
   Scene,
@@ -236,6 +237,15 @@ export type ProjectEvent =
       type: "timeline.updated";
       at: string;
       items: TimelineItem[];
+    }
+  | {
+      /**
+       * 配乐床整条替换（C4）。和 `timeline.updated` 分开：
+       * 换 take 不该顺手重写音乐，音乐改了也不该假装画面动了。
+       */
+      type: "timeline.music.updated";
+      at: string;
+      music: MusicCue[];
     };
 
 /** 时间线项的公共校验：id 唯一、时长合法、take 属于该镜、片段不重叠 */
@@ -271,6 +281,40 @@ function checkTimeline(items: TimelineItem[], project: Project) {
     if (end > previousEnd) {
       previousEnd = end;
       previousId = item.id;
+    }
+  }
+}
+
+function checkMusic(cues: MusicCue[], project: Project) {
+  const ids = new Set<Id>();
+  const timelineEnd = project.timeline.items.reduce(
+    (end, item) => Math.max(end, item.startMs + item.durationMs),
+    0,
+  );
+  for (const cue of cues) {
+    if (ids.has(cue.id)) throw new Error(`timeline.music.updated 有重复的配乐项: ${cue.id}`);
+    ids.add(cue.id);
+    const asset = project.assets.find((item) => item.id === cue.assetId);
+    if (!asset || asset.kind !== "audio") {
+      throw new Error(`timeline.music.updated 的 ${cue.id} 没有挂到音频资产 ${cue.assetId}`);
+    }
+    if (!cue.licenseRef.trim()) {
+      throw new Error(`timeline.music.updated 的 ${cue.id} 缺少授权备注`);
+    }
+    if (!Number.isInteger(cue.startMs) || cue.startMs < 0) {
+      throw new Error(`timeline.music.updated 的 ${cue.id} 起点不合法`);
+    }
+    if (!Number.isInteger(cue.durationMs) || cue.durationMs <= 0) {
+      throw new Error(`timeline.music.updated 的 ${cue.id} 时长不合法`);
+    }
+    if (timelineEnd > 0 && cue.startMs >= timelineEnd) {
+      throw new Error(`timeline.music.updated 的 ${cue.id} 起点在成片之外`);
+    }
+    if (cue.gainDb > 0 || cue.gainDb < -40) {
+      throw new Error(`timeline.music.updated 的 ${cue.id} 增益超出 -40–0 dB`);
+    }
+    if (cue.duckDb < 12 || cue.duckDb > 18) {
+      throw new Error(`timeline.music.updated 的 ${cue.id} ducking 深度超出 12–18 dB`);
     }
   }
 }
@@ -462,6 +506,7 @@ export function applyEvent(
         dialogue: current.dialogue.filter((line) => !dialogueIds.has(line.id)),
         takes: current.takes.filter((take) => take.shotId !== event.shotId),
         timeline: {
+          ...current.timeline,
           items: current.timeline.items.filter(
             (item) => item.shotId !== event.shotId && !takeIds.has(item.takeId),
           ),
@@ -803,7 +848,19 @@ export function applyEvent(
       checkTimeline(event.items, current);
       return {
         ...current,
-        timeline: { items: event.items.map((item) => ({ ...item })) },
+        timeline: { ...current.timeline, items: event.items.map((item) => ({ ...item })) },
+      };
+    }
+
+    case "timeline.music.updated": {
+      if (!current) throw new Error("timeline.music.updated 之前必须有 project.created");
+      checkMusic(event.music, current);
+      return {
+        ...current,
+        timeline: {
+          ...current.timeline,
+          music: event.music.map((cue) => ({ ...cue })),
+        },
       };
     }
   }

@@ -44,14 +44,14 @@
 
 > 具体码率、文件大小、标题字数、话题数量以平台最新文档为准；这张表是**结构**，数值进 `PlatformSpec` 并由校验任务更新。
 
+**当前实现（2026-11-11，ADR-0099）**：规格表在 `apps/web/lib/platforms.ts`，版本号 `2026-11`，共 9 份（含「通用（不按平台卡）」）。只有画幅、时长上下限、编码（H.264）与分辨率短边 ≥720 会硬拦导出；帧率不符只提示复核；标题字数、话题数量、码率、文件大小与封面都标 `reference: true`，超了只提示，不单独拦。各平台的具体数值只写有公开依据的部分：抖音 15s–15min、快手 ≥15s、YouTube Shorts ≤180s、X ≤140s（普通账号），其余不设硬性时长；所有平台当前都没有可引用的公开文件上限。成片页的目标平台下拉会立即重算「平台规格」列表与导出按钮；发布包记录 `platform`、`platformName`、`specVersion` 与逐项 `platformChecks`。**未做**：逐条复核平台文档、码率 / 文件大小硬上限、多平台版本渲染（G9）、官方 API 发布（G4）。
+
 ### 规格校验项
 
-- 分辨率、画幅、码率、编码（H.264 优先）、帧率
-- 时长上下限、文件大小上限
-- 封面尺寸与安全区
-- 标题/简介字数、话题数量与格式
+- **硬校验**：分辨率短边 ≥720、画幅、编码（H.264）、帧率（不符只 review）、时长上下限、文件大小上限（有公开值才拦）
+- **参考值**：码率区间、封面尺寸与安全区、标题/简介字数、话题数量与格式
 - 字幕：烧录 vs 外挂（多数平台推荐烧录，保证样式）
-- 音乐：平台曲库 vs 自带上传（版权限制）
+- 音乐：平台曲库 vs 自带上传（版权限制）；发布包记录授权来源
 - 首帧：是否允许黑帧/纯字幕帧
 
 ---
@@ -73,7 +73,9 @@ interface PublishPackage {
   subtitleAssetId?: ID;
   aiLabel: AILabel;              // 显式 + 隐式
   compliance: ComplianceCheck;   // 预检结果
-  specVersion: string;           // 对应 PlatformSpec 版本
+  specVersion: string;           // 对应 PlatformSpec 版本（当前 2026-11）
+  platformChecks: { id: string; label: string; status: "pass" | "review" | "block"; detail: string; reference?: boolean }[];
+  music: { title: string; mood: string; gainDb: number; duckDb: number; ducking: boolean; licenseRef: string }[];
   status: "draft" | "ready" | "exported" | "published" | "failed";
 }
 ```

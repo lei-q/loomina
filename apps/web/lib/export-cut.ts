@@ -1,6 +1,13 @@
 import type { AILabel } from "@loomina/ir";
 import type { RenderCompliance } from "./compliance";
 import {
+  PLATFORM_SPEC_VERSION,
+  platformSpecOf,
+  validatePlatform,
+  type PlatformCheck,
+  type PlatformId,
+} from "./platforms";
+import {
   SAFE_AREA,
   SUBTITLE_STYLES,
   type EditView,
@@ -391,6 +398,8 @@ export type PublishOptions = {
   style: SubtitleStyleId;
   /** 草稿 / 定稿 */
   kind: "draft" | "final";
+  /** 目标平台（G7）；缺省抖音 */
+  platform?: PlatformId;
   /** 导出前预检证据（G8）；发布包里留一份，便于回溯 */
   compliance?: RenderCompliance;
 };
@@ -399,7 +408,10 @@ export type PublishPackage = {
   formatVersion: 1;
   kind: PublishOptions["kind"];
   createdAt: string;
-  platform: "douyin";
+  platform: PlatformId;
+  platformName: string;
+  specVersion: string;
+  platformChecks: PlatformCheck[];
   video: null;
   videoNote: string;
   cover?: string;
@@ -407,6 +419,14 @@ export type PublishPackage = {
   description: string;
   topics: string[];
   durationSec: number;
+  music: {
+    title: string;
+    mood: string;
+    gainDb: number;
+    duckDb: number;
+    ducking: boolean;
+    licenseRef: string;
+  }[];
   aiLabel: AILabel;
   /** 导出前的合规预检指纹与确认状态 */
   compliance?: RenderCompliance;
@@ -432,20 +452,51 @@ export function buildPublishPackage(
   if (view.noPicture > 0) warnings.push(`${view.noPicture} 个片段没有画面`);
   if (view.withVoice === 0) warnings.push("整条片子还没有配音");
   if (view.missing > 0) warnings.push(`剧本里还有 ${view.missing} 镜没进时间线`);
+  const platform = options.platform ?? "douyin";
+  const spec = platformSpecOf(platform);
+  const topics = options.topics.map((topic) => topic.trim()).filter(Boolean);
+  const title = options.title.trim() || view.title;
+  const validation = validatePlatform(spec, {
+    durationMs: view.totalMs,
+    width: 1080,
+    height: 1920,
+    fps: 30,
+    codec: "H.264",
+    title,
+    topics,
+  });
+  if (!validation.ok) {
+    warnings.push(
+      `${spec.name} 规格还有 ${validation.blocked} 项硬阻断：${
+        validation.checks.find((check) => check.status === "block")?.detail ?? ""
+      }`,
+    );
+  }
 
   return {
     formatVersion: 1,
     kind: options.kind,
     createdAt: new Date().toISOString(),
-    platform: "douyin",
+    platform,
+    platformName: spec.name,
+    specVersion: PLATFORM_SPEC_VERSION,
+    platformChecks: validation.checks,
     video: null,
     videoNote:
       "发布包是清单，不含视频文件；成片 MP4 在成片页单独导出（本机 ffmpeg，1080×1920，带字幕与 AI 角标）。",
     ...(cover ? { cover } : {}),
-    title: options.title.trim() || view.title,
+    title,
     description: options.description.trim(),
-    topics: options.topics.map((topic) => topic.trim()).filter(Boolean),
+    topics,
     durationSec: view.totalSec,
+    music: view.music.map((cue) => ({
+      title: cue.title,
+      mood: cue.mood,
+      gainDb: cue.gainDb,
+      duckDb: cue.duckDb,
+      ducking: cue.ducking,
+      licenseRef: cue.licenseRef,
+    })),
     aiLabel: AI_LABEL,
     ...(options.compliance ? { compliance: options.compliance } : {}),
     subtitleStyle: options.style,

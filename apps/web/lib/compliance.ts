@@ -10,6 +10,7 @@
  */
 
 import type { Project } from "@loomina/ir";
+import { platformCheckDetail, platformSpecOf, validatePlatform, type PlatformId } from "./platforms";
 
 export type ComplianceSeverity = "block" | "review";
 export type ComplianceCategory =
@@ -230,6 +231,13 @@ export type PreflightOptions = {
   topics?: string;
   /** 时间线全长；缺省按 timeline 求和 */
   durationMs?: number;
+  /** 目标平台（G7）；缺省按抖音校验 */
+  platform?: PlatformId;
+  /** 成片规格；缺省按当前渲染器固定值 */
+  width?: number;
+  height?: number;
+  fps?: number;
+  codec?: string;
   at?: string;
 };
 
@@ -419,8 +427,18 @@ export function preflightProject(
     options.durationMs ??
     project.timeline.items.reduce((sum, item) => sum + item.durationMs, 0);
   const seconds = durationMs / 1000;
-  const specOk = durationMs > 0 && durationMs <= 180_000;
-  const spec: ComplianceCheck = {
+  const spec = platformSpecOf(options.platform ?? "douyin");
+  const validation = validatePlatform(spec, {
+    durationMs,
+    width: options.width ?? 1080,
+    height: options.height ?? 1920,
+    fps: options.fps ?? 30,
+    codec: options.codec ?? "H.264",
+    title: options.title ?? project.title,
+    topics: (options.topics ?? "").split(/[,，\s]+/).filter(Boolean),
+  });
+  const specOk = durationMs > 0 && durationMs <= 180_000 && validation.ok;
+  const specCheck: ComplianceCheck = {
     id: "spec",
     label: "平台规格",
     status: specOk ? "pass" : "block",
@@ -429,10 +447,9 @@ export function preflightProject(
         ? "时间线还是空的：先把镜头放上时间线"
         : durationMs > 180_000
           ? `全长 ${seconds.toFixed(1)} 秒，超过 180 秒上限：回时间线删减`
-          : `1080×1920 · 30fps · ${seconds.toFixed(1)} 秒（上限 180 秒）`,
+          : platformCheckDetail(validation),
   };
-
-  const checks = [aiLabel, safety, rights.check, spec];
+  const checks = [aiLabel, safety, rights.check, specCheck];
   const blocked = findings.filter((finding) => finding.severity === "block").length;
   const review = findings.length - blocked;
   const signature = fnv1a(

@@ -19,8 +19,10 @@ import {
   type RenderAudio,
   type RenderClip,
   type RenderManifest,
+  type RenderMusic,
   type RenderOverlay,
 } from "./render-manifest";
+import type { LoudnessReport } from "./render-audio";
 
 export type RenderBuild = {
   manifest: RenderManifest;
@@ -33,6 +35,7 @@ export type RenderResult = {
   fileName: string;
   remoteSkipped: number;
   placeholders: number;
+  loudness?: LoudnessReport;
 };
 
 const FONT_STACK =
@@ -187,13 +190,35 @@ export function buildRenderManifest(
     for (const line of clip.lines) {
       if (!line.audioUri) continue;
       if (/^https?:\/\//i.test(line.audioUri)) {
-        audio.push({ remote: line.audioUri, startMs: line.startMs });
+        audio.push({ remote: line.audioUri, startMs: line.startMs, durationMs: line.durationMs });
         continue;
       }
       const parts = parseDataUri(line.audioUri);
       if (!parts || !isAudioMime(parts.mime)) continue;
-      audio.push({ audio: line.audioUri, startMs: line.startMs });
+      audio.push({ audio: line.audioUri, startMs: line.startMs, durationMs: line.durationMs });
     }
+  }
+
+  const music: RenderMusic[] = [];
+  for (const cue of view.music) {
+    if (!cue.uri) continue;
+    const endMs = Math.min(view.totalMs, cue.startMs + cue.durationMs);
+    if (endMs <= cue.startMs) continue;
+    const common = {
+      startMs: cue.startMs,
+      endMs,
+      gainDb: cue.gainDb,
+      duckDb: cue.duckDb,
+      ducking: cue.ducking,
+      loop: cue.loop,
+    };
+    if (/^https?:\/\//i.test(cue.uri)) {
+      music.push({ remote: cue.uri, ...common });
+      continue;
+    }
+    const parts = parseDataUri(cue.uri);
+    if (!parts || !isAudioMime(parts.mime)) continue;
+    music.push({ audio: cue.uri, ...common });
   }
 
   const overlays = [badgeOverlay(view.totalMs), ...subtitleOverlays(view, styleId)];
@@ -207,6 +232,7 @@ export function buildRenderManifest(
       clips,
       overlays,
       audio,
+      music,
       aiLabel: { explicit: true, implicit: true, standard: "AI生成" },
       compliance,
     },
@@ -240,6 +266,7 @@ type JobState = {
   bytes?: number;
   remoteSkipped: number;
   placeholders: number;
+  loudness?: LoudnessReport;
   error?: string;
 };
 
@@ -319,5 +346,11 @@ export async function exportMp4(
   const blob = await file.blob();
   const fileName = state.fileName || renderFileName(view.title);
   download(blob, fileName);
-  return { bytes: blob.size, fileName, remoteSkipped, placeholders: usedPlaceholders };
+  return {
+    bytes: blob.size,
+    fileName,
+    remoteSkipped,
+    placeholders: usedPlaceholders,
+    ...(state.loudness ? { loudness: state.loudness } : {}),
+  };
 }

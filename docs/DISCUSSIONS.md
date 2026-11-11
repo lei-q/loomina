@@ -3019,3 +3019,33 @@ H6 内容安全审核 + G8 合规预检：文本先行，导出前统一检查 A
 
 **下一步**
 回到原队列第 7 项：C4 配乐 / C12 响度归一化 + G7 平台规格。
+
+---
+
+## 第一百零四次 · 2026-11-11 · C4 配乐 + C12 混音响度 + G7 平台规格
+
+**背景**
+`SOUND.md` 的不变量 26 / 27 / 28 要求台词期间音乐 ducking、成片通过 −14 LUFS / ≤ −1 dBTP 检查、音乐必须有授权引用；`PUBLISHING.md` 要求 `PlatformSpec` 版本化。C4、C12、G7 在 `FEATURES.md` 仍是「待设计」。当前没有音乐生成接口，也没有平台开放平台资质，因此不能假装「按情绪生成」或「已按平台官方规格校验」。
+
+**结论**
+- 配乐先做「导入有授权的音乐」：`Timeline.music` + 事件 `timeline.music.updated`。资产必须是 `audio`，`licenseRef` 必填；默认循环铺满全片，基准增益 −40–0 dB，ducking 12–18 dB。成片页可读入、试听、调增益与压深、换情绪、移除。不做生成、情绪曲线、BPM 卡点与多 cue。
+- Ducking 用已知台词窗而不是 sidechain：合并间隔 ≤500ms 的台词窗，生成写死的 `volume` 表达式，压深就是界面上的数值；前 200ms / 后 300ms 斜坡。对白与音乐各成一条总线再 `amix(normalize=0)`，混音单独输出 48k PCM。
+- 响度两遍 loudnorm：先量，再以 `linear=true` 归一到 I=−14、TP=−1.5（AAC 留 0.5 dB 余量）；编码后再测成片集成响度、真峰值与 `aphasemeter` 反相 / 单声道时长。偏离 ±1 LU 或真峰值 >−1 dBTP 即 fail 且不交付；反相 >500ms 只标「需复核」；量不到写「未测」。
+- 平台规格表 `2026-11` 共 9 份。只有画幅、时长上下限、编码、分辨率短边 ≥720 硬拦；帧率不符只 review；标题字数、话题数、码率、文件大小、封面标 `reference: true` 只提示。成片页目标平台下拉立即重算预检与导出按钮；发布包记录 `platform` / `specVersion` / `platformChecks` 与配乐元数据。
+
+**验证**
+- `pnpm typecheck`、`pnpm test`（IR 116 / gateway 28 / pipeline 30 / web 392，共 566）、`next build` 全过。
+- 新增 `platforms.test.ts` 9 条、`render-audio.test.ts` 18 条；IR 新增配乐事件 6 条；清单校验补配乐 1 条；发布包补平台默认与规格拦截 1 条。
+- 无头 Chrome 在 `/edit` 实走：抖音默认规格挡住 5.5 秒测试片（1 项硬阻断，五个导出按钮全灰）→ 切「通用」后平台规格通过 → 勾选素材授权确认（上传音乐触发 review）→ 渲染成功。输出 5.5 秒、1080×1920、H.264 + AAC；页面报告 −14.1 LUFS / −12.6 dBTP，独立 `loudnorm` 复测 −14.05 / −12.61。
+- 发布包实测：`platform: "generic"`、`specVersion: "2026-11"`、6 项 `platformChecks`、配乐 `gainDb: -22 / duckDb: 18 / licenseRef` 都在 JSON 里。
+- 截图 `/tmp/loomina-music-loudness.png`、`/tmp/loomina-music-2.png`、`/tmp/loomina-music-3.png`。
+
+**未做 / 边界**
+- 没有音乐生成；配乐只有一条床，不支持分段换曲。
+- 没有平台码率 / 文件大小硬上限，也没有官方 API 发布或多平台版本渲染。
+- 授权来源只由作者自填，系统不核验版权；H7 授权台账与 H3 对象存储仍未做。
+- 响度不合格时整条不交付，没有自动二次归一。
+- 平台规格的参考值未逐条复核，平台改规则后表会过时。
+
+**下一步**
+原队列第 8 项：F8 / F9 阶段流程、H10 单镜预算、A9 声音确认收尾。

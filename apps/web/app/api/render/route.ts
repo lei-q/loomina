@@ -16,6 +16,15 @@ import {
   validateRenderManifest,
   type RenderManifest,
 } from "@/lib/render-manifest";
+import {
+  buildAudioMixCommand,
+  loudnormFilter,
+  loudnessVerdict,
+  parseLoudnessJson,
+  parsePhaseMeter,
+  type LoudnessMeasurement,
+  type LoudnessReport,
+} from "@/lib/render-audio";
 
 /**
  * 成片渲染任务队列（E6 / H2）。
@@ -38,7 +47,16 @@ const JOB_TTL_MS = 30 * 60 * 1000;
 
 type MediaKind = "video" | "image" | "audio";
 type ResolvedClip = { path: string; mediaKind: "video" | "image" };
-type ResolvedAudio = { path: string; startMs: number };
+type ResolvedAudio = { path: string; startMs: number; durationMs: number };
+type ResolvedMusic = {
+  path: string;
+  startMs: number;
+  endMs: number;
+  gainDb: number;
+  duckDb: number;
+  ducking: boolean;
+  loop: boolean;
+};
 type JobStatus = "queued" | "running" | "done" | "error";
 
 type RenderJob = {
@@ -58,6 +76,7 @@ type RenderJob = {
   bytes?: number;
   remoteSkipped: number;
   placeholders: number;
+  loudness?: LoudnessReport;
 };
 
 const jobs = new Map<string, RenderJob>();
@@ -174,7 +193,7 @@ function buildCommand(
   manifest: RenderManifest,
   clips: ResolvedClip[],
   overlays: string[],
-  audio: ResolvedAudio[],
+  audio: { mixPath?: string; loudnorm?: string },
   outFile: string,
 ): string[] {
   const total = seconds(manifest.totalMs);
@@ -203,10 +222,6 @@ function buildCommand(
     args.push("-loop", "1", "-framerate", String(manifest.fps), "-t", total, "-i", overlayPath);
   });
 
-  audio.forEach((track) => {
-    args.push("-i", track.path);
-  });
-
   if (clips.length === 1) {
     filters.push(`[v0]null[vbase]`);
   } else {
@@ -226,24 +241,10 @@ function buildCommand(
   });
   if (!manifest.overlays.length) filters.push(`[vbase]null[vout]`);
 
-  if (audio.length) {
-    const base = clips.length + overlays.length;
-    const audioLabels: string[] = [];
-    audio.forEach((track, index) => {
-      const inputIndex = base + index;
-      filters.push(
-        `[${inputIndex}:a]aresample=48000,adelay=${track.startMs}|${track.startMs}[au${index}]`,
-      );
-      audioLabels.push(`[au${index}]`);
-    });
-    if (audio.length === 1) {
-      filters.push(`[au0]apad,atrim=duration=${total},asetpts=PTS-STARTPTS[aout]`);
-    } else {
-      filters.push(
-        `${audioLabels.join("")}amix=inputs=${audio.length}:duration=longest:normalize=0,` +
-          `apad,atrim=duration=${total},asetpts=PTS-STARTPTS[aout]`,
-      );
-    }
+  if (audio.mixPath) {
+    const mixIndex = clips.length + overlays.length;
+    args.push("-i", audio.mixPath);
+    filters.push(`[${mixIndex}:a]${audio.loudnorm ?? "anull"}[aout]`);
   } else {
     const silentIndex = clips.length + overlays.length;
     args.push("-f", "lavfi", "-t", total, "-i", "anullsrc=r=48000:cl=stereo");
@@ -325,8 +326,53 @@ function runFfmpeg(
   });
 }
 
-function scheduleCleanup(job: RenderJob): void {
-  const timer = setTimeout(() => {
+/** 量集成响度与真峰值：loudnorm 的 JSON 打在 stderr 里 */
+async function measureLoudness(
+  file: string,
+  totalMs: number,
+): Promise<LoudnessMeasurement | null> {
+  const result = await runFfmpeg(
+    [
+      "-hide_banner",
+      "-nostats",
+      "-i",
+      file,
+      "-af",
+      "loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json",
+      "-f",
+      "null",
+      "-",
+    ],
+    totalMs,
+    () => {},
+  );
+  return parseLoudnessJson(result.stderr);
+}
+
+/** 单声道兼容：反相段总时长；不拿「音量变小」冒充相位检查 */
+async function measurePhase(
+  file: string,
+  totalMs: number,
+): Promise<{ outOfPhaseMs: number | null; monoMs: number | null }> {
+  const result = await runFfmpeg(
+    [
+      "-hide_banner",
+      "-nostats",
+      "-i",
+      file,
+      "-af",
+      "aphasemeter=video=0:phasing=1:duration=0.5",
+      "-f",
+      "null",
+      "-",
+    ],
+    totalMs,
+    () => {},
+  );
+  return parsePhaseMeter(result.stderr);
+}
+
+function scheduleCleanup(job: RenderJob): void {  const timer = setTimeout(() => {
     if (job.dir) void rm(job.dir, { recursive: true, force: true });
     jobs.delete(job.id);
   }, JOB_TTL_MS);
@@ -382,15 +428,41 @@ async function runJob(job: RenderJob): Promise<void> {
 
     const audio: ResolvedAudio[] = [];
     for (const [index, track] of job.manifest.audio.entries()) {
+      const durationMs = Math.max(
+        0,
+        Math.min(track.durationMs ?? job.manifest.totalMs - track.startMs, job.manifest.totalMs - track.startMs),
+      );
       if (track.remote) {
         const downloaded = await downloadRemote(track.remote, dir, `remote-audio-${index}`, "audio");
-        if (downloaded) audio.push({ path: downloaded.path, startMs: track.startMs });
-        else remoteSkipped += 1;
+        if (downloaded) {
+          audio.push({ path: downloaded.path, startMs: track.startMs, durationMs });
+        } else remoteSkipped += 1;
         continue;
       }
       audio.push({
         path: await writeAsset(dir, track.audio!, `audio-${index}`),
         startMs: track.startMs,
+        durationMs,
+      });
+    }
+
+    const music: ResolvedMusic[] = [];
+    for (const [index, track] of job.manifest.music.entries()) {
+      if (track.remote) {
+        const downloaded = await downloadRemote(
+          track.remote,
+          dir,
+          `remote-music-${index}`,
+          "audio",
+        );
+        if (downloaded) {
+          music.push({ ...track, path: downloaded.path });
+        } else remoteSkipped += 1;
+        continue;
+      }
+      music.push({
+        ...track,
+        path: await writeAsset(dir, track.audio!, `music-${index}`),
       });
     }
 
@@ -398,8 +470,38 @@ async function runJob(job: RenderJob): Promise<void> {
     job.placeholders =
       job.manifest.clips.filter((clip) => clip.placeholder === true).length + fallbackClips;
 
+    let mixPath: string | undefined;
+    let measured: LoudnessMeasurement | null = null;
+    if (audio.length > 0 || music.length > 0) {
+      job.stage = "混音与响度";
+      job.progress = 0;
+      const mixFile = path.join(/* turbopackIgnore: true */ dir, "mix.wav");
+      const mixArgs = buildAudioMixCommand({
+        dialogue: audio,
+        music,
+        totalMs: job.manifest.totalMs,
+        outFile: mixFile,
+      });
+      const mixResult = await runFfmpeg(mixArgs, job.manifest.totalMs, (percent) => {
+        job.progress = Math.min(14, Math.floor(percent * 0.14));
+      });
+      if (mixResult.code !== 0) {
+        const tail = mixResult.stderr.trim().split("\n").slice(-6).join("\n");
+        throw new Error(`混音没做出来：${tail || "未知错误"}`);
+      }
+      job.stage = "测量响度";
+      measured = await measureLoudness(mixFile, job.manifest.totalMs);
+      mixPath = mixFile;
+    }
+
     const outFile = path.join(/* turbopackIgnore: true */ dir, "out.mp4");
-    const args = buildCommand(job.manifest, clips, overlays, audio, outFile);
+    const args = buildCommand(
+      job.manifest,
+      clips,
+      overlays,
+      mixPath ? { mixPath, loudnorm: loudnormFilter(measured) } : {},
+      outFile,
+    );
 
     let result = { code: -1, stderr: "" };
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -408,9 +510,11 @@ async function runJob(job: RenderJob): Promise<void> {
         attempt === 1
           ? `编码中（${clips.length} 段）`
           : `第 ${attempt} 次重试（上一次 ffmpeg 失败）`;
-      job.progress = 0;
+      job.progress = mixPath ? 15 : 0;
       result = await runFfmpeg(args, job.manifest.totalMs, (percent) => {
-        job.progress = percent;
+        job.progress = mixPath
+          ? 15 + Math.floor(percent * 0.84)
+          : percent;
       });
       if (result.code === 0) break;
     }
@@ -421,6 +525,30 @@ async function runJob(job: RenderJob): Promise<void> {
     }
 
     const info = await stat(outFile);
+    job.stage = "复核响度与相位";
+    const [outputLoudness, phase] = await Promise.all([
+      measureLoudness(outFile, job.manifest.totalMs),
+      measurePhase(outFile, job.manifest.totalMs),
+    ]);
+    const verdict = loudnessVerdict({
+      integratedLufs: outputLoudness?.inputI ?? null,
+      truePeakDb: outputLoudness?.inputTp ?? null,
+      outOfPhaseMs: phase.outOfPhaseMs,
+    });
+    job.loudness = {
+      integratedLufs: outputLoudness?.inputI ?? null,
+      truePeakDb: outputLoudness?.inputTp ?? null,
+      rangeLu: outputLoudness?.inputLra ?? null,
+      outOfPhaseMs: phase.outOfPhaseMs,
+      monoMs: phase.monoMs,
+      checkedAt: new Date().toISOString(),
+      verdict: verdict.status,
+      detail: verdict.detail,
+    };
+    if (verdict.status === "fail") {
+      throw new Error(`响度检查没通过，没有交付：${verdict.detail}`);
+    }
+
     job.filePath = outFile;
     job.fileName = renderFileName(job.manifest.title);
     job.bytes = info.size;
@@ -467,6 +595,7 @@ function publicJob(job: RenderJob): Record<string, unknown> {
     bytes: job.bytes,
     remoteSkipped: job.remoteSkipped,
     placeholders: job.placeholders,
+    loudness: job.loudness,
     error: job.error,
   };
 }

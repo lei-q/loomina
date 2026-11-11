@@ -162,6 +162,62 @@ describe("成片渲染清单（E6）", () => {
     expect(acknowledged.ok).toBe(true);
   });
 
+  it("配乐床：默认 ducking / loop，时间必须落在成片内", () => {
+    const ok = validateRenderManifest(
+      manifest({
+        music: [{ audio: "data:audio/mpeg;base64,SUQz", startMs: 0, endMs: 1000 }],
+      }),
+    );
+    expect(ok.ok).toBe(true);
+    if (!ok.ok) return;
+    expect(ok.manifest.music[0]).toMatchObject({
+      startMs: 0,
+      endMs: 1000,
+      gainDb: -18,
+      duckDb: 15,
+      ducking: true,
+      loop: true,
+    });
+
+    expect(
+      validateRenderManifest(
+        manifest({ music: [{ audio: "data:audio/mpeg;base64,SUQz", startMs: 0, endMs: 1200 }] }),
+      ).ok,
+    ).toBe(false);
+    expect(
+      validateRenderManifest(
+        manifest({
+          music: [{ audio: "data:audio/mpeg;base64,SUQz", startMs: 0, endMs: 1000, duckDb: 20 }],
+        }),
+      ).ok,
+    ).toBe(false);
+    expect(
+      validateRenderManifest(
+        manifest({
+          music: [{ audio: "data:audio/mpeg;base64,SUQz", startMs: 0, endMs: 1000, gainDb: 6 }],
+        }),
+      ).ok,
+    ).toBe(false);
+    expect(
+      validateRenderManifest(
+        manifest({
+          music: [{ audio: "data:image/png;base64,AAAA", startMs: 0, endMs: 1000 }],
+        }),
+      ).ok,
+    ).toBe(false);
+    expect(
+      validateRenderManifest(
+        manifest({
+          music: Array.from({ length: 5 }, () => ({
+            remote: "https://cdn.example.com/a.mp3",
+            startMs: 0,
+            endMs: 1000,
+          })),
+        }),
+      ).ok,
+    ).toBe(false);
+  });
+
   it("文件名去掉路径分隔符", () => {
     expect(renderFileName("夜班 / 第一集")).toBe("夜班-第一集-成片.mp4");
     expect(renderFileName("   ")).toBe("成片-成片.mp4");

@@ -1433,3 +1433,154 @@ describe("时间线（ADR-0086）", () => {
     ).toThrow(/时长/);
   });
 });
+
+describe("配乐（C4 / C12）", () => {
+  const musicAsset = {
+    id: "a-music-bed",
+    kind: "audio" as const,
+    source: "upload" as const,
+    uri: "data:audio/mpeg;base64,SUQz",
+    mime: "audio/mpeg",
+    durationMs: 30_000,
+    createdAt: AT,
+  };
+
+  const cue = {
+    id: "mc-1",
+    assetId: musicAsset.id,
+    title: "夜班主题",
+    mood: "克制",
+    startMs: 0,
+    durationMs: 6000,
+    gainDb: -18,
+    duckDb: 15,
+    ducking: true,
+    loop: true,
+    licenseRef: "自有素材",
+  };
+
+  function withMusic(): Project {
+    return rebuild([
+      created(load()),
+      { type: "asset.updated", at: AT, asset: musicAsset },
+    ]);
+  }
+
+  it("整条替换：重放后与写入一致，清空也走同一条事件", () => {
+    const project = withMusic();
+    const events: ProjectEvent[] = [
+      created(load()),
+      { type: "asset.updated", at: AT, asset: musicAsset },
+      { type: "timeline.music.updated", at: AT, music: [cue] },
+    ];
+    const next = rebuild(events);
+    expect(next.timeline.music).toEqual([cue]);
+    expect(rebuild(events)).toEqual(next);
+
+    const cleared = applyEvent(next, {
+      type: "timeline.music.updated",
+      at: AT,
+      music: [],
+    });
+    expect(cleared.timeline.music).toEqual([]);
+    expect(cleared.timeline.items).toEqual(project.timeline.items);
+  });
+
+  it("换 take 不顺手清掉配乐", () => {
+    const project = withMusic();
+    const withCue = applyEvent(project, {
+      type: "timeline.music.updated",
+      at: AT,
+      music: [cue],
+    });
+    const reordered = applyEvent(withCue, {
+      type: "timeline.updated",
+      at: AT,
+      items: [
+        { id: "ti-2", shotId: "sh-2", takeId: "take-2", startMs: 0, durationMs: 3500 },
+        { id: "ti-1", shotId: "sh-1", takeId: "take-1", startMs: 3500, durationMs: 2500 },
+      ],
+    });
+    expect(reordered.timeline.music).toEqual([cue]);
+  });
+
+  it("必须挂到存在的音频资产；图片与不存在的资产都拒绝", () => {
+    const project = withMusic();
+    const imageId = project.assets.find((asset) => asset.kind === "image")!.id;
+    expect(() =>
+      applyEvent(project, {
+        type: "timeline.music.updated",
+        at: AT,
+        music: [{ ...cue, assetId: imageId }],
+      }),
+    ).toThrow(/没有挂到音频资产/);
+    expect(() =>
+      applyEvent(project, {
+        type: "timeline.music.updated",
+        at: AT,
+        music: [{ ...cue, assetId: "a-nope" }],
+      }),
+    ).toThrow(/没有挂到音频资产/);
+  });
+
+  it("授权备注不能空着", () => {
+    const project = withMusic();
+    expect(() =>
+      applyEvent(project, {
+        type: "timeline.music.updated",
+        at: AT,
+        music: [{ ...cue, licenseRef: "   " }],
+      }),
+    ).toThrow(/缺少授权备注/);
+  });
+
+  it("id 不得重复，起点必须在成片之内", () => {
+    const project = withMusic();
+    expect(() =>
+      applyEvent(project, {
+        type: "timeline.music.updated",
+        at: AT,
+        music: [cue, { ...cue }],
+      }),
+    ).toThrow(/重复/);
+    expect(() =>
+      applyEvent(project, {
+        type: "timeline.music.updated",
+        at: AT,
+        music: [{ ...cue, startMs: 6000 }],
+      }),
+    ).toThrow(/成片之外/);
+  });
+
+  it("起点、时长、增益与 ducking 深度都按混音口径卡住", () => {
+    const project = withMusic();
+    expect(() =>
+      applyEvent(project, {
+        type: "timeline.music.updated",
+        at: AT,
+        music: [{ ...cue, startMs: -1 }],
+      }),
+    ).toThrow(/起点不合法/);
+    expect(() =>
+      applyEvent(project, {
+        type: "timeline.music.updated",
+        at: AT,
+        music: [{ ...cue, durationMs: 0 }],
+      }),
+    ).toThrow(/时长不合法/);
+    expect(() =>
+      applyEvent(project, {
+        type: "timeline.music.updated",
+        at: AT,
+        music: [{ ...cue, gainDb: 3 }],
+      }),
+    ).toThrow(/增益/);
+    expect(() =>
+      applyEvent(project, {
+        type: "timeline.music.updated",
+        at: AT,
+        music: [{ ...cue, duckDb: 20 }],
+      }),
+    ).toThrow(/ducking/);
+  });
+});

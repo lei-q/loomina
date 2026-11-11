@@ -1,0 +1,246 @@
+import { describe, expect, it } from "vitest";
+import {
+  LOUDNESS_TARGET,
+  buildAudioMixCommand,
+  duckVolumeExpression,
+  loudnessVerdict,
+  loudnormFilter,
+  mergeIntervals,
+  parseLoudnessJson,
+  parsePhaseMeter,
+} from "./render-audio";
+
+describe("混音（C12）", () => {
+  it("合并重叠与一口气的台词窗，远处的窗保持分开", () => {
+    expect(
+      mergeIntervals([
+        { startMs: 0, endMs: 1000 },
+        { startMs: 900, endMs: 2000 },
+        { startMs: 2400, endMs: 3000 },
+        { startMs: 5000, endMs: 6000 },
+      ]),
+    ).toEqual([
+      { startMs: 0, endMs: 3000 },
+      { startMs: 5000, endMs: 6000 },
+    ]);
+  });
+
+  it("空窗与非法窗被丢掉", () => {
+    expect(
+      mergeIntervals([
+        { startMs: 1000, endMs: 1000 },
+        { startMs: 3000, endMs: 2000 },
+        { startMs: Number.NaN, endMs: 4000 },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("不 ducking 时只有基础增益", () => {
+    expect(duckVolumeExpression([{ startMs: 0, endMs: 1000 }], -18, 15, false)).toBe(
+      "0.125893",
+    );
+  });
+
+  it("没有台词窗时也只有基础增益", () => {
+    expect(duckVolumeExpression([], -18, 15)).toBe("0.125893");
+  });
+
+  it("台词窗里按 duckDb 压低，两侧留斜坡", () => {
+    const expression = duckVolumeExpression([{ startMs: 1000, endMs: 3000 }], -18, 15);
+    expect(expression).toContain("0.125893"); // -18 dB 基础增益
+    expect(expression).toContain("0.177828"); // 压 15 dB
+    expect(expression).toContain("lt(t,0.800)"); // 提前 200 ms 起坡
+    expect(expression).toContain("lt(t,3.300)"); // 之后 300 ms 抬回
+    expect(expression.startsWith("0.125893*")).toBe(true);
+  });
+
+  it("两个台词窗各乘一层，压深与增益互不影响", () => {
+    const expression = duckVolumeExpression(
+      [
+        { startMs: 0, endMs: 1000 },
+        { startMs: 4000, endMs: 5000 },
+      ],
+      -12,
+      18,
+    );
+    expect(expression).toContain("0.251189"); // -12 dB
+    expect(expression).toContain("0.125893"); // 压 18 dB
+    expect(expression.match(/if\(lt\(t,-?[0-9.]+\),1,/g)).toHaveLength(2);
+    expect(expression).toContain("lt(t,-0.200)");
+    expect(expression).toContain("lt(t,3.800)");
+  });
+
+  it("混音命令：对白与循环配乐分别入轨，输出 PCM wav", () => {
+    const args = buildAudioMixCommand({
+      dialogue: [{ path: "/tmp/dlg1.m4a", startMs: 0, durationMs: 2000 }],
+      music: [
+        {
+          path: "/tmp/music.mp3",
+          startMs: 0,
+          endMs: 8000,
+          gainDb: -18,
+          duckDb: 15,
+          ducking: true,
+          loop: true,
+        },
+      ],
+      totalMs: 8000,
+      outFile: "/tmp/mix.wav",
+    });
+    expect(args.join(" ")).toContain("-stream_loop -1");
+    expect(args.filter((arg) => arg === "-i")).toHaveLength(2);
+    const filters = args[args.indexOf("-filter_complex") + 1]!;
+    expect(filters).toContain("[0:a]aresample=48000,adelay=0|0");
+    expect(filters).toContain("volume=volume='0.125893*");
+    expect(filters).toContain("[dlgmix][musmix]amix=inputs=2");
+    expect(filters).toContain("atrim=duration=8.000");
+    expect(args).toContain("[aout]");
+    expect(args).toContain("pcm_s16le");
+    expect(args.at(-1)).toBe("/tmp/mix.wav");
+  });
+
+  it("只有配乐时不循环就不加 -stream_loop，单轨走 anull", () => {
+    const args = buildAudioMixCommand({
+      dialogue: [],
+      music: [
+        {
+          path: "/tmp/music.mp3",
+          startMs: 500,
+          endMs: 2500,
+          gainDb: -20,
+          duckDb: 12,
+          ducking: false,
+          loop: false,
+        },
+      ],
+      totalMs: 3000,
+      outFile: "/tmp/mix.wav",
+    });
+    expect(args).not.toContain("-stream_loop");
+    const filters = args[args.indexOf("-filter_complex") + 1]!;
+    expect(filters).toContain("[0:a]aresample=48000");
+    expect(filters).toContain("adelay=500|500");
+    expect(filters).toContain("[mus0]anull[musmix]");
+    expect(filters).toContain("[musmix]apad,atrim=duration=3.000");
+  });
+
+  it("没有任何音轨时补一段等长静音", () => {
+    const args = buildAudioMixCommand({
+      dialogue: [],
+      music: [],
+      totalMs: 4000,
+      outFile: "/tmp/mix.wav",
+    });
+    expect(args.join(" ")).toContain("anullsrc=r=48000:cl=stereo");
+    const filters = args[args.indexOf("-filter_complex") + 1]!;
+    expect(filters).toContain("atrim=duration=4.000");
+  });
+});
+
+describe("响度（C12）", () => {
+  const measured = {
+    inputI: -22.4,
+    inputTp: -4.1,
+    inputLra: 3.2,
+    inputThresh: -32.7,
+    targetOffset: 0.12,
+  };
+
+  it("量到值后线性归一，目标 −14 LUFS / −1.5 dBTP", () => {
+    const filter = loudnormFilter(measured);
+    expect(filter).toContain(`I=${LOUDNESS_TARGET.integratedLufs}`);
+    expect(filter).toContain(`TP=${LOUDNESS_TARGET.loudnormTruePeakDb}`);
+    expect(filter).toContain("measured_I=-22.4");
+    expect(filter).toContain("measured_TP=-4.1");
+    expect(filter).toContain("measured_LRA=3.2");
+    expect(filter).toContain("measured_thresh=-32.7");
+    expect(filter).toContain("offset=0.12");
+    expect(filter).toContain("linear=true");
+  });
+
+  it("没量到就退回动态 loudnorm，不编 measured 值", () => {
+    const filter = loudnormFilter(null);
+    expect(filter).toBe("loudnorm=I=-14:TP=-1.5:LRA=11");
+    expect(filter).not.toContain("measured_I");
+  });
+
+  it("从 stderr 里取最后一个 loudnorm JSON", () => {
+    const stderr = [
+      "[Parsed_loudnorm_0 @ 0x1] {",
+      '  "input_i" : "-70.00",',
+      '  "input_tp" : "-70.00"',
+      "}",
+      "some noise",
+      "{",
+      '  "input_i" : "-22.40",',
+      '  "input_tp" : "-4.10",',
+      '  "input_lra" : "3.20",',
+      '  "input_thresh" : "-32.70",',
+      '  "target_offset" : "0.12"',
+      "}",
+    ].join("\n");
+    expect(parseLoudnessJson(stderr)).toEqual(measured);
+  });
+
+  it("JSON 里的 -inf 当作没量到", () => {
+    const parsed = parseLoudnessJson('{"input_i":"-inf","input_tp":"-inf"}');
+    expect(parsed).toEqual({
+      inputI: null,
+      inputTp: null,
+      inputLra: null,
+      inputThresh: null,
+      targetOffset: null,
+    });
+    expect(parseLoudnessJson("no json here")).toBeNull();
+  });
+
+  it("反相与单声道时长换算成毫秒", () => {
+    const stderr = [
+      "[Parsed_aphasemeter_2 @ 0x1] out_phase_duration: 0.512",
+      "[Parsed_aphasemeter_2 @ 0x1] mono_duration: 8.000",
+    ].join("\n");
+    expect(parsePhaseMeter(stderr)).toEqual({ outOfPhaseMs: 512, monoMs: 8000 });
+    expect(parsePhaseMeter("")).toEqual({ outOfPhaseMs: null, monoMs: null });
+  });
+
+  it("达标算通过，明细写清量到的数值", () => {
+    const verdict = loudnessVerdict({
+      integratedLufs: -14.2,
+      truePeakDb: -1.4,
+      outOfPhaseMs: 0,
+    });
+    expect(verdict.status).toBe("pass");
+    expect(verdict.detail).toContain("-14.2 LUFS");
+  });
+
+  it("响度或真峰值不达标即失败", () => {
+    expect(
+      loudnessVerdict({ integratedLufs: -18.6, truePeakDb: -1.2, outOfPhaseMs: 0 }).status,
+    ).toBe("fail");
+    expect(
+      loudnessVerdict({ integratedLufs: -14.0, truePeakDb: -0.2, outOfPhaseMs: 0 }).status,
+    ).toBe("fail");
+    expect(
+      loudnessVerdict({ integratedLufs: -14.0, truePeakDb: null, outOfPhaseMs: 0 }).status,
+    ).toBe("fail");
+  });
+
+  it("反相超过半秒只提示复核，不冒充不合格", () => {
+    const verdict = loudnessVerdict({
+      integratedLufs: -14.3,
+      truePeakDb: -1.6,
+      outOfPhaseMs: 900,
+    });
+    expect(verdict.status).toBe("review");
+    expect(verdict.detail).toContain("0.9 秒反相");
+  });
+
+  it("量不到集成响度就写未测", () => {
+    const verdict = loudnessVerdict({
+      integratedLufs: null,
+      truePeakDb: null,
+      outOfPhaseMs: null,
+    });
+    expect(verdict.status).toBe("unmeasured");
+  });
+});

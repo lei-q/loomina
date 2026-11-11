@@ -27,6 +27,15 @@ import {
 } from "@/lib/compliance";
 import { shotLabel, spendOf, toStageView } from "@/lib/read-model";
 import { exportMp4 } from "@/lib/render-client";
+import type { LoudnessReport } from "@/lib/render-audio";
+import {
+  PLATFORM_SPECS,
+  PLATFORM_SPEC_VERSION,
+  platformSpecOf,
+  validatePlatform,
+  type PlatformCheck,
+  type PlatformId,
+} from "@/lib/platforms";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
 
@@ -40,11 +49,93 @@ function fmtSec(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+const AUDIO_MIME: Record<string, string> = {
+  mp3: "audio/mpeg",
+  m4a: "audio/mp4",
+  aac: "audio/aac",
+  wav: "audio/wav",
+  ogg: "audio/ogg",
+  webm: "audio/webm",
+};
+
+/** 本地音乐读成 data URI，并量出真实时长；读不出时长就不收 */
+function readMusicFile(file: File): Promise<{
+  uri: string;
+  mime: string;
+  durationMs: number;
+}> {
+  const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+  const mime = file.type || AUDIO_MIME[extension] || "";
+  if (!mime.startsWith("audio/")) {
+    return Promise.reject(new Error("这不是音频文件：选 mp3 / m4a / wav。"));
+  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("这个文件读不出来。"));
+    reader.onload = () => {
+      const uri = typeof reader.result === "string" ? reader.result : "";
+      if (!uri.startsWith("data:audio/")) {
+        reject(new Error("这个文件读不成音频 data URI。"));
+        return;
+      }
+      const audio = new Audio();
+      const timer = window.setTimeout(() => {
+        audio.removeAttribute("src");
+        reject(new Error("读不出音频时长：换一个文件，或先转成 mp3。"));
+      }, 10_000);
+      audio.preload = "metadata";
+      audio.onloadedmetadata = () => {
+        window.clearTimeout(timer);
+        const durationMs = Math.round(audio.duration * 1000);
+        audio.removeAttribute("src");
+        if (!Number.isFinite(durationMs) || durationMs < 500) {
+          reject(new Error("这条音频太短或时长读不出来。"));
+          return;
+        }
+        resolve({ uri, mime, durationMs });
+      };
+      audio.onerror = () => {
+        window.clearTimeout(timer);
+        reject(new Error("浏览器解不开这条音频：换 mp3 / m4a / wav 再试。"));
+      };
+      audio.src = uri;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 const CHECK_STATUS: Record<ComplianceCheck["status"], string> = {
   pass: "通过",
   review: "需确认",
   block: "未通过",
 };
+
+function PlatformRow({ check }: { check: PlatformCheck }) {
+  return (
+    <li className="flex items-start gap-2 border-b border-line py-1.5 last:border-b-0">
+      <span
+        aria-hidden
+        className={cn(
+          "mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full",
+          check.status === "pass"
+            ? "bg-line-2"
+            : check.status === "review"
+              ? "bg-muted"
+              : "bg-pick",
+        )}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <span className="text-[9.5px] text-text">{check.label}</span>
+          {check.reference && (
+            <span className="text-[8px] tracking-[.06em] text-muted-2">参考</span>
+          )}
+        </div>
+        <p className="mt-0.5 text-[8.5px] leading-[1.6] text-muted-2">{check.detail}</p>
+      </div>
+    </li>
+  );
+}
 
 function CheckRow({ check }: { check: ComplianceCheck }) {
   return (
@@ -92,6 +183,9 @@ export function EditScreen() {
   const editError = useWorkbench((state) => state.editError);
   const autoCutTimeline = useWorkbench((state) => state.autoCutTimeline);
   const setTimelineTake = useWorkbench((state) => state.setTimelineTake);
+  const addMusic = useWorkbench((state) => state.addMusic);
+  const updateMusic = useWorkbench((state) => state.updateMusic);
+  const removeMusic = useWorkbench((state) => state.removeMusic);
   const setBudget = useWorkbench((state) => state.setBudget);
 
   useEffect(() => {
@@ -107,9 +201,23 @@ export function EditScreen() {
   const [title, setTitle] = useState(project.title);
   const [description, setDescription] = useState("");
   const [topics, setTopics] = useState("短剧,AI创作");
+  const [platform, setPlatform] = useState<PlatformId>("douyin");
   const [notice, setNotice] = useState("");
   const [rendering, setRendering] = useState(false);
   const [renderStage, setRenderStage] = useState("");
+  const [loudness, setLoudness] = useState<LoudnessReport>();
+  const [musicFile, setMusicFile] = useState<{
+    name: string;
+    size: number;
+    uri: string;
+    mime: string;
+    durationMs: number;
+  }>();
+  const [musicMood, setMusicMood] = useState("紧张");
+  const [musicLicense, setMusicLicense] = useState("");
+  const [musicBusy, setMusicBusy] = useState(false);
+  const [musicError, setMusicError] = useState("");
+  const musicPreviewRef = useRef<HTMLAudioElement>(null);
   /** 确认的是哪一版预检：文案一改，指纹变，确认自动失效 */
   const [ackSignature, setAckSignature] = useState<string>();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -128,8 +236,22 @@ export function EditScreen() {
         description,
         topics,
         durationMs: view.totalMs,
+        platform,
       }),
-    [project, title, description, topics, view.totalMs],
+    [project, title, description, topics, view.totalMs, platform],
+  );
+  const platformValidation = useMemo(
+    () =>
+      validatePlatform(platformSpecOf(platform), {
+        durationMs: view.totalMs,
+        width: 1080,
+        height: 1920,
+        fps: 30,
+        codec: "H.264",
+        title,
+        topics: topics.split(/[,，\s]+/).filter(Boolean),
+      }),
+    [platform, view.totalMs, title, topics],
   );
   const acknowledged = report.review > 0 && ackSignature === report.signature;
   const gateOpen = report.ok && (report.review === 0 || acknowledged);
@@ -214,8 +336,64 @@ export function EditScreen() {
     seekTo(0);
   };
 
-  const exportPreview = () => {
-    if (!gateOpen) {
+  const chooseMusic = async (file: File | undefined) => {
+    if (!file) return;
+    setMusicBusy(true);
+    setMusicError("");
+    try {
+      if (file.size > 18 * 1024 * 1024) {
+        throw new Error("文件超过 18 MB：换一段短一点的配乐。");
+      }
+      const result = await readMusicFile(file);
+      setMusicFile({ name: file.name, size: file.size, ...result });
+    } catch (error) {
+      setMusicFile(undefined);
+      setMusicError(error instanceof Error ? error.message : "这条音乐读不进来。");
+    } finally {
+      setMusicBusy(false);
+    }
+  };
+
+  const commitMusic = () => {
+    if (!musicFile) {
+      setMusicError("先选一个音频文件。");
+      return;
+    }
+    if (!musicLicense.trim()) {
+      setMusicError("写清授权来源：曲库名、授权书编号，或「自己录制」。");
+      return;
+    }
+    const ok = addMusic({
+      uri: musicFile.uri,
+      mime: musicFile.mime,
+      title: musicFile.name.replace(/\.[^.]+$/, ""),
+      mood: musicMood,
+      durationMs: musicFile.durationMs,
+      licenseRef: musicLicense,
+    });
+    if (ok) {
+      setMusicFile(undefined);
+      setMusicLicense("");
+      setMusicError("");
+      setNotice("配乐已加入：导出时会按台词窗自动 ducking。");
+    }
+  };
+
+  const toggleMusicPreview = () => {
+    const element = musicPreviewRef.current;
+    const cue = view.music[0];
+    if (!element || !cue?.uri) return;
+    if (element.paused) {
+      if (element.src !== cue.uri) element.src = cue.uri;
+      element.currentTime = 0;
+      element.volume = Math.pow(10, cue.gainDb / 20);
+      void element.play().catch(() => setMusicError("浏览器没能播放这条音乐。"));
+    } else {
+      element.pause();
+    }
+  };
+
+  const exportPreview = () => {    if (!gateOpen) {
       setNotice(gateReason);
       return;
     }
@@ -246,6 +424,8 @@ export function EditScreen() {
       const notes: string[] = [];
       if (result.placeholders > 0) notes.push(`${result.placeholders} 个片段用占位图`);
       if (result.remoteSkipped > 0) notes.push(`${result.remoteSkipped} 个远端素材没下载`);
+      setLoudness(result.loudness);
+      if (result.loudness) notes.push(result.loudness.detail);
       setNotice(
         `成片已导出：${mb} MB · 1080×1920 · 带字幕与「AI 生成」角标${
           notes.length > 0 ? `。${notes.join("；")}` : ""
@@ -293,6 +473,7 @@ export function EditScreen() {
       topics: topics.split(/[,，\s]+/),
       style: styleId,
       kind: "draft",
+      platform,
       compliance: renderComplianceOf(report, acknowledged),
     });
     downloadFile(
@@ -712,6 +893,235 @@ export function EditScreen() {
                   </section>
                 )}
 
+                <section aria-label="配乐" className="mt-5 border-t border-line pt-4">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <h2 className="text-[11px] tracking-[.06em] text-text">配乐</h2>
+                    <span className="text-[8.5px] tracking-[.06em] text-muted-2">C4 · C12</span>
+                  </div>
+
+                  {view.music.length === 0 ? (
+                    <>
+                      <p className="mt-1 text-[9.5px] leading-[1.7] text-muted-2">
+                        选一条自己有权使用的音乐。加入后默认循环铺满全片，台词出现时自动压低
+                        15 dB；整片混音会归一到 −14 LUFS。
+                      </p>
+                      <div className="mt-2 flex flex-wrap items-end gap-2">
+                        <label className="flex min-w-[180px] flex-1 flex-col gap-1 text-[9.5px] text-muted-2">
+                          音乐文件
+                          <input
+                            type="file"
+                            accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg"
+                            disabled={Boolean(readOnly) || musicBusy}
+                            onChange={(event) => {
+                              const file = event.target.files?.[0];
+                              void chooseMusic(file);
+                              event.target.value = "";
+                            }}
+                            className="rounded-token border border-line bg-transparent px-2 py-1 text-[10px] text-muted file:mr-2 file:rounded-token file:border-0 file:bg-line file:px-2 file:py-0.5 file:text-[9.5px] file:text-text"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1 text-[9.5px] text-muted-2">
+                          情绪
+                          <select
+                            value={musicMood}
+                            onChange={(event) => setMusicMood(event.target.value)}
+                            className="rounded-token border border-line bg-transparent px-1.5 py-1 text-[10px] text-text focus:border-line-2 focus:outline-none"
+                          >
+                            {["紧张", "悬疑", "温柔", "悲伤", "燃", "轻松"].map((mood) => (
+                              <option key={mood} value={mood} className="bg-surface">
+                                {mood}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-end gap-2">
+                        <label className="flex min-w-[200px] flex-1 flex-col gap-1 text-[9.5px] text-muted-2">
+                          授权来源（必填）
+                          <input
+                            value={musicLicense}
+                            onChange={(event) => setMusicLicense(event.target.value)}
+                            placeholder="例如：Artlist 授权 / 授权书 2026-11-01 / 自己录制"
+                            className="rounded-token border border-line bg-transparent px-2 py-1 text-[10px] text-text focus:border-line-2 focus:outline-none"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={commitMusic}
+                          disabled={
+                            Boolean(readOnly) ||
+                            musicBusy ||
+                            !musicFile ||
+                            !musicLicense.trim()
+                          }
+                          className="rounded-token border border-line px-3 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          加入配乐
+                        </button>
+                      </div>
+                      {musicFile && (
+                        <p className="mt-1 text-[9px] text-muted">
+                          已读入 {musicFile.name} · {fmtSec(musicFile.durationMs)} ·{" "}
+                          {(musicFile.size / 1024 / 1024).toFixed(1)} MB
+                        </p>
+                      )}
+                      {musicBusy && (
+                        <p className="mt-1 text-[9px] text-muted-2">正在读音频与时长…</p>
+                      )}
+                      {musicError && (
+                        <p className="mt-1 text-[9px] leading-[1.6] text-pick">{musicError}</p>
+                      )}
+                      <p className="mt-1 text-[8.5px] leading-[1.6] text-muted-2">
+                        mp3 / m4a / wav / ogg，≤ 18 MB。没有授权来源的音乐不会进项目；
+                        上传素材在导出前检查里还会再要求确认一次。
+                      </p>
+                    </>
+                  ) : (
+                    view.music.map((cue) => (
+                      <div key={cue.id} className="mt-2 rounded-token border border-line p-2.5">
+                        <div className="flex flex-wrap items-baseline justify-between gap-2">
+                          <span className="min-w-0 flex-1 truncate text-[10.5px] text-text">
+                            {cue.title}
+                          </span>
+                          <span className="text-[8.5px] text-muted-2">
+                            {cue.assetDurationMs ? fmtSec(cue.assetDurationMs) : "时长未知"} ·{" "}
+                            {cue.loop ? "循环铺满" : "只播一遍"} · 全片 {fmtSec(cue.durationMs)}
+                          </span>
+                        </div>
+                        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                          <label className="flex items-center gap-2 text-[9.5px] text-muted-2">
+                            基准增益
+                            <input
+                              type="range"
+                              min={-40}
+                              max={0}
+                              step={1}
+                              value={cue.gainDb}
+                              disabled={Boolean(readOnly)}
+                              onChange={(event) =>
+                                updateMusic({ gainDb: Number(event.target.value) })
+                              }
+                              className="min-w-0 flex-1 accent-[var(--pick)]"
+                            />
+                            <span className="tnum w-[42px] text-right text-[9px] text-muted">
+                              {cue.gainDb} dB
+                            </span>
+                          </label>
+                          <label className="flex items-center gap-2 text-[9.5px] text-muted-2">
+                            台词下压低
+                            <input
+                              type="range"
+                              min={12}
+                              max={18}
+                              step={1}
+                              value={cue.duckDb}
+                              disabled={Boolean(readOnly) || !cue.ducking}
+                              onChange={(event) =>
+                                updateMusic({ duckDb: Number(event.target.value) })
+                              }
+                              className="min-w-0 flex-1 accent-[var(--pick)]"
+                            />
+                            <span className="tnum w-[42px] text-right text-[9px] text-muted">
+                              {cue.duckDb} dB
+                            </span>
+                          </label>
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-3">
+                          <label className="flex cursor-pointer items-center gap-1.5 text-[9.5px] text-muted">
+                            <input
+                              type="checkbox"
+                              checked={cue.ducking}
+                              disabled={Boolean(readOnly)}
+                              onChange={(event) => updateMusic({ ducking: event.target.checked })}
+                              className="accent-[var(--pick)]"
+                            />
+                            台词下自动 ducking
+                          </label>
+                          <label className="flex items-center gap-1.5 text-[9.5px] text-muted-2">
+                            情绪
+                            <select
+                              value={cue.mood}
+                              disabled={Boolean(readOnly)}
+                              onChange={(event) => updateMusic({ mood: event.target.value })}
+                              className="rounded-token border border-line bg-transparent px-1 py-0.5 text-[9.5px] text-text focus:border-line-2 focus:outline-none"
+                            >
+                              {["", "紧张", "悬疑", "温柔", "悲伤", "燃", "轻松"].map((mood) => (
+                                <option key={mood || "none"} value={mood} className="bg-surface">
+                                  {mood || "未标"}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={toggleMusicPreview}
+                            className="rounded-token border border-line px-2 py-0.5 text-[9.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                          >
+                            试听
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              removeMusic();
+                              setLoudness(undefined);
+                            }}
+                            disabled={Boolean(readOnly)}
+                            className="rounded-token border border-line px-2 py-0.5 text-[9.5px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-pick enabled:hover:text-pick disabled:opacity-40"
+                          >
+                            移除
+                          </button>
+                          <audio ref={musicPreviewRef} className="hidden" />
+                        </div>
+                        <p className="mt-1.5 text-[8.5px] leading-[1.6] text-muted-2">
+                          授权：{cue.licenseRef} · 导出时混音总线归一到 −14 LUFS，真峰值目标 ≤ −1
+                          dBTP。
+                        </p>
+                      </div>
+                    ))
+                  )}
+
+                  {loudness && (
+                    <div className="mt-2 rounded-token border border-line bg-surface/60 px-2.5 py-2">
+                      <div className="flex flex-wrap items-baseline gap-2">
+                        <span className="text-[9.5px] text-text">上次成片响度实测</span>
+                        <span
+                          className={cn(
+                            "text-[8.5px] tracking-[.06em]",
+                            loudness.verdict === "pass"
+                              ? "text-muted-2"
+                              : loudness.verdict === "fail"
+                                ? "text-pick"
+                                : "text-muted",
+                          )}
+                        >
+                          {loudness.verdict === "pass"
+                            ? "达标"
+                            : loudness.verdict === "review"
+                              ? "需人工试听"
+                              : loudness.verdict === "unmeasured"
+                                ? "未测"
+                                : "未达标"}
+                        </span>
+                        <span className="tnum ml-auto text-[8.5px] text-muted-2">
+                          {loudness.integratedLufs === null
+                            ? "LUFS 未测"
+                            : `${loudness.integratedLufs.toFixed(1)} LUFS`}
+                          {" · "}
+                          {loudness.truePeakDb === null
+                            ? "真峰值未测"
+                            : `${loudness.truePeakDb.toFixed(1)} dBTP`}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[8.5px] leading-[1.6] text-muted-2">
+                        {loudness.detail}
+                        {loudness.monoMs !== null && loudness.monoMs > 0
+                          ? `；检出单声道 / 近单声道 ${(loudness.monoMs / 1000).toFixed(1)} 秒`
+                          : ""}
+                      </p>
+                    </div>
+                  )}
+                </section>
+
                 <section aria-label="导出" className="mt-6 border-t border-line pt-4">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <h2 className="text-[11px] tracking-[.06em] text-text">导出</h2>
@@ -729,6 +1139,53 @@ export function EditScreen() {
                         ))}
                       </select>
                     </label>
+                  </div>
+
+                  <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(160px,1fr)_auto]">
+                    <label className="flex flex-col gap-1 text-[9.5px] text-muted-2">
+                      目标平台
+                      <select
+                        value={platform}
+                        onChange={(event) => setPlatform(event.target.value as PlatformId)}
+                        className="rounded-token border border-line bg-transparent px-2 py-1 text-[10.5px] text-text focus:border-line-2 focus:outline-none"
+                      >
+                        {PLATFORM_SPECS.map((spec) => (
+                          <option key={spec.id} value={spec.id} className="bg-surface">
+                            {spec.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="flex items-end">
+                      <span className="pb-1.5 text-[8.5px] tracking-[.06em] text-muted-2">
+                        规格库 {PLATFORM_SPEC_VERSION} · 发布包会记下这一版
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="mt-2 rounded-token border border-line bg-surface/60 p-3">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <h3 className="text-[10.5px] tracking-[.06em] text-text">平台规格</h3>
+                      <span
+                        className={cn(
+                          "tnum text-[9px]",
+                          platformValidation.ok ? "text-muted-2" : "text-pick",
+                        )}
+                      >
+                        {platformValidation.ok
+                          ? `${platformValidation.review} 项参考提醒 · 画幅 / 时长 / 编码通过`
+                          : `${platformValidation.blocked} 项硬阻断`}
+                      </span>
+                    </div>
+                    <ul className="mt-1.5 border-t border-line">
+                      {platformValidation.checks.map((check) => (
+                        <PlatformRow key={check.id} check={check} />
+                      ))}
+                    </ul>
+                    <p className="mt-1.5 text-[8.5px] leading-[1.6] text-muted-2">
+                      {platformValidation.spec.note} 只有画幅、时长上限、编码与帧率会硬拦；
+                      标题字数、话题数量、码率与封面是参考值，平台随时会改。
+                    </p>
                   </div>
 
                   <div className="mt-2 grid gap-2 sm:grid-cols-2">
