@@ -103,6 +103,74 @@ export type BeatSpan = {
   hasEmotion: boolean;
 };
 
+/**
+ * 节拍摘要（A11）：一拍一行，回答「这一拍在干什么、用了多少时间」。
+ *
+ * 只是把已有的 `BeatSpan` 读成一句话，不新增事实：顺序、占比、缺什么
+ * 都能从 span 本身算出来。独立 Beat 实体与 Beat 级成本仍不做（见 ADR-0115）。
+ */
+export type BeatDigestLine = {
+  id: string;
+  kind: BeatKind;
+  label: string;
+  task: string;
+  sceneLabel: string;
+  shotNos: number[];
+  shotCount: number;
+  seconds: number;
+  /** 占全片时长的百分比，四舍五入到整数 */
+  sharePct: number;
+  covered: boolean;
+  /** 缺哪一类镜头；都齐时为 null */
+  missing: "information" | "emotion" | null;
+};
+
+export type BeatDigest = {
+  lines: BeatDigestLine[];
+  totalSeconds: number;
+  count: number;
+  /** 覆盖的拍数 */
+  covered: number;
+  /** 用时最长的一拍；没有拍时为 undefined */
+  longest?: BeatDigestLine;
+  /** 按顺序连起来的节拍名，例如「钩子 → 铺垫 → 升级」 */
+  arc: string;
+};
+
+export function digestBeats(beats: BeatSpan[]): BeatDigest {
+  const totalMs = beats.reduce((sum, beat) => sum + beat.durationMs, 0);
+  const lines: BeatDigestLine[] = beats.map((beat) => {
+    const covered = beat.hasInformation && beat.hasEmotion;
+    return {
+      id: beat.id,
+      kind: beat.kind,
+      label: BEAT_LABEL[beat.kind],
+      task: BEAT_TASK[beat.kind],
+      sceneLabel: beat.sceneLabel,
+      shotNos: beat.shotNos,
+      shotCount: beat.shotIds.length,
+      seconds: beat.durationMs / 1000,
+      sharePct: totalMs > 0 ? Math.round((beat.durationMs / totalMs) * 100) : 0,
+      covered,
+      missing: covered ? null : beat.hasInformation ? "emotion" : "information",
+    };
+  });
+
+  const longest = lines.reduce<BeatDigestLine | undefined>(
+    (best, line) => (!best || line.seconds > best.seconds ? line : best),
+    undefined,
+  );
+
+  return {
+    lines,
+    totalSeconds: totalMs / 1000,
+    count: lines.length,
+    covered: lines.filter((line) => line.covered).length,
+    longest,
+    arc: lines.map((line) => line.label).join(" → "),
+  };
+}
+
 export type StoryboardRule =
   | "V1"
   | "V2"

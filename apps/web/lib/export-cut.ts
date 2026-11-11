@@ -77,6 +77,71 @@ export function buildSrt(view: EditView): string {
     .join("\n");
 }
 
+// ── ASS（D4）──────────────────────────────────────────────────
+
+function assTime(ms: number): string {
+  // ASS 用「时:分:秒.厘秒」，只保留两位小数
+  const safe = Math.max(0, Math.round(ms));
+  const hours = Math.floor(safe / 3_600_000);
+  const minutes = Math.floor((safe % 3_600_000) / 60_000);
+  const secs = Math.floor((safe % 60_000) / 1000);
+  const centis = Math.floor((safe % 1000) / 10);
+  return `${hours}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}.${String(centis).padStart(2, "0")}`;
+}
+
+/**
+ * ASS 字幕（D4）：与 SRT 同一份 cue，带样式头。
+ *
+ * 样式按成片页的字幕档位换算：字号用画面高度的百分比，
+ * ASS 里 PlayResX/Y 设成成片尺寸，两边的比例才对得上。
+ */
+export function buildAss(view: EditView, styleId: SubtitleStyleId = "default"): string {
+  const style = SUBTITLE_STYLES[styleId];
+  const width = 1080;
+  const height = 1920;
+  // cqw 是「画面宽度的百分比」；ASS 的 Fontsize 以 PlayResY 为基准，换算到高度上
+  const fontSize = Math.round((style.fontSizeCqw / 100) * width * (height / width));
+  const marginV = Math.round((style.bottomPct / 100) * height);
+  const outline = Math.max(1, Math.round((style.strokeCqw / 100) * width));
+  const marginH = Math.round((SAFE_AREA.sidePct / 100) * width);
+
+  const cues = view.cues
+    .filter((cue) => cue.text.trim().length > 0)
+    .map((cue) => ({
+      startMs: cue.startMs,
+      endMs: cue.startMs + cue.durationMs,
+      text: cue.text.trim(),
+    }))
+    .sort((a, b) => a.startMs - b.startMs);
+
+  const header = `[Script Info]
+; 织光机 Loomina · ASS 字幕（D4）
+; AI 生成内容：本片由 AI 生成（${AI_LABEL.standard}）
+Title: ${view.title}
+ScriptType: v4.00+
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+PlayResX: ${width}
+PlayResY: ${height}
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,PingFang SC,${fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,-1,0,0,0,100,100,1,0,1,${outline},0,2,${marginH},${marginH},${marginV},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+`;
+
+  const events = cues
+    .map(
+      (cue) =>
+        `Dialogue: 0,${assTime(cue.startMs)},${assTime(cue.endMs)},Default,,0,0,0,,${cue.text.replace(/\r?\n/g, "\\N")}`,
+    )
+    .join("\n");
+
+  return `${header}${events}${events ? "\n" : ""}`;
+}
+
 // ── OTIO 时间线 ────────────────────────────────────────────────
 
 const OTIO_RATE = 24;

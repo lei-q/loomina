@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ProjectSchema, type Project } from "@loomina/ir";
 import {
   analyzeStoryboard,
+  digestBeats,
   groupBeats,
   inferBeat,
   inferPurpose,
@@ -157,6 +158,57 @@ describe("覆盖率", () => {
   it("没有镜头时覆盖率是 0，不除零", () => {
     const report = analyzeStoryboard(makeProject([]));
     expect(report.summary).toMatchObject({ shots: 0, beats: 0, coveragePct: 0 });
+  });
+});
+
+describe("节拍摘要（A11 / ADR-0115）", () => {
+  it("一拍一行：镜号、时长、占比、覆盖与缺什么", () => {
+    const project = makeProject([
+      { beat: "hook", purpose: "hook", durationMs: 3000 },
+      { beat: "setup", purpose: "information", durationMs: 2000 },
+      { beat: "setup", purpose: "reaction", durationMs: 1000 },
+      { beat: "turn", purpose: "information", durationMs: 4000 },
+    ]);
+    const digest = digestBeats(analyzeStoryboard(project).beats);
+
+    expect(digest.count).toBe(3);
+    expect(digest.totalSeconds).toBeCloseTo(10, 5);
+    expect(digest.lines.map((line) => line.label)).toEqual(["钩子", "铺垫", "转折"]);
+    expect(digest.arc).toBe("钩子 → 铺垫 → 转折");
+    expect(digest.covered).toBe(1);
+
+    const setup = digest.lines[1]!;
+    expect(setup.shotNos).toEqual([2, 3]);
+    expect(setup.shotCount).toBe(2);
+    expect(setup.seconds).toBeCloseTo(3, 5);
+    expect(setup.sharePct).toBe(30);
+    expect(setup.covered).toBe(true);
+    expect(setup.missing).toBeNull();
+
+    // 转折只有信息镜头，缺情绪
+    expect(digest.lines[2]!.covered).toBe(false);
+    expect(digest.lines[2]!.missing).toBe("emotion");
+  });
+
+  it("缺信息时写「缺信息」，不是笼统的不覆盖", () => {
+    const project = makeProject([{ beat: "setup", purpose: "reaction" }]);
+    const digest = digestBeats(analyzeStoryboard(project).beats);
+    expect(digest.lines[0]!.missing).toBe("information");
+  });
+
+  it("最长的一拍能点出来；没有拍时不编一个", () => {
+    const project = makeProject([
+      { beat: "hook", purpose: "hook", durationMs: 1000 },
+      { beat: "climax", purpose: "emotion", durationMs: 5000 },
+    ]);
+    const digest = digestBeats(analyzeStoryboard(project).beats);
+    expect(digest.longest?.label).toBe("高潮");
+    expect(digest.longest?.sharePct).toBe(83);
+
+    const empty = digestBeats([]);
+    expect(empty.count).toBe(0);
+    expect(empty.longest).toBeUndefined();
+    expect(empty.arc).toBe("");
   });
 });
 

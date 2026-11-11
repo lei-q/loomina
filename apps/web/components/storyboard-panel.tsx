@@ -9,6 +9,7 @@ import {
   PURPOSE_LABEL,
   PURPOSE_TASK,
   analyzeStoryboard,
+  digestBeats,
 } from "@/lib/storyboard";
 import { cn } from "@/lib/utils";
 
@@ -60,6 +61,7 @@ export function StoryboardPanel({
       }),
     [project, quoteAllCny],
   );
+  const digest = useMemo(() => digestBeats(report.beats), [report.beats]);
   const current = report.plans.find((plan) => plan.shotId === currentShotId);
   const planLocked = readOnly || project.shots.find((shot) => shot.id === currentShotId)?.locked === true;
 
@@ -206,6 +208,25 @@ export function StoryboardPanel({
 
           <section className="mt-5">
             <h3 className="text-[10.5px] tracking-[.06em] text-text">节拍</h3>
+            {/* 节拍摘要（A11）：先给一句总览，再逐拍展开 */}
+            {digest.count > 0 && (
+              <div className="mt-1.5 border border-line px-2 py-1.5 text-[9px] leading-[1.7] text-muted-2">
+                <p className="text-muted">
+                  {digest.count} 拍 · 共 {digest.totalSeconds.toFixed(1)}s · 覆盖{" "}
+                  <span className="tnum">
+                    {digest.covered}/{digest.count}
+                  </span>
+                  {digest.longest && (
+                    <>
+                      {" "}
+                      · 最长「{digest.longest.label}」{digest.longest.seconds.toFixed(1)}s（
+                      {digest.longest.sharePct}%）
+                    </>
+                  )}
+                </p>
+                <p className="mt-0.5 break-words">{digest.arc}</p>
+              </div>
+            )}
             <ul className="mt-1.5 border-t border-line">
               {report.beats.map((beat) => {
                 const covered = beat.hasInformation && beat.hasEmotion;

@@ -18,6 +18,7 @@ import {
   buildOtio,
   buildPreviewHtml,
   buildPublishPackage,
+  buildAss,
   buildSrt,
   downloadFile,
   safeFileName,
@@ -494,6 +495,21 @@ export function EditScreen() {
     }
     downloadFile(safeFileName(view.title, "字幕.srt"), buildSrt(view), "text/plain");
     setNotice("字幕已导出（SRT）：时间按初剪的绝对时间。");
+  };
+
+  const exportAss = () => {
+    if (!gateOpen) {
+      setNotice(gateReason);
+      return;
+    }
+    downloadFile(
+      safeFileName(view.title, "字幕.ass"),
+      buildAss(view, styleId),
+      "text/plain",
+    );
+    setNotice(
+      `字幕已导出（ASS）：带「${style.label}」样式，字号与底边距离和成片页一致，剪辑软件里不用再调。`,
+    );
   };
 
   const exportPackage = () => {
@@ -1435,6 +1451,14 @@ export function EditScreen() {
                       className="rounded-token border border-line px-3 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       导出字幕 SRT
+                    </button>
+                    <button
+                      type="button"
+                      onClick={exportAss}
+                      disabled={!gateOpen}
+                      className="rounded-token border border-line px-3 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      导出字幕 ASS
                     </button>
                     <button
                       type="button"

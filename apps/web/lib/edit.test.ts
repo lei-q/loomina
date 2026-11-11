@@ -5,6 +5,7 @@ import {
   buildOtio,
   buildPreviewHtml,
   buildPublishPackage,
+  buildAss,
   buildSrt,
   safeFileName,
 } from "./export-cut";
@@ -119,6 +120,37 @@ describe("导出（E6 / D3 / G1）", () => {
     const blocks = buildSrt(view).trim().split("\n\n");
     expect(blocks).toHaveLength(view.cues.length);
     expect(blocks[0]).toContain(view.cues[0]!.text);
+  });
+
+  it("ASS 带样式头与事件，时间换成厘秒（D4）", () => {
+    const view = toEditView(sampleProject);
+    const ass = buildAss(view);
+    expect(ass).toContain("[Script Info]");
+    expect(ass).toContain("[V4+ Styles]");
+    expect(ass).toContain("PlayResX: 1080");
+    expect(ass).toContain("PlayResY: 1920");
+    // 时间格式是 时:分:秒.厘秒，不是 SRT 的逗号毫秒
+    expect(ass).toMatch(/Dialogue: 0,0:00:00\.00,0:00:02\.60,Default/);
+    expect(ass).toContain(view.cues[0]!.text);
+    expect(ass).not.toContain("-->");
+  });
+
+  it("ASS 的字号与底边距离跟着字幕档位变（D3）", () => {
+    const view = toEditView(sampleProject);
+    const normal = buildAss(view, "default");
+    const large = buildAss(view, "large");
+    const sizeOf = (ass: string) => Number(/^Style: Default,PingFang SC,(\d+),/m.exec(ass)![1]);
+    const marginOf = (ass: string) => Number(/^Style: Default,.*,2,\d+,\d+,(\d+),1$/m.exec(ass)![1]);
+    expect(sizeOf(large)).toBeGreaterThan(sizeOf(normal));
+    // 大字档离底边更远（18% > 14%）
+    expect(marginOf(large)).toBeGreaterThan(marginOf(normal));
+  });
+
+  it("没有台词时 ASS 只有头，没有 Dialogue 行", () => {
+    const view = toEditView(sampleProject);
+    const ass = buildAss({ ...view, cues: [] });
+    expect(ass).toContain("[Events]");
+    expect(ass).not.toContain("Dialogue:");
   });
 
   it("预览 HTML 自包含，带字幕与安全区样式", () => {
