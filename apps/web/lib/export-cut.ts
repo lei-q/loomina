@@ -21,8 +21,7 @@ const AI_LABEL: AILabel = {
 // 导出（E6 / D2 / D3 / G1，ADR-0086 / ADR-0087）
 //
 // 这里只产出「自包含文件」：预览 HTML、OTIO 时间线、发布包 JSON、SRT。
-// 本机 ffmpeg 已可用（9.0.2），但服务端渲染 mp4 还没做——界面与文档都如实说明，
-// 不假装已经能出片。
+// mp4 渲染走 `app/api/render`（ADR-0091）：浏览器先排版成 PNG，服务端 ffmpeg 编码。
 
 function escapeHtml(text: string): string {
   return text
@@ -416,8 +415,8 @@ export type PublishPackage = {
 /**
  * 发布包（G1）：标题、简介、话题、封面、字幕与 AI 标注，一起打包成一份 JSON。
  *
- * 视频本身是 `null`：服务端渲染还没做（ffmpeg 缺失），与其塞一条假路径，
- * 不如让「还差哪一步」写在包里的 `videoNote` 与 `warnings` 里。
+ * 视频本身是 `null`：发布包是清单，不含二进制；成片 MP4 由成片页单独导出
+ * （`/api/render`）。与其塞一条假路径，不如让「视频在哪」写清楚。
  */
 export function buildPublishPackage(
   view: EditView,
@@ -436,7 +435,7 @@ export function buildPublishPackage(
     platform: "douyin",
     video: null,
     videoNote:
-      "还没有渲染 mp4：当前导出的是可播放的 HTML 预览 + OTIO 时间线，拿到剪辑软件里出片后再上传。",
+      "发布包是清单，不含视频文件；成片 MP4 在成片页单独导出（本机 ffmpeg，1080×1920，带字幕与 AI 角标）。",
     ...(cover ? { cover } : {}),
     title: options.title.trim() || view.title,
     description: options.description.trim(),

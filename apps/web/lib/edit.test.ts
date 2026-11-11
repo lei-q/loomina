@@ -195,7 +195,7 @@ describe("导出（E6 / D3 / G1）", () => {
       standard: "AI生成",
     });
     expect(pack.video).toBeNull();
-    expect(pack.videoNote).toContain("还没有渲染 mp4");
+    expect(pack.videoNote).toContain("成片 MP4 在成片页单独导出");
     expect(pack.subtitles).toContain("你早就知道，对吧。");
     expect(pack.warnings).toEqual([
       "2 个片段没有画面",

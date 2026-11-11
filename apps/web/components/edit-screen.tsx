@@ -21,6 +21,7 @@ import {
   safeFileName,
 } from "@/lib/export-cut";
 import { shotLabel, spendOf, toStageView } from "@/lib/read-model";
+import { exportMp4 } from "@/lib/render-client";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
 
@@ -64,6 +65,8 @@ export function EditScreen() {
   const [description, setDescription] = useState("");
   const [topics, setTopics] = useState("短剧,AI创作");
   const [notice, setNotice] = useState("");
+  const [rendering, setRendering] = useState(false);
+  const [renderStage, setRenderStage] = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const fired = useRef<Set<string>>(new Set());
@@ -154,6 +157,29 @@ export function EditScreen() {
     setNotice(
       `预览已导出：${(size / 1024 / 1024).toFixed(1)} MB。双击打开就能播；素材是内嵌的。`,
     );
+  };
+
+  const exportVideo = async () => {
+    if (rendering) return;
+    setRendering(true);
+    setNotice("");
+    try {
+      const result = await exportMp4(view, styleId, setRenderStage);
+      const mb = (result.bytes / 1024 / 1024).toFixed(1);
+      const notes: string[] = [];
+      if (result.placeholders > 0) notes.push(`${result.placeholders} 个片段用占位图`);
+      if (result.remoteSkipped > 0) notes.push(`${result.remoteSkipped} 个远端素材没下载`);
+      setNotice(
+        `成片已导出：${mb} MB · 1080×1920 · 带字幕与「AI 生成」角标${
+          notes.length > 0 ? `。${notes.join("；")}` : ""
+        }。`,
+      );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "渲染失败");
+    } finally {
+      setRendering(false);
+      setRenderStage("");
+    }
   };
 
   const exportOtio = () => {
@@ -646,8 +672,16 @@ export function EditScreen() {
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       type="button"
+                      onClick={exportVideo}
+                      disabled={rendering || view.clips.length === 0}
+                      className="rounded-token border border-pick bg-pick px-3 py-1 text-[10.5px] text-white transition-opacity duration-[var(--dur)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {rendering ? "正在渲染 MP4…" : "导出成片 MP4"}
+                    </button>
+                    <button
+                      type="button"
                       onClick={exportPreview}
-                      className="rounded-token border border-pick bg-pick px-3 py-1 text-[10.5px] text-white transition-opacity duration-[var(--dur)] hover:opacity-90"
+                      className="rounded-token border border-line px-3 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
                     >
                       导出预览 HTML
                     </button>
@@ -674,19 +708,20 @@ export function EditScreen() {
                     </button>
                   </div>
 
-                  {notice && (
-                    <p className="mt-2 text-[9.5px] leading-[1.7] text-muted">{notice}</p>
+                  {(notice || renderStage) && (
+                    <p className="mt-2 text-[9.5px] leading-[1.7] text-muted">
+                      {renderStage || notice}
+                    </p>
                   )}
 
                   <p className="mt-3 text-[9.5px] leading-[1.7] text-muted-2">
-                    预览 HTML 是自包含的：画面、字幕、音轨都在文件里，双击就能看。
-                    <span className="text-muted"> mp4 还没做</span>——本机 ffmpeg 已装好，
-                    但服务端渲染管线还没接，所以发布包里的视频位先空着，
-                    拿 OTIO 去剪辑软件出片是现在能走通的路。
+                    成片 MP4 由本机 ffmpeg 渲染：1080×1920、H.264、带字幕与「AI 生成」角标，
+                    通常 20–90 秒。远端视频暂不下载，先用首帧或占位图顶上；发布包仍是清单，
+                    不含视频文件。
                   </p>
                   <p className="mt-2 text-[9.5px] leading-[1.7] text-muted-2">
                     AI 标识不是可选项：预览画面右下角的「AI 生成」角标、HTML 元数据、OTIO
-                    元数据与发布包里的 `aiLabel` 都会带上；mp4 接上后角标也要烧进画面。
+                    元数据与发布包里的 `aiLabel` 都会带上；成片 MP4 里也已经烧进画面。
                   </p>
                 </section>
               </div>
