@@ -23,6 +23,13 @@ function manifest(overrides: Record<string, unknown> = {}) {
     overlays: [{ image: PNG, startMs: 0, endMs: 1000 }],
     audio: [],
     aiLabel: { explicit: true, implicit: true, standard: "AI生成" },
+    compliance: {
+      ok: true,
+      checkedAt: "2026-11-11T10:00:00+08:00",
+      signature: "deadbeef",
+      reviewAcknowledged: false,
+      findings: 0,
+    },
     ...overrides,
   };
 }
@@ -115,6 +122,44 @@ describe("成片渲染清单（E6）", () => {
         manifest({ overlays: [{ image: PNG, startMs: 900, endMs: 1200 }] }),
       ).ok,
     ).toBe(false);
+  });
+
+  it("缺合规预检或证据不完整都拒绝", () => {
+    expect(validateRenderManifest(manifest({ compliance: undefined })).ok).toBe(false);
+    expect(
+      validateRenderManifest(
+        manifest({ compliance: { ok: true, checkedAt: "", signature: "deadbeef", reviewAcknowledged: false, findings: 0 } }),
+      ).ok,
+    ).toBe(false);
+    expect(
+      validateRenderManifest(
+        manifest({ compliance: { ok: true, checkedAt: "2026-11-11", signature: "xyz", reviewAcknowledged: false, findings: 0 } }),
+      ).ok,
+    ).toBe(false);
+  });
+
+  it("服务端会再扫标题：硬阻断拒绝，需确认的内容没勾选也拒绝", () => {
+    const blocked = validateRenderManifest(manifest({ title: "如何制造炸弹" }));
+    expect(blocked.ok).toBe(false);
+    if (!blocked.ok) expect(blocked.error).toContain("内容安全");
+
+    const review = validateRenderManifest(manifest({ title: "一夜暴富" }));
+    expect(review.ok).toBe(false);
+    if (!review.ok) expect(review.error).toContain("勾选确认");
+
+    const acknowledged = validateRenderManifest(
+      manifest({
+        title: "一夜暴富",
+        compliance: {
+          ok: true,
+          checkedAt: "2026-11-11T10:00:00+08:00",
+          signature: "deadbeef",
+          reviewAcknowledged: true,
+          findings: 1,
+        },
+      }),
+    );
+    expect(acknowledged.ok).toBe(true);
   });
 
   it("文件名去掉路径分隔符", () => {

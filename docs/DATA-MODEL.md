@@ -659,6 +659,8 @@ interface TimelineItem {
 
 **导出**（不写回 IR）：预览 HTML、OTIO、SRT、发布包 JSON 都是本地生成的文件。IR 里的 `PublishPackage` schema 仍在，尚没有写入它的事件；视频渲染未做，发布包的视频位为空。
 
+**导出前合规证据（ADR-0095）**：成片页先跑 `preflightProject`，得到四项检查、命中项与内容指纹；MP4 渲染清单与发布包 JSON 都带 `compliance: { ok, checkedAt, signature, reviewAcknowledged, findings }`。这是导出物的字段，不写回 IR：规则与确认状态不属于作品数据。
+
 **识别（ADR-0087）不新增 IR 字段。** ASR 结果只放在 store 的内存里（`asrResult`，只留最近一条），刷新即丢；用户确认后写一条 `dialogue.updated { text }`，**不带 `durationMs`**——时长仍以音轨为准（准则 P5）。服务端只收 `data:audio/…;base64`（上限 8 MB），不抓外部地址。
 
 ## 6. 风格 / 发布

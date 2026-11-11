@@ -1,4 +1,5 @@
 import type { AILabel } from "@loomina/ir";
+import type { RenderCompliance } from "./compliance";
 import {
   SAFE_AREA,
   SUBTITLE_STYLES,
@@ -390,6 +391,8 @@ export type PublishOptions = {
   style: SubtitleStyleId;
   /** 草稿 / 定稿 */
   kind: "draft" | "final";
+  /** 导出前预检证据（G8）；发布包里留一份，便于回溯 */
+  compliance?: RenderCompliance;
 };
 
 export type PublishPackage = {
@@ -405,6 +408,8 @@ export type PublishPackage = {
   topics: string[];
   durationSec: number;
   aiLabel: AILabel;
+  /** 导出前的合规预检指纹与确认状态 */
+  compliance?: RenderCompliance;
   subtitleStyle: SubtitleStyleId;
   subtitles: string;
   shots: { shotNo: number; takeNo: number; startMs: number; durationMs: number }[];
@@ -442,6 +447,7 @@ export function buildPublishPackage(
     topics: options.topics.map((topic) => topic.trim()).filter(Boolean),
     durationSec: view.totalSec,
     aiLabel: AI_LABEL,
+    ...(options.compliance ? { compliance: options.compliance } : {}),
     subtitleStyle: options.style,
     subtitles: buildSrt(view),
     shots: view.clips.map((clip) => ({

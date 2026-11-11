@@ -6,6 +6,7 @@ import {
   type EditView,
   type SubtitleStyleId,
 } from "./edit";
+import type { RenderCompliance } from "./compliance";
 import {
   RENDER_FPS,
   RENDER_HEIGHT,
@@ -151,6 +152,7 @@ function badgeOverlay(totalMs: number): RenderOverlay {
 export function buildRenderManifest(
   view: EditView,
   styleId: SubtitleStyleId,
+  compliance: RenderCompliance,
 ): RenderBuild {
   const ordered = [...view.clips].sort((a, b) => a.startMs - b.startMs);
   let placeholders = 0;
@@ -206,6 +208,7 @@ export function buildRenderManifest(
       overlays,
       audio,
       aiLabel: { explicit: true, implicit: true, standard: "AI生成" },
+      compliance,
     },
     placeholders,
   };
@@ -255,10 +258,11 @@ const JOB_TIMEOUT_MS = 11 * 60 * 1000;
 export async function exportMp4(
   view: EditView,
   styleId: SubtitleStyleId,
+  compliance: RenderCompliance,
   onStage?: (stage: string) => void,
 ): Promise<RenderResult> {
   onStage?.("正在排版字幕与占位画面…");
-  const { manifest } = buildRenderManifest(view, styleId);
+  const { manifest } = buildRenderManifest(view, styleId, compliance);
 
   onStage?.("正在提交渲染任务…");
   const submit = await fetch("/api/render", {

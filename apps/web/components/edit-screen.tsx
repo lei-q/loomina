@@ -20,6 +20,11 @@ import {
   downloadFile,
   safeFileName,
 } from "@/lib/export-cut";
+import {
+  preflightProject,
+  renderComplianceOf,
+  type ComplianceCheck,
+} from "@/lib/compliance";
 import { shotLabel, spendOf, toStageView } from "@/lib/read-model";
 import { exportMp4 } from "@/lib/render-client";
 import { useWorkbench } from "@/lib/workbench-store";
@@ -33,6 +38,44 @@ const STATUS_LABEL: Record<string, string> = {
 
 function fmtSec(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+const CHECK_STATUS: Record<ComplianceCheck["status"], string> = {
+  pass: "通过",
+  review: "需确认",
+  block: "未通过",
+};
+
+function CheckRow({ check }: { check: ComplianceCheck }) {
+  return (
+    <li className="flex items-start gap-2.5 py-1.5">
+      <span
+        aria-hidden
+        className={cn(
+          "mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full",
+          check.status === "pass"
+            ? "bg-line-2"
+            : check.status === "review"
+              ? "bg-muted"
+              : "bg-pick",
+        )}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-baseline gap-x-2">
+          <span className="text-[10px] text-text">{check.label}</span>
+          <span
+            className={cn(
+              "text-[8.5px] tracking-[.08em]",
+              check.status === "block" ? "text-pick" : "text-muted-2",
+            )}
+          >
+            {CHECK_STATUS[check.status]}
+          </span>
+        </div>
+        <p className="mt-0.5 text-[9px] leading-[1.6] text-muted-2">{check.detail}</p>
+      </div>
+    </li>
+  );
 }
 
 /**
@@ -67,6 +110,8 @@ export function EditScreen() {
   const [notice, setNotice] = useState("");
   const [rendering, setRendering] = useState(false);
   const [renderStage, setRenderStage] = useState("");
+  /** 确认的是哪一版预检：文案一改，指纹变，确认自动失效 */
+  const [ackSignature, setAckSignature] = useState<string>();
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const fired = useRef<Set<string>>(new Set());
@@ -74,6 +119,25 @@ export function EditScreen() {
   const view = useMemo(() => toEditView(project, { maxChars }), [project, maxChars]);
   const stage = useMemo(() => toStageView(project), [project]);
   const spend = useMemo(() => spendOf(project), [project]);
+
+  // 导出前检查（G8）：标题 / 简介 / 话题也算发布内容，改一个字就要重看
+  const report = useMemo(
+    () =>
+      preflightProject(project, {
+        title,
+        description,
+        topics,
+        durationMs: view.totalMs,
+      }),
+    [project, title, description, topics, view.totalMs],
+  );
+  const acknowledged = report.review > 0 && ackSignature === report.signature;
+  const gateOpen = report.ok && (report.review === 0 || acknowledged);
+  const gateReason = !report.ok
+    ? `还有 ${report.blocked} 处硬阻断：改完文案再导出。`
+    : report.review > 0 && !acknowledged
+      ? `有 ${report.review} 处需要人工确认：读完后勾选确认。`
+      : "";
 
   const style = SUBTITLE_STYLES[styleId];
   const current =
@@ -151,6 +215,10 @@ export function EditScreen() {
   };
 
   const exportPreview = () => {
+    if (!gateOpen) {
+      setNotice(gateReason);
+      return;
+    }
     const html = buildPreviewHtml(view, styleId);
     const size = new Blob([html]).size;
     downloadFile(safeFileName(view.title, "预览.html"), html, "text/html");
@@ -161,10 +229,19 @@ export function EditScreen() {
 
   const exportVideo = async () => {
     if (rendering) return;
+    if (!gateOpen) {
+      setNotice(gateReason);
+      return;
+    }
     setRendering(true);
     setNotice("");
     try {
-      const result = await exportMp4(view, styleId, setRenderStage);
+      const result = await exportMp4(
+        view,
+        styleId,
+        renderComplianceOf(report, acknowledged),
+        setRenderStage,
+      );
       const mb = (result.bytes / 1024 / 1024).toFixed(1);
       const notes: string[] = [];
       if (result.placeholders > 0) notes.push(`${result.placeholders} 个片段用占位图`);
@@ -183,6 +260,10 @@ export function EditScreen() {
   };
 
   const exportOtio = () => {
+    if (!gateOpen) {
+      setNotice(gateReason);
+      return;
+    }
     const otio = buildOtio(view);
     downloadFile(
       safeFileName(view.title, "时间线.otio"),
@@ -193,17 +274,26 @@ export function EditScreen() {
   };
 
   const exportSrt = () => {
+    if (!gateOpen) {
+      setNotice(gateReason);
+      return;
+    }
     downloadFile(safeFileName(view.title, "字幕.srt"), buildSrt(view), "text/plain");
     setNotice("字幕已导出（SRT）：时间按初剪的绝对时间。");
   };
 
   const exportPackage = () => {
+    if (!gateOpen) {
+      setNotice(gateReason);
+      return;
+    }
     const pack = buildPublishPackage(view, {
       title,
       description,
       topics: topics.split(/[,，\s]+/),
       style: styleId,
       kind: "draft",
+      compliance: renderComplianceOf(report, acknowledged),
     });
     downloadFile(
       safeFileName(view.title, "发布包.json"),
@@ -669,11 +759,98 @@ export function EditScreen() {
                     </label>
                   </div>
 
+                  <div className="mt-3 rounded-token border border-line bg-surface/60 p-3">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <h3 className="text-[10.5px] tracking-[.06em] text-text">导出前检查</h3>
+                      <span
+                        className={cn(
+                          "tnum text-[9px]",
+                          report.ok ? "text-muted-2" : "text-pick",
+                        )}
+                      >
+                        {report.ok
+                          ? report.review > 0
+                            ? `${report.review} 处待确认 · 指纹 ${report.signature}`
+                            : `通过 · 指纹 ${report.signature}`
+                          : `${report.blocked} 处阻断 · 指纹 ${report.signature}`}
+                      </span>
+                    </div>
+
+                    <ul className="mt-1.5 border-t border-line">
+                      {report.checks.map((check) => (
+                        <CheckRow key={check.id} check={check} />
+                      ))}
+                    </ul>
+
+                    {report.findings.length > 0 && (
+                      <div className="mt-1 border-t border-line pt-2">
+                        <p className="text-[9px] tracking-[.06em] text-muted-2">命中</p>
+                        <ul className="mt-1 space-y-1.5">
+                          {report.findings.slice(0, 8).map((finding, index) => (
+                            <li
+                              key={`${finding.ruleId}-${finding.path}-${index}`}
+                              className="flex items-start gap-2 text-[9.5px] leading-[1.6]"
+                            >
+                              <span
+                                className={cn(
+                                  "shrink-0 pt-px text-[8.5px] tracking-[.06em]",
+                                  finding.severity === "block" ? "text-pick" : "text-muted-2",
+                                )}
+                              >
+                                {finding.severity === "block" ? "阻断" : "确认"}
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="text-muted">{finding.path}</span>
+                                <span className="text-muted-2"> · 「{finding.term}」 </span>
+                                <span className="text-muted-2">{finding.message}</span>
+                                <span className="mt-0.5 block text-[9px] text-muted-2">
+                                  {finding.excerpt}
+                                </span>
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                        {report.findings.length > 8 && (
+                          <p className="mt-1.5 text-[9px] text-muted-2">
+                            还有 {report.findings.length - 8} 处没有列出：先改掉上面这些再重新检查。
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {report.review > 0 && report.ok && (
+                      <label className="mt-2 flex cursor-pointer items-start gap-2 border-t border-line pt-2 text-[9.5px] leading-[1.6] text-muted">
+                        <input
+                          type="checkbox"
+                          checked={acknowledged}
+                          onChange={(event) =>
+                            setAckSignature(event.target.checked ? report.signature : undefined)
+                          }
+                          className="mt-[2px] accent-[var(--pick)]"
+                        />
+                        <span>
+                          我确认上面 {report.review} 处内容属于剧情需要，没有美化或教学细节，可以导出。
+                        </span>
+                      </label>
+                    )}
+
+                    <p
+                      className={cn(
+                        "mt-2 border-t border-line pt-2 text-[9.5px] leading-[1.6]",
+                        report.ok ? "text-muted-2" : "text-pick",
+                      )}
+                    >
+                      {gateOpen
+                        ? "检查通过：五个导出按钮都可用。"
+                        : `${gateReason}改完文案会自动重新检查，确认状态也会随之失效。`}
+                    </p>
+                  </div>
+
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       type="button"
                       onClick={exportVideo}
-                      disabled={rendering || view.clips.length === 0}
+                      disabled={!gateOpen || rendering || view.clips.length === 0}
                       className="rounded-token border border-pick bg-pick px-3 py-1 text-[10.5px] text-white transition-opacity duration-[var(--dur)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       {rendering ? "正在渲染 MP4…" : "导出成片 MP4"}
@@ -681,28 +858,32 @@ export function EditScreen() {
                     <button
                       type="button"
                       onClick={exportPreview}
-                      className="rounded-token border border-line px-3 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                      disabled={!gateOpen}
+                      className="rounded-token border border-line px-3 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       导出预览 HTML
                     </button>
                     <button
                       type="button"
                       onClick={exportOtio}
-                      className="rounded-token border border-line px-3 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                      disabled={!gateOpen}
+                      className="rounded-token border border-line px-3 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       导出 .otio
                     </button>
                     <button
                       type="button"
                       onClick={exportSrt}
-                      className="rounded-token border border-line px-3 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                      disabled={!gateOpen}
+                      className="rounded-token border border-line px-3 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       导出字幕 SRT
                     </button>
                     <button
                       type="button"
                       onClick={exportPackage}
-                      className="rounded-token border border-line px-3 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                      disabled={!gateOpen}
+                      className="rounded-token border border-line px-3 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       导出发布包
                     </button>

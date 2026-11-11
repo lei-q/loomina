@@ -6,6 +6,8 @@
  * 服务端只做校验、拼滤镜与编码，不信任客户端给的尺寸与时长。
  */
 
+import { scanText, type RenderCompliance } from "./compliance";
+
 export const RENDER_WIDTH = 1080;
 export const RENDER_HEIGHT = 1920;
 export const RENDER_FPS = 30;
@@ -59,6 +61,8 @@ export type RenderManifest = {
   overlays: RenderOverlay[];
   audio: RenderAudio[];
   aiLabel: { explicit: true; implicit: true; standard: "AI生成" };
+  /** 成片页的合规预检证据（G8）；服务端会再扫一遍清单文案 */
+  compliance: RenderCompliance;
 };
 
 export type DataUriParts = { mime: string; base64: string; bytes: number };
@@ -296,6 +300,43 @@ export function validateRenderManifest(
     return { ok: false, error: "缺少 AI 标注" };
   }
 
+  // 合规证据：必须来自成片页的预检，不能在清单里塞个空对象蒙混
+  const complianceRaw =
+    raw.compliance && typeof raw.compliance === "object"
+      ? (raw.compliance as Record<string, unknown>)
+      : null;
+  if (!complianceRaw || complianceRaw.ok !== true) {
+    return { ok: false, error: "缺少合规预检：回成片页重新检查后再导出" };
+  }
+  if (
+    typeof complianceRaw.checkedAt !== "string" ||
+    !complianceRaw.checkedAt ||
+    typeof complianceRaw.signature !== "string" ||
+    !/^[0-9a-f]{8}$/.test(complianceRaw.signature) ||
+    typeof complianceRaw.reviewAcknowledged !== "boolean" ||
+    !integer(complianceRaw.findings)
+  ) {
+    return { ok: false, error: "合规预检证据不完整：回成片页重新检查" };
+  }
+
+  // 纵深防御：标题与占位文案用同一套规则再扫一遍，不信任客户端
+  const scanned = [
+    { text: raw.title.trim(), path: "成片标题" },
+    ...checkedClips
+      .filter((clip) => clip.label)
+      .map((clip) => ({ text: clip.label!, path: "片段文案" })),
+  ].flatMap((unit) => scanText(unit.text, unit.path));
+  const blocked = scanned.filter((finding) => finding.severity === "block");
+  if (blocked.length > 0) {
+    return { ok: false, error: `内容安全：${blocked[0]!.message}` };
+  }
+  if (
+    scanned.some((finding) => finding.severity === "review") &&
+    complianceRaw.reviewAcknowledged !== true
+  ) {
+    return { ok: false, error: "成片清单里有需要人工确认的内容：回成片页预检并勾选确认" };
+  }
+
   return {
     ok: true,
     manifest: {
@@ -311,6 +352,13 @@ export function validateRenderManifest(
         explicit: true,
         implicit: true,
         standard: "AI生成",
+      },
+      compliance: {
+        ok: true,
+        checkedAt: complianceRaw.checkedAt,
+        signature: complianceRaw.signature,
+        reviewAcknowledged: complianceRaw.reviewAcknowledged,
+        findings: complianceRaw.findings,
       },
     },
   };
