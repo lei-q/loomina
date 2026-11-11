@@ -285,6 +285,14 @@ export function VoiceScreen() {
                           >
                             {line.state === "voiced" ? "有声" : "还没配"}
                           </span>
+                          {line.stale && (
+                            <span
+                              className="rounded-token border border-pick/60 px-1 py-px text-[8.5px] text-pick"
+                              title="音轨是按旧台词念的：重配才会对上现在这句"
+                            >
+                              旧台词
+                            </span>
+                          )}
                           {role?.voice && (
                             <span className="text-[8.5px] text-muted-2">音色 {role.voice}</span>
                           )}

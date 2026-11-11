@@ -30,6 +30,7 @@ export function parseShotMaterial(value: unknown): ShotPromptMaterial | string {
     characters?: unknown;
     location?: { name?: unknown };
     props?: unknown;
+    dialogue?: unknown;
   };
 
   const size = ShotSchema.shape.shotSize.safeParse(shot.shotSize);
@@ -65,6 +66,18 @@ export function parseShotMaterial(value: unknown): ShotPromptMaterial | string {
         .filter((item) => item.name)
     : [];
 
+  // 台词跟着视频提示词走（A5 / ADR-0107）：只收名字与文本，最多 8 句。
+  const dialogue = Array.isArray(shot.dialogue)
+    ? shot.dialogue
+        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+        .slice(0, 8)
+        .map((item) => ({
+          speaker: name(item.speaker),
+          text: text(item.text, 160),
+        }))
+        .filter((item) => item.speaker && item.text)
+    : [];
+
   const where = name(shot.location?.name);
   return {
     description: text(shot.description, 400),
@@ -73,5 +86,6 @@ export function parseShotMaterial(value: unknown): ShotPromptMaterial | string {
     characters,
     location: where ? { name: where } : undefined,
     props,
+    ...(dialogue.length ? { dialogue } : {}),
   };
 }

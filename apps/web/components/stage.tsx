@@ -228,7 +228,9 @@ function Current({
                 }}
                 title={
                   take.uri
-                    ? `看第 ${take.no} 拍 · ${TAKE_STATUS_CN[take.status] ?? take.status}`
+                    ? `看第 ${take.no} 拍 · ${TAKE_STATUS_CN[take.status] ?? take.status}${
+                        take.stalePrompt ? " · 提示词里没有当前台词" : ""
+                      }`
                     : `第 ${take.no} 拍还没有片子`
                 }
                 className={cn(
@@ -243,10 +245,21 @@ function Current({
                 <span className="text-[8.5px] text-muted-2">
                   {TAKE_STATUS_CN[take.status] ?? take.status}
                 </span>
+                {take.stalePrompt && (
+                  <span className="text-[8.5px] text-pick" title="出片时的提示词里没有当前台词">
+                    旧词
+                  </span>
+                )}
               </button>
             );
           })}
         </div>
+      )}
+
+      {shot.staleTakes > 0 && (
+        <p className="max-w-[340px] text-center text-[9px] leading-[1.6] text-pick">
+          {shot.staleTakes} 条 take 的出片提示词里没有当前台词，口型可能对不上；重拍才会用上新台词。
+        </p>
       )}
 
       {/* 首尾两帧并排选：点哪格，大画面就看哪一帧（ADR-0038） */}

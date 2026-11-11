@@ -33,6 +33,8 @@ export type StageTake = {
   uri?: string;
   createdAt: string;
   costCny: number;
+  /** 出片时的提示词里没有当前台词（A5 / ADR-0107）：这一拍的口型可能与现在这句对不上 */
+  stalePrompt?: boolean;
 };
 
 export type StageShot = {
@@ -81,6 +83,10 @@ export type StageShot = {
   staleLast?: StaleMark;
   /** 这一镜台词拼成的字幕（预演与审片共用，ADR-0084） */
   subtitle: string;
+  /** 出片提示词里没有当前台词的 take 数（A5 / ADR-0107） */
+  staleTakes: number;
+  /** 配音与当前台词对不上的句数（A5 / ADR-0107） */
+  staleVoices: number;
   /** 这一镜的金额上限（H10）；不设就是只受项目预算约束 */
   budgetCny?: number;
   /** 这一镜已经花掉多少（H10） */
@@ -322,6 +328,54 @@ export function shotSpendOf(project: Project, shotId: string): ShotSpend {
   return { spent: Math.round(spent * 100) / 100, unpriced };
 }
 
+export type DownstreamGap = {
+  /** 这一镜的台词句数；没有台词时不谈同步 */
+  lines: number;
+  /** 出片提示词里不含当前台词的 take 数 */
+  takes: number;
+  /** 音轨是按旧台词念的句数 */
+  voices: number;
+};
+
+/**
+ * 改台词之后下游有没有跟上（A5 / ADR-0107）。
+ *
+ * 两条判断都只看已有的溯源，不猜：
+ * - take：出片时存下的 `provenance.prompt` 里缺任何一句当前台词，就说明这一拍不是按现在这句出的；
+ * - 配音：音轨资产的 `provenance.prompt` 与当前台词不同，就说明念的是旧词。
+ *
+ * 导入的视频没有提示词，无从判断，不计入；没有台词的镜头也不计入。
+ */
+export function downstreamGap(project: Project, shotId: string): DownstreamGap {
+  const shot = project.shots.find((item) => item.id === shotId);
+  if (!shot) return { lines: 0, takes: 0, voices: 0 };
+  const lineById = new Map(project.dialogue.map((line) => [line.id, line]));
+  const assetById = new Map(project.assets.map((asset) => [asset.id, asset]));
+  const lines = shot.dialogueIds.flatMap((id) => {
+    const line = lineById.get(id);
+    return line ? [line] : [];
+  });
+
+  let voices = 0;
+  for (const line of lines) {
+    if (!line.audioAssetId) continue;
+    const asset = assetById.get(line.audioAssetId);
+    const spoken = asset?.provenance?.prompt;
+    // 没有溯源就无从判断，不冒充「旧台词」
+    if (spoken !== undefined && spoken !== line.text) voices += 1;
+  }
+
+  let takes = 0;
+  for (const take of project.takes) {
+    if (take.shotId !== shot.id) continue;
+    const prompt = take.provenance.prompt;
+    if (!prompt) continue;
+    if (lines.some((line) => !prompt.includes(line.text))) takes += 1;
+  }
+
+  return { lines: lines.length, takes, voices };
+}
+
 export type StageView = {
   title: string;
   version: number;
@@ -455,6 +509,19 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
     // 首尾帧各对表演设计的起点与落点（B16 / ADR-0103）
     const firstMaterial = shotMaterial(project, shot, { frame: "first" });
     const lastMaterial = shotMaterial(project, shot, { frame: "last" });
+    const lineTexts = shot.dialogueIds.flatMap((id) => {
+      const line = dialogueById.get(id);
+      return line ? [line.text] : [];
+    });
+    const stalePromptOf = (prompt: string | undefined) =>
+      Boolean(prompt) && lineTexts.some((text) => !prompt!.includes(text));
+    const staleVoices = shot.dialogueIds.filter((id) => {
+      const line = dialogueById.get(id);
+      if (!line?.audioAssetId) return false;
+      const asset = assetById.get(line.audioAssetId);
+      const spoken = asset?.provenance?.prompt;
+      return spoken !== undefined && spoken !== line.text;
+    }).length;
     const takes: StageTake[] = shot.takeIds.flatMap((id, i) => {
       const item = takesById.get(id);
       if (!item) return [];
@@ -466,6 +533,7 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
           uri: assetById.get(item.assetId)?.uri,
           createdAt: item.provenance.createdAt,
           costCny: item.costCny,
+          ...(stalePromptOf(item.provenance.prompt) ? { stalePrompt: true } : {}),
         },
       ];
     });
@@ -507,6 +575,8 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
         .map((id) => dialogueById.get(id)?.text)
         .filter((text): text is string => Boolean(text))
         .join(" "),
+      staleTakes: takes.filter((item) => item.stalePrompt).length,
+      staleVoices,
       budgetCny: shot.budgetCny,
       spentCny: shotSpendOf(project, shot.id).spent,
     };
@@ -651,6 +721,8 @@ export type VoiceLine = {
   audioDur?: number;
   audioUri?: string;
   state: "missing" | "voiced";
+  /** 音轨是按旧台词念的（A5 / ADR-0107）：重配才会对上 */
+  stale?: boolean;
 };
 
 export type VoiceRole = {
@@ -716,6 +788,9 @@ export function toVoiceView(project: Project): VoiceView {
           : {}),
         ...(asset?.uri ? { audioUri: asset.uri } : {}),
         state: asset?.uri ? "voiced" : "missing",
+        ...(asset?.uri && asset.provenance?.prompt !== undefined && asset.provenance.prompt !== line.text
+          ? { stale: true }
+          : {}),
       });
     }
   }

@@ -7,6 +7,7 @@ import {
   actionHistory,
   dialogueHistory,
   dialogueOrderHistory,
+  downstreamGap,
   previousActionText,
   previousDialogueText,
   previousSceneHead,
@@ -1308,6 +1309,20 @@ export function ScriptScreen() {
                           {shot.size} · {shot.angle} · {shot.dur.toFixed(1)}s
                           {shot.locked && <span className="ml-2 text-muted-2">· 已锁定</span>}
                         </p>
+
+                        {(() => {
+                          const gap = downstreamGap(project, shot.id);
+                          if (gap.takes === 0 && gap.voices === 0) return null;
+                          return (
+                            <p className="mt-1 text-[8.5px] leading-[1.6] text-pick">
+                              下游还没跟上这段台词：
+                              {gap.takes > 0 ? `${gap.takes} 条 take 的出片提示词里没有当前台词` : ""}
+                              {gap.takes > 0 && gap.voices > 0 ? " · " : ""}
+                              {gap.voices > 0 ? `${gap.voices} 句配音念的是旧台词` : ""}
+                              。去分镜页重拍或去声音页重配就会用上新台词。
+                            </p>
+                          );
+                        })()}
 
                         {/* 这一镜里换人（ADR-0070）：点名字选换上的人，他这一镜的台词一起换 */}
                         {shot.characterIds.length > 0 && (

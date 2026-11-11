@@ -234,6 +234,8 @@ export type ShotPromptMaterial = {
     template?: SceneTemplate;
   };
   props: Pick<Prop, "name" | "description">[];
+  /** 这一镜的台词（A5 / ADR-0107）：只进视频提示词，不进首尾帧——静帧不烧字幕 */
+  dialogue?: DialoguePrompt[];
   /** 表演设计（B16 / B17）：先翻成人话，再由 shotParts 拼进去 */
   performance?: PerformancePrompt;
   /** 镜头内调度（B17）：角色 / 道具在画面的左右与前后 */
@@ -260,6 +262,12 @@ export type StagingPrompt = {
   side: StagingMark["side"];
   depth: StagingMark["depth"];
   note: string;
+};
+
+/** 送进视频提示词的一句台词：说话人用名字，不用 id。 */
+export type DialoguePrompt = {
+  speaker: string;
+  text: string;
 };
 
 const SIDE_CN: Record<StagingMark["side"], string> = {
@@ -307,6 +315,7 @@ export function shotMaterial(
     : undefined;
   const characterById = new Map(project.characters.map((character) => [character.id, character]));
   const propById = new Map(project.props.map((prop) => [prop.id, prop]));
+  const dialogueById = new Map(project.dialogue.map((line) => [line.id, line]));
 
   const performance = shot.performance
     ? {
@@ -356,6 +365,20 @@ export function shotMaterial(
       const prop = propById.get(id);
       return prop ? [prop] : [];
     }),
+    ...(shot.dialogueIds.length
+      ? {
+          dialogue: shot.dialogueIds.flatMap((id) => {
+            const line = dialogueById.get(id);
+            if (!line) return [];
+            return [
+              {
+                speaker: characterById.get(line.characterId)?.name ?? "角色",
+                text: line.text,
+              },
+            ];
+          }),
+        }
+      : {}),
     ...(performance ? { performance } : {}),
     ...(shot.staging.length > 0
       ? {
@@ -464,6 +487,14 @@ export function buildShotPrompt(project: Project, shot: Shot): string {
  */
 export function buildVideoPrompt(material: ShotPromptMaterial): string {
   const parts = shotParts(material);
+  // 台词跟着视频走（A5 / ADR-0107）：改了台词，下一次出片的提示词就是新的。
+  // 首帧 / 尾帧提示词不加这一句——静帧不烧字幕，也不要求口型。
+  if (material.dialogue && material.dialogue.length) {
+    const lines = material.dialogue
+      .map((line) => `${line.speaker}「${line.text}」`)
+      .join("；");
+    parts.push(`台词（口型对齐）：${lines}`);
+  }
   parts.push("从首帧起势，动作连贯，镜头平稳，保持人物一致");
   parts.push(LOOK);
   return parts.join("。");

@@ -198,6 +198,25 @@ describe("首帧提示词（ADR-0037）", () => {
     expect(prompt).not.toContain("首帧画面");
     expect(prompt).not.toContain("无字幕");
   });
+
+  it("台词进视频提示词；首尾帧不带台词，静帧不烧字幕（ADR-0107）", () => {
+    const project = load();
+    const shot = project.shots.find((item) => item.dialogueIds.length > 0) ?? project.shots[0]!;
+    const lines = shot.dialogueIds.flatMap((id) => {
+      const line = project.dialogue.find((item) => item.id === id);
+      return line ? [line] : [];
+    });
+    const material = shotMaterial(project, shot);
+    const video = buildVideoPrompt(material);
+    const first = buildKeyframePrompt(material, "first");
+
+    for (const line of lines) {
+      expect(video).toContain(line.text);
+      expect(first).not.toContain(line.text);
+    }
+    expect(video).toContain("台词（口型对齐）");
+    expect(video).not.toContain("c-");
+  });
 });
 
 describe("三视图提示词", () => {

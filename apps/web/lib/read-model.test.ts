@@ -5,6 +5,7 @@ import {
   castTextHistory,
   dialogueHistory,
   dialogueOrderHistory,
+  downstreamGap,
   filterKeyframeCells,
   keyframeTally,
   previousActionText,
@@ -1421,5 +1422,90 @@ describe("按阶段 / 按镜记账（H4）", () => {
     const cast = spendByStage(withUnpriced).find((stage) => stage.id === "cast");
     expect(cast?.unpriced).toBe(1);
     expect(cast?.spent).toBe(0);
+  });
+});
+
+describe("台词下游同步（A5 / ADR-0107）", () => {
+  const AT = "2026-11-11T09:00:00Z";
+
+  function withPrompts(prompt: string | undefined, voicePrompt?: string) {
+    return ProjectSchema.parse({
+      ...sampleProject,
+      takes: sampleProject.takes.map((take) =>
+        take.id === "t-01"
+          ? { ...take, provenance: { ...take.provenance, ...(prompt ? { prompt } : {}) } }
+          : take,
+      ),
+      dialogue: sampleProject.dialogue.map((line) =>
+        line.id === "d-01" && voicePrompt !== undefined
+          ? { ...line, audioAssetId: "a-voice-d-01" }
+          : line,
+      ),
+      assets:
+        voicePrompt === undefined
+          ? sampleProject.assets
+          : [
+              ...sampleProject.assets,
+              {
+                id: "a-voice-d-01",
+                kind: "audio",
+                source: "generated",
+                uri: "data:audio/mpeg;base64,SUQz",
+                createdAt: AT,
+                provenance: {
+                  modelId: "tts",
+                  prompt: voicePrompt,
+                  referenceAssetIds: [],
+                  createdAt: AT,
+                },
+              },
+            ],
+    });
+  }
+
+  it("出片提示词不含当前台词时，take 标成旧词", () => {
+    const project = withPrompts("人物：周；镜头平稳");
+    expect(downstreamGap(project, "s-01")).toMatchObject({ lines: 1, takes: 1, voices: 0 });
+    const view = toStageView(project);
+    const shot = view.shots.find((item) => item.id === "s-01");
+    expect(shot?.staleTakes).toBe(1);
+    expect(shot?.takes[0]?.stalePrompt).toBe(true);
+    expect(shot?.prompts.video).toContain("你早就知道，对吧。");
+  });
+
+  it("提示词里已经有当前台词就不算旧，没有提示词的导入片也不冒充", () => {
+    const fresh = withPrompts("台词（口型对齐）：周「你早就知道，对吧。」");
+    expect(downstreamGap(fresh, "s-01").takes).toBe(0);
+    const imported = withPrompts(undefined);
+    expect(downstreamGap(imported, "s-01").takes).toBe(0);
+  });
+
+  it("配音念的是旧台词时单独计数，并在声音页标出", () => {
+    const project = withPrompts(undefined, "你早就知道了。");
+    expect(downstreamGap(project, "s-01")).toMatchObject({ lines: 1, takes: 0, voices: 1 });
+    const voice = toVoiceView(project);
+    expect(voice.lines.find((line) => line.id === "d-01")?.stale).toBe(true);
+    expect(toStageView(project).shots[0]?.staleVoices).toBe(1);
+  });
+
+  it("音轨没有溯源时不冒充旧台词", () => {
+    const project = ProjectSchema.parse({
+      ...sampleProject,
+      dialogue: sampleProject.dialogue.map((line) =>
+        line.id === "d-01" ? { ...line, audioAssetId: "a-voice-d-01" } : line,
+      ),
+      assets: [
+        ...sampleProject.assets,
+        {
+          id: "a-voice-d-01",
+          kind: "audio",
+          source: "generated",
+          uri: "data:audio/mpeg;base64,SUQz",
+          createdAt: AT,
+        },
+      ],
+    });
+    expect(downstreamGap(project, "s-01").voices).toBe(0);
+    expect(toVoiceView(project).lines.find((line) => line.id === "d-01")?.stale).toBeUndefined();
   });
 });
