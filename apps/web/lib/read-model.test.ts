@@ -14,6 +14,9 @@ import {
   sceneHead,
   sceneHeadHistory,
   scriptToText,
+  shotLedger,
+  spendByStage,
+  spendOf,
   staleFrames,
   staleMasters,
   toCastView,
@@ -1287,5 +1290,136 @@ describe("名字与描述的历史（ADR-0082）", () => {
     expect(castTextHistory(events, "character", "c-zhou")!.edits).toHaveLength(1);
     expect(castTextHistory(events, "character", "c-none")).toBeUndefined();
     expect(castTextHistory(events.slice(0, 1), "character", "c-lin")!.edits).toEqual([]);
+  });
+});
+
+describe("按阶段 / 按镜记账（H4）", () => {
+  const AT = "2026-11-11T10:00:00+08:00";
+  const project = ProjectSchema.parse({
+    ...sampleProject,
+    assets: [
+      ...sampleProject.assets,
+      {
+        id: "a-first",
+        kind: "image",
+        source: "generated",
+        uri: "data:image/png;base64,AA==",
+        costCny: 0.12,
+        createdAt: AT,
+      },
+      {
+        id: "a-voice",
+        kind: "audio",
+        source: "generated",
+        uri: "data:audio/mpeg;base64,AA==",
+        costCny: 0.05,
+        createdAt: AT,
+      },
+      {
+        id: "a-music",
+        kind: "audio",
+        source: "upload",
+        createdAt: AT,
+      },
+    ],
+    dialogue: sampleProject.dialogue.map((line, index) =>
+      index === 0 ? { ...line, audioAssetId: "a-voice" } : line,
+    ),
+    shots: sampleProject.shots.map((shot, index) =>
+      index === 0 ? { ...shot, keyframes: { firstAssetId: "a-first" } } : shot,
+    ),
+    timeline: {
+      ...sampleProject.timeline,
+      music: [
+        {
+          id: "m-1",
+          assetId: "a-music",
+          title: "夜巡",
+          licenseRef: "曲库授权",
+          startMs: 0,
+          durationMs: 3000,
+        },
+      ],
+    },
+  });
+
+  it("按阶段拆账，合计与已花一致", () => {
+    const spend = spendOf(project);
+    const stages = spendByStage(project);
+    expect(stages.map((stage) => stage.id)).toEqual([
+      "cast",
+      "storyboard",
+      "voice",
+      "edit",
+    ]);
+    const sum = Math.round(stages.reduce((total, stage) => total + stage.spent, 0) * 100) / 100;
+    expect(sum).toBe(spend.spent);
+    expect(stages.find((stage) => stage.id === "storyboard")?.spent).toBe(
+      Math.round((spend.takes + 0.12) * 100) / 100,
+    );
+    expect(stages.find((stage) => stage.id === "voice")?.spent).toBe(0.05);
+    expect(stages.find((stage) => stage.id === "edit")?.spent).toBe(0);
+  });
+
+  it("take 的视频资产不重复计费", () => {
+    const stages = spendByStage(project);
+    expect(stages.find((stage) => stage.id === "storyboard")?.spent).toBe(
+      Math.round(
+        (project.takes.reduce((sum, take) => sum + take.costCny, 0) + 0.12) * 100,
+      ) / 100,
+    );
+
+    // 视频生成会同时写 take.costCny 和资产 costCny：已花只认 take 的那一笔
+    const doubled = ProjectSchema.parse({
+      ...project,
+      assets: [
+        ...project.assets,
+        {
+          id: "a-01",
+          kind: "video",
+          source: "generated",
+          uri: "data:video/mp4;base64,AA==",
+          costCny: 1.58,
+          createdAt: AT,
+        },
+      ],
+    });
+    expect(spendOf(doubled).spent).toBe(spendOf(project).spent);
+    expect(
+      spendByStage(doubled).reduce((sum, stage) => sum + stage.spent, 0),
+    ).toBe(spendOf(doubled).spent);
+  });
+
+  it("按镜拆账，首尾帧算进这一镜，淘汰单独列出", () => {
+    const rows = shotLedger(project);
+    expect(rows).toHaveLength(project.shots.length);
+    expect(rows[0]).toMatchObject({
+      shotId: "s-01",
+      label: "SH-01",
+      takes: 1,
+      spent: 1.7,
+      rejected: 1.58,
+    });
+    expect(rows[1]?.spent).toBe(2.12);
+    expect(rows[2]?.spent).toBe(2.12);
+  });
+
+  it("没有价目的生成资产只数出来，不当 0 算", () => {
+    const withUnpriced = ProjectSchema.parse({
+      ...project,
+      assets: [
+        ...project.assets,
+        {
+          id: "a-unpriced",
+          kind: "image",
+          source: "generated",
+          uri: "data:image/png;base64,AA==",
+          createdAt: AT,
+        },
+      ],
+    });
+    const cast = spendByStage(withUnpriced).find((stage) => stage.id === "cast");
+    expect(cast?.unpriced).toBe(1);
+    expect(cast?.spent).toBe(0);
   });
 });

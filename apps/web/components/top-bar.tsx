@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import type { ProjectRequote } from "@/lib/pricing";
 import { ExportIcon, Logomark, PlayIcon } from "@/components/icons";
 import { ModelPicker } from "@/components/model-picker";
+import { SpendLedger } from "@/components/spend-ledger";
 import type { Modality } from "@/lib/config-types";
 import { nextOpenStage, stageStates } from "@/lib/stage-flow";
 import { useWorkbench } from "@/lib/workbench-store";
@@ -96,6 +97,7 @@ export function TopBar({
   consistencyCount,
 }: TopBarProps) {
   const [draftBudget, setDraftBudget] = useState<string>("");
+  const [ledgerOpen, setLedgerOpen] = useState(false);
   const project = useWorkbench((state) => state.project);
   const setRetryLimit = useWorkbench((state) => state.setRetryLimit);
   const setOnBudgetExceed = useWorkbench((state) => state.setOnBudgetExceed);
@@ -187,6 +189,14 @@ export function TopBar({
         >
           设置
         </Link>
+        <button
+          type="button"
+          onClick={() => setLedgerOpen(true)}
+          title="按阶段与按镜看钱花在哪：不花钱"
+          className="text-[10px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
+        >
+          记账
+        </button>
         {readOnly && (
           <span
             title="另一个标签页在编辑这份项目。这里只读，刷新后以那边为准"
@@ -409,6 +419,11 @@ export function TopBar({
           导出
         </button>
       </div>
+      <SpendLedger
+        project={project}
+        open={ledgerOpen}
+        onClose={() => setLedgerOpen(false)}
+      />
     </header>
   );
 }

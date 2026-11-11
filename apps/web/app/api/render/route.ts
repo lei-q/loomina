@@ -24,6 +24,11 @@ import {
   type LoudnessMeasurement,
   type LoudnessReport,
 } from "@/lib/render-audio";
+import {
+  loadRenderJobs,
+  saveRenderJobs,
+  type PersistedRenderJob,
+} from "@/lib/render-job-store";
 
 /**
  * 成片渲染任务队列（E6 / H2）。
@@ -32,8 +37,8 @@ import {
  * 排队的任务不会同时抢 CPU。任务完成后的 MP4 在临时目录里留 30 分钟，
  * 客户端用 `?job=<id>&download=1` 取回，之后目录与记录一起清掉。
  *
- * 这是单进程、内存态的队列：next start 重启后任务全部丢失，不做持久化。
- * 对本地单人创作够用，接云端时再换真正的任务系统。
+ * 队列状态落本机 `.loomina/render-jobs.json`：重启后排队任务继续跑，
+ * 正在跑的任务如实标成「重启中断」，已完成且未过期的成品仍可下载。
  */
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -81,6 +86,99 @@ type RenderJob = {
 const jobs = new Map<string, RenderJob>();
 const queue: string[] = [];
 let activeJobId: string | null = null;
+
+/** 落盘串行化：慢磁盘也不能让两次快照交错写坏文件。 */
+let persistChain: Promise<void> = Promise.resolve();
+
+function snapshotJob(job: RenderJob): PersistedRenderJob {
+  return {
+    id: job.id,
+    manifest: job.manifest,
+    status: job.status,
+    stage: job.stage,
+    progress: job.progress,
+    attempts: job.attempts,
+    createdAt: job.createdAt,
+    ...(job.startedAt !== undefined ? { startedAt: job.startedAt } : {}),
+    ...(job.finishedAt !== undefined ? { finishedAt: job.finishedAt } : {}),
+    ...(job.error ? { error: job.error } : {}),
+    fileName: job.fileName,
+    ...(job.dir ? { dir: job.dir } : {}),
+    ...(job.filePath ? { filePath: job.filePath } : {}),
+    ...(job.bytes !== undefined ? { bytes: job.bytes } : {}),
+    remoteSkipped: job.remoteSkipped,
+    placeholders: job.placeholders,
+    ...(job.loudness ? { loudness: job.loudness } : {}),
+  };
+}
+
+/**
+ * 只在状态变化时落盘：进度每秒都变，写它没有恢复价值。
+ * 写失败不影响渲染本身——这一轮是「尽量活过重启」，不是强一致存储。
+ */
+function persistJobs(): void {
+  const snapshot = [...jobs.values()].map(snapshotJob);
+  persistChain = persistChain
+    .then(() => saveRenderJobs(snapshot))
+    .catch(() => {});
+}
+
+let loaded: Promise<void> | undefined;
+
+/** 读回上次进程留下的任务；同一个进程只做一次。 */
+function ensureJobsLoaded(): Promise<void> {
+  loaded ??= restoreJobs();
+  return loaded;
+}
+
+async function restoreJobs(): Promise<void> {
+  const stored = await loadRenderJobs();
+  const now = Date.now();
+  for (const record of stored) {
+    if (jobs.has(record.id)) continue;
+    const job = record as RenderJob;
+
+    if (record.status === "queued") {
+      job.stage = "重启后恢复排队";
+      jobs.set(job.id, job);
+      queue.push(job.id);
+      continue;
+    }
+
+    if (record.status === "running") {
+      // ffmpeg 随进程一起没了；半份文件不能当成品交付
+      if (record.dir) void rm(record.dir, { recursive: true, force: true });
+      job.status = "error";
+      job.stage = "失败";
+      job.error = "服务重启，这次渲染中断了：没有交付半成品。重新点导出即可。";
+      job.finishedAt = now;
+      jobs.set(job.id, job);
+      scheduleCleanup(job);
+      continue;
+    }
+
+    const finished = record.finishedAt ?? now;
+    const remain = finished + JOB_TTL_MS - now;
+    if (remain <= 0) {
+      if (record.dir) void rm(record.dir, { recursive: true, force: true });
+      continue;
+    }
+    if (record.status === "done") {
+      if (!record.filePath) continue;
+      try {
+        await stat(record.filePath);
+      } catch {
+        if (record.dir) void rm(record.dir, { recursive: true, force: true });
+        continue;
+      }
+    }
+    jobs.set(job.id, job);
+    scheduleCleanup(job, Math.max(1000, remain));
+  }
+
+  if (queue.length > 0) pump();
+  persistJobs();
+}
 
 function seconds(ms: number): string {
   return (ms / 1000).toFixed(3);
@@ -372,10 +470,12 @@ async function measurePhase(
   return parsePhaseMeter(result.stderr);
 }
 
-function scheduleCleanup(job: RenderJob): void {  const timer = setTimeout(() => {
+function scheduleCleanup(job: RenderJob, ttlMs = JOB_TTL_MS): void {
+  const timer = setTimeout(() => {
     if (job.dir) void rm(job.dir, { recursive: true, force: true });
     jobs.delete(job.id);
-  }, JOB_TTL_MS);
+    persistJobs();
+  }, ttlMs);
   // 不要因为一个待清理的任务把进程留活
   timer.unref?.();
 }
@@ -384,6 +484,7 @@ async function runJob(job: RenderJob): Promise<void> {
   job.status = "running";
   job.stage = "准备素材";
   job.startedAt = Date.now();
+  persistJobs();
   try {
     const dir = await mkdtemp(path.join(/* turbopackIgnore: true */ tmpdir(), "loomina-render-"));
     job.dir = dir;
@@ -556,6 +657,7 @@ async function runJob(job: RenderJob): Promise<void> {
     job.status = "done";
     job.stage = "完成";
     job.finishedAt = Date.now();
+    persistJobs();
     scheduleCleanup(job);
   } catch (error) {
     job.status = "error";
@@ -563,6 +665,7 @@ async function runJob(job: RenderJob): Promise<void> {
     job.error = error instanceof Error ? error.message : "未知错误";
     job.finishedAt = Date.now();
     if (job.dir) await rm(job.dir, { recursive: true, force: true });
+    persistJobs();
     scheduleCleanup(job);
   }
 }
@@ -601,6 +704,7 @@ function publicJob(job: RenderJob): Record<string, unknown> {
 }
 
 export async function POST(request: Request) {
+  await ensureJobsLoaded();
   const body = await request.json().catch(() => null);
   const checked = validateRenderManifest(body);
   if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: 400 });
@@ -626,11 +730,13 @@ export async function POST(request: Request) {
   };
   jobs.set(job.id, job);
   queue.push(job.id);
+  persistJobs();
   pump();
   return NextResponse.json(publicJob(job), { status: 202 });
 }
 
 export async function GET(request: Request) {
+  await ensureJobsLoaded();
   const url = new URL(request.url);
   const jobId = url.searchParams.get("job");
   if (!jobId) return NextResponse.json({ error: "缺少任务号" }, { status: 400 });

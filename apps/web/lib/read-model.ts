@@ -5,6 +5,7 @@ import {
   SHEET_ANGLES,
   SHEET_LABELS,
   type CastStatus,
+  type Id,
   type Project,
   type ProjectEvent,
   type SheetView,
@@ -112,7 +113,10 @@ export function spendOf(project: Project): Spend {
     .reduce((sum, take) => sum + take.costCny, 0);
   let assets = 0;
   let unpriced = 0;
+  // take 的视频资产不单独计费：钱记在 take 上，资产再记一次就重复了
+  const takeAssetIds = new Set(project.takes.map((take) => take.assetId));
   for (const asset of project.assets) {
+    if (takeAssetIds.has(asset.id)) continue;
     if (asset.costCny !== undefined) assets += asset.costCny;
     else if (asset.source === "generated" && asset.uri) unpriced += 1;
   }
@@ -124,6 +128,164 @@ export function spendOf(project: Project): Spend {
     rejected: round(rejected),
     unpriced,
   };
+}
+
+export type StageSpend = {
+  id: "cast" | "storyboard" | "voice" | "edit";
+  label: string;
+  /** 这一阶段已经花掉的钱（元） */
+  spent: number;
+  /** 这一阶段没有价目、算不进已花的生成资产张数 */
+  unpriced: number;
+  /** 钱花在哪里：给界面一句人话 */
+  detail: string;
+};
+
+/**
+ * 按阶段拆账（H4）。
+ *
+ * 分类只按引用关系走，不按资产类型猜：
+ * - take 的视频资产不单独计费，钱记在 take 上 → 分镜；
+ * - 首尾帧资产 → 分镜；
+ * - 台词音轨 → 配音；其余音频 → 配音；
+ * - 配乐资产 → 成片；
+ * - 剩下没人引用的图 / 视频 → 定妆（角色三视图、场景主镜、道具参考）。
+ *
+ * 文本调用与本机 ffmpeg 渲染目前没有落进 IR 的费用，所以剧本 / 成片这两个阶段
+ * 只会在有配乐资产时出现金额；界面要如实写"未计入"，不能把它们当成免费。
+ */
+export function spendByStage(project: Project): StageSpend[] {
+  const takeAssetIds = new Set(project.takes.map((take) => take.assetId));
+  const keyframeIds = new Set<string>();
+  for (const shot of project.shots) {
+    if (shot.keyframes.firstAssetId) keyframeIds.add(shot.keyframes.firstAssetId);
+    if (shot.keyframes.lastAssetId) keyframeIds.add(shot.keyframes.lastAssetId);
+  }
+  const dialogueAudioIds = new Set(
+    project.dialogue.map((line) => line.audioAssetId).filter((id): id is Id => Boolean(id)),
+  );
+  const musicAssetIds = new Set(project.timeline.music.map((cue) => cue.assetId));
+
+  const buckets: Record<
+    StageSpend["id"],
+    { spent: number; unpriced: number; assets: number }
+  > = {
+    cast: { spent: 0, unpriced: 0, assets: 0 },
+    storyboard: { spent: 0, unpriced: 0, assets: 0 },
+    voice: { spent: 0, unpriced: 0, assets: 0 },
+    edit: { spent: 0, unpriced: 0, assets: 0 },
+  };
+  const add = (id: StageSpend["id"], asset: (typeof project.assets)[number]) => {
+    buckets[id].assets += 1;
+    if (asset.costCny !== undefined) buckets[id].spent += asset.costCny;
+    else if (asset.source === "generated" && asset.uri) buckets[id].unpriced += 1;
+  };
+
+  for (const asset of project.assets) {
+    // take 的视频已经由 take.costCny 记过，资产再记一次会重复
+    if (takeAssetIds.has(asset.id)) continue;
+    if (keyframeIds.has(asset.id)) add("storyboard", asset);
+    else if (dialogueAudioIds.has(asset.id)) add("voice", asset);
+    else if (musicAssetIds.has(asset.id)) add("edit", asset);
+    else if (asset.kind === "audio") add("voice", asset);
+    else add("cast", asset);
+  }
+
+  const takeCost = project.takes.reduce((sum, take) => sum + take.costCny, 0);
+  buckets.storyboard.spent += takeCost;
+
+  const round = (value: number) => Math.round(value * 100) / 100;
+
+  return [
+    {
+      id: "cast",
+      label: "定妆",
+      spent: round(buckets.cast.spent),
+      unpriced: buckets.cast.unpriced,
+      detail: `${buckets.cast.assets} 个资产 · 角色 / 场景 / 道具参考`,
+    },
+    {
+      id: "storyboard",
+      label: "分镜",
+      spent: round(buckets.storyboard.spent),
+      unpriced: buckets.storyboard.unpriced,
+      detail: `${project.takes.length} 条 take · ${buckets.storyboard.assets} 个关键帧资产`,
+    },
+    {
+      id: "voice",
+      label: "配音",
+      spent: round(buckets.voice.spent),
+      unpriced: buckets.voice.unpriced,
+      detail: `${project.dialogue.filter((line) => line.audioAssetId).length} 句有声台词 · ${buckets.voice.assets} 段音频`,
+    },
+    {
+      id: "edit",
+      label: "成片",
+      spent: round(buckets.edit.spent),
+      unpriced: buckets.edit.unpriced,
+      detail:
+        project.timeline.music.length > 0
+          ? `${project.timeline.music.length} 段配乐 · 本机 ffmpeg 渲染不按文件计费`
+          : "本机 ffmpeg 渲染不按文件计费 · 文本调用未记账",
+    },
+  ];
+}
+
+export type ShotLedgerRow = {
+  shotId: string;
+  label: string;
+  scene: string;
+  durationMs: number;
+  /** 这一镜的 take 与首尾帧 */
+  spent: number;
+  unpriced: number;
+  takes: number;
+  /** 其中已淘汰 take 的钱 */
+  rejected: number;
+};
+
+/** 按镜拆账（H4）：每一镜花了多少，定妆等项目级成本不摊进来。 */
+export function shotLedger(project: Project): ShotLedgerRow[] {
+  const sceneName = (sceneId: string) => {
+    const scene = project.scenes.find((item) => item.id === sceneId);
+    if (!scene) return "未知场景";
+    return scene.code || `第 ${scene.index + 1} 场`;
+  };
+  const locationName = (sceneId: string) => {
+    const scene = project.scenes.find((item) => item.id === sceneId);
+    return project.locations.find((item) => item.id === scene?.locationId)?.name ?? "";
+  };
+
+  return project.shots.map((shot, index) => {
+    const takes = project.takes.filter((take) => take.shotId === shot.id);
+    const takeAssetIds = new Set(takes.map((take) => take.assetId));
+    const frameIds = new Set(
+      [shot.keyframes.firstAssetId, shot.keyframes.lastAssetId].filter(
+        (id): id is Id => Boolean(id),
+      ),
+    );
+    let spent = takes.reduce((sum, take) => sum + take.costCny, 0);
+    let unpriced = 0;
+    for (const asset of project.assets) {
+      if (!frameIds.has(asset.id) || takeAssetIds.has(asset.id)) continue;
+      if (asset.costCny !== undefined) spent += asset.costCny;
+      else if (asset.source === "generated" && asset.uri) unpriced += 1;
+    }
+    return {
+      shotId: shot.id,
+      label: shotLabel(index + 1),
+      scene: locationName(shot.sceneId) || sceneName(shot.sceneId),
+      durationMs: shot.durationMs,
+      spent: Math.round(spent * 100) / 100,
+      unpriced,
+      takes: takes.length,
+      rejected: Math.round(
+        takes
+          .filter((take) => take.status === "rejected")
+          .reduce((sum, take) => sum + take.costCny, 0) * 100,
+      ) / 100,
+    };
+  });
 }
 
 export type ShotSpend = {
