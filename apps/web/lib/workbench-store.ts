@@ -348,7 +348,11 @@ type WorkbenchState = {
   /** 移掉配乐床：写一条空的 `timeline.music.updated`，资产留在项目里 */
   removeMusic: () => boolean;
   /** 批量补缺：按镜号顺序一帧一帧生成，跳过锁定，失败即停（ADR-0042 附记） */
-  generateMissingFrames: (frame?: Frame) => Promise<void>;
+  /**
+   * 批量补帧（H21）：按镜号顺序补缺的帧，跳过锁定，失败即停。
+   * 传 `only` 就只补这些镜头——分镜筛选到某一档时，「挑张补」补的是眼前这几格。
+   */
+  generateMissingFrames: (frame?: Frame, only?: string[]) => Promise<void>;
   /** 批量补帧的进度；`stop` 置上后当前这一张结束就停 */
   batch?: { frame: Frame; done: number; total: number; stop?: boolean };
   stopBatch: () => void;
@@ -2697,18 +2701,23 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     return true;
   },
 
-  generateMissingFrames: async (frame = "first") => {
+  generateMissingFrames: async (frame = "first", only) => {
 
     if (get().readOnly || get().batch) return;
     const { shots } = toStageView(get().project);
+    const scope = only ? new Set(only) : undefined;
     const missing = shots
       // 锁定的镜头跳过：批量不是绕过闸门的理由
       .filter((shot) => !shot.locked)
+      .filter((shot) => (scope ? scope.has(shot.id) : true))
       .filter((shot) => (frame === "last" ? !shot.hasLastFrame : !shot.hasKeyframe))
       .map((shot) => shot.id);
 
     if (missing.length === 0) {
-      set({ castError: frame === "last" ? "尾帧都齐了。" : "首帧都齐了。" });
+      const what = frame === "last" ? "尾帧" : "首帧";
+      set({
+        castError: scope ? `这一档里没有缺${what}的镜头。` : `${what}都齐了。`,
+      });
       return;
     }
 

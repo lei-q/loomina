@@ -223,11 +223,14 @@ export function KeyframesScreen() {
   const [filter, setFilter] = useState<KeyframeFilter>("all");
   const tally = useMemo(() => keyframeTally(view.cells), [view.cells]);
   const cells = useMemo(() => filterKeyframeCells(view.cells, filter), [view.cells, filter]);
-  // 批量只补没锁的格子：锁定是闸门，批量不是绕过去的理由
-  const missingFirst = view.cells.filter((cell) => !cell.locked && !cell.hasFirst).length;
-  const missingLast = view.cells.filter((cell) => !cell.locked && !cell.hasLast).length;
+  // 批量只补没锁的格子：锁定是闸门，批量不是绕过去的理由。
+  // 筛选到某一档时，「挑张补」只补眼前这几格（H21）——否则筛完还得自己数。
+  const scoped = filter === "all" ? view.cells : cells;
+  const missingFirst = scoped.filter((cell) => !cell.locked && !cell.hasFirst).length;
+  const missingLast = scoped.filter((cell) => !cell.locked && !cell.hasLast).length;
   const batchPrice = (count: number) =>
     imageCny === undefined ? `${count} 张` : `${count} 张 · ¥${(count * imageCny).toFixed(2)}`;
+  const scopeIds = filter === "all" ? undefined : cells.map((cell) => cell.id);
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg text-text">
@@ -317,6 +320,11 @@ export function KeyframesScreen() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              {filter !== "all" && !batch && (
+                <span className="text-[9.5px] text-muted-2">
+                  只补这一档（{cells.length} 格）
+                </span>
+              )}
               {batch ? (
                 <>
                   <span className="tnum text-[10.5px] text-muted" aria-live="polite">
@@ -336,18 +344,26 @@ export function KeyframesScreen() {
                 <>
                   <button
                     type="button"
-                    onClick={() => void generateMissingFrames("first")}
+                    onClick={() => void generateMissingFrames("first", scopeIds)}
                     disabled={missingFirst === 0 || readOnly}
-                    title="按镜号顺序补首帧：跳过锁定的镜头，一张失败就停"
+                    title={
+                      filter === "all"
+                        ? "按镜号顺序补首帧：跳过锁定的镜头，一张失败就停"
+                        : "只补当前这一档里缺首帧的镜头：跳过锁定，一张失败就停"
+                    }
                     className="tnum rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:pointer-events-none disabled:opacity-40"
                   >
                     补缺首帧 <span className="text-[9px] text-muted-2">{batchPrice(missingFirst)}</span>
                   </button>
                   <button
                     type="button"
-                    onClick={() => void generateMissingFrames("last")}
+                    onClick={() => void generateMissingFrames("last", scopeIds)}
                     disabled={missingLast === 0 || readOnly}
-                    title="按镜号顺序补尾帧：跳过锁定的镜头，一张失败就停"
+                    title={
+                      filter === "all"
+                        ? "按镜号顺序补尾帧：跳过锁定的镜头，一张失败就停"
+                        : "只补当前这一档里缺尾帧的镜头：跳过锁定，一张失败就停"
+                    }
                     className="tnum rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:pointer-events-none disabled:opacity-40"
                   >
                     补缺尾帧 <span className="text-[9px] text-muted-2">{batchPrice(missingLast)}</span>

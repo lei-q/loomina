@@ -887,6 +887,36 @@ describe("批量补帧（ADR-0042 附记）", () => {
     vi.unstubAllGlobals();
   });
 
+  it("挑张补：只补传进来的那几镜（H21）", async () => {
+    let calls = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => { calls += 1; return okResponse(); }));
+
+    await state().generateMissingFrames("first", ["s-02", "s-03", "s-08"]);
+
+    const patched = state()
+      .events.filter((event) => event.type === "shot.updated")
+      .map((event) => event.shotId);
+    // s-08 锁着，即使点名也不碰
+    expect(calls).toBe(2);
+    expect(patched).toEqual(["s-02", "s-03"]);
+    expect(state().batch).toBeUndefined();
+    vi.unstubAllGlobals();
+  });
+
+  it("点名的那几镜都齐了就说「这一档里没有缺的」，不写事件", async () => {
+    let calls = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => { calls += 1; return okResponse(); }));
+    await state().generateMissingFrames("first", ["s-02"]);
+    const snapshot = state().events.length;
+
+    await state().generateMissingFrames("first", ["s-02"]);
+
+    expect(calls).toBe(1);
+    expect(state().events).toHaveLength(snapshot);
+    expect(state().castError).toContain("这一档里没有缺首帧");
+    vi.unstubAllGlobals();
+  });
+
   it("失败说明用整片镜号：第二场以后不能报场内序号", async () => {
     vi.stubGlobal(
       "fetch",
