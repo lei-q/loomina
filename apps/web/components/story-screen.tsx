@@ -3,6 +3,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  BEAT_SHEETS,
+  beatSheetById,
+  beatWindows,
+  formatSeconds,
+  GENRE_MATRIX,
+  genreById,
+  genreReadiness,
   SHOT_ANGLE_CN,
   SHOT_MIN_MS,
   SHOT_PADDING_MS,
@@ -13,11 +20,12 @@ import {
 import { TopBar } from "@/components/top-bar";
 import { StageGate } from "@/components/stage-gate";
 import { ModelPicker } from "@/components/model-picker";
+import { LoglineScoreCard, LoglineWorkshop } from "@/components/logline-score";
 import { estimateDialogueMs } from "@/lib/dialogue";
 import { useModelCatalog, useModelChoice } from "@/lib/model-choice";
 import { useWorkbench } from "@/lib/workbench-store";
 
-const GENRES = ["都市逆袭", "甜宠", "悬疑", "家庭伦理"] as const;
+const DEFAULT_GENRE = "逆袭打脸";
 
 const IDEAS = [
   "外卖员每天给顶层公寓送餐，直到董事长当众喊他「少主」。",
@@ -83,7 +91,8 @@ export function StoryScreen() {
   const [fileName, setFileName] = useState<string>();
   const [rights, setRights] = useState(false);
   const [reading, setReading] = useState(false);
-  const [genre, setGenre] = useState<string>("都市逆袭");
+  const [genre, setGenre] = useState<string>(DEFAULT_GENRE);
+  const [beatSheetId, setBeatSheetId] = useState<string>("60s");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [result, setResult] = useState<StoryResult>();
@@ -133,6 +142,11 @@ export function StoryScreen() {
       seconds: Math.round(durationMs / 100) / 10,
     };
   }, [result]);
+
+  const genreProfile = genreById(genre);
+  const readiness = genreProfile ? genreReadiness(genreProfile) : undefined;
+  const beatSheet = beatSheetById(beatSheetId) ?? BEAT_SHEETS[0]!;
+  const beatOverlay = beatWindows(beatSheet, stats ? stats.seconds * 1000 : undefined);
 
   function switchMode(next: StoryOrigin) {
     if (next === mode) return;
@@ -184,6 +198,7 @@ export function StoryScreen() {
         body: JSON.stringify(
           {
             ...(mode === "import" ? { source, genre } : { idea, genre }),
+            beatSheet: beatSheetId,
             ...(textModelId ? { modelId: textModelId } : {}),
           },
         ),
@@ -370,23 +385,133 @@ export function StoryScreen() {
               </>
             )}
 
-            <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-4">
-              <span className="text-[10px] text-muted-2">题材</span>
-              {GENRES.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => setGenre(item)}
-                  aria-pressed={genre === item}
-                  className={
-                    genre === item
-                      ? "rounded-token border border-line-2 bg-line px-2.5 py-1 text-[10.5px] text-text"
-                      : "rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
-                  }
+            <div className="mt-4 border-t border-line pt-4">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="mr-1 text-[10px] text-muted-2">题材</span>
+                {GENRE_MATRIX.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setGenre(item.name)}
+                    aria-pressed={genre === item.name}
+                    title={`${item.audience} · 可行性 ${item.feasibility} · 竞争 ${item.competition}`}
+                    className={
+                      genre === item.name
+                        ? "rounded-token border border-line-2 bg-line px-2.5 py-1 text-[10.5px] text-text"
+                        : "rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                    }
+                  >
+                    {item.name}
+                    <span className="ml-1 text-[8.5px] text-muted-2">{item.priority}</span>
+                  </button>
+                ))}
+              </div>
+              {genreProfile && readiness && (
+                <p
+                  className={`mt-2 text-[9.5px] leading-[1.7] ${
+                    readiness.tone === "warn" ? "text-pick" : "text-muted-2"
+                  }`}
                 >
-                  {item}
-                </button>
-              ))}
+                  「{genreProfile.name}」· {readiness.level} · {readiness.reason}
+                </p>
+              )}
+
+              <details className="mt-2.5 rounded-token border border-line bg-bg px-3 py-2">
+                <summary className="cursor-pointer text-[10px] leading-[1.7] text-muted">
+                  题材矩阵 · 12 个题材的受众 / 可行性 / 竞争
+                </summary>
+                <div className="mt-2 overflow-x-auto">
+                  <table className="w-full min-w-[520px] text-left text-[9.5px] leading-[1.6]">
+                    <thead className="text-muted-2">
+                      <tr className="border-b border-line">
+                        <th className="py-1 pr-3 font-normal">题材</th>
+                        <th className="py-1 pr-3 font-normal">受众</th>
+                        <th className="py-1 pr-3 font-normal">AI 可行性</th>
+                        <th className="py-1 pr-3 font-normal">竞争</th>
+                        <th className="py-1 pr-3 font-normal">优先级</th>
+                        <th className="py-1 font-normal">建议</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {GENRE_MATRIX.map((item) => (
+                        <tr key={item.id} className="border-b border-line last:border-0">
+                          <td className="py-1 pr-3 text-muted">{item.name}</td>
+                          <td className="py-1 pr-3 text-muted-2">{item.audience}</td>
+                          <td className="py-1 pr-3 text-muted-2">{item.feasibility}</td>
+                          <td className="py-1 pr-3 text-muted-2">{item.competition}</td>
+                          <td className="py-1 pr-3 text-muted-2">{item.priority}</td>
+                          <td className="py-1 text-muted-2">{item.advice}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-2 text-[9px] leading-[1.6] text-muted-2">
+                  首发聚焦都市情感 / 逆袭打脸 / 甜宠霸总：室内、少人、对话驱动，正好落在模型强项上。古装、萌宝、动作类会放大一致性与群演风险。
+                </p>
+              </details>
+
+              <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                <span className="mr-1 text-[10px] text-muted-2">节拍表</span>
+                {BEAT_SHEETS.map((sheet) => (
+                  <button
+                    key={sheet.id}
+                    type="button"
+                    onClick={() => setBeatSheetId(sheet.id)}
+                    aria-pressed={beatSheetId === sheet.id}
+                    className={
+                      beatSheetId === sheet.id
+                        ? "rounded-token border border-line-2 bg-line px-2.5 py-1 text-[10.5px] text-text"
+                        : "rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                    }
+                  >
+                    {sheet.name}
+                  </button>
+                ))}
+                <span className="text-[9px] leading-[1.6] text-muted-2">{beatSheet.note}</span>
+              </div>
+
+              <details className="mt-2.5 rounded-token border border-line bg-bg px-3 py-2">
+                <summary className="cursor-pointer text-[10px] leading-[1.7] text-muted">
+                  节拍时间窗 · {beatSheet.name}（{beatSheet.beats.length} 拍）
+                  {result ? ` · 按这条草稿 ${stats?.seconds.toFixed(1)}s 换算` : ""}
+                </summary>
+                <div className="mt-2 overflow-x-auto">
+                  <table className="w-full min-w-[460px] text-left text-[9.5px] leading-[1.6]">
+                    <thead className="text-muted-2">
+                      <tr className="border-b border-line">
+                        <th className="py-1 pr-3 font-normal">时间</th>
+                        <th className="py-1 pr-3 font-normal">Beat</th>
+                        <th className="py-1 font-normal">任务</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {beatOverlay.map((beat, index) => (
+                        <tr key={`${beat.label}-${index}`} className="border-b border-line last:border-0">
+                          <td className="tnum py-1 pr-3 text-muted">
+                            {formatSeconds(beat.startMs / 1000)}–{formatSeconds(beat.endMs / 1000)}
+                          </td>
+                          <td className="py-1 pr-3 text-muted">{beat.label}</td>
+                          <td className="py-1 text-muted-2">{beat.task}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-2 text-[9px] leading-[1.6] text-muted-2">
+                  {result
+                    ? "时间窗按这条草稿的总时长等比换算；当前生成仍是 60–90 秒、10–14 镜。"
+                    : `按模板名义时长 ${beatSheet.nominalSeconds}s 显示；生成后换成草稿的实际时长。`}
+                </p>
+              </details>
+
+              <LoglineWorkshop genreId={genre} />
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-4">
+              <span className="text-[9.5px] leading-[1.6] text-muted-2">
+                生成会带上所选题材与节拍表；结果仍先在内存里，确认才写项目。
+              </span>
               <button
                 type="button"
                 onClick={() => void generate()}
@@ -488,6 +613,10 @@ export function StoryScreen() {
                     </div>
                   ))}
                 </dl>
+              </div>
+
+              <div className="mt-4">
+                <LoglineScoreCard text={result.draft.logline} genreId={genre} />
               </div>
 
               <div className="mt-6 grid gap-5 lg:grid-cols-[1.15fr_.85fr]">

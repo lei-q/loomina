@@ -28,6 +28,7 @@ export async function POST(request: Request) {
     idea?: unknown;
     source?: unknown;
     genre?: unknown;
+    beatSheet?: unknown;
     modelId?: unknown;
   } | null;
   if (!body) {
@@ -37,10 +38,11 @@ export async function POST(request: Request) {
   const idea = typeof body.idea === "string" ? body.idea : undefined;
   const source = typeof body.source === "string" ? body.source : undefined;
   const genre = typeof body.genre === "string" ? body.genre : undefined;
+  const beatSheet = typeof body.beatSheet === "string" ? body.beatSheet : undefined;
   const modelId = typeof body.modelId === "string" ? body.modelId : undefined;
 
   try {
-    return NextResponse.json(await generateStory({ idea, source, genre }, modelId));
+    return NextResponse.json(await generateStory({ idea, source, genre, beatSheet }, modelId));
   } catch (error) {
     const message =
       error instanceof TreecloudError ||

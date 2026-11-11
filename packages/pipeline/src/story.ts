@@ -14,6 +14,7 @@ import {
   type StoryRelationship,
 } from "@loomina/ir";
 import { estimateDialogueMs } from "./dialogue";
+import { beatSheetPrompt, type BeatSheet } from "./story-kit";
 
 /**
  * 故事入口（ADR-0088）。
@@ -593,10 +594,14 @@ export function projectFromStoryDraft(
   return project;
 }
 
-export function storyMessages(idea: string, genre?: string): { role: "system" | "user"; content: string }[] {
+export function storyMessages(
+  idea: string,
+  genre?: string,
+  beatSheet?: BeatSheet,
+): { role: "system" | "user"; content: string }[] {
   const system = storySystem(
     "目标：把一句话或一段大纲变成一条 60–90 秒的竖屏短剧骨架，可直接进入分镜。",
-    [],
+    beatSheet ? [beatSheetPrompt(beatSheet)] : [],
   );
   const user = [
     genre?.trim() ? `题材偏好：${genre.trim()}` : "",
@@ -622,6 +627,7 @@ export function storyMessages(idea: string, genre?: string): { role: "system" | 
 export function importStoryMessages(
   source: string,
   genre?: string,
+  beatSheet?: BeatSheet,
 ): { role: "system" | "user"; content: string }[] {
   const system = storySystem(
     "目标：把用户给的小说 / 剧本文字改写成一条 60–90 秒的竖屏短剧骨架，可直接进入分镜。",
@@ -630,6 +636,7 @@ export function importStoryMessages(
       "7. 忠实保留原文的人物关系、核心冲突与结局意思；可以合并次要人物与场次，不新增原文没有的主要人物。",
       "8. 删除旁白、说明性叙述与无法拍摄的内心描写，把信息改成动作、物件或台词。",
       "9. 不照抄大段原文；台词可以精简，但不能改变人物立场与结局。",
+      ...(beatSheet ? [beatSheetPrompt(beatSheet)] : []),
     ],
   );
   const user = [

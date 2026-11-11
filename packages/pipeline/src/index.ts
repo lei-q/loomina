@@ -19,6 +19,7 @@ import { sceneTemplateById, sceneTemplatePrompt, type SceneTemplate } from "./sc
 
 export * from "./dialogue";
 export * from "./story";
+export * from "./story-kit";
 export * from "./scene-templates";
 
 export interface PriceTable {

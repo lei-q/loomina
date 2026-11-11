@@ -7,6 +7,7 @@ import {
   StoryDraftError,
   storyMessages,
 } from "../src/story";
+import { beatSheetById } from "../src/story-kit";
 
 const DRAFT = {
   title: "少主归来",
@@ -191,5 +192,17 @@ describe("草稿 → 项目（ADR-0088）", () => {
     expect(messages[0]?.content).toContain("只输出 JSON");
     expect(messages[1]?.content).toContain("悬疑");
     expect(messages[1]?.content).toContain("林夏：你早就知道");
+  });
+
+  it("选了节拍表就把时间窗写进系统提示，两条生成路径都带", () => {
+    const sheet = beatSheetById("60s")!;
+    const idea = storyMessages("外卖员是继承人", "逆袭打脸", sheet);
+    expect(idea[0]?.content).toContain("结构参考「60 秒单集」");
+    expect(idea[0]?.content).toContain("hook 0–3s");
+    const imported = importStoryMessages("第一场 夜 咖啡馆", "悬疑", sheet);
+    expect(imported[0]?.content).toContain("结构参考「60 秒单集」");
+    expect(imported[0]?.content).toContain("不新增原文没有的主要人物");
+    // 不选节拍表时提示词保持原样
+    expect(storyMessages("外卖员是继承人")[0]?.content).not.toContain("结构参考");
   });
 });
