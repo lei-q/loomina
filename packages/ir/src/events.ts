@@ -394,7 +394,23 @@ function checkReferenceImages(ids: Id[], assets: Asset[], label: string) {
   }
 }
 
+/**
+ * 应用一条事件；`Project.version` 每应用一条就 +1（F1 状态校准）。
+ *
+ * 版本号要能回答「现在这份项目是第几版」，所以它跟着状态走，而不是跟着某一次
+ * 批量生成走：改一句台词、确认一次闸门、回退一次，都是新的一版。
+ * `project.created` 是例外——它带来自己的起始版本。
+ */
 export function applyEvent(
+  current: Project | null,
+  event: ProjectEvent,
+): Project {
+  const next = applyEventCore(current, event);
+  if (event.type === "project.created") return next;
+  return { ...next, version: next.version + 1 };
+}
+
+function applyEventCore(
   current: Project | null,
   event: ProjectEvent,
 ): Project {
@@ -1068,8 +1084,9 @@ export function rebuildStates(events: ProjectEvent[]): Project[] {
           `project.restored 的目标不合法：${target}（要落在 1–${index} 之间）`,
         );
       }
-      // 回滚只指向前面的日志，所以这一步一定已经算过
-      states.push(states[target - 1]!);
+      // 回滚只指向前面的日志，所以这一步一定已经算过。
+      // 版本号同样 +1：回到旧内容也是一次状态变更，否则「v 几」会往回跳。
+      states.push({ ...states[target - 1]!, version: previous!.version + 1 });
       continue;
     }
     if (!previous && event.type !== "project.created") {

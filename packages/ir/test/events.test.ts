@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { clone } from "../src/clone";
-import { applyEvent, rebuild, type ProjectEvent } from "../src/events";
+import { applyEvent, rebuild, rebuildStates, type ProjectEvent } from "../src/events";
 import { validateProject } from "../src/invariants";
 import { ProjectSchema, type Project, type Take } from "../src/schema";
 import minimalJson from "../../../examples/minimal.json";
@@ -1973,5 +1973,63 @@ describe("全局回滚（F2 / ADR-0109）", () => {
     expect(() =>
       applyEvent(load(), { type: "project.restored", at: AT, toEventCount: 1 }),
     ).toThrow(/rebuild/);
+  });
+});
+
+describe("项目版本随事件递增（F1 / ADR-0113）", () => {
+  it("created 带来自己的起始版本，不再加一", () => {
+    const project = load();
+    expect(rebuild([created(project)]).version).toBe(project.version);
+  });
+
+  it("每应用一条事件版本 +1：改预算、改重试上限、记一条资产都算", () => {
+    const project = load();
+    const start = project.version;
+    expect(
+      applyEvent(project, {
+        type: "project.updated",
+        at: AT,
+        budgetCny: 120,
+      }).version,
+    ).toBe(start + 1);
+
+    const states = rebuildStates([
+      created(project),
+      { type: "project.updated", at: AT, budgetCny: 120 },
+      { type: "project.updated", at: AT, maxAttemptsPerShot: 3 },
+      { type: "shot.updated", at: AT, shotId: "sh-1", patch: { description: "改过的动作" } },
+    ]);
+    expect(states.map((state) => state.version)).toEqual([
+      start,
+      start + 1,
+      start + 2,
+      start + 3,
+    ]);
+  });
+
+  it("回滚也是一版：内容回到旧状态，版本继续往上走", () => {
+    const project = load();
+    const start = project.version;
+    const states = rebuildStates([
+      created(project),
+      { type: "project.updated", at: AT, budgetCny: 120 },
+      { type: "project.restored", at: AT, toEventCount: 1 },
+    ]);
+    expect(states[2]!.budgetCny).toBe(project.budgetCny);
+    expect(states[2]!.version).toBe(start + 2);
+  });
+
+  it("版本只增不减：连续回滚不会让数字往回跳", () => {
+    const project = load();
+    const start = project.version;
+    const states = rebuildStates([
+      created(project),
+      { type: "project.updated", at: AT, budgetCny: 120 },
+      { type: "project.restored", at: AT, toEventCount: 1 },
+      { type: "project.updated", at: AT, budgetCny: 90 },
+      { type: "project.restored", at: AT, toEventCount: 3 },
+    ]);
+    const versions = states.map((state) => state.version);
+    expect(versions).toEqual([start, start + 1, start + 2, start + 3, start + 4]);
   });
 });

@@ -13,7 +13,7 @@ interface Project {
   id: ID;
   title: string;
   logline: string;
-  version: number;          // 单调递增，配合版本快照
+  version: number;          // 每应用一条事件 +1（含回滚），只增不减；ADR-0113
   budgetCny: number;        // 预算上限（元），默认 60；ADR-0035
   maxAttemptsPerShot: number;          // 同一镜最多自动试几次（含第一次），1–5，默认 3；ADR-0101
   onBudgetExceed: "block" | "keep";    // 超预算处置：阻断 / 保留现有结果，默认 block；ADR-0101
@@ -823,7 +823,8 @@ interface AILabel {
 
 ## 9. 版本策略
 
-- 项目整体 `version` 单调递增；每个保存点生成快照（或事件日志重放）。
+- 项目整体 `version` 单调递增：`applyEvent` 每应用一条事件就 +1（`project.created` 用事件自带的起始版本），回滚同样 +1——回到旧内容也是一次状态变更。所以它是「改到第几版」，不是「日志里还剩什么」；真实的先后顺序看日志本身。
+- 每个保存点生成快照（或事件日志重放）。
 - 早期实现：**事件日志 + 定期快照**，比"每次全量存 JSON"更省空间，也天然支持撤销。
 - 破坏性 schema 变更必须写迁移脚本，并在 ADR 中记录。
 

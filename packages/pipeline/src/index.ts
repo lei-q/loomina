@@ -107,6 +107,9 @@ export async function runMinimalChain(
 
   const updated: Project = {
     ...project,
+    // 这里是直接构造 Project（探针与测试用），不经过事件总线。
+    // 接进工作流时，出片结果应以事件落进日志，由 applyEvent 统一按事件计版本，
+    // 否则两次 +1 会让版本跳号（F1 / ADR-0113）。
     version: project.version + 1,
     shots,
     takes: [...project.takes, ...newTakes],
