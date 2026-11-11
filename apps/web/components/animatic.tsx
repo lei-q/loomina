@@ -4,13 +4,19 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Scene } from "@/components/scene";
 import { shotLabel, type AnimaticView } from "@/lib/read-model";
+import { elapsedMsOf, locateInTimeline, totalMsOf } from "@/lib/animatic-clock";
 import { CloseIcon, PauseIcon, PlayIcon } from "@/components/icons";
 
 /**
- * 预演（ADR-0084）：把这一条片按镜头时长一张张放过去。
+ * 预演（ADR-0084 / E7.1 / ADR-0127）：把这一条片按镜头时长一张张放过去。
  *
  * 只在浏览器里播现成的关键帧 / 视频，不渲染文件、不花钱；
  * 先让人看见节奏与字幕，再决定要不要生成。
+ *
+ * E7.1 把它从「只能从某一镜开头播」升级成一条**可拖的时间轴**：
+ * 播放由一条墙钟推进（不是每镜一个 setTimeout），拖动时把整片毫秒数
+ * 换算成「第几镜 + 镜内偏移」，播放与拖动共用同一套换算。
+ * 精度到镜准确、镜内近似——镜内偏移能不能落到那一帧由播放器决定。
  */
 export function AnimaticOverlay({
   view,
@@ -20,53 +26,117 @@ export function AnimaticOverlay({
   onClose: () => void;
 }) {
   const total = Math.max(view.segments.length, 1);
+  const totalMs = totalMsOf(view.segments);
   const [index, setIndex] = useState(0);
+  const [offsetMs, setOffsetMs] = useState(0);
   const [playing, setPlaying] = useState(true);
   const [ended, setEnded] = useState(false);
   const [clip, setClip] = useState(0);
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  /** 用户拖动后 +1：让播放器把 currentTime 拉回这一处 */
+  const [seekToken, setSeekToken] = useState(0);
+  const lastTick = useRef<number | undefined>(undefined);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   // 配乐（E10）：一条床，跟着预演播 / 停
   const musicRef = useRef<HTMLAudioElement | null>(null);
   const music = view.music[0];
   const [musicOn, setMusicOn] = useState(true);
   const segment = view.segments[index];
   const clips = segment?.clips ?? [];
+  /** 下一次「跳转」要把片子对到哪一毫秒；只有跳转时才有值 */
+  const pendingSeek = useRef<number | undefined>(undefined);
 
+  /** 跳到某一镜（镜内从头开始） */
   const jump = useCallback(
     (next: number) => {
       const clamped = Math.max(0, Math.min(view.segments.length - 1, next));
+      pendingSeek.current = 0;
       setIndex(clamped);
+      setOffsetMs(0);
+      setSeekToken((value) => value + 1);
       setEnded(false);
     },
     [view.segments.length],
   );
 
+  /** 拖到整条片子的某一毫秒 */
+  const seek = useCallback(
+    (ms: number) => {
+      const at = locateInTimeline(view.segments, ms);
+      pendingSeek.current = at.offsetMs;
+      setIndex(at.index);
+      setOffsetMs(at.offsetMs);
+      setSeekToken((value) => value + 1);
+      setEnded(false);
+    },
+    [view.segments],
+  );
+
   const finish = useCallback(() => {
     setPlaying(false);
     setEnded(true);
-  }, []);
+    // 停在片尾而不是跳回最后一镜的开头：进度条与「x / 总长」要对得上
+    const last = Math.max(0, view.segments.length - 1);
+    pendingSeek.current = undefined;
+    setIndex(last);
+    setOffsetMs((view.segments[last]?.dur ?? 0) * 1000);
+  }, [view.segments]);
 
-  // 每一镜按自己的秒数往下走；到头就停住，不自动循环
+  // 墙钟推进：每 50ms 算一次「整片第几毫秒」，再换算回镜与偏移。
+  // 不用每镜一个 setTimeout：拖动之后定时器与画面就对不上了。
+  //
+  // 用 `setInterval` 而不是 `requestAnimationFrame`：预演是 24fps 的节奏预览，
+  // 不需要每帧刷新；而 rAF 在后台标签页里会被完全停掉，回来时进度会跳。
+  // 定时器在后台被降到 1 秒一次，所以 delta 封顶 250ms——宁可后台慢一点，
+  // 也不要在切回来时凭空跳过一大段。
+  //
+  // 位置放在 ref 里、effect 只依赖 `playing`：effect 若依赖 offsetMs，
+  // 每次 tick 都会重启定时器，delta 永远是 0。
+  const position = useRef({ index: 0, offsetMs: 0 });
   useEffect(() => {
-    if (!playing || !segment) return;
-    timer.current = setTimeout(() => {
-      if (index + 1 >= view.segments.length) finish();
-      else setIndex(index + 1);
-    }, segment.dur * 1000);
-    return () => clearTimeout(timer.current);
-  }, [playing, index, segment, view.segments.length, finish]);
+    position.current = { index, offsetMs };
+  }, [index, offsetMs]);
+
+  useEffect(() => {
+    if (!playing || view.segments.length === 0) {
+      lastTick.current = undefined;
+      return;
+    }
+    const timer = setInterval(() => {
+      const now = performance.now();
+      const previous = lastTick.current;
+      lastTick.current = now;
+      if (previous === undefined) return;
+      const at = position.current;
+      const delta = Math.min(250, Math.max(0, now - previous));
+      const next = elapsedMsOf(view.segments, at.index, at.offsetMs) + delta;
+      if (next >= totalMs) {
+        finish();
+        return;
+      }
+      const located = locateInTimeline(view.segments, next);
+      if (located.index !== at.index) setIndex(located.index);
+      setOffsetMs(located.offsetMs);
+    }, 50);
+    return () => {
+      clearInterval(timer);
+      lastTick.current = undefined;
+    };
+  }, [playing, totalMs, view.segments, finish]);
 
   const replay = () => {
+    pendingSeek.current = 0;
     setIndex(0);
+    setOffsetMs(0);
+    setSeekToken((value) => value + 1);
     setEnded(false);
     setPlaying(true);
   };
 
-  // 换镜 → 从这一镜的第一句念起
+  // 换镜 / 拖到别处 → 这一镜的台词从头念
   useEffect(() => {
     setClip(0);
-  }, [index]);
+  }, [index, seekToken]);
 
   // 音轨跟着播放状态走：暂停时真停，接着播从原处续上（ADR-0085）
   useEffect(() => {
@@ -82,6 +152,36 @@ export function AnimaticOverlay({
       // 浏览器不给自动播放时，字幕照走；用户点一下「暂停 / 播放」即可
     });
   }, [playing, index, clip, clips]);
+
+  // 拖动 / 切镜之后把片子对到那一处（镜内近似：浏览器只能从关键帧之后解码）。
+  //
+  // **只在显式跳转时对一次**，不跟着每帧的 offsetMs 走：每帧写一次 currentTime
+  // 会不停打断加载，视频永远停在 readyState 0。播放期间让片子自己放，
+  // 切镜由墙钟决定；墙钟与片子之间的漂移在这一级是可接受的（到镜准确）。
+  const applyPendingSeek = useCallback(() => {
+    const element = videoRef.current;
+    const target = pendingSeek.current;
+    if (!element || target === undefined) return;
+    if (!Number.isFinite(element.duration) || element.duration <= 0) return;
+    try {
+      element.currentTime = Math.min(target / 1000, Math.max(0, element.duration - 0.05));
+      pendingSeek.current = undefined;
+    } catch {
+      // 元数据还没到就拖了：留到 loadedmetadata 再对
+    }
+  }, []);
+
+  useEffect(() => {
+    applyPendingSeek();
+  }, [seekToken, index, segment?.videoUri, applyPendingSeek]);
+
+  // 视频跟着播放状态走：暂停真停，继续接着放
+  useEffect(() => {
+    const element = videoRef.current;
+    if (!element) return;
+    if (playing) void element.play().catch(() => {});
+    else element.pause();
+  }, [playing, index, segment?.videoUri]);
 
   // 配乐跟着播放状态走：暂停就停，继续从原处接上；不放「不是成片」的默片预演
   useEffect(() => {
@@ -108,11 +208,8 @@ export function AnimaticOverlay({
     return () => window.removeEventListener("keydown", onKey);
   }, [index, jump, onClose]);
 
-  const elapsed = view.segments
-    .slice(0, index)
-    .reduce((sum, item) => sum + item.dur, 0);
-  const progress =
-    view.totalSec > 0 ? Math.min(100, (elapsed / view.totalSec) * 100) : 0;
+  const elapsed = elapsedMsOf(view.segments, index, offsetMs);
+  const progress = totalMs > 0 ? Math.min(100, (elapsed / totalMs) * 100) : 0;
 
   return (
     <div
@@ -128,6 +225,12 @@ export function AnimaticOverlay({
         </span>
         <span className="tnum rounded-token border border-line px-1.5 py-px text-[8.5px] text-muted-2">
           这不是成片
+        </span>
+        <span
+          className="rounded-token border border-line px-1.5 py-px text-[8.5px] text-muted-2"
+          title="时间轴到镜准确；镜内只能落到最近的关键帧之后，所以是近似"
+        >
+          到镜准确 · 镜内近似
         </span>
         <button
           type="button"
@@ -145,12 +248,14 @@ export function AnimaticOverlay({
           {segment?.videoUri ? (
             <video
               key={segment.id}
+              ref={videoRef}
               src={segment.videoUri}
               poster={segment.imageUri}
               muted
               playsInline
               autoPlay
               loop
+              onLoadedMetadata={applyPendingSeek}
               className="h-full w-full object-cover"
             />
           ) : segment?.imageUri ? (
@@ -262,13 +367,28 @@ export function AnimaticOverlay({
             </label>
           )}
           <p className="text-[9px] leading-[1.6] text-muted-2">
-            空格暂停，← → 切镜，Esc 退出
+            空格暂停，← → 切镜，Esc 退出；拖下面的进度条找点
           </p>
         </div>
       </div>
 
-      {/* 整条进度：每一镜占它自己那段宽度，点哪段跳哪段 */}
+      {/* 整条进度（E7.1）：可拖的时间轴，拖到哪一毫秒就停在哪一镜的那一处 */}
       <div className="shrink-0 px-5 pb-4 pt-2">
+        <div className="mb-1.5 flex items-center gap-2">
+          <input
+            type="range"
+            min={0}
+            max={Math.max(0, totalMs)}
+            step={10}
+            value={Math.round(elapsed)}
+            onChange={(event) => seek(Number(event.target.value))}
+            aria-label="预演进度"
+            className="h-3 w-full min-w-0 cursor-pointer accent-current"
+          />
+          <span className="tnum shrink-0 text-[9px] text-muted-2">
+            {(elapsed / 1000).toFixed(1)}s
+          </span>
+        </div>
         <div className="mb-1.5 h-[2px] w-full bg-line">
           <div
             className="h-full bg-text transition-[width] duration-200"
@@ -296,7 +416,7 @@ export function AnimaticOverlay({
           ))}
         </div>
         <p className="tnum mt-1.5 text-[9px] text-muted-2">
-          {Math.round(elapsed * 10) / 10}s / {view.totalSec.toFixed(1)}s · 共 {total} 镜
+          {(elapsed / 1000).toFixed(1)}s / {view.totalSec.toFixed(1)}s · 共 {total} 镜
         </p>
       </div>
     </div>

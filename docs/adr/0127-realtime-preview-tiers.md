@@ -134,6 +134,44 @@ export type PreviewCapability = {
 - 回归：E10 的逐镜播放、台词音轨、配乐静音开关全部不受影响。
 - E7.2（依赖确认后）：逐帧步进 10 帧，画面与 ffmpeg 同帧导出对比无明显色差；seek 到任意毫秒的平均响应 < 150 ms。
 
+## 落地（E7.1，2026-11-11）
+
+### 1. 换算抽成纯函数
+
+`apps/web/lib/animatic-clock.ts`：
+
+```ts
+totalMsOf(segments): number
+locateInTimeline(segments, ms): { index, offsetMs }   // 左闭右开，两端夹住
+elapsedMsOf(segments, index, offsetMs): number        // 上面那个的逆运算
+```
+
+播放与拖动共用这一套换算，所以「拖到的位置」与「播到的位置」不会差一镜。10 条单测锁住边界：切点算后一镜第 0 毫秒、零时长镜头不占时间、越界夹住、来回换算不漂移。
+
+### 2. 时钟从 rAF 改成 50ms 定时器
+
+第一版用 `requestAnimationFrame` 逐帧推进。浏览器在**后台标签页**里会完全停掉 rAF，切回来时 `now - previous` 是几十秒，预演会凭空跳过一大段。
+
+改成 `setInterval(…, 50)` 并把 delta 封顶 250ms：后台被降到 1 秒一次时宁可慢一点，也不要在切回来时跳。预演是 24fps 的节奏预览，50ms 的刷新率本来就够。
+
+### 3. 视频只在「跳转」时对一次时间，不跟着每帧走
+
+第一版把 `element.currentTime = offsetMs / 1000` 放在一个依赖 `offsetMs` 的 effect 里，等于**每 50ms 写一次 currentTime**。结果视频永远停在 `readyState 0`：加载刚起步就被 seek 打断，再被下一帧打断。
+
+改成 `pendingSeek` ref：`jump` / `seek` / `replay` 写一次目标位置，effect 与 `onLoadedMetadata` 各对一次。播放期间让片子自己放，切镜由墙钟决定——墙钟与片子之间的漂移在这一级是可接受的（本来就叫「到镜近似」）。
+
+### 4. 界面
+
+- 底部多一条 `<input type="range">`，`step=10`、`max` 是全长毫秒；拖动即 `seek`。
+- 头部多一个签「到镜准确 · 镜内近似」，`title` 写清原因（镜内只能落到最近的关键帧之后）。
+- 播到片尾停在**片尾**而不是最后一镜的开头：进度条、「x / 总长」与「再看一遍」三处对得上。
+
+### 5. 验证
+
+- 单测 **808** 全过（IR 160 + gateway 28 + pipeline 51 + web 569），新增 10 条 `animatic-clock.test.ts`。`pnpm typecheck`、`next build` 全过。
+- 浏览器（生产 3100，示例项目 12 镜 32.6s）：预演头部出现「到镜准确 · 镜内近似」；拖到 16300ms → 切到 SH-06（第 6 / 12 镜），第 6 格高亮；暂停后进度停在 16550 不动；继续播放后前进到 16800；拖到接近片尾 → 出现「再看一遍」且进度是 32.6s / 32.6s；点第 2 格 → SH-02 且进度回到 3100ms（第 2 镜起点）。
+- **没验到的**：无头 Chrome 里 `<video>` 停在 `readyState 0`（元数据一直不到），所以「镜内把片子对到某一秒」这一段只验到「写入了 currentTime、没有报错」，真实画面是否落到那一帧要人在浏览器里看。这条与 ADR-0085 记录的无头环境限制同源。
+
 ## 备选方案
 
 | 方案 | 不采用的原因 |
