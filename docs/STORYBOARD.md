@@ -85,6 +85,8 @@ interface Beat {
 
 > 这一步最容易偷懒：直接把剧本按行切。必须让模型回答"这个 Beat 改变了什么"，否则分镜会变成"把台词配画面"。
 
+> **落地情况（ADR-0096，2026-11-11）**：IR 里第一版 BeatKind 是 `hook / setup / escalation / turn / climax / resolution / endHook`，`inciting` 暂并入 `escalation`。Beat 挂在 `Shot.beat?` 上，不单独建 `Beat` 实体；生成提示词直接要求模型标 Beat 与镜头目的。旧项目没有标注时按全片位置推断，推断只存在于读模型，作者在分镜页改过才写 `shot.updated`。Beat 摘要、信息 / 情绪字段与独立 Beat 生命周期还没做。
+
 ---
 
 ## 四、第 ② 步：覆盖率规划
@@ -234,6 +236,8 @@ interface CameraPlacement {
 | V9 | 运镜在模型能力内 | 替换为支持的能力 |
 | V10 | 角色/道具引用存在且已锁定 | 阻断 |
 
+> **落地情况（ADR-0096，2026-11-11）**：第一版只做能可靠判断的六条——V1 每场有 `establish` 目的或全景、V2 台词说话人在场、V4 单镜 1–8 秒（`error`）、V5 每拍有信息 + 情绪 / 反应、V6 同场连续三个同景别、V8 整片重做报价超预算。结果在分镜页「检查」抽屉里逐条显示，可点 `去 SH-xx` 跳转；这一版是提示与建议，不是导出 / 生成前的硬闸门。V3 需要 3D 走位、V7 需要节奏标定、V9 需要能力矩阵、V10 需要把现有零散校验汇总，均未接入。
+
 输出：
 
 ```ts
@@ -330,12 +334,12 @@ interface ValidationReport {
 
 | 概念 | IR |
 | --- | --- |
-| Beat | `Beat`（新增） |
-| 覆盖率方案 | `CoveragePlan`（新增） |
+| Beat | `Shot.beat?`（ADR-0096；独立 `Beat` 实体未建） |
+| 覆盖率方案 | 读模型 `BeatSpan[]`，不落 IR |
 | 走位 | `Blocking`（新增） |
 | 机位 | `CameraPlacement`（新增） |
-| 校验结果 | `ValidationReport`（新增） |
-| 镜头目的 | `Shot.purpose`（新增） |
+| 校验结果 | 读模型 `StoryboardReport`，不落 IR |
+| 镜头目的 | `Shot.purpose?`（ADR-0096，已落地） |
 | 镜头 | `Shot` / `CameraSpec` / `LightingSpec` |
 | 连续性 | `SceneState` / `ContinuityEntry` |
 

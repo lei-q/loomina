@@ -188,6 +188,29 @@ export const KeyframesSchema = z.object({
 });
 export type Keyframes = z.infer<typeof KeyframesSchema>;
 
+/** 短剧节拍（A11 / STORY.md 第 ④ 步）：一镜属于哪一拍。 */
+export const BeatKindSchema = z.enum([
+  "hook",
+  "setup",
+  "escalation",
+  "turn",
+  "climax",
+  "resolution",
+  "endHook",
+]);
+export type BeatKind = z.infer<typeof BeatKindSchema>;
+
+/** 这一镜在覆盖率里承担什么（A12 / STORYBOARD.md V5）。 */
+export const ShotPurposeSchema = z.enum([
+  "establish",
+  "information",
+  "emotion",
+  "reaction",
+  "transition",
+  "hook",
+]);
+export type ShotPurpose = z.infer<typeof ShotPurposeSchema>;
+
 export const ShotSchema = z.object({
   id: Id,
   sceneId: Id,
@@ -199,6 +222,12 @@ export const ShotSchema = z.object({
   promptNotes: z.array(z.string()).default([]),
   shotSize: z.enum(["wide", "medium", "close", "extreme-close"]),
   camera: CameraSchema,
+  /**
+   * 故事节拍与镜头目的（A11 / A12，ADR-0096）。
+   * 可选：旧项目没有这两个字段，分镜检查会按镜序推断，不把推断偷偷写回 IR。
+   */
+  beat: BeatKindSchema.optional(),
+  purpose: ShotPurposeSchema.optional(),
   characterIds: z.array(Id).default([]),
   /** 关键道具：有叙事作用、需要跨镜头保持一致的东西（ADR-0030） */
   propIds: z.array(Id).default([]),

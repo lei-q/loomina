@@ -4,9 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import { AnimaticOverlay } from "@/components/animatic";
 import { ReelBar } from "@/components/reel-bar";
 import { Stage } from "@/components/stage";
+import { StoryboardPanel } from "@/components/storyboard-panel";
 import { TopBar } from "@/components/top-bar";
 import { toAnimaticView, toStageView } from "@/lib/read-model";
 import { fetchPrice } from "@/lib/image-price";
+import { analyzeStoryboard } from "@/lib/storyboard";
 import { useWorkbench } from "@/lib/workbench-store";
 
 export function Workbench() {
@@ -22,6 +24,7 @@ export function Workbench() {
   const instruct = useWorkbench((state) => state.instruct);
   const removeNote = useWorkbench((state) => state.removeNote);
   const setShotLock = useWorkbench((state) => state.setShotLock);
+  const setShotPlan = useWorkbench((state) => state.setShotPlan);
   const toggleShotCharacter = useWorkbench((state) => state.toggleShotCharacter);
   const toggleShotProp = useWorkbench((state) => state.toggleShotProp);
   const moveShotCharacter = useWorkbench((state) => state.moveShotCharacter);
@@ -54,10 +57,20 @@ export function Workbench() {
   // 预演（ADR-0084）：把整条片子按镜头时长放一遍
   const [previewOpen, setPreviewOpen] = useState(false);
   const animatic = useMemo(() => toAnimaticView(project), [project]);
+  // 分镜检查（ADR-0096）：覆盖率和校验都从同一份读模型来
+  const [checkOpen, setCheckOpen] = useState(false);
+  const storyboard = useMemo(
+    () =>
+      analyzeStoryboard(project, {
+        requoteCny: view.requoteAll.totalCny,
+        budgetCny: project.budgetCny,
+      }),
+    [project, view.requoteAll.totalCny],
+  );
 
-  // 键盘：← → 换格，⌘⏎ 留用；输入框里只让 ⌘⏎ 生效；预演打开时让给预演
+  // 键盘：← → 换格，⌘⏎ 留用；输入框里只让 ⌘⏎ 生效；预演 / 检查打开时让给它们
   useEffect(() => {
-    if (previewOpen) return;
+    if (previewOpen || checkOpen) return;
     function onKeyDown(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
       const typing =
@@ -83,7 +96,7 @@ export function Workbench() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [view, select, decide, previewOpen]);
+  }, [view, select, decide, previewOpen, checkOpen]);
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg text-text">
@@ -99,6 +112,8 @@ export function Workbench() {
         readOnly={readOnly}
         onBudgetChange={setBudget}
         allRequote={view.requoteAll}
+        onCheck={view.shots.length > 0 ? () => setCheckOpen(true) : undefined}
+        checkCount={storyboard.summary.errors + storyboard.summary.warnings}
         onPreview={view.shots.length > 0 ? () => setPreviewOpen(true) : undefined}
       />
       {castError && (
@@ -151,6 +166,17 @@ export function Workbench() {
       )}
       {previewOpen && view.shots.length > 0 && (
         <AnimaticOverlay view={animatic} onClose={() => setPreviewOpen(false)} />
+      )}
+      {checkOpen && view.shots.length > 0 && (
+        <StoryboardPanel
+          project={project}
+          currentShotId={view.shots[view.current]!.id}
+          quoteAllCny={view.requoteAll.totalCny}
+          readOnly={readOnly ?? false}
+          onSelect={select}
+          onPlanChange={(patch) => setShotPlan(view.shots[view.current]!.id, patch)}
+          onClose={() => setCheckOpen(false)}
+        />
       )}
     </div>
   );

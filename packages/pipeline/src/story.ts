@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   assertValidProject,
+  type BeatKind,
   type Character,
   type DialogueLine,
   type Location,
@@ -8,6 +9,7 @@ import {
   type Prop,
   type Scene,
   type Shot,
+  type ShotPurpose,
   type StoryArc,
   type StoryRelationship,
 } from "@loomina/ir";
@@ -25,6 +27,25 @@ const ANGLES = ["eye", "low", "high", "top"] as const;
 const MOVEMENTS = ["static", "push", "pull", "pan", "tilt", "handheld"] as const;
 const SPACES = ["int", "ext"] as const;
 const TIMES = ["day", "night", "dawn", "dusk"] as const;
+
+const BEAT_ALIASES: Record<string, BeatKind> = {
+  hook: "hook", 钩子: "hook", 开场钩子: "hook",
+  setup: "setup", 铺垫: "setup", 建置: "setup", 建立: "setup",
+  escalation: "escalation", 升级: "escalation", 加压: "escalation", 冲突升级: "escalation",
+  turn: "turn", 转折: "turn", 反转: "turn",
+  climax: "climax", 高潮: "climax", 爽点: "climax",
+  resolution: "resolution", 收束: "resolution", 结局: "resolution", 解决: "resolution",
+  endhook: "endHook", 尾钩: "endHook", 结尾钩子: "endHook", 悬念: "endHook",
+};
+
+const PURPOSE_ALIASES: Record<string, ShotPurpose> = {
+  establish: "establish", 建立: "establish", 定场: "establish", 环境: "establish",
+  information: "information", 信息: "information", 交代: "information",
+  emotion: "emotion", 情绪: "emotion",
+  reaction: "reaction", 反应: "reaction",
+  transition: "transition", 过渡: "transition", 空镜: "transition",
+  hook: "hook", 钩子: "hook", 抓人: "hook",
+};
 
 const SHOT_SIZE_ALIASES: Record<string, (typeof SHOT_SIZES)[number]> = {
   wide: "wide", 远景: "wide", 全景: "wide", 大远景: "wide",
@@ -125,6 +146,9 @@ const RawStorySchema = z.object({
               angle: z.string().optional().default("eye"),
               movement: z.string().optional().default("static"),
               focalMm: z.union([z.number(), z.string()]).optional(),
+              /** 故事节拍与镜头目的（A11 / A12）；模型没给就留空，由分镜检查推断 */
+              beat: z.string().optional().default(""),
+              purpose: z.string().optional().default(""),
               characterNames: z.array(z.string()).optional().default([]),
               propNames: z.array(z.string()).optional().default([]),
               dialogue: z
@@ -183,6 +207,8 @@ export type StoryDraft = {
       angle: (typeof ANGLES)[number];
       movement: (typeof MOVEMENTS)[number];
       focalMm: number;
+      beat?: BeatKind;
+      purpose?: ShotPurpose;
       characterNames: string[];
       propNames: string[];
       dialogue: { characterName: string; text: string }[];
@@ -215,6 +241,16 @@ function pick<T extends string>(aliases: Record<string, T>, value: string | unde
   const key = (value ?? "").trim();
   if (!key) return fallback;
   return aliases[key.toLowerCase()] ?? aliases[key] ?? fallback;
+}
+
+/** 认不出来就留空：由分镜检查按镜序推断，不猜一个看似合理的值写进 IR */
+function pickOptional<T extends string>(
+  aliases: Record<string, T>,
+  value: string | undefined,
+): T | undefined {
+  const key = (value ?? "").trim();
+  if (!key) return undefined;
+  return aliases[key.toLowerCase()] ?? aliases[key];
 }
 
 function focalOf(value: number | string | undefined): number {
@@ -292,6 +328,8 @@ function normalize(raw: z.infer<typeof RawStorySchema>): StoryDraft {
       angle: pick(ANGLE_ALIASES, shot.angle, "eye"),
       movement: pick(MOVEMENT_ALIASES, shot.movement, "static"),
       focalMm: focalOf(shot.focalMm),
+      beat: pickOptional(BEAT_ALIASES, shot.beat),
+      purpose: pickOptional(PURPOSE_ALIASES, shot.purpose),
       characterNames: shot.characterNames
         .map((name) => name.trim())
         .filter((name) => names.has(name))
@@ -466,6 +504,8 @@ export function projectFromStoryDraft(
           movement: shotDraft.movement,
           focalMm: shotDraft.focalMm,
         },
+        ...(shotDraft.beat ? { beat: shotDraft.beat } : {}),
+        ...(shotDraft.purpose ? { purpose: shotDraft.purpose } : {}),
         characterIds: shotDraft.characterNames
           .map((name) => characterByName.get(name)?.id)
           .filter((id): id is string => Boolean(id)),
@@ -613,6 +653,7 @@ function storySystem(task: string, extraRules: string[]): string {
     "4. 只写能拍出来的动作，不写内心独白与抽象情绪；用动作和物件透露信息。台词要短、狠、能截图。",
     "5. 人物要有一个当场做出的选择，不能只是被剧情推着走。",
     "6. 镜头之间要有景别变化，不要连续三个同景别。",
+    "7. 每一镜标出所属节拍 beat 与镜头目的 purpose；节拍顺序沿 hook → setup → escalation → turn → climax → endHook（需要收束可用 resolution）。每个节拍至少有一个信息镜头（establish / information）与一个情绪或反应镜头（emotion / reaction）。",
     ...extraRules,
     "枚举值（必须原样使用）：",
     "shotSize: wide | medium | close | extreme-close",
@@ -620,6 +661,8 @@ function storySystem(task: string, extraRules: string[]): string {
     "movement: static | push | pull | pan | tilt | handheld",
     "space: int | ext",
     "timeOfDay: day | night | dawn | dusk",
+    "beat: hook | setup | escalation | turn | climax | resolution | endHook",
+    "purpose: establish | information | emotion | reaction | transition | hook",
     "输出 JSON 的形状：",
     JSON.stringify(
       {
@@ -660,6 +703,8 @@ function storySystem(task: string, extraRules: string[]): string {
                 angle: "eye",
                 movement: "static",
                 focalMm: 35,
+                beat: "escalation",
+                purpose: "information",
                 characterNames: ["必须与 characters 里的 name 一致"],
                 propNames: ["必须与 props 里的 name 一致"],
                 dialogue: [{ characterName: "人物名", text: "不超过 15 字" }],

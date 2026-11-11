@@ -176,8 +176,9 @@ interface Shot {
   id: ID;
   index: number;
   sceneId: ID;
-  beatId?: ID;
-  purpose: "establish" | "information" | "emotion" | "reaction" | "transition" | "hook";
+  // ADR-0096：第一版挂在镜头上，独立 Beat 实体未建；未标时由读模型推断
+  beat?: "hook" | "setup" | "escalation" | "turn" | "climax" | "resolution" | "endHook";
+  purpose?: "establish" | "information" | "emotion" | "reaction" | "transition" | "hook";
 
   // 叙事
   description: string;
@@ -232,6 +233,8 @@ interface Keyframes {
   lastAssetId?: ID;
 }
 ```
+
+> **落地情况（ADR-0096，2026-11-11）**：`Shot.beat?: BeatKind` 与 `Shot.purpose?: ShotPurpose` 已进 IR，都是可选字段；旧日志回放不受影响。生成提示词要求模型直接标，中文别名可解析，不认识的词留空。没有标注的镜头由 `apps/web/lib/storyboard.ts` 在读模型里推断，推断不写回 IR；作者在分镜页「检查」抽屉里改过才写 `shot.updated`。覆盖率（每拍同时有信息与情绪 / 反应镜头）与 V1 / V2 / V4 / V5 / V6 / V8 校验都是读模型结论，不落字段。
 
 > **落地情况（ADR-0039，2026-11-10）**：`Shot.promptNotes: string[]`（zod 默认 `[]`）是一句话指令落下的补充要求，提示词里作为「补充：…」原样带上；改结构字段（景别 / 机位 / 运镜）走同一条 `shot.updated` 的 patch，不改版本号。
 
@@ -714,7 +717,7 @@ interface AILabel {
 10. **经 `Approval` 锁定的资产不得被自动流程覆盖**；修改必须先解锁并留痕。
 11. **预算超限时不得提交新任务**；降级路径必须显式记录。
 12. 任何镜头状态变化都必须经过单一状态机，不允许直接改 `status`。
-13. **每个 Shot 必须归属一个 Beat，且每个 Beat 至少有一个信息镜头与一个情绪镜头**（准则 P15）。
+13. **每个 Shot 必须归属一个 Beat，且每个 Beat 至少有一个信息镜头与一个情绪镜头**（准则 P15）。*当前状态（ADR-0096）：`Shot.beat` 仍可选，缺省由读模型推断；覆盖率在分镜页提示但不阻断。等阶段闸门（F8 / F9）接入后再收紧为必填与硬校验。*
 14. **`CameraPlacement` 必须遵守动作轴线**，除非该镜被显式标记为过渡镜（V3）。
 15. **Take 进入 approved 前必须有 `ConsistencyReport`**，且 verdict 不为 fail。
 16. `Blocking.axis` 变更必须触发同场所有机位的重新校验。

@@ -53,6 +53,10 @@ export type TopBarProps = {
   exportLabel?: string;
   /** 打开预演（ADR-0084）；给了才出现「预演」 */
   onPreview?: () => void;
+  /** 打开分镜检查（ADR-0096）；给了才出现「检查」 */
+  onCheck?: () => void;
+  /** 检查里要看的条数（错误 + 提示），显示在按钮右上 */
+  checkCount?: number;
 };
 
 function Money({ value }: { value?: number }) {
@@ -74,6 +78,8 @@ export function TopBar({
   onExport,
   exportLabel,
   onPreview,
+  onCheck,
+  checkCount,
 }: TopBarProps) {
   const [draftBudget, setDraftBudget] = useState<string>("");
   const budget = budgetCny ?? 60;
@@ -248,6 +254,19 @@ export function TopBar({
               )}
             </div>
           </details>
+        )}
+        {onCheck && (
+          <button
+            type="button"
+            onClick={onCheck}
+            title="看每一拍的覆盖率，查分镜问题：不花钱"
+            className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            检查
+            {checkCount !== undefined && checkCount > 0 && (
+              <span className="tnum text-[9px] text-pick">{checkCount}</span>
+            )}
+          </button>
         )}
         {onPreview && (
           <button

@@ -57,6 +57,8 @@ const DRAFT = {
       shots: [
         {
           description: "程野拎着餐盒推门，满桌高管回头。",
+          beat: "钩子",
+          purpose: "信息",
           shotSize: "全景",
           angle: "平视",
           movement: "推近",
@@ -72,6 +74,8 @@ const DRAFT = {
         },
         {
           description: "特写：餐盒夹层里的 U 盘。",
+          beat: "不存在的拍",
+          purpose: "reaction",
           shotSize: "大特写",
           angle: "俯拍",
           movement: "固定",
@@ -96,6 +100,10 @@ describe("故事草稿解析（ADR-0088）", () => {
     expect(draft.scenes[0]?.shots[0]?.focalMm).toBe(35);
     expect(draft.scenes[0]?.shots[1]?.shotSize).toBe("extreme-close");
     expect(draft.scenes[0]?.shots[1]?.angle).toBe("high");
+    // 节拍与镜头目的认中英文别名；不认识的词留空，不瞎猜
+    expect(draft.scenes[0]?.shots[0]).toMatchObject({ beat: "hook", purpose: "information" });
+    expect(draft.scenes[0]?.shots[1]?.beat).toBeUndefined();
+    expect(draft.scenes[0]?.shots[1]?.purpose).toBe("reaction");
   });
 
   it("丢掉不存在的人物、关系，并把每镜台词截到 2 句", () => {
@@ -153,6 +161,9 @@ describe("草稿 → 项目（ADR-0088）", () => {
     expect(project.shots[0]?.propIds).toEqual(["prop-1"]);
     expect(project.dialogue).toHaveLength(2);
     expect(project.shots[0]?.dialogueIds).toHaveLength(2);
+    expect(project.shots[0]).toMatchObject({ beat: "hook", purpose: "information" });
+    expect(project.shots[1]?.beat).toBeUndefined();
+    expect(project.shots[1]?.purpose).toBe("reaction");
     // 有台词：全部台词 + 1000ms 表演余量；没台词：5 秒
     expect(project.shots[0]?.durationMs).toBe(1200 + 1200 + 1000);
     expect(project.shots[1]?.durationMs).toBe(5000);
@@ -164,6 +175,8 @@ describe("草稿 → 项目（ADR-0088）", () => {
     expect(messages[0]?.content).toContain("只输出 JSON");
     expect(messages[0]?.content).toContain("extreme-close");
     expect(messages[0]?.content).toContain("前 3 秒必须是钩子");
+    expect(messages[0]?.content).toContain('"beat"');
+    expect(messages[0]?.content).toContain('"purpose"');
     expect(messages[1]?.content).toContain("都市逆袭");
   });
 

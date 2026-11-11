@@ -2932,3 +2932,64 @@ describe("故事入口开工（ADR-0088）", () => {
     state().readOnly = false;
   });
 });
+
+describe("分镜节拍与镜头目的（ADR-0096）", () => {
+  beforeEach(() => {
+    state().reset();
+  });
+
+  it("改节拍写一条 shot.updated，回放一致", () => {
+    const before = state().events.length;
+    expect(state().setShotPlan("s-01", { beat: "climax" })).toBe(true);
+
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.updated",
+      shotId: "s-01",
+      patch: { beat: "climax" },
+    });
+    expect(state().project.shots.find((shot) => shot.id === "s-01")?.beat).toBe("climax");
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("可以把节拍和目的一起改，也可以只改目的", () => {
+    expect(state().setShotPlan("s-02", { beat: "turn", purpose: "reaction" })).toBe(true);
+    expect(
+      state().project.shots.find((shot) => shot.id === "s-02"),
+    ).toMatchObject({ beat: "turn", purpose: "reaction" });
+
+    expect(state().setShotPlan("s-02", { purpose: "emotion" })).toBe(true);
+    expect(state().project.shots.find((shot) => shot.id === "s-02")).toMatchObject({
+      beat: "turn",
+      purpose: "emotion",
+    });
+    // 只传一个没变化的字段，不把另一个也不写掉，也不产生事件
+    expect(state().setShotPlan("s-02", { beat: "turn" })).toBe(false);
+    expect(state().project.shots.find((shot) => shot.id === "s-02")).toMatchObject({
+      beat: "turn",
+      purpose: "emotion",
+    });
+  });
+
+  it("值没变就不写日志", () => {
+    state().setShotPlan("s-01", { beat: "setup" });
+    const after = state().events.length;
+    expect(state().setShotPlan("s-01", { beat: "setup" })).toBe(false);
+    expect(state().events).toHaveLength(after);
+  });
+
+  it("锁定的镜头不改，给出人话原因", () => {
+    const before = state().events.length;
+    expect(state().setShotPlan("s-08", { beat: "climax" })).toBe(false);
+    expect(state().events).toHaveLength(before);
+    expect(state().castError).toContain("已锁定");
+    expect(state().project.shots.find((shot) => shot.id === "s-08")?.beat).toBeUndefined();
+  });
+
+  it("找不到镜头或没给任何字段时不写", () => {
+    const before = state().events.length;
+    expect(state().setShotPlan("s-404", { beat: "hook" })).toBe(false);
+    expect(state().setShotPlan("s-01", {})).toBe(false);
+    expect(state().events).toHaveLength(before);
+  });
+});

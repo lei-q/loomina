@@ -10,6 +10,7 @@ import {
   VOICE_PROFILE_MAX,
   type ApprovalTargetType,
   type Asset,
+  type BeatKind,
   type Character,
   type Location,
   type Project,
@@ -18,6 +19,7 @@ import {
   type Scene,
   type SheetView,
   type Shot,
+  type ShotPurpose,
 } from "@loomina/ir";
 import {
   parseInstruction,
@@ -123,6 +125,11 @@ type WorkbenchState = {
   select: (shotId: string) => void;
   /** 锁 / 解锁一镜：留用过的镜头才能锁；读写都留痕（ADR-0041） */
   setShotLock: (shotId: string, locked: boolean) => void;
+  /** 标这一镜的节拍与镜头目的（A11 / A12）：一条 `shot.updated`（ADR-0096） */
+  setShotPlan: (
+    shotId: string,
+    patch: { beat?: BeatKind; purpose?: ShotPurpose },
+  ) => boolean;
   /** 这一镜里谁出场：一条 `shot.updated { characterIds }`（ADR-0065） */
   toggleShotCharacter: (shotId: string, characterId: string) => boolean;
   /** 道具出场：点一下把这件道具加进或移出这一镜（ADR-0066） */
@@ -695,6 +702,41 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       events: [...events, event],
       castError: undefined,
     });
+  },
+
+  setShotPlan: (shotId, patch) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) {
+      set({ castError: "找不到这一镜。" });
+      return false;
+    }
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定，先解锁再改节拍或镜头目的。" });
+      return false;
+    }
+    if (!patch.beat && !patch.purpose) return false;
+    // 只比较真的给了的字段：只改目的时，节拍的 undefined 不代表要抹掉
+    const changed: { beat?: BeatKind; purpose?: ShotPurpose } = {};
+    if (patch.beat !== undefined && patch.beat !== shot.beat) changed.beat = patch.beat;
+    if (patch.purpose !== undefined && patch.purpose !== shot.purpose) {
+      changed.purpose = patch.purpose;
+    }
+    if (!changed.beat && !changed.purpose) return false;
+
+    const event: ProjectEvent = {
+      type: "shot.updated",
+      at: new Date().toISOString(),
+      shotId: shot.id,
+      patch: changed,
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
   },
 
   toggleShotCharacter: (shotId, characterId) => {
