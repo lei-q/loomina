@@ -4,11 +4,14 @@
  * 三件事共用一份读模型：
  * - A11 Beat 分析：每镜归到哪一拍；没有显式标注的旧项目按镜序推断；
  * - A12 覆盖率：每一拍有没有信息镜头与情绪 / 反应镜头；
- * - A13 分镜校验：V1 / V2 / V4 / V5 / V6 / V8 / V10。
+ * - A13 分镜校验：V1 / V2 / V3 / V4 / V5 / V6 / V7 / V8 / V9 / V10 / V11。
  *
  * 推断只在读模型里发生，不写回 IR；作者在检查面板里改过的值才落 `shot.updated`。
- * V3（180° 轴线）、V7（切率曲线）、V9（模型能力）需要 3D 走位与能力矩阵，这一轮不做。
- * V10 查表演设计（B16 / B17）；题干里的「不拦生成」是这一轮的有意取舍（ADR-0103）。
+ * V3 用 B17 的左右调度做近似：只看同一场相邻两镜，没有 3D 坐标就不声称精确；
+ * V7 用每拍平均镜长与全片平均对比，查「该碎不碎」的拍；
+ * V9 只查尾帧：当前网关没有尾帧字段，运镜本身只作为提示词提交。
+ * V10 查表演设计（B16 / B17）；V11 查节拍顺序（A11）。
+ * 「不拦生成」是这一轮的有意取舍（ADR-0103 / ADR-0108）。
  */
 
 import type {
@@ -92,11 +95,26 @@ export type BeatSpan = {
   /** 这一拍起点与时长（按剧本顺序累加，不是时间线） */
   startMs: number;
   durationMs: number;
+  /** 平均镜长（秒）；没有镜头时是 0 */
+  aslSeconds: number;
+  /** 每 10 秒切几次；没有时长时是 0 */
+  cutsPer10s: number;
   hasInformation: boolean;
   hasEmotion: boolean;
 };
 
-export type StoryboardRule = "V1" | "V2" | "V4" | "V5" | "V6" | "V8" | "V10";
+export type StoryboardRule =
+  | "V1"
+  | "V2"
+  | "V3"
+  | "V4"
+  | "V5"
+  | "V6"
+  | "V7"
+  | "V8"
+  | "V9"
+  | "V10"
+  | "V11";
 
 export type StoryboardIssue = {
   rule: StoryboardRule;
@@ -125,12 +143,27 @@ export type StoryboardOptions = {
   /** 整片重做一遍的报价；给了才查 V8 */
   requoteCny?: number;
   budgetCny?: number;
+  /**
+   * 当前视频模型是否吃尾帧。不传按 false：网关目前没有尾帧字段（B12）。
+   * 供应商补上之后再传 true，V9 自然不再提示。
+   */
+  videoAcceptsLastFrame?: boolean;
 };
 
 function sceneLabelOf(project: Project, sceneId: string): string {
   const scene = project.scenes.find((item) => item.id === sceneId);
   if (!scene) return "未知场次";
   return `第 ${scene.code || scene.index + 1} 场`;
+}
+
+/** 左右调度的简化坐标：左 -1、右 +1；中间与没标的不参与轴线比较。 */
+function stagingSides(shot: Shot): Map<string, -1 | 1> {
+  const sides = new Map<string, -1 | 1>();
+  for (const mark of shot.staging) {
+    if (!mark.characterId || mark.side === "center") continue;
+    sides.set(mark.characterId, mark.side === "left" ? -1 : 1);
+  }
+  return sides;
 }
 
 /** 按场次顺序、场内镜序排出全片镜头，并写全片镜号。 */
@@ -240,6 +273,8 @@ export function groupBeats(plans: ShotPlan[]): BeatSpan[] {
         shotNos: [plan.no],
         startMs: plan.startMs,
         durationMs: plan.durationMs,
+        aslSeconds: 0,
+        cutsPer10s: 0,
         hasInformation: false,
         hasEmotion: false,
       });
@@ -252,12 +287,17 @@ export function groupBeats(plans: ShotPlan[]): BeatSpan[] {
       span.hasEmotion = true;
     }
   }
-  return spans;
+  return spans.map((span) => ({
+    ...span,
+    aslSeconds: span.shotIds.length > 0 ? span.durationMs / span.shotIds.length / 1000 : 0,
+    cutsPer10s: span.durationMs > 0 ? span.shotIds.length / (span.durationMs / 10_000) : 0,
+  }));
 }
 
 /**
  * A13 校验。只返回能在这里可靠判断的规则：
- * V1 建立镜头、V2 台词承载、V4 镜头时长、V5 每拍信息 + 情绪、V6 同景别连续、V8 预算。
+ * V1 建立镜头、V2 台词承载、V3 轴线近似、V4 镜头时长、V5 每拍信息 + 情绪、
+ * V6 同景别连续、V7 切率、V8 预算、V9 尾帧能力、V10 表演设计、V11 节拍顺序。
  */
 export function validateStoryboard(
   project: Project,
@@ -302,6 +342,45 @@ export function validateStoryboard(
         shotIds: [shot.id],
       });
     }
+  }
+
+  // V3：同一场相邻两镜里，两个角色的左右关系不能翻。
+  // 没有 3D 坐标，只能拿 B17 的 left / center / right 近似；中间机位与没标的人不参与。
+  for (let index = 1; index < plans.length; index += 1) {
+    const previous = plans[index - 1]!;
+    const current = plans[index]!;
+    if (previous.sceneId !== current.sceneId) continue;
+    const beforeShot = shotById.get(previous.shotId);
+    const afterShot = shotById.get(current.shotId);
+    if (!beforeShot || !afterShot) continue;
+    const before = stagingSides(beforeShot);
+    const after = stagingSides(afterShot);
+    const shared = [...before.keys()].filter((id) => after.has(id));
+    if (shared.length < 2) continue;
+
+    const flipped = new Set<string>();
+    for (let left = 0; left < shared.length; left += 1) {
+      for (let right = left + 1; right < shared.length; right += 1) {
+        const beforeGap = before.get(shared[left]!)! - before.get(shared[right]!)!;
+        const afterGap = after.get(shared[left]!)! - after.get(shared[right]!)!;
+        if (beforeGap !== 0 && afterGap !== 0 && Math.sign(beforeGap) !== Math.sign(afterGap)) {
+          flipped.add(shared[left]!);
+          flipped.add(shared[right]!);
+        }
+      }
+    }
+    if (flipped.size === 0) continue;
+
+    const names = [...flipped]
+      .slice(0, 3)
+      .map((id) => project.characters.find((item) => item.id === id)?.name ?? "角色")
+      .join("、");
+    issues.push({
+      rule: "V3",
+      severity: "warning",
+      message: `第 ${previous.no} → ${current.no} 镜：${names}的左右位置翻了，像越过了 180° 轴线：插一个中性镜，或把其中一镜的调度改回来。`,
+      shotIds: [previous.shotId, current.shotId],
+    });
   }
 
   // V4：单镜时长在模型安全区间（1–8 秒）
@@ -365,6 +444,29 @@ export function validateStoryboard(
     }
   }
 
+  // V7：切率曲线。该碎的拍（钩子 / 升级 / 转折 / 高潮 / 尾钩）不能比全片慢太多：
+  // 平均镜长 >= 全片 1.6 倍且 >= 3.5 秒，或一拍只有一镜 4 秒以上，都提示。
+  const totalMs = plans.reduce((sum, plan) => sum + plan.durationMs, 0);
+  const filmAsl = plans.length > 0 ? totalMs / plans.length / 1000 : 0;
+  const intenseBeats = new Set<BeatKind>(["hook", "escalation", "turn", "climax", "endHook"]);
+  for (const beat of beats) {
+    if (!intenseBeats.has(beat.kind) || beat.durationMs < 4000) continue;
+    const singleLongShot = beat.shotIds.length === 1;
+    if (!singleLongShot && beat.aslSeconds < Math.max(3.5, filmAsl * 1.6)) continue;
+    if (filmAsl <= 0) continue;
+    const length =
+      beat.shotIds.length === 1
+        ? `只有 1 个镜头`
+        : `${beat.shotIds.length} 镜、平均 ${beat.aslSeconds.toFixed(1)} 秒一镜`;
+    issues.push({
+      rule: "V7",
+      severity: "warning",
+      message: `${beat.sceneLabel}「${BEAT_LABEL[beat.kind]}」这一拍 ${(beat.durationMs / 1000).toFixed(1)} 秒${length}，全片平均 ${filmAsl.toFixed(1)} 秒一镜：这一拍要更碎，补反应镜或拆镜。`,
+      shotIds: beat.shotIds,
+      beatId: beat.id,
+    });
+  }
+
   // V10：表演设计（B16 / B17）。不拦生成，只在检查里点名：
   // 存量项目没有 PerformanceSpec，硬拦会把已有片子锁死（ADR-0103）。
   const missingPerformance = plans.filter((plan) => {
@@ -381,6 +483,60 @@ export function validateStoryboard(
       message: `${shown}${tail}还没有表演设计：补上 objective 与视线，首尾帧与视频提示词才会写到表情和看谁。`,
       shotIds: missingPerformance.map((plan) => plan.shotId),
     });
+  }
+
+  // V9：尾帧能力。画面画了尾帧，但网关只把首帧送给视频模型时，尾帧只是参考。
+  if (!(options.videoAcceptsLastFrame ?? false)) {
+    const withLastFrame = plans.filter((plan) => {
+      const shot = shotById.get(plan.shotId);
+      return Boolean(shot?.keyframes.lastAssetId);
+    });
+    if (withLastFrame.length > 0) {
+      const nos = withLastFrame.map((plan) => `第 ${plan.no} 镜`);
+      const shown = nos.slice(0, 6).join("、");
+      const tail = nos.length > 6 ? ` 等 ${nos.length} 镜` : "";
+      issues.push({
+        rule: "V9",
+        severity: "warning",
+        message: `${shown}${tail}已经画了尾帧，但当前视频模型只吃首帧（网关没有尾帧字段）：尾帧不会送进视频，落点与口型只能靠提示词。`,
+        shotIds: withLastFrame.map((plan) => plan.shotId),
+      });
+    }
+  }
+
+  // V11：节拍顺序（A11）。开场要钩子、结尾要尾钩，同一场里不能倒退。
+  if (plans.length >= 2) {
+    const first = plans[0]!;
+    if (first.beat !== "hook") {
+      issues.push({
+        rule: "V11",
+        severity: "warning",
+        message: `全片第一镜是「${BEAT_LABEL[first.beat]}」，不是钩子：前 3 秒先给一个能抓住人的画面。`,
+        shotIds: [first.shotId],
+      });
+    }
+    const last = plans.at(-1)!;
+    if (last.beat !== "endHook") {
+      issues.push({
+        rule: "V11",
+        severity: "warning",
+        message: `最后一镜是「${BEAT_LABEL[last.beat]}」，不是尾钩：结尾留一个新悬念，观众才会追下一集。`,
+        shotIds: [last.shotId],
+      });
+    }
+    const rank = new Map(BEAT_ORDER.map((kind, index) => [kind, index]));
+    for (let index = 1; index < plans.length; index += 1) {
+      const previous = plans[index - 1]!;
+      const current = plans[index]!;
+      if (previous.sceneId !== current.sceneId) continue;
+      if ((rank.get(current.beat) ?? 0) >= (rank.get(previous.beat) ?? 0)) continue;
+      issues.push({
+        rule: "V11",
+        severity: "warning",
+        message: `第 ${previous.no} → ${current.no} 镜：节拍从「${BEAT_LABEL[previous.beat]}」回到「${BEAT_LABEL[current.beat]}」，在倒退：确认这是新的一轮冲突，否则把后面的拍往前推。`,
+        shotIds: [previous.shotId, current.shotId],
+      });
+    }
   }
 
   // V8：整片重做一遍的报价超过预算
@@ -401,7 +557,7 @@ export function validateStoryboard(
 
   return issues.sort((a, b) => {
     if (a.severity !== b.severity) return a.severity === "error" ? -1 : 1;
-    return a.rule.localeCompare(b.rule);
+    return a.rule.localeCompare(b.rule, undefined, { numeric: true });
   });
 }
 

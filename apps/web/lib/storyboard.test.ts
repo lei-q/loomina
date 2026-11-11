@@ -324,3 +324,185 @@ describe("V10 表演设计（B16 / B17 / ADR-0103）", () => {
     ).toBe(false);
   });
 });
+
+describe("V3 轴线近似（B17 调度 / ADR-0108）", () => {
+  it("同一场相邻两镜里两个角色的左右关系翻了", () => {
+    const project = makeProject([
+      {
+        staging: [
+          { characterId: "c-a", side: "left", depth: "midground", note: "" },
+          { characterId: "c-b", side: "right", depth: "midground", note: "" },
+        ],
+      },
+      {
+        staging: [
+          { characterId: "c-a", side: "right", depth: "midground", note: "" },
+          { characterId: "c-b", side: "left", depth: "midground", note: "" },
+        ],
+      },
+    ]);
+    const v3 = analyzeStoryboard(project).issues.filter((issue) => issue.rule === "V3");
+    expect(v3).toHaveLength(1);
+    expect(v3[0]?.message).toContain("甲、乙");
+    expect(v3[0]?.message).toContain("像越过了 180° 轴线");
+    expect(v3[0]?.shotIds).toEqual(["s-1", "s-2"]);
+  });
+
+  it("只共享一个角色、有人站中间或跨场，都不判越轴", () => {
+    const single = makeProject([
+      {
+        staging: [{ characterId: "c-a", side: "left", depth: "midground", note: "" }],
+      },
+      {
+        staging: [
+          { characterId: "c-a", side: "right", depth: "midground", note: "" },
+          { characterId: "c-b", side: "right", depth: "midground", note: "" },
+        ],
+      },
+    ]);
+    expect(analyzeStoryboard(single).issues.some((issue) => issue.rule === "V3")).toBe(false);
+
+    const center = makeProject([
+      {
+        staging: [
+          { characterId: "c-a", side: "left", depth: "midground", note: "" },
+          { characterId: "c-b", side: "center", depth: "midground", note: "" },
+        ],
+      },
+      {
+        staging: [
+          { characterId: "c-a", side: "right", depth: "midground", note: "" },
+          { characterId: "c-b", side: "center", depth: "midground", note: "" },
+        ],
+      },
+    ]);
+    expect(analyzeStoryboard(center).issues.some((issue) => issue.rule === "V3")).toBe(false);
+
+    const crossScene = makeProject([
+      {
+        sceneId: "sc-1",
+        staging: [
+          { characterId: "c-a", side: "left", depth: "midground", note: "" },
+          { characterId: "c-b", side: "right", depth: "midground", note: "" },
+        ],
+      },
+      {
+        sceneId: "sc-2",
+        staging: [
+          { characterId: "c-a", side: "right", depth: "midground", note: "" },
+          { characterId: "c-b", side: "left", depth: "midground", note: "" },
+        ],
+      },
+    ]);
+    expect(analyzeStoryboard(crossScene).issues.some((issue) => issue.rule === "V3")).toBe(false);
+  });
+});
+
+describe("V7 切率（ADR-0108）", () => {
+  it("该碎的拍只有一镜 4 秒以上，提示补反应镜", () => {
+    const project = makeProject([
+      { beat: "setup", purpose: "information", durationMs: 1000 },
+      { beat: "climax", purpose: "emotion", durationMs: 5000 },
+      { beat: "endHook", purpose: "information", durationMs: 1000 },
+    ]);
+    const v7 = analyzeStoryboard(project).issues.filter((issue) => issue.rule === "V7");
+    expect(v7).toHaveLength(1);
+    expect(v7[0]?.message).toContain("只有 1 个镜头");
+    expect(v7[0]?.message).toContain("这一拍要更碎");
+  });
+
+  it("多镜但平均镜长明显高于全片，也提示；不到 4 秒的单镜不提示", () => {
+    const slow = makeProject([
+      { beat: "setup", purpose: "information", durationMs: 1000 },
+      { beat: "climax", purpose: "emotion", durationMs: 4000 },
+      { beat: "climax", purpose: "reaction", durationMs: 4000 },
+      { beat: "endHook", purpose: "information", durationMs: 1000 },
+    ]);
+    const slowV7 = analyzeStoryboard(slow).issues.filter((issue) => issue.rule === "V7");
+    expect(slowV7).toHaveLength(1);
+    expect(slowV7[0]?.message).toContain("平均 4.0 秒一镜");
+    expect(slowV7[0]?.message).toContain("全片平均 2.5 秒一镜");
+
+    const short = makeProject([
+      { beat: "setup", purpose: "information", durationMs: 1000 },
+      { beat: "climax", purpose: "emotion", durationMs: 3900 },
+      { beat: "endHook", purpose: "information", durationMs: 1000 },
+    ]);
+    expect(analyzeStoryboard(short).issues.some((issue) => issue.rule === "V7")).toBe(false);
+  });
+
+  it("拍级统计带上平均镜长与 10 秒切数", () => {
+    const project = makeProject([
+      { beat: "setup", purpose: "information", durationMs: 1000 },
+      { beat: "setup", purpose: "emotion", durationMs: 2000 },
+    ]);
+    const beat = groupBeats(planShots(project))[0]!;
+    expect(beat.aslSeconds).toBeCloseTo(1.5);
+    expect(beat.cutsPer10s).toBeCloseTo(6.67, 1);
+  });
+});
+
+describe("V9 尾帧能力（ADR-0108）", () => {
+  it("画了尾帧但模型只吃首帧，点名这些镜头", () => {
+    const project = makeProject([
+      { keyframes: { firstAssetId: "a-first", lastAssetId: "a-last" } },
+      { keyframes: { firstAssetId: "a-first-2" } },
+    ]);
+    const v9 = analyzeStoryboard(project).issues.filter((issue) => issue.rule === "V9");
+    expect(v9).toHaveLength(1);
+    expect(v9[0]?.message).toContain("第 1 镜");
+    expect(v9[0]?.message).not.toContain("第 2 镜");
+    expect(v9[0]?.shotIds).toEqual(["s-1"]);
+  });
+
+  it("模型支持尾帧时不再提示", () => {
+    const project = makeProject([{ keyframes: { lastAssetId: "a-last" } }]);
+    expect(
+      analyzeStoryboard(project, { videoAcceptsLastFrame: true }).issues.some(
+        (issue) => issue.rule === "V9",
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("V11 节拍顺序（A11 / ADR-0108）", () => {
+  it("开场不是钩子、结尾不是尾钩各提一条", () => {
+    const project = makeProject([
+      { beat: "setup", purpose: "information" },
+      { beat: "setup", purpose: "emotion" },
+    ]);
+    const v11 = analyzeStoryboard(project).issues.filter((issue) => issue.rule === "V11");
+    expect(v11).toHaveLength(2);
+    expect(v11[0]?.message).toContain("全片第一镜是「铺垫」");
+    expect(v11[1]?.message).toContain("最后一镜是「铺垫」");
+  });
+
+  it("同一场里节拍倒退才点名，跨场重新起势不算", () => {
+    const regress = makeProject([
+      { beat: "hook", purpose: "information" },
+      { beat: "climax", purpose: "emotion" },
+      { beat: "setup", purpose: "information" },
+      { beat: "endHook", purpose: "emotion" },
+    ]);
+    const regression = analyzeStoryboard(regress).issues.filter((issue) =>
+      issue.message.includes("在倒退"),
+    );
+    expect(regression).toHaveLength(1);
+    expect(regression[0]?.shotIds).toEqual(["s-2", "s-3"]);
+
+    const crossScene = makeProject([
+      { sceneId: "sc-1", beat: "hook", purpose: "information" },
+      { sceneId: "sc-1", beat: "climax", purpose: "emotion" },
+      { sceneId: "sc-2", beat: "setup", purpose: "information" },
+      { sceneId: "sc-2", beat: "endHook", purpose: "emotion" },
+    ]);
+    expect(
+      analyzeStoryboard(crossScene).issues.some((issue) => issue.message.includes("在倒退")),
+    ).toBe(false);
+  });
+
+  it("只有一个镜头时不查首尾顺序", () => {
+    const project = makeProject([{ beat: "setup", purpose: "information" }]);
+    expect(analyzeStoryboard(project).issues.some((issue) => issue.rule === "V11")).toBe(false);
+  });
+});

@@ -225,7 +225,8 @@ export function StoryboardPanel({
                           </span>
                           <span className="tnum text-[9px] text-muted-2">
                             {beat.sceneLabel} · {spanLabel(beat)} ·{" "}
-                            {(beat.durationMs / 1000).toFixed(1)}s
+                            {(beat.durationMs / 1000).toFixed(1)}s · {beat.shotIds.length} 镜 ·{" "}
+                            {beat.aslSeconds.toFixed(1)}s/镜 · {beat.cutsPer10s.toFixed(1)} 切/10s
                           </span>
                         </span>
                         <span className="mt-0.5 block text-[9px] text-muted-2">
@@ -300,15 +301,19 @@ export function StoryboardPanel({
               })}
               {report.issues.length === 0 && (
                 <li className="py-2 text-[10px] text-muted-2">
-                  当前规则都过了：每场有建立镜头，每拍有信息与情绪，单镜 1–8 秒。
+                  当前规则都过了：建立镜头、信息与情绪、时长、轴线、切率、尾帧都没有异常。
                 </li>
               )}
             </ul>
           </section>
 
           <p className="mt-4 border-t border-line pt-3 text-[9px] leading-[1.7] text-muted-2">
-            V3 轴线、V7 切率曲线、V9 模型能力还没查：需要 3D 走位与能力矩阵。
-            覆盖率只统计「信息镜头 + 情绪 / 反应镜头」是否齐全，不评价故事好不好。
+            当前视频模型：首帧 ✓ · 尾帧 ✗ · 运镜仅提示词 · 单镜 1–8 秒。
+          </p>
+          <p className="mt-2 text-[9px] leading-[1.7] text-muted-2">
+            V3 轴线只看同一场相邻两镜的左右调度，没有 3D 坐标，只说「像」越轴，不标红；V7 拿每拍平均镜长与全片
+            对比，查该碎不碎的拍；V9 只查尾帧，运镜本身只作为提示词提交。覆盖率只统计「信息镜头 + 情绪 /
+            反应镜头」是否齐全，不评价故事好不好。
           </p>
         </div>
       </aside>
