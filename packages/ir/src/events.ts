@@ -42,10 +42,15 @@ export const GATE_NOTE_MAX = 240;
 export type ProjectEvent =
   | { type: "project.created"; at: string; project: Project }
   | {
-      /** 项目级设置：目前只有预算。预算改了要留痕，否则"超没超"说不清 */
+      /**
+       * 项目级设置（H10）：预算、单镜重试上限与超预算处置。
+       * 改了都要留痕，否则"什么时候从 60 改成 19 的"说不清。
+       */
       type: "project.updated";
       at: string;
-      budgetCny: number;
+      budgetCny?: number;
+      maxAttemptsPerShot?: number;
+      onBudgetExceed?: "block" | "keep";
     }
   | { type: "shot.updated"; at: string; shotId: Id; patch: Partial<Shot> }
   | {
@@ -369,10 +374,35 @@ export function applyEvent(
 
     case "project.updated": {
       if (!current) throw new Error("project.updated 之前必须有 project.created");
-      if (!(event.budgetCny > 0)) {
-        throw new Error(`预算必须大于 0：${event.budgetCny}`);
+      const next: Project = { ...current };
+      let touched = 0;
+      if (event.budgetCny !== undefined) {
+        if (!(event.budgetCny > 0)) {
+          throw new Error(`预算必须大于 0：${event.budgetCny}`);
+        }
+        next.budgetCny = event.budgetCny;
+        touched += 1;
       }
-      return { ...current, budgetCny: event.budgetCny };
+      if (event.maxAttemptsPerShot !== undefined) {
+        if (
+          !Number.isInteger(event.maxAttemptsPerShot) ||
+          event.maxAttemptsPerShot < 1 ||
+          event.maxAttemptsPerShot > 5
+        ) {
+          throw new Error(`单镜重试上限必须是 1–5 的整数：${event.maxAttemptsPerShot}`);
+        }
+        next.maxAttemptsPerShot = event.maxAttemptsPerShot;
+        touched += 1;
+      }
+      if (event.onBudgetExceed !== undefined) {
+        if (event.onBudgetExceed !== "block" && event.onBudgetExceed !== "keep") {
+          throw new Error(`超预算处置只能是 block 或 keep：${event.onBudgetExceed}`);
+        }
+        next.onBudgetExceed = event.onBudgetExceed;
+        touched += 1;
+      }
+      if (touched === 0) throw new Error("project.updated 没有要改的字段");
+      return next;
     }
 
     case "shot.updated": {

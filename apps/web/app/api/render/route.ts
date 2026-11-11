@@ -5,9 +5,8 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import {
-  RENDER_HEIGHT,
+  RENDER_PROFILES,
   RENDER_MAX_ASSET_BYTES,
-  RENDER_WIDTH,
   isAudioMime,
   isImageMime,
   isVideoMime,
@@ -197,6 +196,7 @@ function buildCommand(
   outFile: string,
 ): string[] {
   const total = seconds(manifest.totalMs);
+  const profile = RENDER_PROFILES[manifest.quality];
   const args: string[] = ["-hide_banner", "-y", "-progress", "pipe:1", "-nostats"];
   const filters: string[] = [];
 
@@ -213,8 +213,8 @@ function buildCommand(
         : ""
     }trim=duration=${duration},setpts=PTS-STARTPTS,format=yuv420p[v${index}]`;
     filters.push(
-      `[${index}:v]scale=${RENDER_WIDTH}:${RENDER_HEIGHT}:force_original_aspect_ratio=decrease,` +
-        `pad=${RENDER_WIDTH}:${RENDER_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=0x0C0C0D,${tail}`,
+      `[${index}:v]scale=${manifest.width}:${manifest.height}:force_original_aspect_ratio=decrease,` +
+        `pad=${manifest.width}:${manifest.height}:(ow-iw)/2:(oh-ih)/2:color=0x0C0C0D,${tail}`,
     );
   });
 
@@ -261,9 +261,9 @@ function buildCommand(
     "-c:v",
     "libx264",
     "-preset",
-    "veryfast",
+    profile.preset,
     "-crf",
-    "20",
+    String(profile.crf),
     "-pix_fmt",
     "yuv420p",
     "-r",
@@ -271,7 +271,7 @@ function buildCommand(
     "-c:a",
     "aac",
     "-b:a",
-    "128k",
+    profile.audioBitrate,
     "-ar",
     "48000",
     "-t",

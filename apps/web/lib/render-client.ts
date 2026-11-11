@@ -8,9 +8,7 @@ import {
 } from "./edit";
 import type { RenderCompliance } from "./compliance";
 import {
-  RENDER_FPS,
-  RENDER_HEIGHT,
-  RENDER_WIDTH,
+  RENDER_PROFILES,
   isAudioMime,
   isImageMime,
   isVideoMime,
@@ -21,6 +19,7 @@ import {
   type RenderManifest,
   type RenderMusic,
   type RenderOverlay,
+  type RenderQuality,
 } from "./render-manifest";
 import type { LoudnessReport } from "./render-audio";
 
@@ -41,10 +40,10 @@ export type RenderResult = {
 const FONT_STACK =
   '"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif';
 
-function canvas(): HTMLCanvasElement {
+function canvas(width: number, height: number): HTMLCanvasElement {
   const el = document.createElement("canvas");
-  el.width = RENDER_WIDTH;
-  el.height = RENDER_HEIGHT;
+  el.width = width;
+  el.height = height;
   return el;
 }
 
@@ -75,38 +74,44 @@ function visualOf(clip: EditClip): Visual {
 }
 
 /** 占位画面：没有视频也没有首尾帧时，至少让成片里看得出这是哪一镜 */
-function drawPlaceholder(clip: EditClip): string {
-  const el = canvas();
+function drawPlaceholder(clip: EditClip, width: number, height: number): string {
+  const el = canvas(width, height);
   const ctx = el.getContext("2d")!;
+  const scale = width / RENDER_PROFILES.final.width;
   ctx.fillStyle = "#111113";
-  ctx.fillRect(0, 0, RENDER_WIDTH, RENDER_HEIGHT);
+  ctx.fillRect(0, 0, width, height);
   ctx.strokeStyle = "#1c1c20";
   ctx.lineWidth = 2;
-  for (let x = -RENDER_HEIGHT; x < RENDER_WIDTH; x += 28) {
+  for (let x = -height; x < width; x += 28) {
     ctx.beginPath();
     ctx.moveTo(x, 0);
-    ctx.lineTo(x + RENDER_HEIGHT, RENDER_HEIGHT);
+    ctx.lineTo(x + height, height);
     ctx.stroke();
   }
   ctx.fillStyle = "#4A4B4E";
-  ctx.font = `400 34px ${FONT_STACK}`;
+  ctx.font = `400 ${Math.round(34 * scale)}px ${FONT_STACK}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(`SH-${String(clip.shotNo).padStart(2, "0")} 还没有画面`, RENDER_WIDTH / 2, RENDER_HEIGHT / 2);
+  ctx.fillText(`SH-${String(clip.shotNo).padStart(2, "0")} 还没有画面`, width / 2, height / 2);
   return el.toDataURL("image/png");
 }
 
 /** 字幕与角标都画成透明全画幅 PNG：ffmpeg 这台机器没有 drawtext / subtitles */
-function subtitleOverlays(view: EditView, styleId: SubtitleStyleId): RenderOverlay[] {
+function subtitleOverlays(
+  view: EditView,
+  styleId: SubtitleStyleId,
+  width: number,
+  height: number,
+): RenderOverlay[] {
   const style = SUBTITLE_STYLES[styleId];
-  const el = canvas();
+  const el = canvas(width, height);
   const ctx = el.getContext("2d")!;
-  const fontSize = (RENDER_WIDTH * style.fontSizeCqw) / 100;
-  const stroke = (RENDER_WIDTH * style.strokeCqw) / 100;
-  const bottom = RENDER_HEIGHT * (1 - style.bottomPct / 100);
+  const fontSize = (width * style.fontSizeCqw) / 100;
+  const stroke = (width * style.strokeCqw) / 100;
+  const bottom = height * (1 - style.bottomPct / 100);
 
   return view.cues.map((cue) => {
-    ctx.clearRect(0, 0, RENDER_WIDTH, RENDER_HEIGHT);
+    ctx.clearRect(0, 0, width, height);
     ctx.font = `600 ${fontSize}px ${FONT_STACK}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
@@ -114,8 +119,8 @@ function subtitleOverlays(view: EditView, styleId: SubtitleStyleId): RenderOverl
     ctx.lineWidth = stroke;
     ctx.strokeStyle = "#000";
     ctx.fillStyle = "#fff";
-    ctx.strokeText(cue.text, RENDER_WIDTH / 2, bottom);
-    ctx.fillText(cue.text, RENDER_WIDTH / 2, bottom);
+    ctx.strokeText(cue.text, width / 2, bottom);
+    ctx.fillText(cue.text, width / 2, bottom);
     return {
       image: el.toDataURL("image/png"),
       startMs: cue.startMs,
@@ -125,30 +130,31 @@ function subtitleOverlays(view: EditView, styleId: SubtitleStyleId): RenderOverl
 }
 
 /** 显式标识：右下角「AI 生成」，与成片页、预览 HTML 同一位置 */
-function badgeOverlay(totalMs: number): RenderOverlay {
-  const el = canvas();
+function badgeOverlay(totalMs: number, width: number, height: number): RenderOverlay {
+  const el = canvas(width, height);
   const ctx = el.getContext("2d")!;
-  ctx.clearRect(0, 0, RENDER_WIDTH, RENDER_HEIGHT);
+  const scale = width / RENDER_PROFILES.final.width;
+  ctx.clearRect(0, 0, width, height);
   const text = "AI 生成";
-  const fontSize = 30;
+  const fontSize = Math.round(30 * scale);
   ctx.font = `500 ${fontSize}px ${FONT_STACK}`;
-  const width = ctx.measureText(text).width + 28;
-  const height = fontSize + 20;
-  const x = RENDER_WIDTH - 24 - width;
-  const y = RENDER_HEIGHT - 24 - height;
+  const badgeWidth = ctx.measureText(text).width + 28 * scale;
+  const badgeHeight = fontSize + 20 * scale;
+  const x = width - 24 * scale - badgeWidth;
+  const y = height - 24 * scale - badgeHeight;
 
   ctx.fillStyle = "rgba(0,0,0,0.58)";
   ctx.strokeStyle = "rgba(255,255,255,0.16)";
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.roundRect(x, y, width, height, 6);
+  ctx.roundRect(x, y, badgeWidth, badgeHeight, 6);
   ctx.fill();
   ctx.stroke();
 
   ctx.fillStyle = "rgba(255,255,255,0.82)";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(text, x + width / 2, y + height / 2 + 1);
+  ctx.fillText(text, x + badgeWidth / 2, y + badgeHeight / 2 + 1);
   return { image: el.toDataURL("image/png"), startMs: 0, endMs: totalMs };
 }
 
@@ -156,7 +162,9 @@ export function buildRenderManifest(
   view: EditView,
   styleId: SubtitleStyleId,
   compliance: RenderCompliance,
+  quality: RenderQuality = "final",
 ): RenderBuild {
+  const profile = RENDER_PROFILES[quality];
   const ordered = [...view.clips].sort((a, b) => a.startMs - b.startMs);
   let placeholders = 0;
 
@@ -168,7 +176,7 @@ export function buildRenderManifest(
         durationMs: clip.durationMs,
         remote: visual.remote,
         mediaKind: visual.mediaKind ?? "video",
-        fallback: drawPlaceholder(clip),
+        fallback: drawPlaceholder(clip, profile.width, profile.height),
         label,
       };
     }
@@ -178,7 +186,7 @@ export function buildRenderManifest(
     placeholders += 1;
     return {
       durationMs: clip.durationMs,
-      media: drawPlaceholder(clip),
+      media: drawPlaceholder(clip, profile.width, profile.height),
       mediaKind: "image" as const,
       placeholder: true,
       label,
@@ -221,13 +229,17 @@ export function buildRenderManifest(
     music.push({ audio: cue.uri, ...common });
   }
 
-  const overlays = [badgeOverlay(view.totalMs), ...subtitleOverlays(view, styleId)];
+  const overlays = [
+    badgeOverlay(view.totalMs, profile.width, profile.height),
+    ...subtitleOverlays(view, styleId, profile.width, profile.height),
+  ];
   return {
     manifest: {
       title: view.title,
-      width: RENDER_WIDTH,
-      height: RENDER_HEIGHT,
-      fps: RENDER_FPS,
+      quality,
+      width: profile.width,
+      height: profile.height,
+      fps: profile.fps,
       totalMs: view.totalMs,
       clips,
       overlays,
@@ -286,10 +298,11 @@ export async function exportMp4(
   view: EditView,
   styleId: SubtitleStyleId,
   compliance: RenderCompliance,
+  quality: RenderQuality,
   onStage?: (stage: string) => void,
 ): Promise<RenderResult> {
   onStage?.("正在排版字幕与占位画面…");
-  const { manifest } = buildRenderManifest(view, styleId, compliance);
+  const { manifest } = buildRenderManifest(view, styleId, compliance, quality);
 
   onStage?.("正在提交渲染任务…");
   const submit = await fetch("/api/render", {

@@ -28,6 +28,8 @@ import {
 } from "@/lib/compliance";
 import { shotLabel, spendOf, toStageView } from "@/lib/read-model";
 import { exportMp4 } from "@/lib/render-client";
+import { RENDER_PROFILES, type RenderQuality } from "@/lib/render-manifest";
+import { stageStateOf } from "@/lib/stage-flow";
 import type { LoudnessReport } from "@/lib/render-audio";
 import {
   PLATFORM_SPECS,
@@ -206,6 +208,7 @@ export function EditScreen() {
   const [notice, setNotice] = useState("");
   const [rendering, setRendering] = useState(false);
   const [renderStage, setRenderStage] = useState("");
+  const [quality, setQuality] = useState<RenderQuality>("draft");
   const [loudness, setLoudness] = useState<LoudnessReport>();
   const [musicFile, setMusicFile] = useState<{
     name: string;
@@ -256,6 +259,9 @@ export function EditScreen() {
   );
   const acknowledged = report.review > 0 && ackSignature === report.signature;
   const gateOpen = report.ok && (report.review === 0 || acknowledged);
+  const editGate = useMemo(() => stageStateOf(project, "edit"), [project]);
+  const finalAllowed = editGate.gate === "confirmed";
+  const profile = RENDER_PROFILES[quality];
   const gateReason = !report.ok
     ? `还有 ${report.blocked} 处硬阻断：改完文案再导出。`
     : report.review > 0 && !acknowledged
@@ -412,6 +418,10 @@ export function EditScreen() {
       setNotice(gateReason);
       return;
     }
+    if (quality === "final" && !finalAllowed) {
+      setNotice("定稿渲染要先在页面底部确认这一版成片；还没确认时只能导出草稿。");
+      return;
+    }
     setRendering(true);
     setNotice("");
     try {
@@ -419,6 +429,7 @@ export function EditScreen() {
         view,
         styleId,
         renderComplianceOf(report, acknowledged),
+        quality,
         setRenderStage,
       );
       const mb = (result.bytes / 1024 / 1024).toFixed(1);
@@ -428,7 +439,7 @@ export function EditScreen() {
       setLoudness(result.loudness);
       if (result.loudness) notes.push(result.loudness.detail);
       setNotice(
-        `成片已导出：${mb} MB · 1080×1920 · 带字幕与「AI 生成」角标${
+        `${profile.label}成片已导出：${mb} MB · ${profile.width}×${profile.height} / ${profile.fps}fps · 带字幕与「AI 生成」角标${
           notes.length > 0 ? `。${notes.join("；")}` : ""
         }。`,
       );
@@ -1304,6 +1315,41 @@ export function EditScreen() {
                     </p>
                   </div>
 
+                  <div className="mt-3 border-t border-line pt-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[9px] tracking-[.06em] text-muted-2">渲染档位</span>
+                      {(["draft", "final"] as const).map((id) => {
+                        const option = RENDER_PROFILES[id];
+                        const locked = id === "final" && !finalAllowed;
+                        return (
+                          <button
+                            key={id}
+                            type="button"
+                            aria-pressed={quality === id}
+                            onClick={() => setQuality(id)}
+                            disabled={locked}
+                            className={cn(
+                              "rounded-token border px-2.5 py-1 text-[10px] transition-colors duration-[var(--dur)] disabled:cursor-not-allowed disabled:opacity-40",
+                              quality === id
+                                ? "border-pick bg-pick/12 text-text"
+                                : "border-line text-muted enabled:hover:border-line-2 enabled:hover:text-text",
+                            )}
+                          >
+                            {option.label}
+                            <span className="ml-1.5 text-[9px] text-muted-2">
+                              {option.width}×{option.height} · {option.fps}fps
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-1.5 text-[9.5px] leading-[1.7] text-muted-2">
+                      {finalAllowed
+                        ? "定稿已解锁：先在草稿上看节奏，确认成片后再导定稿。"
+                        : "定稿要先在页面底部确认这一版成片；没确认时只能导草稿。"}
+                    </p>
+                  </div>
+
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       type="button"
@@ -1311,7 +1357,7 @@ export function EditScreen() {
                       disabled={!gateOpen || rendering || view.clips.length === 0}
                       className="rounded-token border border-pick bg-pick px-3 py-1 text-[10.5px] text-white transition-opacity duration-[var(--dur)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                      {rendering ? "正在渲染 MP4…" : "导出成片 MP4"}
+                      {rendering ? "正在渲染 MP4…" : `导出${profile.label} MP4`}
                     </button>
                     <button
                       type="button"
@@ -1354,7 +1400,7 @@ export function EditScreen() {
                   )}
 
                   <p className="mt-3 text-[9.5px] leading-[1.7] text-muted-2">
-                    成片 MP4 由本机 ffmpeg 渲染：1080×1920、H.264、带字幕与「AI 生成」角标。
+                    成片 MP4 由本机 ffmpeg 渲染：草稿 540×960 / 24fps 出处快、定稿 1080×1920 / 30fps 画质高，都带字幕与「AI 生成」角标。
                     提交后进入渲染队列，同一时间只跑一条，排队位置与编码进度显示在按钮下方；
                     远端素材只从白名单域名下载，取不到时用首帧或占位图顶上并计数。
                   </p>

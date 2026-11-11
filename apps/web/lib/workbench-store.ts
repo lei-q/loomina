@@ -53,8 +53,8 @@ export type Decision = "approved" | "rejected";
 /**
  * B6: 视频失败重试。只重试服务端明确说「没在跑、重交安全」的失败；
  * 路由决定 retryable，客户端不做更聪明的猜测。
+ * 重试上限由项目设置（H10 的 maxAttemptsPerShot），这里只放每次之间的等待。
  */
-const VIDEO_MAX_ATTEMPTS = 3;
 const VIDEO_RETRY_DELAYS_MS = [1200, 3000];
 
 function wait(ms: number): Promise<void> {
@@ -141,6 +141,10 @@ type WorkbenchState = {
   setBudget: (cny: number) => void;
   /** 改这一镜的金额上限（H10）：写一条 `shot.updated`；空值表示取消单镜上限 */
   setShotBudget: (shotId: string, cny: number | undefined) => boolean;
+  /** 改单镜自动重试上限（H10）：含第一次，1–5；写一条 `project.updated` */
+  setRetryLimit: (attempts: number) => void;
+  /** 改超预算后的处置（H10）：block 阻断，keep 保留现有结果不再调用生成 */
+  setOnBudgetExceed: (mode: "block" | "keep") => void;
   /**
    * 确认一个阶段（F8 / F9）：按当前内容算签名，写一条 `gate.confirmed`。
    * 已确认的阶段再确认一次就是更新签名，不新增第二条记录。
@@ -485,9 +489,12 @@ async function generateOne(
     const project = get().project;
     const { spent } = spendOf(project);
     const budget = project.budgetCny;
+    const keep = project.onBudgetExceed === "keep";
     if (spent + unit > budget) {
       set({
-        castError: `「${input.label}」超出预算：这一张 ¥${unit.toFixed(2)}，已花 ¥${spent.toFixed(2)} / 预算 ¥${budget.toFixed(2)}。先提高预算再生成。`,
+        castError: keep
+          ? `「${input.label}」超出预算：这一笔 ¥${unit.toFixed(2)}，已花 ¥${spent.toFixed(2)} / 预算 ¥${budget.toFixed(2)}。按「超预算保留现有结果」，这次不重新生成，这一镜沿用手上已有的画面。`
+          : `「${input.label}」超出预算：这一笔 ¥${unit.toFixed(2)}，已花 ¥${spent.toFixed(2)} / 预算 ¥${budget.toFixed(2)}。先提高预算再生成。`,
       });
       return false;
     }
@@ -499,7 +506,9 @@ async function generateOne(
       const shotSpend = shotSpendOf(project, shot.id);
       if (shotSpend.spent + unit > shot.budgetCny) {
         set({
-          castError: `「${input.label}」超出这一镜的上限：这一张 ¥${unit.toFixed(2)}，这一镜已花 ¥${shotSpend.spent.toFixed(2)} / 上限 ¥${shot.budgetCny.toFixed(2)}。先在分镜页提高单镜上限，或改项目预算。`,
+          castError: keep
+            ? `「${input.label}」超出这一镜的上限：这一笔 ¥${unit.toFixed(2)}，这一镜已花 ¥${shotSpend.spent.toFixed(2)} / 上限 ¥${shot.budgetCny.toFixed(2)}。按「超预算保留现有结果」，这次不重新生成，这一镜沿用手上已有的画面。`
+            : `「${input.label}」超出这一镜的上限：这一笔 ¥${unit.toFixed(2)}，这一镜已花 ¥${shotSpend.spent.toFixed(2)} / 上限 ¥${shot.budgetCny.toFixed(2)}。先在分镜页提高单镜上限，或改项目预算。`,
         });
         return false;
       }
@@ -735,6 +744,33 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       castError: undefined,
     });
     return true;
+  },
+
+  setRetryLimit: (attempts) => {
+    if (get().readOnly) return;
+    if (!Number.isInteger(attempts) || attempts < 1 || attempts > 5) return;
+    const { project, events } = get();
+    if (attempts === project.maxAttemptsPerShot) return;
+
+    const event: ProjectEvent = {
+      type: "project.updated",
+      at: new Date().toISOString(),
+      maxAttemptsPerShot: attempts,
+    };
+    set({ project: applyEvent(project, event), events: [...events, event] });
+  },
+
+  setOnBudgetExceed: (mode) => {
+    if (get().readOnly) return;
+    const { project, events } = get();
+    if (mode === project.onBudgetExceed) return;
+
+    const event: ProjectEvent = {
+      type: "project.updated",
+      at: new Date().toISOString(),
+      onBudgetExceed: mode,
+    };
+    set({ project: applyEvent(project, event), events: [...events, event] });
   },
 
   confirmGate: (stage, note) => {
@@ -1343,9 +1379,12 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     if (perSecond !== undefined) {
       const unit = Math.round((shot.durationMs / 1000) * perSecond * 100) / 100;
       const { spent } = spendOf(project);
+      const keep = project.onBudgetExceed === "keep";
       if (spent + unit > project.budgetCny) {
         set({
-          castError: `「${label}」出视频要 ¥${unit.toFixed(2)}，已花 ¥${spent.toFixed(2)} / 预算 ¥${project.budgetCny.toFixed(2)}。先提高预算再生成。`,
+          castError: keep
+            ? `「${label}」出这一条视频要 ¥${unit.toFixed(2)}，已花 ¥${spent.toFixed(2)} / 预算 ¥${project.budgetCny.toFixed(2)}。按「超预算保留现有结果」，这次不重新出片，这一镜沿用现有的画面。`
+            : `「${label}」出视频要 ¥${unit.toFixed(2)}，已花 ¥${spent.toFixed(2)} / 预算 ¥${project.budgetCny.toFixed(2)}。先提高预算再生成。`,
         });
         return false;
       }
@@ -1353,7 +1392,9 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         const shotSpend = shotSpendOf(project, shot.id);
         if (shotSpend.spent + unit > shot.budgetCny) {
           set({
-            castError: `「${label}」超出这一镜的上限：这一段要 ¥${unit.toFixed(2)}，这一镜已花 ¥${shotSpend.spent.toFixed(2)} / 上限 ¥${shot.budgetCny.toFixed(2)}。先在分镜页提高单镜上限，或改项目预算。`,
+            castError: keep
+              ? `「${label}」超出这一镜的上限：这一段要 ¥${unit.toFixed(2)}，这一镜已花 ¥${shotSpend.spent.toFixed(2)} / 上限 ¥${shot.budgetCny.toFixed(2)}。按「超预算保留现有结果」，这次不重新出片，这一镜沿用现有的画面。`
+              : `「${label}」超出这一镜的上限：这一段要 ¥${unit.toFixed(2)}，这一镜已花 ¥${shotSpend.spent.toFixed(2)} / 上限 ¥${shot.budgetCny.toFixed(2)}。先在分镜页提高单镜上限，或改项目预算。`,
           });
           return false;
         }
@@ -1366,7 +1407,8 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
     set({ castError: undefined });
     let lastFailure = "";
-    for (let attempt = 1; attempt <= VIDEO_MAX_ATTEMPTS; attempt += 1) {
+    const maxAttempts = project.maxAttemptsPerShot;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       setJob({ kind: "video", attempt });
       let response: Response;
       try {
@@ -1403,10 +1445,10 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       };
       if (!response.ok || !payload.uri) {
         const reason = payload.error ?? `生成失败（${response.status}）`;
-        if (payload.retryable === true && attempt < VIDEO_MAX_ATTEMPTS) {
+        if (payload.retryable === true && attempt < maxAttempts) {
           lastFailure = reason;
           set({
-            castError: `「${label}」第 ${attempt} 次没出片：${clipReason(reason)}。正在重试（${attempt + 1}/${VIDEO_MAX_ATTEMPTS}）…`,
+            castError: `「${label}」第 ${attempt} 次没出片：${clipReason(reason)}。正在重试（${attempt + 1}/${maxAttempts}）…`,
           });
           await wait(VIDEO_RETRY_DELAYS_MS[attempt - 1] ?? 3000);
           continue;
@@ -1473,7 +1515,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
 
     setJob(undefined);
     set({
-      castError: `「${label}」试了 ${VIDEO_MAX_ATTEMPTS} 次没出片：${clipReason(lastFailure || "原因没说")}。`,
+      castError: `「${label}」试了 ${maxAttempts} 次没出片：${clipReason(lastFailure || "原因没说")}。`,
     });
     return false;
   },

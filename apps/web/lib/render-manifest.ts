@@ -8,9 +8,45 @@
 
 import { scanText, type RenderCompliance } from "./compliance";
 
-export const RENDER_WIDTH = 1080;
-export const RENDER_HEIGHT = 1920;
-export const RENDER_FPS = 30;
+/** 输出档位（H13）：草稿先看节奏，定稿才交付。 */
+export type RenderQuality = "draft" | "final";
+
+export const RENDER_PROFILES: Record<
+  RenderQuality,
+  {
+    label: string;
+    width: number;
+    height: number;
+    fps: number;
+    crf: number;
+    preset: string;
+    audioBitrate: string;
+  }
+> = {
+  draft: {
+    label: "草稿",
+    width: 540,
+    height: 960,
+    fps: 24,
+    crf: 30,
+    preset: "ultrafast",
+    audioBitrate: "96k",
+  },
+  final: {
+    label: "定稿",
+    width: 1080,
+    height: 1920,
+    fps: 30,
+    crf: 20,
+    preset: "veryfast",
+    audioBitrate: "128k",
+  },
+};
+
+/** 定稿尺寸：旧调用方与平台规格仍按 1080×1920 写 */
+export const RENDER_WIDTH = RENDER_PROFILES.final.width;
+export const RENDER_HEIGHT = RENDER_PROFILES.final.height;
+export const RENDER_FPS = RENDER_PROFILES.final.fps;
 /** 单条成片上限：与 MVP 的 60–180 秒体量一致 */
 export const RENDER_MAX_MS = 180_000;
 export const RENDER_MAX_CLIPS = 60;
@@ -69,6 +105,8 @@ export type RenderMusic = {
 
 export type RenderManifest = {
   title: string;
+  /** 草稿 / 定稿（H13）：决定分辨率、帧率与编码档位 */
+  quality: RenderQuality;
   width: number;
   height: number;
   fps: number;
@@ -151,10 +189,17 @@ export function validateRenderManifest(
   if (typeof raw.title !== "string" || !raw.title.trim()) {
     return { ok: false, error: "缺少标题" };
   }
-  if (raw.width !== RENDER_WIDTH || raw.height !== RENDER_HEIGHT) {
-    return { ok: false, error: `只支持 ${RENDER_WIDTH}×${RENDER_HEIGHT}` };
+  const quality: RenderQuality = raw.quality === "draft" ? "draft" : "final";
+  const profile = RENDER_PROFILES[quality];
+  if (raw.width !== profile.width || raw.height !== profile.height) {
+    return {
+      ok: false,
+      error: `${profile.label}只支持 ${profile.width}×${profile.height}`,
+    };
   }
-  if (raw.fps !== RENDER_FPS) return { ok: false, error: `只支持 ${RENDER_FPS}fps` };
+  if (raw.fps !== profile.fps) {
+    return { ok: false, error: `${profile.label}只支持 ${profile.fps}fps` };
+  }
   if (!integer(raw.totalMs) || raw.totalMs < 300 || raw.totalMs > RENDER_MAX_MS) {
     return { ok: false, error: `全长必须在 0.3–${RENDER_MAX_MS / 1000} 秒之间` };
   }
@@ -419,9 +464,10 @@ export function validateRenderManifest(
     ok: true,
     manifest: {
       title: raw.title.trim().slice(0, 80),
-      width: RENDER_WIDTH,
-      height: RENDER_HEIGHT,
-      fps: RENDER_FPS,
+      quality,
+      width: profile.width,
+      height: profile.height,
+      fps: profile.fps,
       totalMs: raw.totalMs,
       clips: checkedClips,
       overlays: checkedOverlays,

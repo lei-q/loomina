@@ -15,6 +15,8 @@ interface Project {
   logline: string;
   version: number;          // 单调递增，配合版本快照
   budgetCny: number;        // 预算上限（元），默认 60；ADR-0035
+  maxAttemptsPerShot: number;          // 同一镜最多自动试几次（含第一次），1–5，默认 3；ADR-0101
+  onBudgetExceed: "block" | "keep";    // 超预算处置：阻断 / 保留现有结果，默认 block；ADR-0101
   createdAt: ISODate;
   updatedAt: ISODate;
 
@@ -391,7 +393,9 @@ interface Budget {
 }
 ```
 
-> **落地情况（ADR-0035 / ADR-0100，2026-11-10 / 11）**：项目级上限是 `Project.budgetCny`（默认 60）+ 一条 `project.updated` 事件；镜头级上限是 `Shot.budgetCny?`，走 `shot.updated`。"已花"都由现算函数得出（`spendOf(project)` / `shotSpendOf(project, shotId)`），不落字段。图像与视频在提交前先过项目预算、再过单镜上限（知道单价、且会超就一次请求都不发）。**重试次数上限、`onExceed` 的降级路径、文本模态的单镜上限仍没做。**
+> **落地情况（ADR-0035 / ADR-0100 / ADR-0101，2026-11-10 / 11）**：项目级上限是 `Project.budgetCny`（默认 60）+ 一条 `project.updated` 事件；镜头级上限是 `Shot.budgetCny?`，走 `shot.updated`。"已花"都由现算函数得出（`spendOf(project)` / `shotSpendOf(project, shotId)`），不落字段。图像与视频在提交前先过项目预算、再过单镜上限（知道单价、且会超就一次请求都不发）。`Project.maxAttemptsPerShot`（1–5，默认 3）与 `onBudgetExceed`（`block` / `keep`，默认 `block`）同样走 `project.updated`，applyEvent 校验范围；视频自动重试读前者，超预算时后者决定是阻断还是保留现有结果（`keep` 同样不发请求）。**文本模态的单镜上限仍没做**（token 单价未知，R28）。
+
+> **渲染清单（ADR-0101，2026-11-11）**：`/api/render` 的请求体是派生清单，不是 IR。`RenderManifest.quality: "draft" | "final"` 决定尺寸、帧率与编码参数：草稿 540×960 / 24fps / CRF 30 / ultrafast / 96k，定稿 1080×1920 / 30fps / CRF 20 / veryfast / 128k。服务端按档位校验尺寸与帧率，不自动换档；不带 `quality` 的旧清单按定稿处理。
 
 ### 4.4 审片决定的写回（ADR-0027）
 

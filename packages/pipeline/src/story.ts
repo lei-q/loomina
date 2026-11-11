@@ -553,6 +553,8 @@ export function projectFromStoryDraft(
     title: draft.title,
     version: 1,
     budgetCny: options.budgetCny ?? 60,
+    maxAttemptsPerShot: 3,
+    onBudgetExceed: "block",
     story: {
       logline: draft.logline,
       synopsis: draft.synopsis,

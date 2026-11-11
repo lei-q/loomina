@@ -192,6 +192,43 @@ describe("project.updated", () => {
       applyEvent(null, { type: "project.updated", at: AT, budgetCny: 100 }),
     ).toThrow();
   });
+
+  it("改重试上限与超预算处置（H10），其余字段原样保留", () => {
+    const project = load();
+    const next = applyEvent(project, {
+      type: "project.updated",
+      at: AT,
+      maxAttemptsPerShot: 4,
+      onBudgetExceed: "keep",
+    });
+
+    expect(next.maxAttemptsPerShot).toBe(4);
+    expect(next.onBudgetExceed).toBe("keep");
+    expect(next.budgetCny).toBe(project.budgetCny);
+    expect(next.shots).toEqual(project.shots);
+  });
+
+  it("重试上限越界或不是整数就拒绝", () => {
+    for (const bad of [0, 6, 2.5]) {
+      expect(() =>
+        applyEvent(load(), { type: "project.updated", at: AT, maxAttemptsPerShot: bad }),
+      ).toThrow();
+    }
+  });
+
+  it("超预算处置只接受 block / keep", () => {
+    expect(() =>
+      applyEvent(load(), {
+        type: "project.updated",
+        at: AT,
+        onBudgetExceed: "ignore" as never,
+      }),
+    ).toThrow();
+  });
+
+  it("什么都没改就拒绝", () => {
+    expect(() => applyEvent(load(), { type: "project.updated", at: AT })).toThrow();
+  });
 });
 
 describe("Project.budgetCny", () => {
@@ -202,6 +239,33 @@ describe("Project.budgetCny", () => {
 
   it("预算必须是正数", () => {
     expect(() => ProjectSchema.parse({ ...clone(minimalJson), budgetCny: -1 })).toThrow();
+  });
+});
+
+describe("Project.maxAttemptsPerShot / onBudgetExceed（H10）", () => {
+  it("老快照没有这两个字段时取默认值：最多试 3 次、超预算阻断", () => {
+    const parsed = ProjectSchema.parse({
+      ...clone(minimalJson),
+      maxAttemptsPerShot: undefined,
+      onBudgetExceed: undefined,
+    });
+    expect(parsed.maxAttemptsPerShot).toBe(3);
+    expect(parsed.onBudgetExceed).toBe("block");
+  });
+
+  it("重试上限只能是 1–5 的整数", () => {
+    expect(() =>
+      ProjectSchema.parse({ ...clone(minimalJson), maxAttemptsPerShot: 6 }),
+    ).toThrow();
+    expect(() =>
+      ProjectSchema.parse({ ...clone(minimalJson), maxAttemptsPerShot: 0 }),
+    ).toThrow();
+  });
+
+  it("超预算处置只接受 block / keep", () => {
+    expect(() =>
+      ProjectSchema.parse({ ...clone(minimalJson), onBudgetExceed: "retry" }),
+    ).toThrow();
   });
 });
 

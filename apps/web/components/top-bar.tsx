@@ -91,6 +91,8 @@ export function TopBar({
 }: TopBarProps) {
   const [draftBudget, setDraftBudget] = useState<string>("");
   const project = useWorkbench((state) => state.project);
+  const setRetryLimit = useWorkbench((state) => state.setRetryLimit);
+  const setOnBudgetExceed = useWorkbench((state) => state.setOnBudgetExceed);
   const gateStates = stageStates(project);
   const nextStage = nextOpenStage(gateStates);
   const budget = budgetCny ?? 60;
@@ -283,6 +285,48 @@ export function TopBar({
                   >
                     改预算
                   </button>
+                </div>
+              )}
+              {!readOnly && (
+                <div className="mt-2.5 space-y-1.5 border-t border-line pt-2.5">
+                  <label className="flex items-center justify-between gap-2 text-[9.5px] text-muted-2">
+                    <span>单镜最多试</span>
+                    <select
+                      id="retry-limit"
+                      value={project.maxAttemptsPerShot}
+                      onChange={(event) => setRetryLimit(Number(event.target.value))}
+                      className="rounded-token border border-line bg-transparent px-1 py-0.5 text-[9.5px] text-text focus:border-line-2 focus:outline-none"
+                    >
+                      {[1, 2, 3, 4, 5].map((value) => (
+                        <option key={value} value={value} className="bg-surface text-text">
+                          {value} 次
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex items-center justify-between gap-2 text-[9.5px] text-muted-2">
+                    <span>超预算时</span>
+                    <select
+                      id="budget-exceed"
+                      value={project.onBudgetExceed}
+                      onChange={(event) =>
+                        setOnBudgetExceed(event.target.value === "keep" ? "keep" : "block")
+                      }
+                      className="rounded-token border border-line bg-transparent px-1 py-0.5 text-[9.5px] text-text focus:border-line-2 focus:outline-none"
+                    >
+                      <option value="block" className="bg-surface text-text">
+                        停下，等我处理
+                      </option>
+                      <option value="keep" className="bg-surface text-text">
+                        保留现有结果
+                      </option>
+                    </select>
+                  </label>
+                  <p className="text-[9px] leading-[1.5] text-muted-2">
+                    {project.onBudgetExceed === "keep"
+                      ? "超预算的镜头不再调用生成，沿用手上已有的画面。"
+                      : "超预算的镜头直接拦下，不会悄悄花钱。"}
+                  </p>
                 </div>
               )}
               {unpriced > 0 && (

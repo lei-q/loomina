@@ -360,6 +360,10 @@ export const ProjectSchema = z.object({
    * 换设备、刷新、重放事件日志之后还得是同一个数（准则 P14 / H10）。
    */
   budgetCny: z.number().positive().default(60),
+  /** 同一镜最多自动试几次（H10）：包含第一次，1–5，默认 3 */
+  maxAttemptsPerShot: z.number().int().min(1).max(5).default(3),
+  /** 超预算时的处置（H10）：阻断，或保留现有结果不再调用生成 */
+  onBudgetExceed: z.enum(["block", "keep"]).default("block"),
   /** 故事层（ADR-0017 / ADR-0088）：logline、人物弧光、关系与钩子 */
   story: StoryBibleSchema.default({}),
   locations: z.array(LocationSchema).default([]),

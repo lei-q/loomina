@@ -895,6 +895,53 @@ describe("预算（ADR-0035）", () => {
     vi.unstubAllGlobals();
   });
 
+  it("超预算选「保留现有结果」时同样不发请求，并说明沿用手上的画面（H10）", async () => {
+    state().setBudget(19);
+    state().setOnBudgetExceed("keep");
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls.push("fetch");
+        return new Response("{}", { status: 200 });
+      }),
+    );
+
+    await state().generateProp("p-cup");
+
+    expect(calls).toHaveLength(0);
+    expect(state().castError).toContain("超出预算");
+    expect(state().castError).toContain("保留现有结果");
+    vi.unstubAllGlobals();
+  });
+
+  it("改重试上限与超预算处置都写 project.updated，重放后一致（H10）", () => {
+    state().setRetryLimit(4);
+    state().setOnBudgetExceed("keep");
+
+    expect(state().project.maxAttemptsPerShot).toBe(4);
+    expect(state().project.onBudgetExceed).toBe("keep");
+    expect(state().events.at(-2)).toMatchObject({
+      type: "project.updated",
+      maxAttemptsPerShot: 4,
+    });
+    expect(state().events.at(-1)).toMatchObject({
+      type: "project.updated",
+      onBudgetExceed: "keep",
+    });
+    const replayed = rebuild(state().events);
+    expect(replayed.maxAttemptsPerShot).toBe(4);
+    expect(replayed.onBudgetExceed).toBe("keep");
+  });
+
+  it("重试上限越界或没变就不写日志", () => {
+    const before = state().events.length;
+    state().setRetryLimit(0);
+    state().setRetryLimit(9);
+    state().setRetryLimit(3);
+    expect(state().events).toHaveLength(before);
+  });
+
   it("预算还够就照常生成", async () => {
     state().setBudget(60);
     const calls: string[] = [];

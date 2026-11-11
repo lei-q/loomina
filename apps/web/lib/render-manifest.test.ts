@@ -114,6 +114,34 @@ describe("成片渲染清单（E6）", () => {
     expect(over.ok).toBe(false);
   });
 
+  it("双档渲染：草稿 540×960 / 24fps 与定稿 1080×1920 / 30fps（H13）", () => {
+    const draft = validateRenderManifest(
+      manifest({ quality: "draft", width: 540, height: 960, fps: 24 }),
+    );
+    expect(draft.ok).toBe(true);
+    if (!draft.ok) return;
+    expect(draft.manifest.quality).toBe("draft");
+    expect(draft.manifest.width).toBe(540);
+
+    const final = validateRenderManifest(manifest({ quality: "final" }));
+    expect(final.ok).toBe(true);
+    if (!final.ok) return;
+    expect(final.manifest.quality).toBe("final");
+    expect(final.manifest.width).toBe(1080);
+
+    // 档位与尺寸/帧率对不上就拒绝，免得标着草稿却按定稿耗时编码
+    expect(
+      validateRenderManifest(manifest({ quality: "draft", width: 1080, height: 1920, fps: 24 })).ok,
+    ).toBe(false);
+    expect(
+      validateRenderManifest(manifest({ quality: "draft", width: 540, height: 960, fps: 30 })).ok,
+    ).toBe(false);
+    // 不写档位按定稿处理：老调用方不受影响
+    const implicit = validateRenderManifest(manifest({ quality: undefined }));
+    expect(implicit.ok).toBe(true);
+    if (implicit.ok) expect(implicit.manifest.quality).toBe("final");
+  });
+
   it("缺 AI 标注、超出上限、叠加层时间越界都拒绝", () => {
     expect(validateRenderManifest(manifest({ aiLabel: undefined })).ok).toBe(false);
     expect(validateRenderManifest(manifest({ totalMs: 180_001 })).ok).toBe(false);
