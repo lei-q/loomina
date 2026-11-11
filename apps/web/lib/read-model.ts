@@ -648,9 +648,22 @@ export type AnimaticSegment = {
   hasPicture: boolean;
 };
 
+/** 预演里的配乐（E10 / C4）：跟着整条片子循环，按 cue 的增益压低 */
+export type AnimaticMusic = {
+  id: string;
+  title: string;
+  mood: string;
+  uri?: string;
+  /** 线性音量，已从 dB 换算；没有文件时是 0 */
+  volume: number;
+  loop: boolean;
+};
+
 export type AnimaticView = {
   title: string;
   segments: AnimaticSegment[];
+  /** 配乐床；目前一条，没有就是空数组 */
+  music: AnimaticMusic[];
   /** 全长，秒 */
   totalSec: number;
   /** 一帧画面都没有的镜头数 */
@@ -696,9 +709,25 @@ export function toAnimaticView(project: Project): AnimaticView {
     };
   });
   const totalSec = segments.reduce((sum, item) => sum + item.dur, 0);
+  const music: AnimaticMusic[] = project.timeline.music.flatMap((cue) => {
+    const asset = assetById.get(cue.assetId);
+    if (!asset?.uri) return [];
+    return [
+      {
+        id: cue.id,
+        title: cue.title,
+        mood: cue.mood,
+        uri: asset.uri,
+        // 与成片同一口径：dB 转线性，0 dB 就是 1
+        volume: Math.min(1, Math.max(0, 10 ** (cue.gainDb / 20))),
+        loop: cue.loop,
+      },
+    ];
+  });
   return {
     title: view.title,
     segments,
+    music,
     totalSec: Math.round(totalSec * 10) / 10,
     missing: segments.filter((item) => !item.hasPicture).length,
     withVideo: segments.filter((item) => Boolean(item.videoUri)).length,

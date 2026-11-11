@@ -26,6 +26,10 @@ export function AnimaticOverlay({
   const [clip, setClip] = useState(0);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // 配乐（E10）：一条床，跟着预演播 / 停
+  const musicRef = useRef<HTMLAudioElement | null>(null);
+  const music = view.music[0];
+  const [musicOn, setMusicOn] = useState(true);
   const segment = view.segments[index];
   const clips = segment?.clips ?? [];
 
@@ -78,6 +82,16 @@ export function AnimaticOverlay({
       // 浏览器不给自动播放时，字幕照走；用户点一下「暂停 / 播放」即可
     });
   }, [playing, index, clip, clips]);
+
+  // 配乐跟着播放状态走：暂停就停，继续从原处接上；不放「不是成片」的默片预演
+  useEffect(() => {
+    const element = musicRef.current;
+    if (!element || !music?.uri) return;
+    element.volume = music.volume;
+    element.loop = music.loop;
+    if (playing && musicOn) void element.play().catch(() => {});
+    else element.pause();
+  }, [playing, musicOn, music?.uri, music?.volume, music?.loop]);
 
   // 空格暂停 / 继续，左右切镜，Esc 关掉
   useEffect(() => {
@@ -181,6 +195,9 @@ export function AnimaticOverlay({
             }}
             className="hidden"
           />
+          {music?.uri && (
+            <audio ref={musicRef} src={music.uri} preload="auto" className="hidden" />
+          )}
         </div>
 
         <div className="flex w-[220px] shrink-0 flex-col gap-3">
@@ -197,6 +214,11 @@ export function AnimaticOverlay({
                 : `有配音的镜头 ${view.withVoice} 个${
                     view.withVoice < view.segments.length ? "（其余是默片）" : ""
                   }`}
+            </li>
+            <li>
+              {music
+                ? `配乐「${music.title}」${music.loop ? " · 循环铺满" : ""}`
+                : "还没有配乐：节奏只有画面与台词"}
             </li>
           </ul>
           <div className="flex items-center gap-1.5">
@@ -225,6 +247,20 @@ export function AnimaticOverlay({
               下一镜
             </button>
           </div>
+          {music && (
+            <label className="flex items-start gap-2 text-[9.5px] leading-[1.6] text-muted-2">
+              <input
+                type="checkbox"
+                checked={musicOn}
+                onChange={(event) => setMusicOn(event.target.checked)}
+                className="mt-0.5 accent-current"
+              />
+              <span>
+                配乐「{music.title}」{music.loop ? " · 循环" : ""}
+                {musicOn ? "" : "（已静音）"}
+              </span>
+            </label>
+          )}
           <p className="text-[9px] leading-[1.6] text-muted-2">
             空格暂停，← → 切镜，Esc 退出
           </p>

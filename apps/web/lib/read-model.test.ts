@@ -284,6 +284,58 @@ describe("toStageView", () => {
     expect(animatic.withVoice).toBe(1);
   });
 
+  it("配乐进预演：带 uri 与换算后的音量，没有文件就不出现（E10）", () => {
+    const withMusic = ProjectSchema.parse({
+      ...sampleProject,
+      assets: [
+        ...sampleProject.assets,
+        {
+          id: "a-music-1",
+          kind: "audio",
+          source: "upload",
+          uri: "data:audio/mpeg;base64,TU5VUw==",
+          durationMs: 90_000,
+          createdAt: "2026-11-11T09:00:00Z",
+        },
+      ],
+      timeline: {
+        ...sampleProject.timeline,
+        music: [
+          {
+            id: "mu-1",
+            assetId: "a-music-1",
+            title: "夜巡",
+            mood: "紧张",
+            startMs: 0,
+            durationMs: 30_000,
+            gainDb: -18,
+            duckDb: 15,
+            ducking: true,
+            loop: true,
+            licenseRef: "自录",
+          },
+        ],
+      },
+    });
+    const animatic = toAnimaticView(withMusic);
+    expect(animatic.music).toHaveLength(1);
+    expect(animatic.music[0]).toMatchObject({
+      id: "mu-1",
+      title: "夜巡",
+      uri: "data:audio/mpeg;base64,TU5VUw==",
+      loop: true,
+    });
+    // -18 dB ≈ 0.126
+    expect(animatic.music[0]!.volume).toBeCloseTo(10 ** (-18 / 20), 5);
+
+    // 资产不存在时配乐不出现，但 cue 本身还在 IR 里
+    const missingAsset = ProjectSchema.parse({
+      ...withMusic,
+      assets: sampleProject.assets,
+    });
+    expect(toAnimaticView(missingAsset).music).toEqual([]);
+  });
+
   it("配音页按镜头顺序铺开台词，角色与已配时长对得上（ADR-0085）", () => {
     const project = ProjectSchema.parse({
       ...sampleProject,
