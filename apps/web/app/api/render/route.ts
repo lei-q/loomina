@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import {
   RENDER_HEIGHT,
@@ -17,23 +18,51 @@ import {
 } from "@/lib/render-manifest";
 
 /**
- * 成片渲染（E6）。
+ * 成片渲染任务队列（E6 / H2）。
  *
- * 浏览器把字幕、占位图与 AI 角标画成 PNG，这里只负责校验、受控下载远端素材、
- * 拼滤镜与编码。本机 ffmpeg 没编进 drawtext / subtitles，中文排版必须在浏览器里完成。
+ * 提交只返回任务号，客户端轮询状态与进度；同一进程内并发固定为 1，
+ * 排队的任务不会同时抢 CPU。任务完成后的 MP4 在临时目录里留 30 分钟，
+ * 客户端用 `?job=<id>&download=1` 取回，之后目录与记录一起清掉。
  *
- * 远端素材（E6.1）：只有列在 RENDER_ALLOWED_HOSTS 里的域名才会下载，超时 / 超限 /
- * 类型不符一律当作「跳过」，改用清单里的兜底图，并在响应头里如实计数。
+ * 这是单进程、内存态的队列：next start 重启后任务全部丢失，不做持久化。
+ * 对本地单人创作够用，接云端时再换真正的任务系统。
  */
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
 const RENDER_TIMEOUT_MS = 240_000;
 const REMOTE_TIMEOUT_MS = 20_000;
+const MAX_ATTEMPTS = 2;
+const MAX_QUEUED = 8;
+const JOB_TTL_MS = 30 * 60 * 1000;
 
 type MediaKind = "video" | "image" | "audio";
 type ResolvedClip = { path: string; mediaKind: "video" | "image" };
 type ResolvedAudio = { path: string; startMs: number };
+type JobStatus = "queued" | "running" | "done" | "error";
+
+type RenderJob = {
+  id: string;
+  manifest: RenderManifest;
+  status: JobStatus;
+  stage: string;
+  progress: number;
+  attempts: number;
+  createdAt: number;
+  startedAt?: number;
+  finishedAt?: number;
+  error?: string;
+  fileName: string;
+  dir?: string;
+  filePath?: string;
+  bytes?: number;
+  remoteSkipped: number;
+  placeholders: number;
+};
+
+const jobs = new Map<string, RenderJob>();
+const queue: string[] = [];
+let activeJobId: string | null = null;
 
 function seconds(ms: number): string {
   return (ms / 1000).toFixed(3);
@@ -119,7 +148,6 @@ async function downloadRemote(
       headers: { Accept: "video/*,image/*,audio/*;q=0.9,*/*;q=0.1" },
     });
     if (!response.ok || !response.body) return null;
-    // 重定向后的最终地址也要在白名单里，防止 302 绕过
     if (!hostAllowed(response.url)) return null;
 
     const declared = Number(response.headers.get("content-length") ?? "0");
@@ -150,7 +178,7 @@ function buildCommand(
   outFile: string,
 ): string[] {
   const total = seconds(manifest.totalMs);
-  const args: string[] = ["-hide_banner", "-y"];
+  const args: string[] = ["-hide_banner", "-y", "-progress", "pipe:1", "-nostats"];
   const filters: string[] = [];
 
   clips.forEach((clip, index) => {
@@ -258,10 +286,27 @@ function buildCommand(
   return args;
 }
 
-function runFfmpeg(args: string[]): Promise<{ code: number; stderr: string }> {
+function runFfmpeg(
+  args: string[],
+  totalMs: number,
+  onProgress: (percent: number) => void,
+): Promise<{ code: number; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] });
+    const child = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] });
     let stderr = "";
+    let stdoutBuffer = "";
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdoutBuffer += chunk.toString("utf8");
+      const lines = stdoutBuffer.split("\n");
+      stdoutBuffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const [key, value] = line.split("=");
+        if (key !== "out_time_us" || !value) continue;
+        const micros = Number(value);
+        if (!Number.isFinite(micros) || micros <= 0) continue;
+        onProgress(Math.min(99, Math.floor((micros / 1000 / totalMs) * 100)));
+      }
+    });
     child.stderr.on("data", (chunk: Buffer) => {
       stderr += chunk.toString("utf8");
       if (stderr.length > 16_000) stderr = stderr.slice(-16_000);
@@ -280,19 +325,28 @@ function runFfmpeg(args: string[]): Promise<{ code: number; stderr: string }> {
   });
 }
 
-export async function POST(request: Request) {
-  const body = await request.json().catch(() => null);
-  const checked = validateRenderManifest(body);
-  if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: 400 });
-  const manifest = checked.manifest;
+function scheduleCleanup(job: RenderJob): void {
+  const timer = setTimeout(() => {
+    if (job.dir) void rm(job.dir, { recursive: true, force: true });
+    jobs.delete(job.id);
+  }, JOB_TTL_MS);
+  // 不要因为一个待清理的任务把进程留活
+  timer.unref?.();
+}
 
-  const dir = await mkdtemp(path.join(/* turbopackIgnore: true */ tmpdir(), "loomina-render-"));
+async function runJob(job: RenderJob): Promise<void> {
+  job.status = "running";
+  job.stage = "准备素材";
+  job.startedAt = Date.now();
   try {
+    const dir = await mkdtemp(path.join(/* turbopackIgnore: true */ tmpdir(), "loomina-render-"));
+    job.dir = dir;
+
     let remoteSkipped = 0;
     let fallbackClips = 0;
 
     const clips: ResolvedClip[] = [];
-    for (const [index, clip] of manifest.clips.entries()) {
+    for (const [index, clip] of job.manifest.clips.entries()) {
       if (clip.remote) {
         const downloaded = await downloadRemote(
           clip.remote,
@@ -309,19 +363,25 @@ export async function POST(request: Request) {
         }
         remoteSkipped += 1;
         fallbackClips += 1;
-        clips.push({ path: await writeAsset(dir, clip.fallback!, `fallback-${index}`), mediaKind: "image" });
+        clips.push({
+          path: await writeAsset(dir, clip.fallback!, `fallback-${index}`),
+          mediaKind: "image",
+        });
         continue;
       }
-      clips.push({ path: await writeAsset(dir, clip.media!, `clip-${index}`), mediaKind: clip.mediaKind! });
+      clips.push({
+        path: await writeAsset(dir, clip.media!, `clip-${index}`),
+        mediaKind: clip.mediaKind!,
+      });
     }
 
     const overlays: string[] = [];
-    for (const [index, overlay] of manifest.overlays.entries()) {
+    for (const [index, overlay] of job.manifest.overlays.entries()) {
       overlays.push(await writeAsset(dir, overlay.image, `overlay-${index}`));
     }
 
     const audio: ResolvedAudio[] = [];
-    for (const [index, track] of manifest.audio.entries()) {
+    for (const [index, track] of job.manifest.audio.entries()) {
       if (track.remote) {
         const downloaded = await downloadRemote(track.remote, dir, `remote-audio-${index}`, "audio");
         if (downloaded) audio.push({ path: downloaded.path, startMs: track.startMs });
@@ -334,35 +394,140 @@ export async function POST(request: Request) {
       });
     }
 
+    job.remoteSkipped = remoteSkipped;
+    job.placeholders =
+      job.manifest.clips.filter((clip) => clip.placeholder === true).length + fallbackClips;
+
     const outFile = path.join(/* turbopackIgnore: true */ dir, "out.mp4");
-    const args = buildCommand(manifest, clips, overlays, audio, outFile);
-    const result = await runFfmpeg(args);
-    if (result.code !== 0) {
-      const tail = result.stderr.trim().split("\n").slice(-6).join("\n");
-      return NextResponse.json(
-        { error: `ffmpeg 没渲出来：${tail || "未知错误"}` },
-        { status: 500 },
-      );
+    const args = buildCommand(job.manifest, clips, overlays, audio, outFile);
+
+    let result = { code: -1, stderr: "" };
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      job.attempts = attempt;
+      job.stage =
+        attempt === 1
+          ? `编码中（${clips.length} 段）`
+          : `第 ${attempt} 次重试（上一次 ffmpeg 失败）`;
+      job.progress = 0;
+      result = await runFfmpeg(args, job.manifest.totalMs, (percent) => {
+        job.progress = percent;
+      });
+      if (result.code === 0) break;
     }
 
-    const buffer = await readFile(outFile);
-    const fileName = renderFileName(manifest.title);
-    const placeholderClips =
-      manifest.clips.filter((clip) => clip.placeholder === true).length + fallbackClips;
-    return new NextResponse(buffer, {
-      headers: {
-        "Content-Type": "video/mp4",
-        "Content-Length": String(buffer.byteLength),
-        "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
-        "Cache-Control": "no-store",
-        "X-Loomina-Remote-Skipped": String(remoteSkipped),
-        "X-Loomina-Placeholders": String(placeholderClips),
-      },
-    });
+    if (result.code !== 0) {
+      const tail = result.stderr.trim().split("\n").slice(-6).join("\n");
+      throw new Error(`ffmpeg 没渲出来：${tail || "未知错误"}`);
+    }
+
+    const info = await stat(outFile);
+    job.filePath = outFile;
+    job.fileName = renderFileName(job.manifest.title);
+    job.bytes = info.size;
+    job.progress = 100;
+    job.status = "done";
+    job.stage = "完成";
+    job.finishedAt = Date.now();
+    scheduleCleanup(job);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "未知错误";
-    return NextResponse.json({ error: `渲染失败：${message}` }, { status: 500 });
-  } finally {
-    await rm(dir, { recursive: true, force: true });
+    job.status = "error";
+    job.stage = "失败";
+    job.error = error instanceof Error ? error.message : "未知错误";
+    job.finishedAt = Date.now();
+    if (job.dir) await rm(job.dir, { recursive: true, force: true });
+    scheduleCleanup(job);
   }
+}
+
+function pump(): void {
+  if (activeJobId) return;
+  const nextId = queue.shift();
+  if (!nextId) return;
+  const job = jobs.get(nextId);
+  if (!job) {
+    pump();
+    return;
+  }
+  activeJobId = nextId;
+  void runJob(job).finally(() => {
+    activeJobId = null;
+    pump();
+  });
+}
+
+function publicJob(job: RenderJob): Record<string, unknown> {
+  return {
+    jobId: job.id,
+    status: job.status,
+    stage: job.stage,
+    progress: job.progress,
+    attempts: job.attempts,
+    position: job.status === "queued" ? queue.indexOf(job.id) + 1 : 0,
+    fileName: job.fileName,
+    bytes: job.bytes,
+    remoteSkipped: job.remoteSkipped,
+    placeholders: job.placeholders,
+    error: job.error,
+  };
+}
+
+export async function POST(request: Request) {
+  const body = await request.json().catch(() => null);
+  const checked = validateRenderManifest(body);
+  if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: 400 });
+
+  if (queue.length >= MAX_QUEUED) {
+    return NextResponse.json(
+      { error: `渲染队列已满（${MAX_QUEUED} 个等待中），等前面渲完再试` },
+      { status: 429 },
+    );
+  }
+
+  const job: RenderJob = {
+    id: randomUUID(),
+    manifest: checked.manifest,
+    status: "queued",
+    stage: activeJobId ? "排队中" : "等待开始",
+    progress: 0,
+    attempts: 0,
+    createdAt: Date.now(),
+    fileName: renderFileName(checked.manifest.title),
+    remoteSkipped: 0,
+    placeholders: 0,
+  };
+  jobs.set(job.id, job);
+  queue.push(job.id);
+  pump();
+  return NextResponse.json(publicJob(job), { status: 202 });
+}
+
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const jobId = url.searchParams.get("job");
+  if (!jobId) return NextResponse.json({ error: "缺少任务号" }, { status: 400 });
+  const job = jobs.get(jobId);
+  if (!job) return NextResponse.json({ error: "任务不存在或已过期" }, { status: 404 });
+
+  if (url.searchParams.get("download") !== "1") {
+    return NextResponse.json(publicJob(job), { headers: { "Cache-Control": "no-store" } });
+  }
+
+  if (job.status !== "done" || !job.filePath) {
+    return NextResponse.json(
+      { error: job.status === "error" ? job.error : "任务还没渲染完", ...publicJob(job) },
+      { status: 409 },
+    );
+  }
+
+  const buffer = await readFile(job.filePath);
+  return new NextResponse(buffer, {
+    headers: {
+      "Content-Type": "video/mp4",
+      "Content-Length": String(buffer.byteLength),
+      "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(job.fileName)}`,
+      "Cache-Control": "no-store",
+      "X-Loomina-Remote-Skipped": String(job.remoteSkipped),
+      "X-Loomina-Placeholders": String(job.placeholders),
+    },
+  });
 }

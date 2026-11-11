@@ -221,43 +221,99 @@ function download(blob: Blob, fileName: string): void {
 }
 
 /**
- * 导出成片 MP4（E6）：浏览器排版 → 服务端 ffmpeg 编码 → 下载。
+ * 导出成片 MP4（E6）：浏览器排版 → 服务端任务队列 → 轮询 → 下载（H2）。
  *
- * 没有进度事件可听（服务端一次请求），所以调用方只能显示阶段文案；
- * 失败时把服务端的人话原样带回来，不吞成「导出失败」。
+ * 提交只拿到任务号；之后每秒问一次状态，排队位置、编码进度与失败原因都原样显示。
+ * 失败时把服务端的人话带回来，不吞成「导出失败」。
  */
+
+type JobState = {
+  jobId: string;
+  status: "queued" | "running" | "done" | "error";
+  stage: string;
+  progress: number;
+  position: number;
+  fileName?: string;
+  bytes?: number;
+  remoteSkipped: number;
+  placeholders: number;
+  error?: string;
+};
+
+async function errorOf(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await response.json()) as { error?: string };
+    return body.error || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+const POLL_MS = 1000;
+const JOB_TIMEOUT_MS = 11 * 60 * 1000;
+
 export async function exportMp4(
   view: EditView,
   styleId: SubtitleStyleId,
   onStage?: (stage: string) => void,
 ): Promise<RenderResult> {
   onStage?.("正在排版字幕与占位画面…");
-  const { manifest, placeholders } = buildRenderManifest(view, styleId);
+  const { manifest } = buildRenderManifest(view, styleId);
 
-  onStage?.("正在渲染 1080×1920（通常 20–90 秒）…");
-  const response = await fetch("/api/render", {
+  onStage?.("正在提交渲染任务…");
+  const submit = await fetch("/api/render", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(manifest),
   });
+  if (!submit.ok) {
+    throw new Error(await errorOf(submit, `提交渲染失败（${submit.status}）`));
+  }
+  const job = (await submit.json()) as JobState;
 
-  if (!response.ok) {
-    let message = `渲染失败（${response.status}）`;
-    try {
-      const body = (await response.json()) as { error?: string };
-      if (body.error) message = body.error;
-    } catch {
-      // 非 JSON 错误就别再套一层「解析失败」
+  const deadline = Date.now() + JOB_TIMEOUT_MS;
+  let state = job;
+  while (state.status !== "done") {
+    if (state.status === "error") throw new Error(state.error || "渲染失败");
+    if (Date.now() > deadline) throw new Error("渲染超时，请重新导出");
+    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+
+    const poll = await fetch(`/api/render?job=${encodeURIComponent(job.jobId)}`, {
+      cache: "no-store",
+    });
+    if (!poll.ok) {
+      throw new Error(await errorOf(poll, `查询渲染进度失败（${poll.status}）`));
     }
-    throw new Error(message);
+    state = (await poll.json()) as JobState;
+
+    if (state.status === "queued") {
+      onStage?.(
+        state.position > 0 ? `排队中（第 ${state.position} 位）…` : "排队中，马上开始…",
+      );
+    } else if (state.status === "running") {
+      onStage?.(
+        `${state.stage}${state.progress > 0 ? ` · ${state.progress}%` : ""}…`,
+      );
+    }
   }
 
-  const remoteSkipped = Number(response.headers.get("x-loomina-remote-skipped") ?? 0);
-  const usedPlaceholders = Number(
-    response.headers.get("x-loomina-placeholders") ?? placeholders,
+  onStage?.("正在取回成片…");
+  const file = await fetch(
+    `/api/render?job=${encodeURIComponent(job.jobId)}&download=1`,
+    { cache: "no-store" },
   );
-  const blob = await response.blob();
-  const fileName = renderFileName(view.title);
+  if (!file.ok) {
+    throw new Error(await errorOf(file, `下载成片失败（${file.status}）`));
+  }
+
+  const remoteSkipped = Number(
+    file.headers.get("x-loomina-remote-skipped") ?? state.remoteSkipped ?? 0,
+  );
+  const usedPlaceholders = Number(
+    file.headers.get("x-loomina-placeholders") ?? state.placeholders ?? 0,
+  );
+  const blob = await file.blob();
+  const fileName = state.fileName || renderFileName(view.title);
   download(blob, fileName);
   return { bytes: blob.size, fileName, remoteSkipped, placeholders: usedPlaceholders };
 }
