@@ -57,6 +57,8 @@ export type ModelRecord = {
   resolution?: string;
   /** 配音默认音色 */
   voice?: string;
+  /** 商用条款 / 能力备注：供应商给的事实，代码测不出来，只能人工记（B12） */
+  terms?: string;
 };
 
 export type ConfigFile = {

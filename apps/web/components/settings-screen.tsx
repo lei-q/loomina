@@ -12,6 +12,8 @@ import {
   type VideoApiName,
 } from "@/lib/config-types";
 import { fetchModelConfig, invalidateModelConfig } from "@/lib/model-choice";
+import type { CapabilityResponse, ModelCapabilityView } from "@/lib/capabilities";
+import type { ProbeReportView } from "@/lib/probes";
 import { cn } from "@/lib/utils";
 
 /**
@@ -46,11 +48,18 @@ type ModelDraft = {
   label: string;
   resolution: string;
   voice: string;
+  /** 商用条款 / 能力备注（B12）；空表示未确认 */
+  terms: string;
 };
 
 type Probe = { ok: boolean; message: string };
 
 const EMPTY_VIDEO_API: "" | VideoApiName = "";
+
+const PRICE_UNIT: Record<"per_second" | "per_image", string> = {
+  per_second: "秒",
+  per_image: "张",
+};
 
 function blankProvider(index: number, used: Set<string>): ProviderDraft {
   let n = index;
@@ -93,6 +102,7 @@ function draftsFrom(config: PublicConfig) {
     label: model.label,
     resolution: model.resolution ?? "",
     voice: model.voice ?? "",
+    terms: model.terms ?? "",
   }));
   const defaults: Partial<Record<Modality, string>> = {};
   for (const modality of MODALITIES) {
@@ -154,6 +164,9 @@ export function SettingsScreen() {
   const [notice, setNotice] = useState<string>();
   const [probes, setProbes] = useState<Record<string, Probe>>({});
   const [probing, setProbing] = useState<string>();
+  const [capability, setCapability] = useState<CapabilityResponse>();
+  const [capabilityLoading, setCapabilityLoading] = useState(true);
+  const [capabilityError, setCapabilityError] = useState<string>();
 
   const applyConfig = useCallback((config: PublicConfig) => {
     const next = draftsFrom(config);
@@ -177,9 +190,25 @@ export function SettingsScreen() {
     setLoading(false);
   }, [applyConfig]);
 
+  const loadCapability = useCallback(async () => {
+    setCapabilityLoading(true);
+    setCapabilityError(undefined);
+    try {
+      const response = await fetch("/api/capability", { cache: "no-store" });
+      const payload = (await response.json()) as CapabilityResponse & { error?: string };
+      if (!response.ok) throw new Error(payload.error || `读不到能力矩阵（${response.status}）`);
+      setCapability(payload);
+    } catch (caught) {
+      setCapabilityError(caught instanceof Error ? caught.message : "读不到能力矩阵");
+    } finally {
+      setCapabilityLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadCapability();
+  }, [load, loadCapability]);
 
   const providerIds = useMemo(() => new Set(providers.map((item) => item.id)), [providers]);
   const providerName = useCallback(
@@ -240,6 +269,7 @@ export function SettingsScreen() {
       label: "",
       resolution: "",
       voice: "",
+      terms: "",
     };
     // 该模态第一个模型自动成为默认，避免保存时还要回头点一次
     if (!models.some((item) => item.modality === modality)) {
@@ -358,6 +388,7 @@ export function SettingsScreen() {
           ? { resolution: model.resolution.trim() }
           : {}),
         ...(model.modality === "tts" && model.voice.trim() ? { voice: model.voice.trim() } : {}),
+        ...(model.terms.trim() ? { terms: model.terms.trim() } : {}),
       })),
       defaults: Object.fromEntries(
         MODALITIES.flatMap((modality) => {
@@ -380,6 +411,7 @@ export function SettingsScreen() {
       applyConfig(result);
       invalidateModelConfig();
       await fetchModelConfig(true);
+      void loadCapability();
       setSaved(true);
       setNotice("已保存。各阶段的顶栏下拉会立刻用新配置。");
     } catch (caught) {
@@ -682,6 +714,20 @@ export function SettingsScreen() {
                                 className={`${inputClass} truncate`}
                               />
                             </Field>
+                            <Field
+                              label="商用条款 / 备注"
+                              className="min-w-[160px] flex-1"
+                              hint="可选；会显示在能力矩阵里"
+                            >
+                              <input
+                                value={model.terms}
+                                onChange={(event) =>
+                                  updateModel(model.key, { terms: event.target.value })
+                                }
+                                placeholder="例如：商用需单独申请"
+                                className={`${inputClass} truncate`}
+                              />
+                            </Field>
                             {modality === "video" && (
                               <Field label="分辨率" className="w-[78px]">
                                 <input
@@ -762,6 +808,77 @@ export function SettingsScreen() {
           {notice && <p className="mt-2 text-[10px] leading-5 text-muted">{notice}</p>}
         </section>
 
+        <section className="mt-9 border-t border-line pt-5">
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
+            <div className="flex items-baseline gap-2">
+              <h2 className="text-[12px] tracking-[.04em]">能力矩阵</h2>
+              <span className="tnum text-[9px] text-muted-2">B12 · H16</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => void loadCapability()}
+              disabled={capabilityLoading}
+              className="rounded-token border border-line px-2.5 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+            >
+              {capabilityLoading ? "读取中…" : "刷新"}
+            </button>
+          </div>
+          <p className="mt-1 max-w-[640px] text-[9.5px] leading-[1.7] text-muted-2">
+            读的是已保存的配置。只列代码实际发送的能力、价目表里查得到的单价和匹配到的 S1 测绘；
+            供应商侧没验证过的标「未测」。这张表不参与路由或降级。
+          </p>
+
+          {capabilityError && (
+            <p className="mt-2 text-[10px] leading-5 text-pick">{capabilityError}</p>
+          )}
+          {capabilityLoading && !capability && (
+            <p className="mt-3 text-[10px] text-muted-2">正在读能力与测绘报告…</p>
+          )}
+
+          {capability && (
+            <>
+              <div className="tnum mt-2 flex flex-wrap items-center gap-2 text-[9px] text-muted-2">
+                <span>{capability.modelCount} 个模型</span>
+                <span className="text-line-2">·</span>
+                <span>{capability.saved ? "已保存配置" : "env 临时视图"}</span>
+                {capability.termsUnconfirmed > 0 && (
+                  <>
+                    <span className="text-line-2">·</span>
+                    <span className="text-pick">
+                      {capability.termsUnconfirmed} 个商用条款未确认
+                    </span>
+                  </>
+                )}
+              </div>
+
+              <div className="mt-4 space-y-5">
+                {capability.groups.map((group) => (
+                  <div key={group.modality}>
+                    <div className="flex items-baseline gap-2 border-b border-line pb-1">
+                      <h3 className="text-[10.5px] text-text">{group.label}</h3>
+                      <span className="tnum text-[9px] text-muted-2">
+                        {group.models.length} 个
+                      </span>
+                      {group.models.length === 0 && (
+                        <span className="text-[9px] text-muted-2">
+                          没配；这一模态暂时不可用
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-2 grid gap-2 lg:grid-cols-2">
+                      {group.models.map((model) => (
+                        <CapabilityCard key={model.id} model={model} />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <ProbeReports probes={capability.probes} />
+            </>
+          )}
+        </section>
+
         <section className="mt-8 border-t border-line pt-4 text-[9.5px] leading-[1.8] text-muted-2">
           <p>
             页面里怎么切换：每个阶段顶栏的下拉只作用于当前浏览器，不选就用该模态的默认。
@@ -781,6 +898,137 @@ export function SettingsScreen() {
       </main>
     </div>
   );
+}
+
+function CapabilityCard({ model }: { model: ModelCapabilityView }) {
+  return (
+    <div className="rounded-token border border-line bg-surface p-2.5">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <span className="text-[10.5px] text-text">{model.label}</span>
+        {model.label !== `${model.providerName} / ${model.model}` && (
+          <>
+            <span className="tnum text-[9px] text-muted-2">{model.model}</span>
+            <span className="text-[9px] text-muted-2">· {model.providerName}</span>
+          </>
+        )}
+        {model.isDefault && (
+          <span className="rounded-token border border-line-2 px-1.5 py-px text-[8px] text-muted">
+            默认
+          </span>
+        )}
+      </div>
+
+      <p className="mt-1.5 text-[9.5px] leading-4">
+        {model.price.kind === "known" ? (
+          <span className="tnum text-muted">
+            ¥{model.price.cny.toFixed(2)} / {PRICE_UNIT[model.price.unit]}
+            <span className="text-muted-2"> · {model.price.basis}</span>
+          </span>
+        ) : (
+          <span className="text-muted-2">单价未知 · {model.price.reason}</span>
+        )}
+      </p>
+
+      <ul className="mt-1.5 space-y-0.5">
+        {model.facts.map((fact) => (
+          <li
+            key={fact.key}
+            className="grid grid-cols-[64px_1fr] gap-2 text-[9px] leading-4"
+          >
+            <span className="text-muted-2">{fact.label}</span>
+            <span
+              className={cn(
+                "min-w-0 break-words",
+                fact.source === "unknown" ? "text-muted-2" : "text-muted",
+              )}
+            >
+              {fact.value}
+            </span>
+          </li>
+        ))}
+      </ul>
+
+      <p className="mt-1.5 text-[9px] leading-4">
+        <span className="text-muted-2">商用条款</span>{" "}
+        {model.terms ? (
+          <span className="text-muted">{model.terms}</span>
+        ) : (
+          <span className="text-muted-2">未确认 · 需人工核对供应商条款</span>
+        )}
+      </p>
+
+      {model.probe ? (
+        <p className="tnum mt-1 text-[9px] leading-4 text-muted-2">
+          S1 · {probeTime(model.probe.report.startedAt)} · {model.probe.report.attempts} 次 ·
+          通过 {model.probe.report.passed} · ¥{model.probe.report.totalCny.toFixed(2)} ·{" "}
+          {probeOutcome(model.probe.report)}
+          {!model.probe.exact && (
+            <span className="text-pick"> · {model.probe.note}</span>
+          )}
+        </p>
+      ) : (
+        <p className="mt-1 text-[9px] text-muted-2">S1 · 还没有这个模型的测绘报告</p>
+      )}
+    </div>
+  );
+}
+
+function ProbeReports({ probes }: { probes: ProbeReportView[] }) {
+  return (
+    <div className="mt-6">
+      <div className="flex items-baseline justify-between gap-2 border-b border-line pb-1">
+        <h3 className="text-[10.5px] text-text">S1 测绘报告</h3>
+        <span className="tnum text-[9px] text-muted-2">最近 {probes.length} 次</span>
+      </div>
+      {probes.length === 0 ? (
+        <p className="mt-1.5 text-[9.5px] leading-[1.7] text-muted-2">
+          还没有测绘报告。运行 <span className="tnum">pnpm probe:s1</span>，成功后刷新这一块。
+        </p>
+      ) : (
+        <ul className="divide-y divide-line">
+          {probes.map((report) => (
+            <li
+              key={report.file}
+              className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 py-1.5 text-[9px]"
+            >
+              <span className="tnum shrink-0 text-muted-2">
+                {probeTime(report.startedAt)}
+              </span>
+              <span
+                className="min-w-[180px] flex-1 truncate text-muted"
+                title={report.file}
+              >
+                {report.videoModel ?? "?"}
+                {report.resolution ? ` @ ${report.resolution}` : ""}{" "}
+                <span className="text-muted-2">+ {report.imageModel ?? "?"}</span>
+              </span>
+              <span className="tnum shrink-0 text-muted-2">
+                通过 {report.passed}/{report.attempts} · ¥{report.totalCny.toFixed(2)} ·{" "}
+                {probeOutcome(report)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-1.5 text-[9px] leading-[1.7] text-muted-2">
+        只读本地 artifacts/s1 的汇总字段：不读密钥、不读 Base URL、不展示逐镜报错。
+        失败码是供应商返回的分类，不是质量评分。
+      </p>
+    </div>
+  );
+}
+
+function probeTime(value: string): string {
+  return value.length >= 16
+    ? `${value.slice(0, 10)} ${value.slice(11, 16)}`
+    : value;
+}
+
+function probeOutcome(report: ProbeReportView): string {
+  if (report.attempts === 0) return "没有有效尝试";
+  const entries = Object.entries(report.failureCodes);
+  if (entries.length === 0) return "全过";
+  return `失败 ${entries.map(([code, n]) => `${code}×${n}`).join(" / ")}`;
 }
 
 function modelIdValid(model: ModelDraft): boolean {

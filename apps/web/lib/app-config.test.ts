@@ -74,8 +74,31 @@ describe("normalizeConfig", () => {
     expect(result.config.providers[1]!.baseUrl).toBe("https://relay.example.com/v1");
   });
 
-  it("id 必须唯一，模型不能指向不存在的供应商", () => {
-    const duplicate = normalizeConfig(
+  it("保留商用条款备注，去掉首尾空白，空串等于没写", () => {
+    const result = normalizeConfig(
+      {
+        ...VALID,
+        models: [
+          {
+            ...VALID.models[2]!,
+            terms: "  商用需单独申请  ",
+          },
+          {
+            ...VALID.models[0]!,
+            terms: "   ",
+          },
+        ],
+        defaults: { video: "relay:minimax-h3", text: "deepseek:deepseek-v4.1-pro" },
+      },
+      PREVIOUS,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.models[0]!.terms).toBe("商用需单独申请");
+    expect(result.config.models[1]!.terms).toBeUndefined();
+  });
+
+  it("id 必须唯一，模型不能指向不存在的供应商", () => {    const duplicate = normalizeConfig(
       { ...VALID, providers: [VALID.providers[0], VALID.providers[0]] },
       PREVIOUS,
     );

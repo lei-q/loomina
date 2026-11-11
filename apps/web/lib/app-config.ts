@@ -30,7 +30,7 @@ const MAX_PROVIDERS = 20;
 const MAX_MODELS = 100;
 const MAX_KEY = 500;
 
-function projectRoot(): string {
+export function projectRoot(): string {
   const cwd = process.cwd();
   if (existsSync(path.join(/* turbopackIgnore: true */ cwd, "apps", "web"))) return cwd;
   const up = path.resolve(/* turbopackIgnore: true */ cwd, "..", "..");
@@ -259,6 +259,9 @@ export function normalizeConfig(
       modality === "tts" && typeof item.voice === "string"
         ? item.voice.trim().slice(0, 40) || undefined
         : undefined;
+    // 商用条款 / 能力备注：自由文本，只在能力矩阵里显示；空串等于没写
+    const terms =
+      typeof item.terms === "string" ? item.terms.trim().slice(0, 240) || undefined : undefined;
 
     models.push({
       id,
@@ -268,6 +271,7 @@ export function normalizeConfig(
       label,
       ...(resolution ? { resolution } : {}),
       ...(voice ? { voice } : {}),
+      ...(terms ? { terms } : {}),
     });
   }
 

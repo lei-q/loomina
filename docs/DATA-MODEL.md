@@ -1025,6 +1025,7 @@ interface ModelRecord {
   label: string;         // 界面显示名，缺省「供应商 / 模型名」
   resolution?: string;   // 仅视频
   voice?: string;        // 仅配音
+  terms?: string;        // 商用条款 / 能力备注，人工填写，≤240 字；能力矩阵只读展示（ADR-0098）
 }
 
 interface ConfigFile {

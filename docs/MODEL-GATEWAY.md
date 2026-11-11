@@ -248,6 +248,8 @@ S1 仍未完成，且不是代码问题：
 
 模型不再只能写死在 `secrity.env`：`/settings` 可配多个供应商与五种模态的多个模型，每种模态一个默认，存本机 `.loomina/config.json`（0600）。请求按 `modelId` 解析到供应商与真实模型名，再填进 `TreecloudConfig` 的 `textModel` / `imageModel` / `videoModel` / `ttsModel` / `asrModel` 槽位。
 
+同一页底部有只读「能力矩阵」（ADR-0098）：按模型列出代码实际发送的字段、价目表里查到的单价、人工填写的商用条款，以及最近 S1 测绘的尝试 / 通过 / 花费 / 失败码。它不替代本节的能力测绘，也不参与路由；供应商侧未验证的能力一律标「未测」。
+
 - 没保存过配置时，页面显示由 `secrity.env` 生成的临时视图，默认模型为文本 `deepseek-v4.1-flash-1017`、图像 `gpt-image-2-c`、视频 `minimax-h3`、配音 `seedance-2.0`；`ASR_MODEL` 未配时识别不可用。
 - `MODEL_NAME` 是视频模型的旧名，仍作为 `VIDEO_MODEL` 的兜底；新配置建议直接写 `VIDEO_MODEL`。
 - 密钥只在服务端解析；浏览器拿不到 Base URL 之外的供应商凭据，`GET /api/config` 只回 `hasKey`。
