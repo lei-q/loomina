@@ -11,7 +11,9 @@ import {
   type StoryDraft,
 } from "@loomina/pipeline";
 import { TopBar } from "@/components/top-bar";
+import { ModelPicker } from "@/components/model-picker";
 import { estimateDialogueMs } from "@/lib/dialogue";
+import { useModelCatalog, useModelChoice } from "@/lib/model-choice";
 import { useWorkbench } from "@/lib/workbench-store";
 
 const GENRES = ["都市逆袭", "甜宠", "悬疑", "家庭伦理"] as const;
@@ -69,6 +71,10 @@ export function StoryScreen() {
   const setBudget = useWorkbench((state) => state.setBudget);
 
   const [info, setInfo] = useState<{ model?: string }>({});
+  const [textModelId] = useModelChoice("text");
+  const catalog = useModelCatalog();
+  const activeModel =
+    catalog?.catalog.text.find((option) => option.id === textModelId)?.model ?? info.model;
   const [infoError, setInfoError] = useState<string>();
   const [mode, setMode] = useState<StoryOrigin>("idea");
   const [idea, setIdea] = useState("");
@@ -175,7 +181,10 @@ export function StoryScreen() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
-          mode === "import" ? { source, genre } : { idea, genre },
+          {
+            ...(mode === "import" ? { source, genre } : { idea, genre }),
+            ...(textModelId ? { modelId: textModelId } : {}),
+          },
         ),
       });
       const payload = (await response.json().catch(() => null)) as
@@ -228,20 +237,17 @@ export function StoryScreen() {
                 看过之后再决定要不要拿它开工。生成不写项目，确认才写。
               </p>
             </div>
-            <dl className="tnum flex items-baseline gap-5 text-[10.5px]">
-              <div className="flex items-baseline gap-1.5">
-                <dt className="text-muted-2">当前项目</dt>
-                <dd className="text-muted">
-                  {project.scenes.length} 场 / {project.shots.length} 镜
-                </dd>
-              </div>
-              {info.model && (
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+              <dl className="tnum flex items-baseline gap-5 text-[10.5px]">
                 <div className="flex items-baseline gap-1.5">
-                  <dt className="text-muted-2">文本模型</dt>
-                  <dd className="text-muted">{info.model}</dd>
+                  <dt className="text-muted-2">当前项目</dt>
+                  <dd className="text-muted">
+                    {project.scenes.length} 场 / {project.shots.length} 镜
+                  </dd>
                 </div>
-              )}
-            </dl>
+              </dl>
+              <ModelPicker modality="text" />
+            </div>
           </header>
 
           <div className="mt-5 flex flex-wrap items-center gap-1.5">
@@ -419,8 +425,8 @@ export function StoryScreen() {
             {info.model && busy && (
               <p className="mt-3 border-t border-line pt-3 text-[10px] leading-[1.7] text-muted-2">
                 {mode === "import"
-                  ? `正在让 ${info.model} 读剧本、合并场次并拆成分镜，通常要 40–100 秒。不要关页面。`
-                  : `正在让 ${info.model} 写故事、拆场次与分镜，通常要 40–100 秒。不要关页面。`}
+                  ? `正在让 ${activeModel} 读剧本、合并场次并拆成分镜，通常要 40–100 秒。不要关页面。`
+                  : `正在让 ${activeModel} 写故事、拆场次与分镜，通常要 40–100 秒。不要关页面。`}
               </p>
             )}
             {error && (

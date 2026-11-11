@@ -996,3 +996,45 @@ interface CostLedger {
 39. **模型单价只能来自 `ModelPrice` 表**，不得在业务代码中硬编码。
 40. **同一镜头连续两次在同一 QA 维度失败时，禁止继续重试**，必须回到设计层修改。
 41. **生成资产的成本只能来自价目表**；价目表里没有这个模型时不得记 0，只能留空并单独计数（ADR-0033）。
+
+## 15. 本机供应商与模型配置（H22 / ADR-0094）
+
+不是 Project IR 的一部分，也不进事件日志；它描述「这台机器用哪家供应商、哪个模型」。
+
+```ts
+type Modality = "text" | "image" | "video" | "tts" | "asr";
+
+interface ProviderRecord {
+  id: string;            // 小写字母 / 数字 / 连字符，≤40
+  name: string;
+  baseUrl: string;       // http(s)，无账号、查询串、锚点；不带结尾斜杠
+  apiKey?: string;       // 只在服务端文件与内存里；接口返回时整字段删除
+  videoApi?: "treecloud" | "litellm";
+}
+
+interface ModelRecord {
+  id: string;            // 全局唯一，默认 `<providerId>:<model>`
+  providerId: string;
+  modality: Modality;
+  model: string;         // 发给供应商的真实模型名
+  label: string;         // 界面显示名，缺省「供应商 / 模型名」
+  resolution?: string;   // 仅视频
+  voice?: string;        // 仅配音
+}
+
+interface ConfigFile {
+  version: 1;
+  providers: ProviderRecord[];
+  models: ModelRecord[];
+  defaults: Partial<Record<Modality, string>>;  // 有该模态模型时必有
+}
+```
+
+落盘路径为仓库根 `.loomina/config.json`（可用 `LOOMINA_CONFIG` 覆盖），目录 0700、文件 0600，写入走临时文件 + `rename`。文件不存在时由 `secrity.env` 生成临时视图，第一次保存才落盘；临时视图不把 `API_KEY` 复制进记录，密钥按供应商 id `env` 在调用时回读。浏览器拿到的 `PublicConfig` 把 `apiKey` 整个删掉，只给 `hasKey` / `keyFromEnv`；页面选择存 `localStorage` 的 `loomina.model.<modality>`，不属于项目数据。
+
+**新增不变量**
+
+42. **密钥不得离开服务端**：任何接口返回、日志与错误文本都不能出现 `apiKey` 原值；供应商回显先替换再截断。
+43. **有模型的模态必须有默认**，且默认必须属于该模态；保存时不允许「有模型但不知道用哪个」。
+44. **同一供应商、同一模态下的同一个真实模型不得重复。**
+45. **Base URL 只收 http(s)**，不得带账号、查询串或锚点；不在业务代码里硬编码供应商地址与模型名，统一走配置解析。

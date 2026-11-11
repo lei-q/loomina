@@ -1,9 +1,4 @@
-import {
-  TreecloudChatAdapter,
-  TreecloudClient,
-  loadEnvFile,
-  treecloudEnvFrom,
-} from "@loomina/gateway";
+import { ConfigError, TreecloudChatAdapter, TreecloudClient } from "@loomina/gateway";
 import {
   SOURCE_MAX_CHARS,
   importStoryMessages,
@@ -11,7 +6,7 @@ import {
   storyMessages,
   type StoryDraft,
 } from "@loomina/pipeline";
-import { envPath } from "@/lib/server-env";
+import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
 
 /**
  * 服务端故事生成（ADR-0088）。
@@ -23,11 +18,23 @@ import { envPath } from "@/lib/server-env";
 export type StoryInfo = {
   /** 配了文本模型才给；没配就是空，界面据此说「还没配文本模型」 */
   model?: string;
+  /** 配置页里的模型 id；页面切换时用它 */
+  modelId?: string;
+  provider?: string;
 };
 
-export function storyInfo(): StoryInfo {
-  const config = treecloudEnvFrom(loadEnvFile(envPath()));
-  return config.textModel ? { model: config.textModel } : {};
+export async function storyInfo(): Promise<StoryInfo> {
+  try {
+    const resolved = await resolveModel("text");
+    return {
+      model: resolved.model.model,
+      modelId: resolved.model.id,
+      provider: resolved.provider.name,
+    };
+  } catch (error) {
+    if (error instanceof ConfigError) return {};
+    throw error;
+  }
 }
 
 export type StoryResult = {
@@ -44,7 +51,10 @@ export type StoryRequest = {
   genre?: string;
 };
 
-export async function generateStory(request: StoryRequest): Promise<StoryResult> {
+export async function generateStory(
+  request: StoryRequest,
+  modelId?: string,
+): Promise<StoryResult> {
   const idea = request.idea?.trim() ?? "";
   const source = request.source?.trim() ?? "";
   if (idea && source) {
@@ -67,7 +77,7 @@ export async function generateStory(request: StoryRequest): Promise<StoryResult>
   }
   const genre = request.genre?.trim().slice(0, GENRE_MAX) || undefined;
 
-  const config = treecloudEnvFrom(loadEnvFile(envPath()));
+  const config = gatewayConfigOf(await resolveModel("text", modelId));
   const client = new TreecloudClient({ ...config, timeoutMs: 150_000 });
   const adapter = new TreecloudChatAdapter(client);
   const output = await adapter.complete({

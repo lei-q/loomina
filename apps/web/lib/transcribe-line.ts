@@ -1,10 +1,9 @@
 import {
+  ConfigError,
   TreecloudClient,
   TreecloudTranscriptionAdapter,
-  loadEnvFile,
-  treecloudEnvFrom,
 } from "@loomina/gateway";
-import { envPath } from "@/lib/server-env";
+import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
 
 /**
  * 服务端识别（ADR-0087）。
@@ -17,11 +16,18 @@ import { envPath } from "@/lib/server-env";
 export type TranscribeInfo = {
   /** 配了 ASR 模型才给；没配就是空，界面据此说「还没配识别模型」 */
   model?: string;
+  /** 配置页里的模型 id */
+  modelId?: string;
 };
 
-export function transcribeInfo(): TranscribeInfo {
-  const config = treecloudEnvFrom(loadEnvFile(envPath()));
-  return config.asrModel ? { model: config.asrModel } : {};
+export async function transcribeInfo(): Promise<TranscribeInfo> {
+  try {
+    const { model } = await resolveModel("asr");
+    return { model: model.model, modelId: model.id };
+  } catch (error) {
+    if (error instanceof ConfigError) return {};
+    throw error;
+  }
 }
 
 export type TranscribedLine = {
@@ -37,6 +43,7 @@ const AUDIO_BYTES_MAX = 8_000_000;
 export async function transcribeLine(request: {
   uri: string;
   mime?: string;
+  modelId?: string;
 }): Promise<TranscribedLine> {
   const match = /^data:(audio\/[a-z0-9.+-]+);base64,([a-z0-9+/=\s]+)$/i.exec(
     request.uri.trim(),
@@ -55,7 +62,7 @@ export async function transcribeLine(request: {
     throw new Error("这条音轨太大了（超过 8 MB），没有送去识别。");
   }
 
-  const config = treecloudEnvFrom(loadEnvFile(envPath()));
+  const config = gatewayConfigOf(await resolveModel("asr", request.modelId));
   const client = new TreecloudClient({ ...config, timeoutMs: 60_000 });
   const adapter = new TreecloudTranscriptionAdapter(client);
   const extension =

@@ -25,7 +25,7 @@ function bad(message: string) {
 
 export async function GET() {
   try {
-    return NextResponse.json(voiceInfo());
+    return NextResponse.json(await voiceInfo());
   } catch (error) {
     const message =
       error instanceof ConfigError ? error.message : "读不到配音配置";
@@ -37,6 +37,7 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as {
     text?: unknown;
     voice?: unknown;
+    modelId?: unknown;
   } | null;
   if (!body) return bad("请求体不是 JSON");
 
@@ -46,10 +47,11 @@ export async function POST(request: Request) {
 
   const voice = typeof body.voice === "string" ? body.voice.trim() : "";
   if (voice.length > VOICE_MAX) return bad(`音色名太长了：${VOICE_MAX} 字以内`);
+  const modelId = typeof body.modelId === "string" ? body.modelId : undefined;
 
   try {
     return NextResponse.json(
-      await speakLine({ text, ...(voice ? { voice } : {}) }),
+      await speakLine({ text, ...(voice ? { voice } : {}), modelId }),
     );
   } catch (error) {
     const message =

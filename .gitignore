@@ -37,3 +37,6 @@ pnpm-debug.log*
 tmp/
 .cache/
 artifacts/
+
+# 本机供应商与模型配置（含 API Key，ADR-0094）
+.loomina/

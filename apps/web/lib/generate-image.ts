@@ -2,8 +2,6 @@ import {
   TreecloudClient,
   TreecloudImageAdapter,
   imageCostCny,
-  loadEnvFile,
-  treecloudEnvFrom,
 } from "@loomina/gateway";
 import {
   buildKeyframePrompt,
@@ -13,7 +11,7 @@ import {
   type ShotPromptMaterial,
 } from "@loomina/pipeline";
 import type { Character, Id, Location, Prop, SheetView } from "@loomina/ir";
-import { envPath } from "@/lib/server-env";
+import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
 
 /**
  * 服务端出图（ADR-0031 / ADR-0032）。
@@ -72,21 +70,24 @@ export type ImagePrice = {
   model: string;
   /** 价目表里的单价（元 / 张）；没有这个模型就不给 */
   cny?: number;
+  /** 配置页里的模型 id */
+  modelId?: string;
 };
 
 /**
  * 当前出图模型的价目（元 / 张），给"提交前报价"用：只读配置与价目表，
  * 不调接口、不花钱。价目表里没有这个模型时 `cny` 缺省——报不出的价不编造。
  */
-export function imagePrice(): ImagePrice {
-  const { imageModel } = treecloudEnvFrom(loadEnvFile(envPath()));
-  return { model: imageModel, cny: imageCostCny(imageModel) };
+export async function imagePrice(modelId?: string): Promise<ImagePrice> {
+  const { model } = await resolveModel("image", modelId);
+  return { model: model.model, cny: imageCostCny(model.model), modelId: model.id };
 }
 
 export async function generateCastImage(
   request: CastImageRequest,
+  modelId?: string,
 ): Promise<GeneratedImage> {
-  const config = treecloudEnvFrom(loadEnvFile(envPath()));
+  const config = gatewayConfigOf(await resolveModel("image", modelId));
   // 路由的 maxDuration 是 180 秒：客户端超时留在它之内，别让上游把路由先掐掉。
   // 出图实测 48 秒到 2 分钟不等，120 秒会误杀慢样本（2026-11-10）。
   const client = new TreecloudClient({ ...config, timeoutMs: 170_000 });

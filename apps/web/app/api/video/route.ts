@@ -20,6 +20,7 @@ type Body = {
   shot?: unknown;
   firstFrame?: unknown;
   durationMs?: unknown;
+  modelId?: unknown;
 };
 
 function bad(message: string) {
@@ -45,7 +46,10 @@ export async function POST(request: Request) {
 
   try {
     return NextResponse.json(
-      await generateShotVideo({ shot, firstFrame, durationMs }),
+      await generateShotVideo(
+        { shot, firstFrame, durationMs },
+        typeof body.modelId === "string" ? body.modelId : undefined,
+      ),
     );
   } catch (error) {
     // 适配器已经做过 <redacted>；这里只补一句人话 + 原始原因

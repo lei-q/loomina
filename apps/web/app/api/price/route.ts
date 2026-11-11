@@ -13,9 +13,15 @@ import { videoPriceInfo } from "@/lib/generate-video";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const imageModelId = url.searchParams.get("imageModelId") ?? undefined;
+  const videoModelId = url.searchParams.get("videoModelId") ?? undefined;
   try {
-    return NextResponse.json({ ...imagePrice(), video: videoPriceInfo() });
+    return NextResponse.json({
+      ...(await imagePrice(imageModelId)),
+      video: await videoPriceInfo(videoModelId),
+    });
   } catch (error) {
     const message =
       error instanceof ConfigError ? error.message : "取不到价目";

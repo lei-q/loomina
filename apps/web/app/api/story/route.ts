@@ -16,7 +16,7 @@ export const maxDuration = 180;
 
 export async function GET() {
   try {
-    return NextResponse.json(storyInfo());
+    return NextResponse.json(await storyInfo());
   } catch (error) {
     const message = error instanceof ConfigError ? error.message : "读不到文本模型配置";
     return NextResponse.json({ error: message }, { status: 500 });
@@ -28,6 +28,7 @@ export async function POST(request: Request) {
     idea?: unknown;
     source?: unknown;
     genre?: unknown;
+    modelId?: unknown;
   } | null;
   if (!body) {
     return NextResponse.json({ error: "请求体不是 JSON" }, { status: 400 });
@@ -36,9 +37,10 @@ export async function POST(request: Request) {
   const idea = typeof body.idea === "string" ? body.idea : undefined;
   const source = typeof body.source === "string" ? body.source : undefined;
   const genre = typeof body.genre === "string" ? body.genre : undefined;
+  const modelId = typeof body.modelId === "string" ? body.modelId : undefined;
 
   try {
-    return NextResponse.json(await generateStory({ idea, source, genre }));
+    return NextResponse.json(await generateStory({ idea, source, genre }, modelId));
   } catch (error) {
     const message =
       error instanceof TreecloudError ||

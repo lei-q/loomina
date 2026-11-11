@@ -243,3 +243,12 @@ S1 仍未完成，且不是代码问题：
 1. 拿一张真实账单，确认 `/v1/model/info` 的计价单位，再决定要不要用它替换 `packages/gateway/src/pricing.ts` 里的人民币快照（不变量 39：价目只有一份）。
 2. 参考图这条路没有现成出口。要等代理支持 `images/edits`，或换一家能收图的接口；在此之前，三视图与道具参考只能靠提示词与验收基线起作用。
 3. 视频配额一旦恢复，用 `gemini-2.5-flash-image` 出首帧 → `minimax-h3` 图生视频跑通最小 i2v 链路。
+
+## 十、配置入口（2026-11-11，ADR-0094）
+
+模型不再只能写死在 `secrity.env`：`/settings` 可配多个供应商与五种模态的多个模型，每种模态一个默认，存本机 `.loomina/config.json`（0600）。请求按 `modelId` 解析到供应商与真实模型名，再填进 `TreecloudConfig` 的 `textModel` / `imageModel` / `videoModel` / `ttsModel` / `asrModel` 槽位。
+
+- 没保存过配置时，页面显示由 `secrity.env` 生成的临时视图，默认模型为文本 `deepseek-v4.1-flash-1017`、图像 `gpt-image-2-c`、视频 `minimax-h3`、配音 `seedance-2.0`；`ASR_MODEL` 未配时识别不可用。
+- `MODEL_NAME` 是视频模型的旧名，仍作为 `VIDEO_MODEL` 的兜底；新配置建议直接写 `VIDEO_MODEL`。
+- 密钥只在服务端解析；浏览器拿不到 Base URL 之外的供应商凭据，`GET /api/config` 只回 `hasKey`。
+- 价目仍只来自 `ModelPrice` 表：所选模型不在表里时界面显示「无价目」，不编造单价（不变量 39 / 41）。

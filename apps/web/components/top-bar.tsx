@@ -5,6 +5,8 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 import type { ProjectRequote } from "@/lib/pricing";
 import { ExportIcon, Logomark, PlayIcon } from "@/components/icons";
+import { ModelPicker } from "@/components/model-picker";
+import type { Modality } from "@/lib/config-types";
 
 /** 阶段是一列；还没做出来的阶段 href 为 null，点了不跳。 */
 const stages = [
@@ -18,6 +20,14 @@ const stages = [
 ] as const;
 
 export type StageName = (typeof stages)[number]["name"];
+
+/** 这一阶段会花哪类模型的请求；顶栏只显示相关的下拉 */
+const STAGE_MODELS: Partial<Record<StageName, Modality[]>> = {
+  分镜: ["image", "video"],
+  定妆: ["image"],
+  关键帧: ["image", "video"],
+  声音: ["tts", "asr"],
+};
 
 export type TopBarProps = {
   title: string;
@@ -107,6 +117,19 @@ export function TopBar({
       </nav>
 
       <div className="ml-auto flex items-center gap-4">
+        {STAGE_MODELS[stage] && (
+          <div className="hidden items-center gap-3 lg:flex">
+            {STAGE_MODELS[stage]!.map((modality) => (
+              <ModelPicker key={modality} modality={modality} />
+            ))}
+          </div>
+        )}
+        <Link
+          href="/settings"
+          className="text-[10px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
+        >
+          设置
+        </Link>
         {readOnly && (
           <span
             title="另一个标签页在编辑这份项目。这里只读，刷新后以那边为准"

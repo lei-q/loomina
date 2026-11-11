@@ -16,7 +16,7 @@ export const maxDuration = 60;
 
 export async function GET() {
   try {
-    return NextResponse.json(transcribeInfo());
+    return NextResponse.json(await transcribeInfo());
   } catch (error) {
     const message =
       error instanceof ConfigError ? error.message : "读不到识别配置";
@@ -27,6 +27,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as {
     uri?: unknown;
+    modelId?: unknown;
   } | null;
   if (!body) {
     return NextResponse.json({ error: "请求体不是 JSON" }, { status: 400 });
@@ -37,8 +38,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "这一句还没有音轨" }, { status: 400 });
   }
 
+  const modelId = typeof body.modelId === "string" ? body.modelId : undefined;
   try {
-    return NextResponse.json(await transcribeLine({ uri }));
+    return NextResponse.json(await transcribeLine({ uri, modelId }));
   } catch (error) {
     const message =
       error instanceof TreecloudError || error instanceof ConfigError

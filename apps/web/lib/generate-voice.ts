@@ -1,10 +1,5 @@
-import {
-  TreecloudClient,
-  TreecloudSpeechAdapter,
-  loadEnvFile,
-  treecloudEnvFrom,
-} from "@loomina/gateway";
-import { envPath } from "@/lib/server-env";
+import { ConfigError, TreecloudClient, TreecloudSpeechAdapter } from "@loomina/gateway";
+import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
 
 /**
  * 服务端出声（ADR-0085）。
@@ -19,14 +14,22 @@ export type VoiceInfo = {
   model?: string;
   /** 默认音色 */
   voice?: string;
+  /** 配置页里的模型 id */
+  modelId?: string;
 };
 
-export function voiceInfo(): VoiceInfo {
-  const config = treecloudEnvFrom(loadEnvFile(envPath()));
-  return {
-    ...(config.ttsModel ? { model: config.ttsModel } : {}),
-    ...(config.ttsVoice ? { voice: config.ttsVoice } : {}),
-  };
+export async function voiceInfo(): Promise<VoiceInfo> {
+  try {
+    const { model } = await resolveModel("tts");
+    return {
+      model: model.model,
+      modelId: model.id,
+      ...(model.voice ? { voice: model.voice } : {}),
+    };
+  } catch (error) {
+    if (error instanceof ConfigError) return {};
+    throw error;
+  }
 }
 
 export type SpokenLine = {
@@ -39,8 +42,9 @@ export type SpokenLine = {
 export async function speakLine(request: {
   text: string;
   voice?: string;
+  modelId?: string;
 }): Promise<SpokenLine> {
-  const config = treecloudEnvFrom(loadEnvFile(envPath()));
+  const config = gatewayConfigOf(await resolveModel("tts", request.modelId));
   const client = new TreecloudClient({ ...config, timeoutMs: 60_000 });
   const adapter = new TreecloudSpeechAdapter(client);
 

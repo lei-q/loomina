@@ -1,14 +1,12 @@
 import {
   TreecloudClient,
   TreecloudVideoAdapter,
-  loadEnvFile,
-  treecloudEnvFrom,
   videoCostCny,
   videoPrice,
 } from "@loomina/gateway";
 import { buildVideoPrompt, type ShotPromptMaterial } from "@loomina/pipeline";
 import type { Id } from "@loomina/ir";
-import { envPath } from "@/lib/server-env";
+import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
 
 /**
  * 服务端出视频（ADR-0083）。
@@ -23,16 +21,18 @@ export type VideoPriceInfo = {
   resolution?: string;
   /** 价目表里的单价（元 / 秒）；没有这个模型就不给（ADR-0033） */
   cnyPerSecond?: number;
+  /** 配置页里的模型 id */
+  modelId?: string;
 };
 
-export function videoPriceInfo(): VideoPriceInfo {
-  const config = treecloudEnvFrom(loadEnvFile(envPath()));
-  const quote = config.videoResolution
-    ? videoPrice(config.videoModel, config.videoResolution)
-    : undefined;
+export async function videoPriceInfo(modelId?: string): Promise<VideoPriceInfo> {
+  const { model } = await resolveModel("video", modelId);
+  const resolution = model.resolution;
+  const quote = resolution ? videoPrice(model.model, resolution) : undefined;
   return {
-    model: config.videoModel,
-    ...(config.videoResolution ? { resolution: config.videoResolution } : {}),
+    model: model.model,
+    modelId: model.id,
+    ...(resolution ? { resolution } : {}),
     ...(quote ? { cnyPerSecond: quote.cnyPerSecond } : {}),
   };
 }
@@ -59,8 +59,9 @@ const POLL_TIMEOUT_MS = 240_000;
 
 export async function generateShotVideo(
   request: ShotVideoRequest,
+  modelId?: string,
 ): Promise<GeneratedVideo> {
-  const config = treecloudEnvFrom(loadEnvFile(envPath()));
+  const config = gatewayConfigOf(await resolveModel("video", modelId));
   // 单次 HTTP 超时收到 60 秒：轮询本身是短请求，卡住的往往是连接
   const client = new TreecloudClient({
     ...config,

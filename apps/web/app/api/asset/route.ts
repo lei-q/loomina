@@ -84,12 +84,17 @@ function parse(body: Body | null): CastImageRequest | string {
 }
 
 export async function POST(request: Request) {
-  const body = (await request.json().catch(() => null)) as Body | null;
+  const body = (await request.json().catch(() => null)) as (Body & { modelId?: unknown }) | null;
   const parsed = parse(body);
   if (typeof parsed === "string") return bad(parsed);
 
   try {
-    return NextResponse.json(await generateCastImage(parsed));
+    return NextResponse.json(
+      await generateCastImage(
+        parsed,
+        typeof body?.modelId === "string" ? body.modelId : undefined,
+      ),
+    );
   } catch (error) {
     // 错误信息里不含密钥（适配器已做 <redacted>）；只回一句人话 + 原始原因
     const message =

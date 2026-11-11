@@ -39,6 +39,7 @@ import {
   toStageView,
   undoableRemoval,
 } from "@/lib/read-model";
+import { getModelChoice } from "@/lib/model-choice";
 import { sampleProject } from "@/lib/sample-project";
 
 export type Decision = "approved" | "rejected";
@@ -441,7 +442,10 @@ async function generateOne(
     const response = await fetch("/api/asset", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input.body),
+      body: JSON.stringify({
+        ...input.body,
+        modelId: getModelChoice("image"),
+      }),
     });
     const payload = (await response.json()) as {
       uri?: string;
@@ -1190,6 +1194,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
           shot: shotMaterial(project, shot),
           firstFrame: firstFrame.uri,
           durationMs: shot.durationMs,
+          modelId: getModelChoice("video"),
         }),
       });
       const payload = (await response.json()) as {
@@ -1391,6 +1396,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         body: JSON.stringify({
           text: line.text,
           ...(character?.voiceProfileId ? { voice: character.voiceProfileId } : {}),
+          modelId: getModelChoice("tts"),
         }),
       });
       const payload = (await response.json()) as {
@@ -1593,7 +1599,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       const response = await fetch("/api/transcribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ uri: asset.uri }),
+        body: JSON.stringify({ uri: asset.uri, modelId: getModelChoice("asr") }),
       });
       const payload = (await response.json()) as {
         text?: string;
