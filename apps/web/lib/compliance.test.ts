@@ -1,9 +1,13 @@
 import { ProjectSchema } from "@loomina/ir";
 import { describe, expect, it } from "vitest";
 import {
+  COMPLIANCE_CHECKPOINTS,
   COMPLIANCE_RULE_COUNT,
   IMPORT_PROMPT_PREFIX,
+  checkpointTexts,
   collectTexts,
+  preflightCheckpoint,
+  preflightCheckpoints,
   preflightProject,
   renderComplianceOf,
   scanProject,
@@ -177,5 +181,151 @@ describe("导出前预检（G8）", () => {
       reviewAcknowledged: true,
       findings: report.findings.length,
     });
+  });
+});
+
+describe("G8 四个检查点", () => {
+  const performative = project({
+    shots: sampleProject.shots.map((shot, index) =>
+      index === 0
+        ? {
+            ...shot,
+            performance: {
+              objective: "确认对方是不是也看见了",
+              emotion: { surface: "平静", subtext: "戒备" },
+              beats: [
+                {
+                  phase: "during",
+                  micro: "眼皮跳了一下",
+                  body: "手扶着门框",
+                  action: "把门推开一半",
+                  startMs: 0,
+                  endMs: 2000,
+                },
+              ],
+              gaze: { target: "character", targetId: "c-lin", direction: "right" },
+              intensity: 3,
+              avoid: ["不要演成惊恐"],
+            },
+            staging: [
+              {
+                characterId: "c-lin",
+                side: "left",
+                depth: "midground",
+                note: "站在门边，手扶着门框",
+              },
+            ],
+          }
+        : shot,
+    ),
+  });
+
+  it("四个检查点按阶段各扫各的文本", () => {
+    expect(COMPLIANCE_CHECKPOINTS.map((item) => item.id)).toEqual([
+      "script",
+      "keyframes",
+      "edit",
+      "publish",
+    ]);
+
+    const script = checkpointTexts(performative, "script").map((unit) => unit.path);
+    expect(script).toContain("标题");
+    expect(script.some((path) => path.startsWith("角色「"))).toBe(true);
+    expect(script.some((path) => path.startsWith("发布 ·"))).toBe(false);
+
+    const keyframes = checkpointTexts(performative, "keyframes").map((unit) => unit.path);
+    expect(keyframes.some((path) => path.includes("表演转 · 微表情"))).toBe(true);
+    expect(keyframes.some((path) => path.includes("· 调度"))).toBe(true);
+    expect(keyframes.some((path) => path.startsWith("台词 ·"))).toBe(false);
+
+    const edit = checkpointTexts(performative, "edit").map((unit) => unit.path);
+    expect(edit.every((path) => path.startsWith("台词 ·") || path.startsWith("配乐 ·"))).toBe(
+      true,
+    );
+
+    const publish = checkpointTexts(performative, "publish", {
+      title: "发布标题",
+      description: "发布简介",
+    }).map((unit) => unit.path);
+    expect(publish).toEqual(["发布 · 标题", "发布 · 简介"]);
+  });
+
+  it("剧本阶段命中硬阻断，清干净后通过", () => {
+    const dirty = project({ title: "如何制毒" });
+    const blocked = preflightCheckpoint(dirty, "script", { at: AT });
+    expect(blocked.status).toBe("block");
+    expect(blocked.findings.some((finding) => finding.severity === "block")).toBe(true);
+
+    const clean = preflightCheckpoint(project(), "script", { at: AT });
+    expect(clean.status).toBe("pass");
+    expect(clean.detail).toContain("没有命中");
+  });
+
+  it("关键帧阶段看表演与调度，不把台词算进来", () => {
+    const staged = performative;
+    const report = preflightCheckpoint(staged, "keyframes", { at: AT });
+    expect(report.status).toBe("pass");
+    // 台词里没有内容，关键帧即使加了台词也不该命中
+    const withDialogue = project({
+      dialogue: sampleProject.dialogue.map((line, index) =>
+        index === 0 ? { ...line, text: "算命的说能改命" } : line,
+      ),
+    });
+    expect(preflightCheckpoint(withDialogue, "keyframes", { at: AT }).findings).toEqual([]);
+    expect(preflightCheckpoint(withDialogue, "script", { at: AT }).status).toBe("review");
+  });
+
+  it("成片阶段扫台词与配乐，空时间线标 review", () => {
+    const withMusic = project({
+      timeline: {
+        items: sampleProject.timeline.items,
+        music: [
+          {
+            id: "m-1",
+            assetId: "a-music",
+            title: "夜巡",
+            mood: "紧张",
+            startMs: 0,
+            durationMs: 3000,
+            licenseRef: "曲库授权 #123",
+          },
+        ],
+      },
+    });
+    const report = preflightCheckpoint(withMusic, "edit", { at: AT });
+    expect(report.status).toBe("pass");
+    expect(report.detail).toContain("配乐 1 段");
+
+    const empty = preflightCheckpoint(project({ timeline: { items: [] } }), "edit", { at: AT });
+    expect(empty.status).toBe("review");
+    expect(empty.detail).toContain("时间线还是空的");
+  });
+
+  it("发布文案只看发布字段，标题兜底用项目标题", () => {
+    const report = preflightCheckpoint(project({ title: "夜班" }), "publish", {
+      description: "加微信领福利",
+      at: AT,
+    });
+    expect(report.status).toBe("review");
+    expect(report.findings.every((finding) => finding.path.startsWith("发布 ·"))).toBe(true);
+    expect(report.findings.some((finding) => finding.path === "发布 · 简介")).toBe(true);
+  });
+
+  it("一次算完四个检查点，改文案就换指纹", () => {
+    const reports = preflightCheckpoints(project({ title: "夜班" }), { at: AT });
+    expect(reports.map((report) => report.id)).toEqual([
+      "script",
+      "keyframes",
+      "edit",
+      "publish",
+    ]);
+    const again = preflightCheckpoints(project({ title: "夜班" }), { at: AT });
+    expect(again.map((report) => report.signature)).toEqual(
+      reports.map((report) => report.signature),
+    );
+    const changed = preflightCheckpoints(project({ title: "夜班 2" }), { at: AT });
+    expect(changed.find((report) => report.id === "script")?.signature).not.toBe(
+      reports.find((report) => report.id === "script")?.signature,
+    );
   });
 });

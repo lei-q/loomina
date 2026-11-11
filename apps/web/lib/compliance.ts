@@ -465,6 +465,195 @@ export function preflightProject(
   };
 }
 
+/**
+ * G8 四个检查点：按阶段各扫一遍，不必等到导出前才发现问题。
+ *
+ * 每个检查点只扫这一阶段真正会产出的文本：剧本阶段看故事与分镜，
+ * 关键帧阶段看镜头描述 / 表演 / 调度，成片阶段看台词与配乐，
+ * 发布阶段看标题 / 简介 / 话题。规则与导出前预检共用一份，不另起一套。
+ */
+export type CheckpointId = "script" | "keyframes" | "edit" | "publish";
+
+export type CheckpointMeta = {
+  id: CheckpointId;
+  label: string;
+  /** 这一阶段扫的是什么 */
+  scope: string;
+};
+
+export const COMPLIANCE_CHECKPOINTS: readonly CheckpointMeta[] = [
+  {
+    id: "script",
+    label: "剧本",
+    scope: "标题、故事、人物、场景、道具、分镜与台词",
+  },
+  {
+    id: "keyframes",
+    label: "关键帧",
+    scope: "镜头描述、补充要求、表演节拍与调度备注",
+  },
+  { id: "edit", label: "成片", scope: "台词、配乐与时间线" },
+  { id: "publish", label: "发布文案", scope: "发布标题、简介与话题" },
+];
+
+export type CheckpointReport = {
+  id: CheckpointId;
+  label: string;
+  scope: string;
+  status: "pass" | "review" | "block";
+  detail: string;
+  findings: ComplianceFinding[];
+  /** 扫过多少段文本：0 表示这一阶段还没有东西可查 */
+  units: number;
+  signature: string;
+  checkedAt: string;
+};
+
+function shotWhere(project: Project, sceneId: string, index: number): string {
+  const scene = project.scenes.find((item) => item.id === sceneId);
+  const code = scene ? scene.code || `第 ${scene.index + 1} 场` : "未知场景";
+  return `${code} · 第 ${index + 1} 镜`;
+}
+
+export function checkpointTexts(
+  project: Project,
+  id: CheckpointId,
+  options: PreflightOptions = {},
+): TextUnit[] {
+  if (id === "script") return collectTexts(project);
+
+  const units: TextUnit[] = [];
+  const push = (path: string, text: string | undefined) => {
+    if (text && text.trim()) units.push({ path, text });
+  };
+
+  if (id === "publish") {
+    push("发布 · 标题", options.title?.trim() || project.title);
+    push("发布 · 简介", options.description);
+    push("发布 · 话题", options.topics);
+    return units;
+  }
+
+  if (id === "keyframes") {
+    for (const character of project.characters) {
+      push(`角色「${character.name}」· 外观`, character.appearance);
+      for (const rule of character.mustNotChange) {
+        push(`角色「${character.name}」· 监工要点`, rule);
+      }
+    }
+    for (const location of project.locations) {
+      push(`场景「${location.name}」· 描述`, location.description);
+    }
+    for (const prop of project.props) {
+      push(`道具「${prop.name}」· 描述`, prop.description);
+    }
+    for (const shot of project.shots) {
+      const where = shotWhere(project, shot.sceneId, shot.index);
+      push(`${where} · 描述`, shot.description);
+      for (const [index, note] of shot.promptNotes.entries()) {
+        push(`${where} · 补充 ${index + 1}`, note);
+      }
+      const performance = shot.performance;
+      if (performance) {
+        push(`${where} · 表演目标`, performance.objective);
+        push(`${where} · 表面情绪`, performance.emotion.surface);
+        push(`${where} · 潜台词`, performance.emotion.subtext);
+        for (const beat of performance.beats) {
+          const phase = beat.phase === "before" ? "起" : beat.phase === "during" ? "转" : "落";
+          push(`${where} · 表演${phase} · 微表情`, beat.micro);
+          push(`${where} · 表演${phase} · 身体`, beat.body);
+          push(`${where} · 表演${phase} · 动作`, beat.action);
+        }
+        for (const [index, avoid] of performance.avoid.entries()) {
+          push(`${where} · 不要 ${index + 1}`, avoid);
+        }
+      }
+      for (const mark of shot.staging) {
+        push(`${where} · 调度`, mark.note);
+      }
+    }
+    return units;
+  }
+
+  // edit：台词与配乐是成片里真正会被人看到 / 听到的文本
+  const characterName = (characterId: string) =>
+    project.characters.find((character) => character.id === characterId)?.name ?? characterId;
+  for (const line of project.dialogue) {
+    push(`台词 · ${characterName(line.characterId)}`, line.text);
+  }
+  for (const cue of project.timeline.music) {
+    push(`配乐 · ${cue.title} · 标题`, cue.title);
+    push(`配乐 · ${cue.title} · 情绪`, cue.mood);
+    push(`配乐 · ${cue.title} · 授权`, cue.licenseRef);
+  }
+  return units;
+}
+
+export function preflightCheckpoint(
+  project: Project,
+  id: CheckpointId,
+  options: PreflightOptions = {},
+): CheckpointReport {
+  const meta = COMPLIANCE_CHECKPOINTS.find((item) => item.id === id);
+  if (!meta) throw new Error(`不认识的检查点：${id}`);
+  const units = checkpointTexts(project, id, options);
+  const findings: ComplianceFinding[] = [];
+  for (const unit of units) findings.push(...scanText(unit.text, unit.path));
+
+  const blocked = findings.filter((finding) => finding.severity === "block").length;
+  const review = findings.length - blocked;
+  let status: CheckpointReport["status"] = blocked > 0 ? "block" : review > 0 ? "review" : "pass";
+  const notes: string[] = [];
+
+  if (id === "edit") {
+    const durationMs = project.timeline.items.reduce((sum, item) => sum + item.durationMs, 0);
+    notes.push(`时间线 ${(durationMs / 1000).toFixed(1)} 秒 · 配乐 ${project.timeline.music.length} 段`);
+    if (durationMs <= 0) {
+      status = "review";
+      notes.push("时间线还是空的：先把镜头放上去");
+    }
+  }
+
+  const detail =
+    blocked > 0
+      ? `命中 ${blocked} 条硬阻断：先改这一阶段的文案`
+      : review > 0
+        ? `${units.length} 段文本里 ${review} 处需要人工确认`
+        : units.length === 0
+          ? "这一阶段还没有可检查的文本"
+          : `${units.length} 段文本扫过 ${COMPLIANCE_RULE_COUNT} 条规则，没有命中`;
+  const signature = fnv1a(
+    JSON.stringify({
+      id,
+      texts: units.map((unit) => `${unit.path}\u0000${unit.text}`),
+      findings: findings.map((finding) => `${finding.ruleId}|${finding.path}|${finding.term}`),
+      notes,
+    }),
+  );
+
+  return {
+    id,
+    label: meta.label,
+    scope: meta.scope,
+    status,
+    detail: notes.length > 0 ? `${detail} · ${notes.join(" · ")}` : detail,
+    findings,
+    units: units.length,
+    signature,
+    checkedAt: options.at ?? new Date().toISOString(),
+  };
+}
+
+/** 四个检查点一次算完：界面按阶段列出，导出前预检仍然单独跑。 */
+export function preflightCheckpoints(
+  project: Project,
+  options: PreflightOptions = {},
+): CheckpointReport[] {
+  return COMPLIANCE_CHECKPOINTS.map((meta) =>
+    preflightCheckpoint(project, meta.id, options),
+  );
+}
+
 /** 渲染清单里的合规证据；校验时会核对形状，防止空对象蒙混过关 */
 export type RenderCompliance = {
   ok: true;

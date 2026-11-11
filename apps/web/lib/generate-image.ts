@@ -12,6 +12,7 @@ import {
 } from "@loomina/pipeline";
 import type { Character, Id, Location, Prop, SheetView } from "@loomina/ir";
 import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
+import { assertPromptAllowed, type PromptModeration } from "@/lib/moderation";
 
 /**
  * 服务端出图（ADR-0031 / ADR-0032）。
@@ -36,6 +37,8 @@ export type GeneratedImage = {
   prompt: string;
   /** 价目表里的单价（元）；没有这个模型就不给，界面上显示"无价目"（ADR-0033） */
   cny?: number;
+  /** 发出请求前的提示词审核结果（H6，ADR-0105） */
+  moderation: PromptModeration;
 };
 
 /** 提示词与占位 shotId 都按资产语义走，不按"这一格是哪个角色的"走。 */
@@ -94,6 +97,8 @@ export async function generateCastImage(
   const adapter = new TreecloudImageAdapter(client);
 
   const { prompt, label } = plan(request);
+  // H6：硬阻断的提示词在这里就停，供应商一次请求都不发
+  const moderation = assertPromptAllowed(prompt, "image");
   const output = await adapter.generate({
     // 定妆资产还不属于某一镜，用语义 id 占位，保证溯源能对上是什么东西
     shotId: label as Id,
@@ -106,5 +111,6 @@ export async function generateCastImage(
     model: output.provenance.modelId,
     prompt,
     cny: imageCostCny(output.provenance.modelId),
+    moderation,
   };
 }

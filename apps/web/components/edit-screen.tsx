@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { StageGate } from "@/components/stage-gate";
+import { ComplianceCheckpoints } from "@/components/compliance-checkpoints";
 import { TopBar } from "@/components/top-bar";
 import {
   DEFAULT_SUBTITLE_CHARS,
@@ -1336,6 +1337,13 @@ export function EditScreen() {
                         : `${gateReason}改完文案会自动重新检查，确认状态也会随之失效。`}
                     </p>
                   </div>
+
+                  <ComplianceCheckpoints
+                    project={project}
+                    title={title}
+                    description={description}
+                    topics={topics}
+                  />
 
                   <div className="mt-3 border-t border-line pt-2">
                     <div className="flex flex-wrap items-center gap-2">

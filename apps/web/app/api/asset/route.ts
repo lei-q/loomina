@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { ConfigError, TreecloudError } from "@loomina/gateway";
 import { SHEET_ANGLES, type SheetView } from "@loomina/ir";
 import { generateCastImage, type CastImageRequest } from "@/lib/generate-image";
+import { PromptBlockedError } from "@/lib/moderation";
 import { name, parseShotMaterial, text } from "@/lib/request-shape";
 
 /** 出图是 20–45 秒的事，别让它跑在 edge 的短超时里。 */
@@ -103,7 +104,21 @@ export async function POST(request: Request) {
         : error instanceof Error
           ? error.message.slice(0, 300)
           : "生成失败";
-    const status = error instanceof ConfigError ? 500 : 502;
-    return NextResponse.json({ error: message }, { status });
+    // 提示词审核拦下的是一次参数问题：回 400，界面按「先改描述」处理
+    const status =
+      error instanceof PromptBlockedError
+        ? 400
+        : error instanceof ConfigError
+          ? 500
+          : 502;
+    return NextResponse.json(
+      {
+        error: message,
+        ...(error instanceof PromptBlockedError
+          ? { code: "prompt_blocked", moderation: error.moderation }
+          : {}),
+      },
+      { status },
+    );
   }
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { ConfigError } from "@loomina/gateway";
 import { VideoGenerationError, generateShotVideo } from "@/lib/generate-video";
+import { PromptBlockedError } from "@/lib/moderation";
 import { parseShotMaterial } from "@/lib/request-shape";
 
 /**
@@ -55,16 +56,25 @@ export async function POST(request: Request) {
     // 适配器已经做过 <redacted>；这里只补一句人话 + 原始原因
     const message =
       error instanceof Error ? error.message.slice(0, 300) : "生成失败";
-    const status = error instanceof ConfigError ? 500 : 502;
+    const status =
+      error instanceof PromptBlockedError
+        ? 400
+        : error instanceof ConfigError
+          ? 500
+          : 502;
     return NextResponse.json(
       {
         error: message,
         code:
-          error instanceof VideoGenerationError
-            ? error.code
-            : error instanceof ConfigError
-              ? "config"
-              : "unknown",
+          error instanceof PromptBlockedError
+            ? "prompt_blocked"
+            : error instanceof VideoGenerationError
+              ? error.code
+              : error instanceof ConfigError
+                ? "config"
+                : "unknown",
+        moderation:
+          error instanceof PromptBlockedError ? error.moderation : undefined,
         // 只有「确定没在跑」的失败才让客户端自动重交（B6）
         retryable: error instanceof VideoGenerationError ? error.retryable : false,
       },

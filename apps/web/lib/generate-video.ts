@@ -8,6 +8,7 @@ import {
 import { buildVideoPrompt, type ShotPromptMaterial } from "@loomina/pipeline";
 import type { Id } from "@loomina/ir";
 import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
+import { assertPromptAllowed, type PromptModeration } from "@/lib/moderation";
 
 /**
  * 服务端出视频（ADR-0083）。
@@ -45,6 +46,8 @@ export type GeneratedVideo = {
   durationMs: number;
   /** 真实花费（元）；供应商没报、价目表又查不到时就缺省，不编造 */
   cny?: number;
+  /** 提交前的提示词审核结果（H6，ADR-0105） */
+  moderation: PromptModeration;
 };
 
 export type ShotVideoRequest = {
@@ -102,6 +105,8 @@ export async function generateShotVideo(
   });
   const adapter = new TreecloudVideoAdapter(client);
   const prompt = buildVideoPrompt(request.shot);
+  // H6：硬阻断在提交前就停，任务不会建立，也就不会计费
+  const moderation = assertPromptAllowed(prompt, "video");
 
   const { jobId } = await adapter
     .submit({
@@ -161,5 +166,6 @@ export async function generateShotVideo(
       (config.videoResolution
         ? videoCostCny(output.provenance.modelId, config.videoResolution, request.durationMs)
         : undefined),
+    moderation,
   };
 }
