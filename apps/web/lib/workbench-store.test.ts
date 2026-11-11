@@ -4167,3 +4167,194 @@ describe("存量地点补几何（B13.1 / ADR-0126）", () => {
     expect(state().events.length).toBeGreaterThan(cleared);
   });
 });
+
+describe("逐句表演参数与试听台（C2 / C9 / ADR-0124）", () => {
+  beforeEach(() => {
+    state().reset();
+  });
+
+  it("改表演参数写一条 dialogue.updated，时长不动", () => {
+    const before = state().events.length;
+    const duration = state().project.dialogue.find((line) => line.id === "d-01")!.durationMs;
+    expect(
+      state().updatePerformance("d-01", {
+        rate: 1.2,
+        pitch: 0,
+        volume: 1,
+        breathiness: 0,
+        emphasis: [{ start: 0, end: 2, strength: 2 }],
+        pauses: [],
+        emotion: "克制",
+        ending: "fall",
+      }),
+    ).toBe(true);
+    expect(state().events.slice(before).map((event) => event.type)).toEqual(["dialogue.updated"]);
+    const line = state().project.dialogue.find((item) => item.id === "d-01")!;
+    expect(line.performance).toMatchObject({ rate: 1.2, emotion: "克制", ending: "fall" });
+    expect(line.durationMs).toBe(duration);
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("传 undefined 清回默认：字段整个去掉", () => {
+    state().updatePerformance("d-01", {
+      rate: 1.3,
+      pitch: 0,
+      volume: 1,
+      breathiness: 0,
+      emphasis: [],
+      pauses: [],
+      emotion: "",
+      ending: "flat",
+    });
+    expect(state().updatePerformance("d-01", undefined)).toBe(true);
+    const line = state().project.dialogue.find((item) => item.id === "d-01")!;
+    expect(line.performance).toBeUndefined();
+    expect("performance" in line).toBe(false);
+    // 事件过一遍 JSON 再回放，清空仍然是清空（undefined 会被丢掉，null 不会）
+    expect(JSON.stringify(rebuild(JSON.parse(JSON.stringify(state().events))))).toBe(
+      JSON.stringify(state().project),
+    );
+  });
+
+  it("重音越界写不进去，台词原样不动", () => {
+    const before = state().events.length;
+    expect(
+      state().updatePerformance("d-01", {
+        rate: 1,
+        pitch: 0,
+        volume: 1,
+        breathiness: 0,
+        emphasis: [{ start: 0, end: 999, strength: 2 }],
+        pauses: [],
+        emotion: "",
+        ending: "flat",
+      }),
+    ).toBe(false);
+    expect(state().events).toHaveLength(before);
+    expect(state().castError).toContain("重音区间越出当前台词");
+  });
+
+  it("锁定的镜头不给改表演", () => {
+    // d-04 在锁定的 s-08 里
+    expect(
+      state().updatePerformance("d-04", {
+        rate: 1.2,
+        pitch: 0,
+        volume: 1,
+        breathiness: 0,
+        emphasis: [],
+        pauses: [],
+        emotion: "",
+        ending: "flat",
+      }),
+    ).toBe(false);
+    expect(state().castError).toContain("已锁定");
+  });
+
+  it("出声时把语速与表演说明一起发出去", async () => {
+    state().updatePerformance("d-01", {
+      rate: 1.2,
+      pitch: 0,
+      volume: 1,
+      breathiness: 0.3,
+      emphasis: [],
+      pauses: [],
+      emotion: "克制",
+      ending: "fall",
+    });
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return new Response(
+          JSON.stringify({ uri: "data:audio/mpeg;base64,SUQz", mime: "audio/mpeg", model: "tts-x" }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+    expect(await state().generateVoice("d-01")).toBe(true);
+    expect(bodies[0]).toMatchObject({ speed: 1.2 });
+    expect(String(bodies[0]!.instructions)).toContain("情绪：克制");
+    expect(String(bodies[0]!.instructions)).toContain("句尾下沉");
+    expect(state().project.dialogue.find((line) => line.id === "d-01")?.audioAssetId).toBe(
+      "a-voice-d-01",
+    );
+    // 普通重配不进试听台
+    expect(state().project.voiceTakes).toHaveLength(0);
+    vi.unstubAllGlobals();
+  });
+
+  it("默认参数不发送 speed / instructions", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return new Response(
+          JSON.stringify({ uri: "data:audio/mpeg;base64,SUQz", mime: "audio/mpeg", model: "tts-x" }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+    await state().generateVoice("d-01");
+    expect(bodies[0]).not.toHaveProperty("speed");
+    expect(bodies[0]).not.toHaveProperty("instructions");
+    vi.unstubAllGlobals();
+  });
+
+  it("存一版：每版占自己的资产，进试听台并设为当前音轨", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ uri: "data:audio/mpeg;base64,SUQz", mime: "audio/mpeg", model: "tts-x" }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+    expect(await state().generateVoice("d-01", { keepTake: true })).toBe(true);
+    expect(await state().generateVoice("d-01", { keepTake: true })).toBe(true);
+    const takes = state().project.voiceTakes;
+    expect(takes).toHaveLength(2);
+    expect(new Set(takes.map((take) => take.assetId)).size).toBe(2);
+    expect(state().project.dialogue.find((line) => line.id === "d-01")?.audioAssetId).toBe(
+      takes[1]!.assetId,
+    );
+    expect(rebuild(state().events)).toEqual(state().project);
+    vi.unstubAllGlobals();
+  });
+
+  it("采用某一版只改音轨，试听台不动；正采用的那版不能删", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ uri: "data:audio/mpeg;base64,SUQz", mime: "audio/mpeg", model: "tts-x" }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+    await state().generateVoice("d-01", { keepTake: true });
+    await state().generateVoice("d-01", { keepTake: true });
+    const [first, second] = state().project.voiceTakes;
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+
+    // 采用第一版
+    expect(state().adoptVoiceTake(first!.id)).toBe(true);
+    expect(state().project.dialogue.find((line) => line.id === "d-01")?.audioAssetId).toBe(
+      first!.assetId,
+    );
+    expect(state().project.voiceTakes).toHaveLength(2);
+    // 正被采用的那一版不能删
+    expect(state().removeVoiceTake(first!.id)).toBe(false);
+    expect(state().castError).toContain("正被采用");
+    // 另一版可以删，资产不删
+    expect(state().removeVoiceTake(second!.id)).toBe(true);
+    expect(state().project.voiceTakes).toHaveLength(1);
+    expect(state().project.assets.some((asset) => asset.id === second!.assetId)).toBe(true);
+    expect(rebuild(state().events)).toEqual(state().project);
+    vi.unstubAllGlobals();
+  });
+});

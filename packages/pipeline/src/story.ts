@@ -583,6 +583,7 @@ export function projectFromStoryDraft(
     scenes,
     shots,
     dialogue,
+    voiceTakes: [],
     takes: [],
     assets: [],
     approvals: [],

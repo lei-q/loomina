@@ -30,6 +30,7 @@ function base(): Project {
     scenes: [],
     shots: [],
     dialogue: [],
+    voiceTakes: [],
     takes: [],
     assets: [],
     approvals: [],

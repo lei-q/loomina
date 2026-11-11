@@ -336,6 +336,64 @@ describe("toStageView", () => {
     expect(toAnimaticView(missingAsset).music).toEqual([]);
   });
 
+  it("配音页带出表演参数与试听台版本数（C2 / C9）", () => {
+    const project = ProjectSchema.parse({
+      ...sampleProject,
+      dialogue: sampleProject.dialogue.map((line) =>
+        line.id === "d-01"
+          ? {
+              ...line,
+              performance: { rate: 1.3, emotion: "克制", ending: "fall" },
+              audioAssetId: "a-voice-d-01-t1",
+            }
+          : line,
+      ),
+      voiceTakes: [
+        {
+          id: "vt-1",
+          lineId: "d-01",
+          assetId: "a-voice-d-01-t1",
+          performance: { rate: 1.3, emotion: "克制", ending: "fall" },
+          provenance: { modelId: "tts", referenceAssetIds: [], createdAt: "2026-11-11T09:00:00Z" },
+          createdAt: "2026-11-11T09:00:00Z",
+        },
+        {
+          id: "vt-2",
+          lineId: "d-01",
+          assetId: "a-voice-d-01-t2",
+          performance: {},
+          provenance: { modelId: "tts", referenceAssetIds: [], createdAt: "2026-11-11T09:01:00Z" },
+          createdAt: "2026-11-11T09:01:00Z",
+        },
+      ],
+      assets: [
+        ...sampleProject.assets,
+        {
+          id: "a-voice-d-01-t1",
+          kind: "audio",
+          source: "generated",
+          uri: "data:audio/mpeg;base64,SUQz",
+          createdAt: "2026-11-11T09:00:00Z",
+        },
+        {
+          id: "a-voice-d-01-t2",
+          kind: "audio",
+          source: "generated",
+          uri: "data:audio/mpeg;base64,SUQz",
+          createdAt: "2026-11-11T09:01:00Z",
+        },
+      ],
+    });
+    const view = toVoiceView(project);
+    const first = view.lines.find((line) => line.id === "d-01")!;
+    expect(first.performance).toMatchObject({ rate: 1.3, emotion: "克制" });
+    expect(first.takes).toBe(2);
+    expect(first.adoptedTakeId).toBe("vt-1");
+    expect(view.lines.find((line) => line.id === "d-02")!.takes).toBe(0);
+    expect(view.lines.find((line) => line.id === "d-02")!.performance).toBeUndefined();
+    expect(view.takes).toBe(2);
+  });
+
   it("配音页按镜头顺序铺开台词，角色与已配时长对得上（ADR-0085）", () => {
     const project = ProjectSchema.parse({
       ...sampleProject,

@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { StageGate } from "@/components/stage-gate";
 import { TopBar } from "@/components/top-bar";
+import { VoicePerformancePanel } from "@/components/voice-performance-panel";
 import { shotLabel, toVoiceView, type VoiceLine, type VoiceRole } from "@/lib/read-model";
+import { summarizePerformance } from "@/lib/voice-performance";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
 import { assetHref } from "@/lib/asset-uri";
@@ -141,6 +143,9 @@ export function VoiceScreen() {
   const applyAsrText = useWorkbench((state) => state.applyAsrText);
   const dismissAsrResult = useWorkbench((state) => state.dismissAsrResult);
   const generateVoice = useWorkbench((state) => state.generateVoice);
+  const updatePerformance = useWorkbench((state) => state.updatePerformance);
+  const adoptVoiceTake = useWorkbench((state) => state.adoptVoiceTake);
+  const removeVoiceTake = useWorkbench((state) => state.removeVoiceTake);
   const attachVoice = useWorkbench((state) => state.attachVoice);
   const fitLineToAudio = useWorkbench((state) => state.fitLineToAudio);
   const setCharacterVoice = useWorkbench((state) => state.setCharacterVoice);
@@ -174,6 +179,8 @@ export function VoiceScreen() {
 
   const view = useMemo(() => toVoiceView(project), [project]);
   const canSpeak = Boolean(voiceInfo?.model);
+  /** 哪一句展开了「表演」折叠：一次只开一个，避免整页拉得很长 */
+  const [openPerformance, setOpenPerformance] = useState<string>();
   const canTranscribe = Boolean(asrInfo?.model);
 
   return (
@@ -297,6 +304,20 @@ export function VoiceScreen() {
                           {role?.voice && (
                             <span className="text-[8.5px] text-muted-2">音色 {role.voice}</span>
                           )}
+                          {line.performance && (
+                            <span
+                              className="rounded-token border border-line px-1 py-px text-[8.5px] text-muted-2"
+                              title="这一句有表演参数：下一次出声按它念"
+                            >
+                              {summarizePerformance(line.performance)}
+                            </span>
+                          )}
+                          {line.takes > 0 && (
+                            <span className="tnum text-[8.5px] text-muted-2">
+                              试听台 {line.takes} 版
+                              {line.adoptedTakeId ? " · 已采用其中一版" : ""}
+                            </span>
+                          )}
                         </div>
 
                         <p className="mt-1 text-[11.5px] leading-[1.7] text-text">{line.text}</p>
@@ -349,6 +370,50 @@ export function VoiceScreen() {
                           readOnly={Boolean(readOnly)}
                           onAttach={(uri) => attachVoice(line.id, uri)}
                         />
+
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setOpenPerformance((current) =>
+                                current === line.id ? undefined : line.id,
+                              )
+                            }
+                            aria-expanded={openPerformance === line.id}
+                            className={cn(
+                              "rounded-token border px-1.5 py-px text-[8.5px] transition-colors duration-[var(--dur)]",
+                              openPerformance === line.id
+                                ? "border-line-2 text-text"
+                                : "border-line text-muted-2 hover:border-line-2 hover:text-text",
+                            )}
+                          >
+                            表演{line.performance ? " · 已调" : ""}
+                          </button>
+                          {line.takes > 0 && (
+                            <span className="tnum text-[8.5px] text-muted-2">
+                              {line.takes} 版
+                            </span>
+                          )}
+                        </div>
+
+                        {openPerformance === line.id && (
+                          <VoicePerformancePanel
+                            line={line}
+                            takes={project.voiceTakes
+                              .filter((take) => take.lineId === line.id)
+                              .slice()
+                              .reverse()}
+                            adoptedAssetId={
+                              project.dialogue.find((item) => item.id === line.id)?.audioAssetId
+                            }
+                            readOnly={Boolean(readOnly)}
+                            canSpeak={canSpeak}
+                            onSave={(performance) => updatePerformance(line.id, performance)}
+                            onGenerateTake={() => void generateVoice(line.id, { keepTake: true })}
+                            onAdoptTake={(takeId) => adoptVoiceTake(takeId)}
+                            onRemoveTake={(takeId) => removeVoiceTake(takeId)}
+                          />
+                        )}
                       </div>
 
                       <div className="flex shrink-0 flex-col items-end gap-1">

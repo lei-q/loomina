@@ -39,6 +39,8 @@ export async function POST(request: Request) {
     text?: unknown;
     voice?: unknown;
     modelId?: unknown;
+    speed?: unknown;
+    instructions?: unknown;
   } | null;
   if (!body) return bad("请求体不是 JSON");
 
@@ -49,9 +51,24 @@ export async function POST(request: Request) {
   const voice = typeof body.voice === "string" ? body.voice.trim() : "";
   if (voice.length > VOICE_MAX) return bad(`音色名太长了：${VOICE_MAX} 字以内`);
   const modelId = typeof body.modelId === "string" ? body.modelId : undefined;
+  // 表演参数（C2 / ADR-0124）：越界的值直接钳到合法区间，不因为一个滑块没拦住就整句不念
+  const speed =
+    typeof body.speed === "number" && Number.isFinite(body.speed)
+      ? Math.min(2, Math.max(0.5, body.speed))
+      : undefined;
+  const instructions =
+    typeof body.instructions === "string" && body.instructions.trim()
+      ? body.instructions.trim().slice(0, 300)
+      : undefined;
 
   try {
-    const result = await speakLine({ text, ...(voice ? { voice } : {}), modelId });
+    const result = await speakLine({
+      text,
+      ...(voice ? { voice } : {}),
+      modelId,
+      ...(speed !== undefined ? { speed } : {}),
+      ...(instructions ? { instructions } : {}),
+    });
     void recordHealthEvent({
       at: new Date().toISOString(),
       modality: "tts",

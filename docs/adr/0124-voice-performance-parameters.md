@@ -149,3 +149,72 @@ export const VoiceTakeSchema = z.object({
 | 第一版就发 SSML | 供应商契约没有这个字段，写了不生效却让人以为生效 |
 | 改 rate 时同步改 `durationMs` | 时长必须以真实音轨为准（P5），没重新出声就没有新时长 |
 | 默认一次生成 3 个 Take | 每次都是真花钱的调用，必须先让作者看到已有几版再点 |
+
+## 落地（C2 / C9 第一档：参数与试听台，2026-11-12）
+
+设计节的形状照做。下面记落地时才定下来的几条，以及验证口径。
+
+### 1. IR
+
+- `VoicePerformanceSchema`（`rate` / `pitch` / `volume` / `breathiness` / `emphasis` / `pauses` / `emotion` / `ending`）全部带默认值；`DialogueLine.performance?` 可选。
+- `EmphasisSpanSchema` 的 `start` / `end` 是**字符下标**（`[...text].length` 口径，不是 UTF-16 长度），`strength` 1–3 默认 2；`PauseMarkSchema` 的 `ms` 50–2000。
+- `Project.voiceTakes: VoiceTake[]`（默认 `[]`），`VoiceTakeSchema` = `id` / `lineId` / `assetId` / `performance` / `provenance` / `createdAt`。
+- 新事件 `voice.take.added { take }` / `voice.take.removed { takeId }`，补进 `event-log.ts` 的 `EVENT_TYPES`；`LOG_VERSION` 不升（两者都有默认值）。
+- `validateProject` 新增两条：`REF_VOICE_TAKE_LINE`（`lineId` 必须存在）、`VOICE_TAKE_ASSET`（`assetId` 必须存在）。
+
+### 2. 清空参数用 `null`，不用 `undefined`
+
+`dialogue.updated.patch` 的类型改成：
+
+```ts
+patch: Omit<Partial<Omit<DialogueLine, "id" | "characterId">>, "performance"> & {
+  /** undefined = 不改；null = 清回默认值 */
+  performance?: VoicePerformance | null;
+};
+```
+
+理由：`undefined` 在 JSON 里会消失，写进日志就等于「没改」，清空永远清不掉。用 `null` 当信号，回放时删字段而不是留一个 `performance: undefined`。测试里专门过了一遍 `JSON.parse(JSON.stringify(events))` 再回放，结果与一次回放一致。
+
+### 3. 区间校验与文本改短
+
+- 写入时：`emphasis.end`、`pauses.afterChar` 超过当前字数**抛错**（作者写的越界值是错误）。
+- 文本同时改短时：越界项**确定性丢弃**，不抛错——改台词不该被上次的重音标记挡住。丢弃后的回放结果一致（测试覆盖）。
+- 只改文本、没带 `performance` 时：不碰参数，只按新字数裁一次。
+
+### 4. 请求体：speed + instructions，停顿靠标点
+
+- `SpeechInput` 加可选 `speed`（映射请求体 `speed`）与 `instructions`（拼成一句中文：「按以下方式念这一句：情绪：克制；句尾下沉。不要改动文字。」）。供应商忽略时行为与不传一致。
+- **停顿不写进 instructions**：改标点会改变念出来的内容。`inputOf(text, performance)` 在停顿处插一个标点（< 600ms 插逗号，否则插省略号），句首 / 句尾 / 已有标点处不插，从后往前插避免下标错位。界面上把「实际发给供应商的文本」显示出来，作者看得见自己会被念成什么样。
+- **重音只说「有 N 处需要重读」**，不标具体字：这一版不假设供应商支持 SSML。
+
+### 5. 存一版：每版占自己的资产
+
+`generateVoice(lineId, { keepTake: true })` 时资产 id 用 `a-voice-<lineId>-t<n>`，普通重配仍是 `a-voice-<lineId>`（换掉旧音轨）。不这样做，试听台里几版会指向同一段音频，「采用」就失去了意义。
+
+同一处顺手修了一个并发问题：出声请求 await 期间作者可能又点了一次，写回时改用**最新的 project** 做基准（原来用的是请求开始时的快照，第二版的序号与资产 id 会算错）。
+
+### 6. 界面
+
+声音页每句多一个「表演」折叠（一次只开一个）：
+
+- 句子文本只读，**选中要重读的字** → 「加重音」，按字符下标写入（不让作者填数字）；
+- 光标位置 → 「在光标处加停顿」；那个位置本来就有标点时明说「念出来不会更慢」；
+- 4 个滑块 + 句尾三选一 + 情绪；「恢复默认」只改本地草稿，点「存下表演」才写事件；
+- 「再念一版」在 TTS 未配时禁用，文案说明参数照样能存；
+- 试听台：`vN · 参数摘要 · 正在用 / 未采用 · 采用 · 删`。正被采用的那一版不能删（否则「当前音轨」指向一条不在台面上的记录），按钮禁用并给 title 说明。
+
+行内徽标：`1.2× · 重读 1 处 · 停 1 处 · 克制 · 下沉`，以及「试听台 N 版 · 已采用其中一版」。历史面板补了三条人话：`改一句台词：表演参数` / `加一版配音：「…」` / `删一版配音`。
+
+### 7. 验证
+
+- 单测 **937**（IR 184 + gateway 28 + pipeline 67 + web 658），新增：IR 12 条（参数写入 / 越界拒绝 / 改短裁剪 / `null` 清空 / take 幂等与校验 / 删台词清理 / 旧日志回放），web 15 条（`voice-performance.test.ts` 8、store 9 里 8 条属于本轮、读模型 1、历史 1）。
+- `pnpm typecheck`、`next build` 全过。
+- 浏览器（生产 3100，CDP）：声音页「表演」折叠 → 语速 1.2、句尾下沉、情绪「克制」→ 选中「知道」→「加重音」显示 `重读「知道」` → 光标加停顿显示「实际发给供应商的文本」→ 存下 → 行内徽标 `1.2× · 重读 1 处 · 停 1 处 · 克制 · 下沉`、按钮变「表演 · 已调」→ 刷新后参数与徽标都在（`dialogue.updated`）→ 按事件播种两版试听台 → 「采用」后变「正在用」、行内「已采用其中一版」、`有声` 徽标与「已配 1 / 4 句」→ 被采用那版的「删」禁用 → 删另一版后列表剩 1 版、日志多一条 `voice.take.removed`。
+- **没验到的**：真实出声与多版对比（TTS 403），`speed` / `instructions` 是否被供应商采纳。试听台的版本是按事件播种的，不是真念出来的。
+
+### 8. 已知缺口
+
+- TTS 403 未解：整条出声链路仍无法端到端验证，`speed` / `instructions` / `breathiness` / `emphasis` 是否生效只能等分组授权。
+- 试听台没有「A/B 连播」与波形对比，只能逐版点播放（音轨播放器本来就在行里）。
+- 变奏（同一动机的不同读法）与自动挑版未做。
+- 停顿时长只有「短停 / 长停」两档（逗号 / 省略号），中间值不改变念法。

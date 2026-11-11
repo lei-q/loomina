@@ -7,6 +7,7 @@ import {
   MusicCueSchema,
   PerformanceSpecSchema,
   StagingMarkSchema,
+  VoicePerformanceSchema,
 } from "./schema";
 import { blockingProblem, placementProblem, spaceProblem, spaceOfShot } from "./geometry";
 import type {
@@ -30,6 +31,8 @@ import type {
   StoryRelationship,
   Take,
   TimelineItem,
+  VoicePerformance,
+  VoiceTake,
 } from "./schema";
 
 /** "不许变"清单：单条上限（整句进提示词，ADR-0074） */
@@ -238,7 +241,14 @@ export type ProjectEvent =
       type: "dialogue.updated";
       at: string;
       lineId: Id;
-      patch: Partial<Omit<DialogueLine, "id" | "characterId">>;
+      patch: Omit<Partial<Omit<DialogueLine, "id" | "characterId">>, "performance"> & {
+        /**
+         * 表演参数（C2 / ADR-0124）。
+         * `undefined` 表示不改；**`null` 表示清回默认值**——`undefined` 过不了 JSON，
+         * 清空必须有一个能存下来的值。
+         */
+        performance?: VoicePerformance | null;
+      };
     }
   | {
       /** 换说话人（ADR-0046）：同一句台词换个角色说，文本与时长不动 */
@@ -271,6 +281,21 @@ export type ProjectEvent =
       at: string;
       lineId: Id;
       cues: { text: string; durationMs: number }[] | null;
+    }
+  | {
+      /**
+       * 加一版配音（C9 / ADR-0124）：进试听台，不自动采用。
+       * 采用某一版 = 一条 `dialogue.updated { audioAssetId }`。
+       */
+      type: "voice.take.added";
+      at: string;
+      take: VoiceTake;
+    }
+  | {
+      /** 删一版配音（C9）：只摘试听台记录，资产不删（可能还挂在台词上） */
+      type: "voice.take.removed";
+      at: string;
+      takeId: Id;
     }
   | { type: "take.added"; at: string; take: Take }
   | {
@@ -428,6 +453,55 @@ function checkTimeline(items: TimelineItem[], project: Project) {
       previousId = item.id;
     }
   }
+}
+
+/**
+ * 表演参数校验（C2 / ADR-0124）。
+ *
+ * 重音与停顿按字符区间定位，所以写入时 `end` 与 `afterChar` 不得超过当前字数。
+ * 文本之后被改短时，越界项被**丢弃**而不是报错——改台词不该被上次的重音标记挡住。
+ */
+function checkPerformance(input: VoicePerformance, text: string, lineId: Id): VoicePerformance {
+  const parsed = VoicePerformanceSchema.safeParse(input);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    throw new Error(
+      `dialogue.updated 的 ${lineId} 表演参数不合法：${issue?.path.join(".") ?? ""} ${issue?.message ?? ""}`.trim(),
+    );
+  }
+  const performance = parsed.data;
+  const length = [...text].length;
+  for (const span of performance.emphasis) {
+    if (span.start >= span.end) {
+      throw new Error(`dialogue.updated 的 ${lineId} 重音区间为空：${span.start}–${span.end}`);
+    }
+    if (span.end > length) {
+      throw new Error(
+        `dialogue.updated 的 ${lineId} 重音区间越出当前台词（${span.end} > ${length} 字）`,
+      );
+    }
+  }
+  for (const pause of performance.pauses) {
+    if (pause.afterChar > length) {
+      throw new Error(
+        `dialogue.updated 的 ${lineId} 停顿位置越出当前台词（${pause.afterChar} > ${length} 字）`,
+      );
+    }
+  }
+  return performance;
+}
+
+/** 文本改短后，把越界的重音与停顿确定性地丢掉（回放结果一致） */
+function clipPerformance(
+  performance: VoicePerformance,
+  text: string,
+): VoicePerformance {
+  const length = [...text].length;
+  return {
+    ...performance,
+    emphasis: performance.emphasis.filter((span) => span.start < span.end && span.end <= length),
+    pauses: performance.pauses.filter((pause) => pause.afterChar <= length),
+  };
 }
 
 function checkMusic(cues: MusicCue[], project: Project) {
@@ -1136,9 +1210,27 @@ function applyEventCore(
           throw new Error(`dialogue.updated 的配音资产不是音频: ${asset.id}`);
         }
       }
-      const dialogue = current.dialogue.map((item) =>
-        item.id === event.lineId ? { ...item, ...event.patch } : item,
-      );
+      // 表演参数（C2 / ADR-0124）：写入时区间不得越界；文本同时改短时按新字数裁掉越界项
+      const nextText = event.patch.text ?? line.text;
+      let nextPerformance = line.performance;
+      if (event.patch.performance === null) {
+        nextPerformance = undefined;
+      } else if (event.patch.performance !== undefined) {
+        nextPerformance = checkPerformance(event.patch.performance, nextText, event.lineId);
+      } else if (event.patch.text !== undefined && line.performance) {
+        nextPerformance = clipPerformance(line.performance, nextText);
+      }
+      const { performance: _patchPerformance, ...restPatch } = event.patch;
+      const dialogue = current.dialogue.map((item) => {
+        if (item.id !== event.lineId) return item;
+        const next: DialogueLine = { ...item, ...restPatch };
+        if (nextPerformance === undefined) {
+          delete (next as { performance?: VoicePerformance }).performance;
+        } else {
+          next.performance = nextPerformance;
+        }
+        return next;
+      });
       return { ...current, dialogue };
     }
 
@@ -1193,10 +1285,11 @@ function applyEventCore(
       return {
         ...current,
         dialogue: current.dialogue.filter((item) => item.id !== event.lineId),
-        // 台词没了，它的手动断句也没地方落，一起摘掉（D2）
+        // 台词没了，它的手动断句与配音试听台也没地方落，一起摘掉（D2 / C9）
         subtitleOverrides: current.subtitleOverrides.filter(
           (override) => override.lineId !== event.lineId,
         ),
+        voiceTakes: current.voiceTakes.filter((take) => take.lineId !== event.lineId),
         shots: current.shots.map((item) =>
           item.dialogueIds.includes(event.lineId)
             ? { ...item, dialogueIds: item.dialogueIds.filter((id) => id !== event.lineId) }
@@ -1267,6 +1360,39 @@ function applyEventCore(
           )
         : [...current.assets, event.asset];
       return { ...current, assets };
+    }
+
+    case "voice.take.added": {
+      if (!current) throw new Error("voice.take.added 之前必须有 project.created");
+      if (current.voiceTakes.some((take) => take.id === event.take.id)) {
+        throw new Error(`voice.take.added 的 id 已存在: ${event.take.id}`);
+      }
+      const line = current.dialogue.find((item) => item.id === event.take.lineId);
+      if (!line) {
+        throw new Error(`voice.take.added 指向不存在的台词: ${event.take.lineId}`);
+      }
+      const asset = current.assets.find((item) => item.id === event.take.assetId);
+      if (!asset) {
+        throw new Error(`voice.take.added 指向不存在的资产: ${event.take.assetId}`);
+      }
+      if (asset.kind !== "audio") {
+        throw new Error(`voice.take.added 的资产不是音频: ${asset.id}`);
+      }
+      const take = clone(event.take);
+      take.performance = checkPerformance(take.performance, line.text, line.id);
+      return { ...current, voiceTakes: [...current.voiceTakes, take] };
+    }
+
+    case "voice.take.removed": {
+      if (!current) throw new Error("voice.take.removed 之前必须有 project.created");
+      if (!current.voiceTakes.some((take) => take.id === event.takeId)) {
+        throw new Error(`voice.take.removed 指向不存在的配音 take: ${event.takeId}`);
+      }
+      // 资产不删：它可能正是台词当前采用的那条
+      return {
+        ...current,
+        voiceTakes: current.voiceTakes.filter((take) => take.id !== event.takeId),
+      };
     }
 
     case "take.added": {

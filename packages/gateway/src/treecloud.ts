@@ -326,6 +326,13 @@ export class TreecloudSpeechAdapter implements SpeechAdapter {
       throw new TreecloudError(400, "tts_empty_text", "这一句是空的，没有可念的内容");
     }
 
+    // speed 与 instructions 是 OpenAI 兼容字段：供应商不支持时会忽略，
+    // 不会报错，也不会改变念出来的字（ADR-0124 §4）
+    const speed =
+      input.speed !== undefined && Number.isFinite(input.speed)
+        ? Math.min(2, Math.max(0.5, input.speed))
+        : undefined;
+    const instructions = input.instructions?.trim();
     const { bytes, mime } = await this.client.requestBytes("/v1/audio/speech", {
       method: "POST",
       body: {
@@ -333,6 +340,8 @@ export class TreecloudSpeechAdapter implements SpeechAdapter {
         input: text,
         response_format: this.options.format ?? "mp3",
         ...(voice ? { voice } : {}),
+        ...(speed !== undefined ? { speed } : {}),
+        ...(instructions ? { instructions } : {}),
       },
     });
     if (bytes.length === 0) {

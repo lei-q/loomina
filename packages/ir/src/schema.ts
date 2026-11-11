@@ -228,6 +228,48 @@ export const GateRecordSchema = z.object({
 });
 export type GateRecord = z.infer<typeof GateRecordSchema>;
 
+/** 重音：按字符区间定位，不按文本匹配（C2 / ADR-0124） */
+export const EmphasisSpanSchema = z.object({
+  /** 起始字符下标（含） */
+  start: z.number().int().nonnegative(),
+  /** 结束字符下标（不含）；写入时不得超过当前字数 */
+  end: z.number().int().positive(),
+  /** 1–3，默认 2 */
+  strength: z.number().int().min(1).max(3).default(2),
+});
+export type EmphasisSpan = z.infer<typeof EmphasisSpanSchema>;
+
+/** 停顿：第 afterChar 个字之后停 ms 毫秒（C2 / ADR-0124） */
+export const PauseMarkSchema = z.object({
+  afterChar: z.number().int().nonnegative(),
+  ms: z.number().int().min(50).max(2000),
+});
+export type PauseMark = z.infer<typeof PauseMarkSchema>;
+
+/**
+ * 逐句表演参数（C2 / C9 / ADR-0124）。
+ *
+ * 它描述「下一次出声要怎么念」，不改 `durationMs`——时长以真实音轨为准（P5）。
+ * 供应商可能忽略其中几项，界面如实标「当前模型可能不支持」。
+ */
+export const VoicePerformanceSchema = z.object({
+  /** 0.5–2.0，1 为原速 */
+  rate: z.number().min(0.5).max(2).default(1),
+  /** 半音偏移，−12–+12 */
+  pitch: z.number().min(-12).max(12).default(0),
+  /** 线性增益，0.25–2.0 */
+  volume: z.number().min(0.25).max(2).default(1),
+  /** 气声比例 0–1 */
+  breathiness: z.number().min(0).max(1).default(0),
+  emphasis: z.array(EmphasisSpanSchema).max(8).default([]),
+  pauses: z.array(PauseMarkSchema).max(8).default([]),
+  /** 情绪标签，进提示词；空串表示不标 */
+  emotion: z.string().max(20).default(""),
+  /** 句尾走向 */
+  ending: z.enum(["rise", "flat", "fall"]).default("flat"),
+});
+export type VoicePerformance = z.infer<typeof VoicePerformanceSchema>;
+
 export const DialogueLineSchema = z.object({
   id: Id,
   characterId: Id,
@@ -236,8 +278,26 @@ export const DialogueLineSchema = z.object({
   durationMs: z.number().int().positive(),
   /** 这一句的配音资产（ADR-0085）；没有就是还没配。 */
   audioAssetId: Id.optional(),
+  /** 逐句表演参数（C2 / ADR-0124）；没写按默认值处理 */
+  performance: VoicePerformanceSchema.optional(),
 });
 export type DialogueLine = z.infer<typeof DialogueLineSchema>;
+
+/**
+ * 配音的一版（C9 / ADR-0124）：试听台里的一条。
+ *
+ * 不进 `DialogueLine`——视频 Take 与配音 Take 语义不同（一个比画面，一个比读法）。
+ * `DialogueLine.audioAssetId` 仍是「当前采用的那条」。
+ */
+export const VoiceTakeSchema = z.object({
+  id: Id,
+  lineId: Id,
+  assetId: Id,
+  performance: VoicePerformanceSchema,
+  provenance: ProvenanceSchema,
+  createdAt: z.string().min(1),
+});
+export type VoiceTake = z.infer<typeof VoiceTakeSchema>;
 
 /** 机位在场地里的位置（B13 / ADR-0126）：几何事实，不改写 `angle` */
 export const CameraPlacementSchema = z.object({
@@ -590,6 +650,8 @@ export const ProjectSchema = z.object({
   scenes: z.array(SceneSchema).default([]),
   shots: z.array(ShotSchema).default([]),
   dialogue: z.array(DialogueLineSchema).default([]),
+  /** 配音的多版本试听台（C9 / ADR-0124）：采用哪一版仍是 `audioAssetId` */
+  voiceTakes: z.array(VoiceTakeSchema).default([]),
   takes: z.array(TakeSchema).default([]),
   assets: z.array(AssetSchema).default([]),
   approvals: z.array(ApprovalSchema).default([]),

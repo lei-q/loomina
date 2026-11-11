@@ -36,6 +36,8 @@ import {
   type StoryArc,
   type StoryRelationship,
   type TimelineItem,
+  type VoicePerformance,
+  type VoiceTake,
 } from "@loomina/ir";
 import {
   parseInstruction,
@@ -52,6 +54,7 @@ import { diffEvents, getEventLog, migrateLog } from "@/lib/event-log";
 import { estimateDialogueMs } from "@/lib/dialogue";
 import { autoCut, timelineEquals } from "@/lib/edit";
 import { planMusicFill } from "@/lib/music-curve";
+import { instructionsOf, performanceOf } from "@/lib/voice-performance";
 import { buildHistory, historyPosition, nextUndo } from "@/lib/history";
 import { claimWriter } from "@/lib/writer-lock";
 import {
@@ -312,8 +315,23 @@ type WorkbenchState = {
   /**
    * 给一句台词出声（ADR-0085）：落一条 `asset.updated` + 一条 `dialogue.updated`。
    * 没配配音模型时服务端会明说；界面还有「贴一条音轨」兜底。
+   *
+   * 带表演参数（C2 / ADR-0124）发请求；`keepTake` 为真时另存一版进试听台，
+   * 并把这一版设为当前采用的音轨。
    */
-  generateVoice: (lineId: string) => Promise<boolean>;
+  generateVoice: (lineId: string, options?: { keepTake?: boolean }) => Promise<boolean>;
+  /**
+   * 改一句的表演参数（C2 / ADR-0124）：一条 `dialogue.updated { performance }`。
+   * 传 `undefined` 表示清回默认值。不影响 `durationMs`。
+   */
+  updatePerformance: (lineId: string, performance: VoicePerformance | undefined) => boolean;
+  /**
+   * 采用试听台里的某一版（C9 / ADR-0124）：一条 `dialogue.updated { audioAssetId }`。
+   * `voiceTakes` 本身不动——试听台记的是「试过哪些」，采用是台词上的事实。
+   */
+  adoptVoiceTake: (takeId: string) => boolean;
+  /** 删掉试听台里的一版（C9）：资产不删，可能还挂在台词上 */
+  removeVoiceTake: (takeId: string) => boolean;
   /**
    * 贴一条音轨当这一句的配音（ADR-0085）：收 http(s):// 或 data:audio/。
    * 供应商配额不通、或已经用自己的录音时，都走这条路。
@@ -2189,7 +2207,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     set({ asrInfo: info });
   },
 
-  generateVoice: async (lineId) => {
+  generateVoice: async (lineId, options) => {
     if (get().readOnly) return false;
     if (lockedStage({ get, set }, "voice")) return false;
     const { project } = get();
@@ -2213,6 +2231,9 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     set({ castError: undefined });
     setJob({ kind: "voice" });
     try {
+      // 表演参数（C2 / ADR-0124）：只影响这一次出声，不改 `durationMs`
+      const performance = performanceOf(line);
+      const instructions = instructionsOf(performance);
       const response = await fetch("/api/voice", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2220,6 +2241,8 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
           text: line.text,
           ...(character?.voiceProfileId ? { voice: character.voiceProfileId } : {}),
           modelId: getModelChoice("tts"),
+          ...(performance.rate !== 1 ? { speed: performance.rate } : {}),
+          ...(instructions ? { instructions } : {}),
         }),
       });
       const payload = (await response.json()) as {
@@ -2232,11 +2255,24 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
         throw new Error(payload.error ?? `出声失败（${response.status}）`);
       }
 
-      // 一句台词一个资产位：重配就换掉这一句的旧音轨，不累积成 take
-      const assetId = `a-voice-${lineId}`;
       const at = stamp();
+      const keepTake = options?.keepTake === true;
       // 音轨也先进资产库（H3 / ADR-0128）：一句 8 MB 的 base64 不该进日志
       const uri = await persistAsset(payload.uri);
+      // 请求与落盘期间作者可能又点了一次：资产 id、序号与写回基准都要按最新的项目算
+      const base = get().project;
+      // 普通重配：一句台词一个资产位，换掉旧音轨；
+      // 存一版（C9）：每版占自己的资产，否则试听台里几版会指向同一段音频
+      let assetId = `a-voice-${lineId}`;
+      let takeId = "";
+      if (keepTake) {
+        // 序号按现有版本数往下排；删过版本后可能撞号，所以两处都退让到不撞为止
+        const seq = base.voiceTakes.filter((take) => take.lineId === lineId).length + 1;
+        assetId = `a-voice-${lineId}-t${seq}`;
+        while (base.assets.some((asset) => asset.id === assetId)) assetId += "x";
+        takeId = `vt-${lineId}-t${seq}`;
+        while (base.voiceTakes.some((take) => take.id === takeId)) takeId += "x";
+      }
       const mime = /^data:(audio\/[a-z0-9.+-]+)[;,]/i.exec(uri)?.[1];
       const written: ProjectEvent[] = [
         {
@@ -2263,9 +2299,32 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
           lineId,
           patch: { audioAssetId: assetId },
         },
+        // 存一版（C9 / ADR-0124）：进试听台，同时设为当前采用的音轨
+        ...(keepTake
+          ? [
+              {
+                type: "voice.take.added" as const,
+                at,
+                take: {
+                  id: takeId,
+                  lineId,
+                  assetId,
+                  performance,
+                  provenance: {
+                    modelId: payload.model ?? "unknown",
+                    prompt: line.text,
+                    referenceAssetIds: [],
+                    createdAt: at,
+                  },
+                  createdAt: at,
+                },
+              },
+            ]
+          : []),
       ];
+      // 按最新项目应用：请求期间可能已经有别的写入（历史、别的句子）
       set({
-        project: written.reduce(applyEvent, project),
+        project: written.reduce(applyEvent, base),
         events: [...get().events, ...written],
         castError: undefined,
       });
@@ -2280,6 +2339,109 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       });
       return false;
     }
+  },
+
+  updatePerformance: (lineId, performance) => {
+    if (get().readOnly) {
+      set({ castError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    if (lockedStage({ get, set }, "voice")) return false;
+    const { project, events } = get();
+    const line = project.dialogue.find((item) => item.id === lineId);
+    if (!line) {
+      set({ castError: "找不到这句台词。" });
+      return false;
+    }
+    const shot = project.shots.find((item) => item.dialogueIds.includes(lineId));
+    if (shot?.locked) {
+      set({ castError: "这一镜已锁定：要改表演先解锁。" });
+      return false;
+    }
+    const event: ProjectEvent = {
+      type: "dialogue.updated",
+      at: stamp(),
+      lineId,
+      // 清回默认值要真的去掉字段：`undefined` 过不了 JSON，用 `null` 当清空信号
+      patch: { performance: performance ?? null },
+    };
+    try {
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        castError: undefined,
+      });
+    } catch (error) {
+      set({ castError: error instanceof Error ? error.message : "表演参数存不下来" });
+      return false;
+    }
+    return true;
+  },
+
+  adoptVoiceTake: (takeId) => {
+    if (get().readOnly) {
+      set({ castError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    if (lockedStage({ get, set }, "voice")) return false;
+    const { project, events } = get();
+    const take = project.voiceTakes.find((item) => item.id === takeId);
+    if (!take) {
+      set({ castError: "找不到这一版配音。" });
+      return false;
+    }
+    const line = project.dialogue.find((item) => item.id === take.lineId);
+    if (!line) {
+      set({ castError: "这一版配音挂的台词已经删了。" });
+      return false;
+    }
+    if (line.audioAssetId === take.assetId) return true;
+    const event: ProjectEvent = {
+      type: "dialogue.updated",
+      at: stamp(),
+      lineId: take.lineId,
+      patch: { audioAssetId: take.assetId },
+    };
+    try {
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        castError: undefined,
+      });
+    } catch (error) {
+      set({ castError: error instanceof Error ? error.message : "换不了这一版" });
+      return false;
+    }
+    return true;
+  },
+
+  removeVoiceTake: (takeId) => {
+    if (get().readOnly) {
+      set({ castError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    if (lockedStage({ get, set }, "voice")) return false;
+    const { project, events } = get();
+    const take = project.voiceTakes.find((item) => item.id === takeId);
+    if (!take) return false;
+    const line = project.dialogue.find((item) => item.id === take.lineId);
+    // 正采用的那一版不能从试听台删掉：那会让「当前音轨」指向一条不在台面上的记录
+    if (line?.audioAssetId === take.assetId) {
+      set({ castError: "这一版正被采用：先换成别的版本再删。" });
+      return false;
+    }
+    const event: ProjectEvent = { type: "voice.take.removed", at: stamp(), takeId };
+    try {
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        castError: undefined,
+      });
+    } catch (error) {
+      set({ castError: error instanceof Error ? error.message : "这一版删不掉" });
+      return false;
+    }
+    return true;
   },
 
   attachVoice: (lineId, rawUri) => {

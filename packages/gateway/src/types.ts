@@ -44,6 +44,16 @@ export interface SpeechInput {
   voice?: string;
   /** 覆盖默认 TTS 模型 */
   model?: string;
+  /**
+   * 语速（C2 / ADR-0124）：映射到请求体的 `speed`。
+   * 供应商忽略时行为与不传一致——这里不假设它一定生效。
+   */
+  speed?: number;
+  /**
+   * 表演说明（C2 / ADR-0124）：情绪与句尾走向拼成一句中文，映射到 `instructions`。
+   * 与 `speed` 同一口径：传了不一定生效，但不会改变念出来的字。
+   */
+  instructions?: string;
 }
 
 export interface SpeechOutput {

@@ -43,6 +43,10 @@ export async function speakLine(request: {
   text: string;
   voice?: string;
   modelId?: string;
+  /** 语速（C2 / ADR-0124）；供应商忽略时与不传一致 */
+  speed?: number;
+  /** 表演说明（C2 / ADR-0124）；供应商忽略时与不传一致 */
+  instructions?: string;
 }): Promise<SpokenLine> {
   const config = gatewayConfigOf(await resolveModel("tts", request.modelId));
   const client = new TreecloudClient({ ...config, timeoutMs: 60_000 });
@@ -51,6 +55,8 @@ export async function speakLine(request: {
   const output = await adapter.speak({
     text: request.text,
     ...(request.voice ? { voice: request.voice } : {}),
+    ...(request.speed !== undefined ? { speed: request.speed } : {}),
+    ...(request.instructions ? { instructions: request.instructions } : {}),
   });
 
   // 一句台词不该有几 MB；超了说明供应商回的不是这一句，宁可报错

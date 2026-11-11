@@ -234,7 +234,8 @@ interface DialogueLine {
   characterId: ID;
   text: string;
   emotion?: string;
-  audioAssetId?: ID;        // TTS 结果
+  audioAssetId?: ID;        // 当前采用的 TTS 音轨（ADR-0085）
+  performance?: VoicePerformance;  // 逐句表演参数（ADR-0124，见 §12）
   durationMs?: number;
 }
 
@@ -1153,6 +1154,16 @@ interface Motif {
 48. **重音与停顿的字符区间不得越出当前台词**（`VOICE_RANGE_OUT_OF_BOUNDS`）；文本改短时越界项被丢弃而非报错。
 49. **配音 Take 的 `assetId` 必须是 `kind: "audio"` 且存在的资产**（`VOICE_TAKE_ASSET`）。
 50. **同一个动机目标只能有一个动机**（`MOTIF_TARGET_UNIQUE`）；动机的 `licenseRef` 不得为空。
+
+**落地细节（C2 / C9 第一档，2026-11-12）**
+
+- **默认值**：`VoicePerformance` 八项全带 zod 默认（`rate` 1、`pitch` 0、`volume` 1、`breathiness` 0、`emphasis` `[]`、`pauses` `[]`、`emotion` `""`、`ending` `"flat"`），所以旧日志回放不补字段也不报错，`LOG_VERSION` 仍为 1。`Project.voiceTakes` 默认 `[]`。
+- **字符区间口径**：`emphasis.start` / `end`、`pauses.afterChar` 都按 `[...text].length`（码点）数，与界面选中的字符一一对应；`end` 是开区间。
+- **清空参数用 `null`**：`dialogue.updated` 的 patch 里 `performance` 三态——`undefined` 不改、`null` 清回默认（回放时 `delete` 字段）、对象则整组覆盖。`undefined` 过 JSON 会消失，写进日志等于没改，所以清空必须显式。
+- **写入时校验、改短时裁剪**：只改参数或同时改长文本时越界抛错；只改短文本、没带 `performance` 时按新字数确定性丢弃越界项（不抛错），回放结果与实时一致。
+- **每版一个资产**：「再念一版」用 `a-voice-<lineId>-t<n>`，普通重配仍是 `a-voice-<lineId>`。`voice.take.added` 校验 id 不重复、台词存在、资产存在且是音频，并按当时的文本再跑一次 `checkPerformance`；`voice.take.removed` 只摘记录，不删资产。正被采用的那一版（`audioAssetId === take.assetId`）拒绝删除。
+- **删台词连带清试听台**：`dialogue.removed` 同时过滤掉 `lineId` 相同的 take（资产留在库里），否则不变量 49 的 `REF_VOICE_TAKE_LINE` 会被旧记录打穿。
+- **请求体**：`speed`（clamp 0.5–2）与 `instructions`（≤300 字，提示语，不改字）；停顿靠 `inputOf` 插标点表达，不是 SSML。供应商忽略时与不传一致。
 
 
 ## 13. 发布与合规层（ADR-0021 / PUBLISHING.md）

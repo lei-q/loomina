@@ -13,6 +13,7 @@ import {
   type SheetView,
   type Shot,
   type Take,
+  type VoicePerformance,
 } from "@loomina/ir";
 import {
   buildKeyframePrompt,
@@ -754,6 +755,12 @@ export type VoiceLine = {
   state: "missing" | "voiced";
   /** 音轨是按旧台词念的（A5 / ADR-0107）：重配才会对上 */
   stale?: boolean;
+  /** 表演参数（C2 / ADR-0124）；没写过就是 undefined，界面按默认值显示 */
+  performance?: VoicePerformance;
+  /** 试听台里有几版（C9）；0 表示还没存过版本 */
+  takes: number;
+  /** 当前音轨是不是试听台里的某一版（C9） */
+  adoptedTakeId?: string;
 };
 
 export type VoiceRole = {
@@ -780,6 +787,8 @@ export type VoiceView = {
   budget: number;
   spend: Spend;
   unpriced: number;
+  /** 试听台总版本数（C9）；界面上写「共 N 版」 */
+  takes: number;
 };
 
 /**
@@ -806,6 +815,8 @@ export function toVoiceView(project: Project): VoiceView {
       if (!line) continue;
       const asset = line.audioAssetId ? assetById.get(line.audioAssetId) : undefined;
       const character = characterById.get(line.characterId);
+      const takes = project.voiceTakes.filter((take) => take.lineId === line.id);
+      const adopted = takes.find((take) => take.assetId === line.audioAssetId);
       lines.push({
         id: line.id,
         no: stageShot.no,
@@ -822,6 +833,9 @@ export function toVoiceView(project: Project): VoiceView {
         ...(asset?.uri && asset.provenance?.prompt !== undefined && asset.provenance.prompt !== line.text
           ? { stale: true }
           : {}),
+        ...(line.performance ? { performance: line.performance } : {}),
+        takes: takes.length,
+        ...(adopted ? { adoptedTakeId: adopted.id } : {}),
       });
     }
   }
@@ -856,6 +870,7 @@ export function toVoiceView(project: Project): VoiceView {
     budget: project.budgetCny,
     spend,
     unpriced: spend.unpriced,
+    takes: project.voiceTakes.length,
   };
 }
 

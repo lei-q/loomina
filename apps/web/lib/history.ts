@@ -77,6 +77,8 @@ const LOCATION_FIELD_CN: Record<string, string> = {
 const DIALOGUE_FIELD_CN: Record<string, string> = {
   text: "台词文本",
   durationMs: "时长",
+  audioAssetId: "配音音轨",
+  performance: "表演参数",
 };
 
 const TAKE_FIELD_CN: Record<string, string> = {
@@ -184,6 +186,12 @@ export function describeEvent(before: Project, event: ProjectEvent): string {
         ? `恢复自动断句：${preview}`
         : `手改断句：${preview}（${event.cues.length} 条）`;
     }
+    case "voice.take.added": {
+      const line = before.dialogue.find((item) => item.id === event.take.lineId);
+      return `加一版配音：${line ? `「${line.text.slice(0, 12)}」` : "一句台词"}`;
+    }
+    case "voice.take.removed":
+      return `删一版配音`;
     case "take.added":
       return `加一条 ${shotName(before, event.take.shotId)} 的 take`;
     case "take.updated": {

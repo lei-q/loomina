@@ -29,6 +29,52 @@ describe("历史读法（F2 / ADR-0109）", () => {
     expect(entries[2]!.label).toContain("SH-");
   });
 
+  it("配音相关事件有专门的说法（C2 / C9）", () => {
+    const performance = {
+      rate: 1.2,
+      pitch: 0,
+      volume: 1,
+      breathiness: 0,
+      emphasis: [],
+      pauses: [],
+      emotion: "",
+      ending: "flat" as const,
+    };
+    const events: ProjectEvent[] = [
+      created(),
+      {
+        type: "asset.updated",
+        at: T(1),
+        asset: {
+          id: "a-voice-d-01",
+          kind: "audio",
+          source: "generated",
+          uri: "data:audio/mpeg;base64,SUQz",
+          createdAt: T(1),
+        },
+      },
+      { type: "dialogue.updated", at: T(2), lineId: "d-01", patch: { performance } },
+      {
+        type: "voice.take.added",
+        at: T(3),
+        take: {
+          id: "vt-1",
+          lineId: "d-01",
+          assetId: "a-voice-d-01",
+          performance,
+          provenance: { modelId: "tts", referenceAssetIds: [], createdAt: T(3) },
+          createdAt: T(3),
+        },
+      },
+      { type: "voice.take.removed", at: T(4), takeId: "vt-1" },
+    ];
+    const labels = buildHistory(events).map((entry) => entry.label);
+    expect(labels).toHaveLength(5);
+    expect(labels[2]).toContain("表演参数");
+    expect(labels[3]).toContain("加一版配音");
+    expect(labels[4]).toBe("删一版配音");
+  });
+
   it("同一次操作写出的多条事件共用时间戳：只有第一条标为起点", () => {
     const events = [created(), lockShot("s-03", T(5)), lockShot("s-04", T(5)), budget(90, T(6))];
     const entries = buildHistory(events);

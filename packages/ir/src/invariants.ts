@@ -20,7 +20,9 @@ export type InvariantCode =
   | "APPROVAL_TARGET"
   | "APPROVAL_LOCKED_ASSET"
   | "REF_STORY_CHARACTER"
-  | "STORY_ARC_UNIQUE";
+  | "STORY_ARC_UNIQUE"
+  | "REF_VOICE_TAKE_LINE"
+  | "VOICE_TAKE_ASSET";
 
 export interface Violation {
   code: InvariantCode;
@@ -93,6 +95,24 @@ export function validateProject(
         code: "REF_DIALOGUE_CHARACTER",
         path: `dialogue.${line.id}.characterId`,
         message: `台词 ${line.id} 引用了不存在的角色 ${line.characterId}`,
+      });
+    }
+  }
+
+  // 1b. 配音试听台的引用必须成立（C9 / ADR-0124）
+  for (const take of project.voiceTakes) {
+    if (!dialogueById.has(take.lineId)) {
+      violations.push({
+        code: "REF_VOICE_TAKE_LINE",
+        path: `voiceTakes.${take.id}.lineId`,
+        message: `配音 take ${take.id} 引用了不存在的台词 ${take.lineId}`,
+      });
+    }
+    if (!assetIds.has(take.assetId)) {
+      violations.push({
+        code: "VOICE_TAKE_ASSET",
+        path: `voiceTakes.${take.id}.assetId`,
+        message: `配音 take ${take.id} 引用了不存在的资产 ${take.assetId}`,
       });
     }
   }

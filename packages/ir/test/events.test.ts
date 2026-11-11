@@ -2481,3 +2481,272 @@ describe("坐标进 IR（B13.1 / ADR-0126）", () => {
     expect(after.shots.find((shot) => shot.id === "sh-1")?.camera.angle).toBe("eye");
   });
 });
+
+describe("逐句表演参数与配音 take（C2 / C9 / ADR-0124）", () => {
+  const performance = {
+    rate: 1.2,
+    pitch: -2,
+    volume: 1,
+    breathiness: 0.3,
+    emphasis: [{ start: 0, end: 2, strength: 3 as const }],
+    pauses: [{ afterChar: 3, ms: 400 }],
+    emotion: "克制",
+    ending: "fall" as const,
+  };
+
+  it("dialogue.updated 写入表演参数，只改这一句", () => {
+    const project = load();
+    const result = rebuild([
+      created(project),
+      {
+        type: "dialogue.updated",
+        at: AT,
+        lineId: "dl-1",
+        patch: { performance },
+      },
+    ]);
+    expect(result.dialogue[0]!.performance).toMatchObject({ rate: 1.2, ending: "fall" });
+    expect(result.dialogue[1]!.performance).toBeUndefined();
+    // 时长不受参数影响（P5）
+    expect(result.dialogue[0]!.durationMs).toBe(2000);
+  });
+
+  it("重音区间越出当前字数被拒", () => {
+    const project = load();
+    expect(() =>
+      rebuild([
+        created(project),
+        {
+          type: "dialogue.updated",
+          at: AT,
+          lineId: "dl-1",
+          patch: { performance: { ...performance, emphasis: [{ start: 0, end: 99, strength: 2 }] } },
+        },
+      ]),
+    ).toThrow(/重音区间越出当前台词/);
+  });
+
+  it("停顿位置越出当前字数被拒", () => {
+    const project = load();
+    expect(() =>
+      rebuild([
+        created(project),
+        {
+          type: "dialogue.updated",
+          at: AT,
+          lineId: "dl-1",
+          patch: { performance: { ...performance, pauses: [{ afterChar: 99, ms: 400 }] } },
+        },
+      ]),
+    ).toThrow(/停顿位置越出当前台词/);
+  });
+
+  it("rate / pitch 越界被拒", () => {
+    const project = load();
+    expect(() =>
+      rebuild([
+        created(project),
+        {
+          type: "dialogue.updated",
+          at: AT,
+          lineId: "dl-1",
+          patch: { performance: { ...performance, rate: 3 } },
+        },
+      ]),
+    ).toThrow(/表演参数不合法/);
+  });
+
+  it("文本改短后越界的重音被确定性地丢弃，回放一致", () => {
+    const project = load();
+    const events: ProjectEvent[] = [
+      created(project),
+      { type: "dialogue.updated", at: AT, lineId: "dl-1", patch: { performance } },
+      { type: "dialogue.updated", at: AT, lineId: "dl-1", patch: { text: "你" } },
+    ];
+    const once = rebuild(events);
+    const twice = rebuild(events);
+    expect(once.dialogue[0]!.performance?.emphasis).toEqual([]);
+    expect(once.dialogue[0]!.performance?.pauses).toEqual([]);
+    expect(JSON.stringify(once)).toBe(JSON.stringify(twice));
+    // 其余参数留着
+    expect(once.dialogue[0]!.performance?.rate).toBe(1.2);
+  });
+
+  it("voice.take.added 进试听台，不改当前采用的音轨", () => {
+    const project = load();
+    const audio = {
+      id: "a-voice-t1",
+      kind: "audio" as const,
+      source: "generated" as const,
+      uri: "data:audio/mpeg;base64,AAAA",
+      createdAt: AT,
+    };
+    const result = rebuild([
+      created(project),
+      { type: "asset.updated", at: AT, asset: audio },
+      {
+        type: "voice.take.added",
+        at: AT,
+        take: {
+          id: "vt-1",
+          lineId: "dl-1",
+          assetId: "a-voice-t1",
+          performance,
+          provenance: { modelId: "tts", referenceAssetIds: [], createdAt: AT },
+          createdAt: AT,
+        },
+      },
+    ]);
+    expect(result.voiceTakes).toHaveLength(1);
+    expect(result.dialogue[0]!.audioAssetId).toBeUndefined();
+    expect(validateProject(result)).toEqual([]);
+  });
+
+  it("voice.take.added 的 id 重复、台词或资产不存在都被拒", () => {
+    const project = load();
+    const audio = {
+      id: "a-voice-t1",
+      kind: "audio" as const,
+      source: "generated" as const,
+      uri: "data:audio/mpeg;base64,AAAA",
+      createdAt: AT,
+    };
+    const base = {
+      id: "vt-1",
+      lineId: "dl-1",
+      assetId: "a-voice-t1",
+      performance,
+      provenance: { modelId: "tts", referenceAssetIds: [], createdAt: AT },
+      createdAt: AT,
+    };
+    const seeded = rebuild([
+      created(project),
+      { type: "asset.updated", at: AT, asset: audio },
+      { type: "voice.take.added", at: AT, take: base },
+    ]);
+    expect(() =>
+      rebuild([...[created(project), { type: "asset.updated" as const, at: AT, asset: audio }, { type: "voice.take.added" as const, at: AT, take: base }], { type: "voice.take.added", at: AT, take: { ...base, id: "vt-1" } }]),
+    ).toThrow(/id 已存在/);
+    expect(() =>
+      applyEvent(seeded, {
+        type: "voice.take.added",
+        at: AT,
+        take: { ...base, id: "vt-2", lineId: "dl-nope" },
+      }),
+    ).toThrow(/不存在的台词/);
+    expect(() =>
+      applyEvent(seeded, {
+        type: "voice.take.added",
+        at: AT,
+        take: { ...base, id: "vt-2", assetId: "a-lin-front" },
+      }),
+    ).toThrow(/不是音频/);
+  });
+
+  it("voice.take.removed 只摘试听台记录，资产不删", () => {
+    const project = load();
+    const audio = {
+      id: "a-voice-t1",
+      kind: "audio" as const,
+      source: "generated" as const,
+      uri: "data:audio/mpeg;base64,AAAA",
+      createdAt: AT,
+    };
+    const seeded = rebuild([
+      created(project),
+      { type: "asset.updated", at: AT, asset: audio },
+      {
+        type: "voice.take.added",
+        at: AT,
+        take: {
+          id: "vt-1",
+          lineId: "dl-1",
+          assetId: "a-voice-t1",
+          performance,
+          provenance: { modelId: "tts", referenceAssetIds: [], createdAt: AT },
+          createdAt: AT,
+        },
+      },
+    ]);
+    const removed = applyEvent(seeded, { type: "voice.take.removed", at: AT, takeId: "vt-1" });
+    expect(removed.voiceTakes).toHaveLength(0);
+    expect(removed.assets.some((asset) => asset.id === "a-voice-t1")).toBe(true);
+    expect(() =>
+      applyEvent(removed, { type: "voice.take.removed", at: AT, takeId: "vt-1" }),
+    ).toThrow(/不存在的配音 take/);
+  });
+
+  it("删台词时试听台记录一起摘掉", () => {
+    const project = load();
+    const audio = {
+      id: "a-voice-t1",
+      kind: "audio" as const,
+      source: "generated" as const,
+      uri: "data:audio/mpeg;base64,AAAA",
+      createdAt: AT,
+    };
+    const seeded = rebuild([
+      created(project),
+      { type: "asset.updated", at: AT, asset: audio },
+      {
+        type: "voice.take.added",
+        at: AT,
+        take: {
+          id: "vt-1",
+          lineId: "dl-1",
+          assetId: "a-voice-t1",
+          performance,
+          provenance: { modelId: "tts", referenceAssetIds: [], createdAt: AT },
+          createdAt: AT,
+        },
+      },
+    ]);
+    const removed = applyEvent(seeded, { type: "dialogue.removed", at: AT, lineId: "dl-1" });
+    expect(removed.voiceTakes).toHaveLength(0);
+  });
+
+  it("旧日志没有 performance / voiceTakes 也能回放", () => {
+    const project = load();
+    const replayed = rebuild([created(project)]);
+    expect(replayed.voiceTakes).toEqual([]);
+    expect(replayed.dialogue[0]!.performance).toBeUndefined();
+  });
+});
+
+describe("清空表演参数（C2 / ADR-0124）", () => {
+  const performance = {
+    rate: 1.5,
+    pitch: 0,
+    volume: 1,
+    breathiness: 0,
+    emphasis: [],
+    pauses: [],
+    emotion: "",
+    ending: "flat" as const,
+  };
+
+  it("patch.performance = null 把字段整个去掉，回放一致", () => {
+    const project = load();
+    const events: ProjectEvent[] = [
+      created(project),
+      { type: "dialogue.updated", at: AT, lineId: "dl-1", patch: { performance } },
+      { type: "dialogue.updated", at: AT, lineId: "dl-1", patch: { performance: null } },
+    ];
+    const once = rebuild(events);
+    expect(once.dialogue[0]!.performance).toBeUndefined();
+    expect("performance" in once.dialogue[0]!).toBe(false);
+    // 事件过一遍 JSON 再回放，结果一样（null 能存下来，undefined 不能）
+    const twice = rebuild(JSON.parse(JSON.stringify(events)) as ProjectEvent[]);
+    expect(JSON.stringify(twice)).toBe(JSON.stringify(once));
+  });
+
+  it("不改 performance 时，改文本不碰参数", () => {
+    const project = load();
+    const result = rebuild([
+      created(project),
+      { type: "dialogue.updated", at: AT, lineId: "dl-1", patch: { performance } },
+      { type: "dialogue.updated", at: AT, lineId: "dl-1", patch: { text: "你早就知道了" } },
+    ]);
+    expect(result.dialogue[0]!.performance?.rate).toBe(1.5);
+  });
+});
