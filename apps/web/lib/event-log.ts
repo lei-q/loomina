@@ -68,6 +68,7 @@ const EVENT_TYPES: Record<ProjectEvent["type"], true> = {
   "approval.updated": true,
   "take.updated": true,
   "asset.updated": true,
+  "timeline.updated": true,
 };
 
 /**

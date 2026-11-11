@@ -23,6 +23,7 @@ import { parseInstruction, shotMaterial, type Frame } from "@loomina/pipeline";
 import { create } from "zustand";
 import { diffEvents, getEventLog, migrateLog } from "@/lib/event-log";
 import { estimateDialogueMs } from "@/lib/dialogue";
+import { autoCut, timelineEquals } from "@/lib/edit";
 import { claimWriter } from "@/lib/writer-lock";
 import {
   latestTake,
@@ -85,6 +86,8 @@ type WorkbenchState = {
    * 没配时这里就是空对象，界面如实说「还没配配音模型」。
    */
   voiceInfo?: { model?: string; voice?: string };
+  /** 成片页的错误：初剪没得剪、换 take 不合规，都写在这里（ADR-0086） */
+  editError?: string;
   /** 登记配音模型：声音页进页面时问一次服务端 */
   setVoiceInfo: (info: { model?: string; voice?: string }) => void;
   /** 登记价目：定妆台进页面时问一次服务端 */
@@ -152,6 +155,13 @@ type WorkbenchState = {
   fitLineToAudio: (lineId: string, durationMs: number) => boolean;
   /** 给一个角色指定音色：一条 `character.updated`；空串表示用回默认音色（ADR-0085） */
   setCharacterVoice: (characterId: string, voice: string) => boolean;
+  /**
+   * 自动初剪（ADR-0086）：按剧本顺序、优先留用 take 生成整条时间线，
+   * 写一条 `timeline.updated`。没有可用 take 的镜头跳过并报出来。
+   */
+  autoCutTimeline: () => boolean;
+  /** 换某一镜用的 take：一条 `timeline.updated` 整条替换（ADR-0086） */
+  setTimelineTake: (itemId: string, takeId: string) => boolean;
   /** 批量补缺：按镜号顺序一帧一帧生成，跳过锁定，失败即停（ADR-0042 附记） */
   generateMissingFrames: (frame?: Frame) => Promise<void>;
   /** 批量补帧的进度；`stop` 置上后当前这一张结束就停 */
@@ -1535,6 +1545,96 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       events: [...events, event],
       castError: undefined,
     });
+    return true;
+  },
+
+  autoCutTimeline: () => {
+    if (get().readOnly) {
+      set({ editError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    const { project, events } = get();
+    const cut = autoCut(project);
+    if (cut.items.length === 0) {
+      set({
+        editError:
+          "一条能用的 take 都还没有：先去分镜页生成，或「贴视频地址」导入一条。",
+      });
+      return false;
+    }
+    if (timelineEquals(project.timeline.items, cut.items)) {
+      // 已经剪过了：不写重复事件，但让界面知道「跳过几镜」这件事仍然成立
+      set({ editError: undefined });
+      return false;
+    }
+
+    const event: ProjectEvent = {
+      type: "timeline.updated",
+      at: new Date().toISOString(),
+      items: cut.items,
+    };
+    try {
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        editError:
+          cut.skipped.length > 0
+            ? `${cut.skipped.length} 镜没有可用 take，先跳过了：${cut.skipped
+                .map((item) => shotLabel(item.no))
+                .join("、")}`
+            : undefined,
+      });
+    } catch (error) {
+      set({
+        editError: error instanceof Error ? error.message : "初剪失败",
+      });
+      return false;
+    }
+    return true;
+  },
+
+  setTimelineTake: (itemId, takeId) => {
+    if (get().readOnly) {
+      set({ editError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    const { project, events } = get();
+    const item = project.timeline.items.find((entry) => entry.id === itemId);
+    if (!item) {
+      set({ editError: "找不到这个片段。" });
+      return false;
+    }
+    if (item.takeId === takeId) return false;
+    const take = project.takes.find((entry) => entry.id === takeId);
+    if (!take || take.shotId !== item.shotId) {
+      set({ editError: "这一版 take 不属于这个镜头。" });
+      return false;
+    }
+    if (take.status === "rejected") {
+      set({ editError: "这一版已经淘汰了：先用回没淘汰的 take。" });
+      return false;
+    }
+
+    const items = project.timeline.items.map((entry) =>
+      entry.id === itemId ? { ...entry, takeId } : entry,
+    );
+    const event: ProjectEvent = {
+      type: "timeline.updated",
+      at: new Date().toISOString(),
+      items,
+    };
+    try {
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        editError: undefined,
+      });
+    } catch (error) {
+      set({
+        editError: error instanceof Error ? error.message : "换 take 失败",
+      });
+      return false;
+    }
     return true;
   },
 

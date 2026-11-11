@@ -1353,3 +1353,83 @@ describe("referenceImages（ADR-0079）", () => {
     ).toThrow(/重复/);
   });
 });
+
+describe("时间线（ADR-0086）", () => {
+  it("整条替换：重放后与写入一致", () => {
+    const project = load();
+    const events = [
+      created(project),
+      {
+        type: "timeline.updated" as const,
+        at: AT,
+        items: [
+          { id: "ti-2", shotId: "sh-2", takeId: "take-2", startMs: 0, durationMs: 3500 },
+          { id: "ti-1", shotId: "sh-1", takeId: "take-1", startMs: 3500, durationMs: 2500 },
+        ],
+      },
+    ];
+    const next = rebuild(events);
+    expect(next.timeline.items.map((item) => item.id)).toEqual(["ti-2", "ti-1"]);
+    expect(rebuild(events)).toEqual(next);
+  });
+
+  it("take 必须存在且属于这一镜", () => {
+    const project = load();
+    expect(() =>
+      applyEvent(project, {
+        type: "timeline.updated",
+        at: AT,
+        items: [{ id: "ti-x", shotId: "sh-1", takeId: "take-2", startMs: 0, durationMs: 2500 }],
+      }),
+    ).toThrow(/不属于镜头/);
+    expect(() =>
+      applyEvent(project, {
+        type: "timeline.updated",
+        at: AT,
+        items: [{ id: "ti-x", shotId: "sh-1", takeId: "take-nope", startMs: 0, durationMs: 2500 }],
+      }),
+    ).toThrow(/不存在或不属于/);
+  });
+
+  it("片段不得重叠，id 不得重复", () => {
+    const project = load();
+    expect(() =>
+      applyEvent(project, {
+        type: "timeline.updated",
+        at: AT,
+        items: [
+          { id: "ti-1", shotId: "sh-1", takeId: "take-1", startMs: 0, durationMs: 2500 },
+          { id: "ti-2", shotId: "sh-2", takeId: "take-2", startMs: 2400, durationMs: 3500 },
+        ],
+      }),
+    ).toThrow(/重叠/);
+    expect(() =>
+      applyEvent(project, {
+        type: "timeline.updated",
+        at: AT,
+        items: [
+          { id: "ti-1", shotId: "sh-1", takeId: "take-1", startMs: 0, durationMs: 2500 },
+          { id: "ti-1", shotId: "sh-2", takeId: "take-2", startMs: 2500, durationMs: 3500 },
+        ],
+      }),
+    ).toThrow(/重复/);
+  });
+
+  it("时长必须为正、起点不得为负", () => {
+    const project = load();
+    expect(() =>
+      applyEvent(project, {
+        type: "timeline.updated",
+        at: AT,
+        items: [{ id: "ti-1", shotId: "sh-1", takeId: "take-1", startMs: -1, durationMs: 2500 }],
+      }),
+    ).toThrow(/起点/);
+    expect(() =>
+      applyEvent(project, {
+        type: "timeline.updated",
+        at: AT,
+        items: [{ id: "ti-1", shotId: "sh-1", takeId: "take-1", startMs: 0, durationMs: 0 }],
+      }),
+    ).toThrow(/时长/);
+  });
+});

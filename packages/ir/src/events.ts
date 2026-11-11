@@ -11,6 +11,7 @@ import type {
   Scene,
   Shot,
   Take,
+  TimelineItem,
 } from "./schema";
 
 /** "不许变"清单：单条上限（整句进提示词，ADR-0074） */
@@ -223,7 +224,56 @@ export type ProjectEvent =
       type: "asset.updated";
       at: string;
       asset: Asset;
+    }
+  | {
+      /**
+       * 整条时间线换掉（ADR-0086）。
+       *
+       * 初剪、换 take 都产出一条「整条替换」的事件，而不是逐项增删：
+       * 时间线的价值在片段之间的关系（顺序、起点、不重叠），
+       * 只记增量的话，回放时得靠一堆小事件拼出同一件事，反而更难核对。
+       */
+      type: "timeline.updated";
+      at: string;
+      items: TimelineItem[];
     };
+
+/** 时间线项的公共校验：id 唯一、时长合法、take 属于该镜、片段不重叠 */
+function checkTimeline(items: TimelineItem[], project: Project) {
+  const ids = new Set<Id>();
+  const takeById = new Map(project.takes.map((take) => [take.id, take]));
+  const shotIds = new Set(project.shots.map((shot) => shot.id));
+  for (const item of items) {
+    if (ids.has(item.id)) throw new Error(`timeline.updated 有重复的时间线项: ${item.id}`);
+    ids.add(item.id);
+    if (!shotIds.has(item.shotId)) {
+      throw new Error(`timeline.updated 指向不存在的镜头: ${item.shotId}`);
+    }
+    const take = takeById.get(item.takeId);
+    if (!take || take.shotId !== item.shotId) {
+      throw new Error(`timeline.updated 的 take ${item.takeId} 不存在或不属于镜头 ${item.shotId}`);
+    }
+    if (!Number.isInteger(item.startMs) || item.startMs < 0) {
+      throw new Error(`timeline.updated 的起点不合法: ${item.startMs}`);
+    }
+    if (!Number.isInteger(item.durationMs) || item.durationMs <= 0) {
+      throw new Error(`timeline.updated 的时长不合法: ${item.durationMs}`);
+    }
+  }
+  const ordered = [...items].sort((a, b) => a.startMs - b.startMs);
+  let previousEnd = -1;
+  let previousId = "";
+  for (const item of ordered) {
+    if (item.startMs < previousEnd) {
+      throw new Error(`timeline.updated 的 ${item.id} 与 ${previousId} 重叠`);
+    }
+    const end = item.startMs + item.durationMs;
+    if (end > previousEnd) {
+      previousEnd = end;
+      previousId = item.id;
+    }
+  }
+}
 
 function checkReferenceImages(ids: Id[], assets: Asset[], label: string) {
   if (new Set(ids).size !== ids.length) {
@@ -745,6 +795,15 @@ export function applyEvent(
         ...current,
         shots,
         takes: [...current.takes, event.take],
+      };
+    }
+
+    case "timeline.updated": {
+      if (!current) throw new Error("timeline.updated 之前必须有 project.created");
+      checkTimeline(event.items, current);
+      return {
+        ...current,
+        timeline: { items: event.items.map((item) => ({ ...item })) },
       };
     }
   }

@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import type { ProjectRequote } from "@/lib/pricing";
 import { ExportIcon, Logomark, PlayIcon } from "@/components/icons";
 
-/** 阶段是一列，但只有已经做出来的两步可以点。 */
+/** 阶段是一列；还没做出来的阶段 href 为 null，点了不跳。 */
 const stages = [
   { name: "故事", href: null },
   { name: "剧本", href: "/script" },
@@ -14,7 +14,7 @@ const stages = [
   { name: "分镜", href: "/" },
   { name: "关键帧", href: "/keyframes" },
   { name: "声音", href: "/voice" },
-  { name: "成片", href: null },
+  { name: "成片", href: "/edit" },
 ] as const;
 
 export type StageName = (typeof stages)[number]["name"];

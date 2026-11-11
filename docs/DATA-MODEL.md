@@ -606,6 +606,36 @@ interface Approval {
 
 **每镜参考图不落库。** 生成前由 `shotAnchors(project, shot)` 现算（ADR-0029 / ADR-0030）：人物按景别取格（单人选正面 + 3/4，多人每人正面），场景带主镜，道具各取第一张参考图，顺序为**人物 → 场景 → 道具**，总数不超过 4 张，超了先丢道具；有已通过的 `Approval` 时只用 `lockedAssetIds`。缺锚点时链路拒绝生成，`ShotRunResult.anchorAssetIds` 只用于核对，不写回 IR。
 
+### 5.2 时间线的落地（ADR-0086）
+
+IR 里的时间线目前是窄实现：**只有画面轨**，音频与字幕不单独落数据，按片段起点从台词派生。
+
+```ts
+interface Timeline {
+  items: TimelineItem[];   // 按 startMs 排；事件里允许乱序，读模型自己排
+}
+
+interface TimelineItem {
+  id: string;              // 初剪固定 tl-<shotId>
+  shotId: string;
+  takeId: string;          // 必须存在，且 take.shotId === shotId
+  startMs: number;         // 非负整数
+  durationMs: number;      // 正整数；初剪取 shot.durationMs
+}
+```
+
+**写入方式**：只有一种事件 `timeline.updated { items }`，整条替换。applyEvent 当场校验与 `validateProject` 同口径：id 不重复、镜头存在、take 存在且属于该镜、起点 / 时长合法、片段不重叠。`shot.removed` 会顺手摘掉属于该镜的片段与 take。
+
+**初剪规则**：场次顺序 → 场内镜序；每镜优先最后一条 `approved`，否则最后一条非 `rejected`；没有可用 take 的镜头跳过，store 把镜号写进 `editError`。时长读 `shot.durationMs`，起点累计。
+
+**派生规则**（`toEditView`）：
+
+- 画面：take 的 `kind === "video"` 资产 uri → take 的图片资产 uri → 镜头的首帧 / 尾帧 → 空。
+- 字幕与音轨：同一镜的 `dialogueIds` 从片段起点依次累加 `durationMs`；`audioAssetId` 指向的音频 uri 就是这一句的音轨。
+- 总数：全长 = 最晚片段终点；`missing` = 没进时间线的镜头数。
+
+**导出**（不写回 IR）：预览 HTML、OTIO、SRT、发布包 JSON 都是本地生成的文件。IR 里的 `PublishPackage` schema 仍在，尚没有写入它的事件；视频渲染未做，发布包的视频位为空。
+
 ## 6. 风格 / 发布
 
 ```ts

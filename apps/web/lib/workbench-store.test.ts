@@ -2704,3 +2704,63 @@ describe("配音（ADR-0085）", () => {
     expect(rebuild(state().events)).toEqual(state().project);
   });
 });
+
+describe("成片（ADR-0086）", () => {
+  beforeEach(() => {
+    state().reset();
+  });
+
+  it("自动初剪写一条 timeline.updated，跳过没有可用 take 的镜头", () => {
+    const ok = state().autoCutTimeline();
+    expect(ok).toBe(true);
+    expect(state().project.timeline.items).toHaveLength(10);
+    expect(state().events.at(-1)?.type).toBe("timeline.updated");
+    expect(state().editError).toContain("SH-01");
+    expect(state().editError).toContain("SH-10");
+  });
+
+  it("已经剪过再点一次不写重复事件", () => {
+    state().autoCutTimeline();
+    const count = state().events.length;
+    expect(state().autoCutTimeline()).toBe(false);
+    expect(state().events).toHaveLength(count);
+  });
+
+  it("换 take 整条替换，只改这一项", () => {
+    state().attachVideo("s-02", "https://example.com/s-02.mp4");
+    state().autoCutTimeline();
+    const before = state().project.timeline.items.find((item) => item.id === "tl-s-02")!;
+    expect(before.takeId).toBe("t-02");
+    const added = state().project.takes.filter((take) => take.shotId === "s-02").at(-1)!;
+
+    expect(state().setTimelineTake("tl-s-02", added.id)).toBe(true);
+    const after = state().project.timeline.items.find((item) => item.id === "tl-s-02")!;
+    expect(after.takeId).toBe(added.id);
+    expect(after.startMs).toBe(before.startMs);
+    expect(state().events.at(-1)?.type).toBe("timeline.updated");
+  });
+
+  it("别的镜头的 take、已淘汰的 take 都拒绝", () => {
+    state().autoCutTimeline();
+    expect(state().setTimelineTake("tl-s-02", "t-03")).toBe(false);
+    expect(state().editError).toContain("不属于");
+    expect(state().setTimelineTake("tl-s-02", "t-01")).toBe(false);
+    expect(state().editError).toContain("不属于");
+
+    // 同一镜的 take 被淘汰之后，也不能再换进去
+    state().attachVideo("s-02", "https://example.com/s-02.mp4");
+    const added = state().project.takes.filter((take) => take.shotId === "s-02").at(-1)!;
+    state().select("s-02");
+    state().decide("rejected");
+    expect(state().setTimelineTake("tl-s-02", added.id)).toBe(false);
+    expect(state().editError).toContain("淘汰");
+  });
+
+  it("只读时初剪与换 take 都不写", () => {
+    const log = state().events.length;
+    state().readOnly = true;
+    expect(state().autoCutTimeline()).toBe(false);
+    expect(state().events).toHaveLength(log);
+    state().readOnly = false;
+  });
+});
