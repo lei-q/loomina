@@ -2,19 +2,24 @@ import {
   assertValidProject,
   SHEET_LABELS,
   shotAnchors,
+  type ActionBeat,
   type Character,
+  type GazeTarget,
   type Id,
   type Location,
   type Project,
   type Prop,
   type SheetView,
   type Shot,
+  type StagingMark,
   type Take,
 } from "@loomina/ir";
 import type { ImageAdapter, VideoAdapter } from "@loomina/gateway";
+import { sceneTemplateById, sceneTemplatePrompt, type SceneTemplate } from "./scene-templates";
 
 export * from "./dialogue";
 export * from "./story";
+export * from "./scene-templates";
 
 export interface PriceTable {
   imageCny: number;
@@ -222,16 +227,113 @@ export type ShotPromptMaterial = {
   /** 一句话指令落下的补充要求（ADR-0039）；没有就不带 */
   notes?: string[];
   characters: Pick<Character, "name" | "appearance" | "mustNotChange">[];
-  location?: Pick<Location, "name">;
+  location?: {
+    name: string;
+    /** 场景模板（B15 / ADR-0103）：给提示词补空间、主光与锚点 */
+    template?: SceneTemplate;
+  };
   props: Pick<Prop, "name" | "description">[];
+  /** 表演设计（B16 / B17）：先翻成人话，再由 shotParts 拼进去 */
+  performance?: PerformancePrompt;
+  /** 镜头内调度（B17）：角色 / 道具在画面的左右与前后 */
+  staging?: StagingPrompt[];
+  /** 生成首帧 / 尾帧时要对上的那一拍（B16 不变量 24） */
+  frameBeat?: ActionBeat;
+};
+
+export type PerformancePrompt = {
+  objective: string;
+  surface: string;
+  subtext: string;
+  intensity: number;
+  gaze: GazeTarget;
+  avoid: string[];
+  /** 起 / 转 / 落；按时间排序 */
+  beats: ActionBeat[];
+  /** 视线对象与调度对象翻成名字：提示词里不能出现 id */
+  gazeName?: string;
+};
+
+export type StagingPrompt = {
+  name: string;
+  side: StagingMark["side"];
+  depth: StagingMark["depth"];
+  note: string;
+};
+
+const SIDE_CN: Record<StagingMark["side"], string> = {
+  left: "画面左",
+  center: "画面中",
+  right: "画面右",
+};
+
+const DEPTH_CN: Record<StagingMark["depth"], string> = {
+  foreground: "前景",
+  midground: "中景",
+  background: "后景",
+};
+
+const GAZE_TARGET_CN: Record<GazeTarget["target"], string> = {
+  character: "看人",
+  prop: "看道具",
+  camera: "看镜头",
+  "off-screen": "看画外",
+};
+
+const GAZE_DIRECTION_CN: Record<GazeTarget["direction"], string> = {
+  left: "向左",
+  right: "向右",
+  up: "向上",
+  down: "向下",
+  center: "向前",
+};
+
+const BEAT_PHASE_CN: Record<ActionBeat["phase"], string> = {
+  before: "起",
+  during: "转",
+  after: "落",
 };
 
 /** 把项目里的 id 解析成提示词原料。 */
-export function shotMaterial(project: Project, shot: Shot): ShotPromptMaterial {
+export function shotMaterial(
+  project: Project,
+  shot: Shot,
+  options: { frame?: "first" | "last" } = {},
+): ShotPromptMaterial {
   const scene = project.scenes.find((item) => item.id === shot.sceneId);
   const location = scene
     ? project.locations.find((item) => item.id === scene.locationId)
     : undefined;
+  const characterById = new Map(project.characters.map((character) => [character.id, character]));
+  const propById = new Map(project.props.map((prop) => [prop.id, prop]));
+
+  const performance = shot.performance
+    ? {
+        objective: shot.performance.objective,
+        surface: shot.performance.emotion.surface,
+        subtext: shot.performance.emotion.subtext,
+        intensity: shot.performance.intensity,
+        gaze: shot.performance.gaze,
+        avoid: shot.performance.avoid,
+        beats: shot.performance.beats,
+        ...(shot.performance.gaze.targetId
+          ? {
+              gazeName:
+                shot.performance.gaze.target === "character"
+                  ? characterById.get(shot.performance.gaze.targetId)?.name
+                  : propById.get(shot.performance.gaze.targetId)?.name,
+            }
+          : {}),
+      }
+    : undefined;
+
+  // 首帧对起、尾帧对落：首尾帧必须和表演设计的起止一致（不变量 24）
+  const frameBeat =
+    performance && options.frame
+      ? options.frame === "first"
+        ? (performance.beats.find((beat) => beat.phase === "before") ?? performance.beats[0])
+        : (performance.beats.find((beat) => beat.phase === "after") ?? performance.beats.at(-1))
+      : undefined;
 
   return {
     description: shot.description,
@@ -239,17 +341,41 @@ export function shotMaterial(project: Project, shot: Shot): ShotPromptMaterial {
     camera: shot.camera,
     notes: shot.promptNotes,
     characters: shot.characterIds
-      .map((id) => project.characters.find((character) => character.id === id))
+      .map((id) => characterById.get(id))
       .filter((character): character is Character => Boolean(character)),
-    location: location ? { name: location.name } : undefined,
+    location: location
+      ? {
+          name: location.name,
+          ...(sceneTemplateById(location.templateId)
+            ? { template: sceneTemplateById(location.templateId) }
+            : {}),
+        }
+      : undefined,
     props: shot.propIds.flatMap((id) => {
-      const prop = project.props.find((item) => item.id === id);
+      const prop = propById.get(id);
       return prop ? [prop] : [];
     }),
+    ...(performance ? { performance } : {}),
+    ...(shot.staging.length > 0
+      ? {
+          staging: shot.staging.flatMap((mark) => {
+            const name = mark.characterId
+              ? characterById.get(mark.characterId)?.name
+              : propById.get(mark.propId ?? "")?.name;
+            return name ? [{ name, side: mark.side, depth: mark.depth, note: mark.note }] : [];
+          }),
+        }
+      : {}),
+    ...(frameBeat ? { frameBeat } : {}),
   };
 }
 
-/** "看到什么 → 人物锚点 → 场景与道具 → 机位"；不含画面质感那一句。 */
+function beatPrompt(beat: ActionBeat): string {
+  const bits = [beat.micro, beat.body, beat.action].filter((bit): bit is string => Boolean(bit));
+  return `${BEAT_PHASE_CN[beat.phase]}：${bits.join("，")}`;
+}
+
+/** "看到什么 → 人物锚点 → 表演与调度 → 场景与道具 → 机位"；不含画面质感那一句。 */
 function shotParts(material: ShotPromptMaterial): string[] {
   const parts: string[] = [];
   if (material.description) parts.push(material.description);
@@ -263,7 +389,40 @@ function shotParts(material: ShotPromptMaterial): string[] {
   });
   if (people.length) parts.push(`人物：${people.join("；")}`);
 
-  if (material.location) parts.push(`场景：${material.location.name}`);
+  if (material.staging && material.staging.length) {
+    const marks = material.staging.map((mark) => {
+      const note = mark.note ? `，${mark.note}` : "";
+      return `${mark.name}在${SIDE_CN[mark.side]}（${DEPTH_CN[mark.depth]}）${note}`;
+    });
+    parts.push(`调度：${marks.join("；")}`);
+  }
+
+  if (material.performance) {
+    const performance = material.performance;
+    const bits: string[] = [];
+    if (performance.objective) bits.push(`目的：${performance.objective}`);
+    if (performance.surface) bits.push(`表面情绪：${performance.surface}`);
+    if (performance.subtext) bits.push(`潜台词：${performance.subtext}`);
+    const gaze = performance.gazeName
+      ? `${GAZE_TARGET_CN[performance.gaze.target]}${performance.gazeName}`
+      : GAZE_TARGET_CN[performance.gaze.target];
+    bits.push(`视线：${gaze}，${GAZE_DIRECTION_CN[performance.gaze.direction]}`);
+    if (performance.intensity !== 3) bits.push(`表演强度 ${performance.intensity}/5`);
+    if (performance.avoid.length) bits.push(`不要：${performance.avoid.join("、")}`);
+    if (bits.length) parts.push(`表演：${bits.join("；")}`);
+    if (material.frameBeat) {
+      parts.push(`这一帧的表演：${beatPrompt(material.frameBeat)}`);
+    } else if (performance.beats.length) {
+      parts.push(`表演节拍：${performance.beats.map(beatPrompt).join("；")}`);
+    }
+  }
+
+  if (material.location) {
+    const template = material.location.template
+      ? `（${sceneTemplatePrompt(material.location.template)}）`
+      : "";
+    parts.push(`场景：${material.location.name}${template}`);
+  }
 
   if (material.notes && material.notes.length) {
     parts.push(`补充：${material.notes.join("；")}`);

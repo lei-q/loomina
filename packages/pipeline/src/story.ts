@@ -514,6 +514,7 @@ export function projectFromStoryDraft(
           .filter((id): id is string => Boolean(id)),
         dialogueIds: lineIds,
         takeIds: [],
+        staging: [],
         keyframes: {},
         locked: false,
       };

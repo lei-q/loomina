@@ -3,10 +3,12 @@
 import {
   applyEvent,
   castReadiness,
+  PerformanceSpecSchema,
   rebuild,
   REFERENCE_IMAGES_MAX,
   SHEET_ANGLES,
   shotAnchors,
+  StagingMarkSchema,
   VOICE_PROFILE_MAX,
   type ApprovalTargetType,
   type Asset,
@@ -15,6 +17,7 @@ import {
   type GateStage,
   type Location,
   type MusicCue,
+  type PerformanceSpec,
   type Project,
   type Prop,
   type ProjectEvent,
@@ -23,6 +26,7 @@ import {
   type SheetView,
   type Shot,
   type ShotPurpose,
+  type StagingMark,
 } from "@loomina/ir";
 import {
   parseInstruction,
@@ -174,6 +178,13 @@ type WorkbenchState = {
     shotId: string,
     patch: { beat?: BeatKind; purpose?: ShotPurpose },
   ) => boolean;
+  /**
+   * 写这一镜的表演设计（B16 / B17）：一条 `shot.updated { performance }`。
+   * 传 `undefined` 表示清空；结构不合法或视线指向不存在的对象时不写。
+   */
+  setShotPerformance: (shotId: string, performance: PerformanceSpec | undefined) => boolean;
+  /** 写这一镜的镜头内调度（B17）：一条 `shot.updated { staging }` */
+  setShotStaging: (shotId: string, staging: StagingMark[]) => boolean;
   /** 这一镜里谁出场：一条 `shot.updated { characterIds }`（ADR-0065） */
   toggleShotCharacter: (shotId: string, characterId: string) => boolean;
   /** 道具出场：点一下把这件道具加进或移出这一镜（ADR-0066） */
@@ -942,6 +953,112 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
     return true;
   },
 
+  setShotPerformance: (shotId, performance) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) {
+      set({ castError: "找不到这一镜。" });
+      return false;
+    }
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定，先解锁再改表演设计。" });
+      return false;
+    }
+
+    let next: PerformanceSpec | undefined;
+    if (performance !== undefined) {
+      const parsed = PerformanceSpecSchema.safeParse(performance);
+      if (!parsed.success) {
+        set({
+          castError: `表演设计不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`,
+        });
+        return false;
+      }
+      next = parsed.data;
+      const gaze = next.gaze;
+      if (gaze.target === "character" && !project.characters.some((item) => item.id === gaze.targetId)) {
+        set({ castError: "视线指向的人物不在这部片里。" });
+        return false;
+      }
+      if (gaze.target === "prop" && !project.props.some((item) => item.id === gaze.targetId)) {
+        set({ castError: "视线指向的道具不在这部片里。" });
+        return false;
+      }
+    }
+
+    // 同值不写：拖动强度滑块又滑回原位不该留一条事件
+    if (JSON.stringify(next) === JSON.stringify(shot.performance)) return false;
+
+    const event: ProjectEvent = {
+      type: "shot.updated",
+      at: new Date().toISOString(),
+      shotId: shot.id,
+      patch: { performance: next },
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  setShotStaging: (shotId, staging) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) {
+      set({ castError: "找不到这一镜。" });
+      return false;
+    }
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定，先解锁再改调度。" });
+      return false;
+    }
+
+    const parsed = StagingMarkSchema.array().safeParse(staging);
+    if (!parsed.success) {
+      set({
+        castError: `镜头调度不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`,
+      });
+      return false;
+    }
+
+    const seen = new Set<string>();
+    for (const mark of parsed.data) {
+      const key = mark.characterId ?? mark.propId!;
+      if (seen.has(key)) {
+        set({ castError: "同一个角色或道具只能有一条调度。" });
+        return false;
+      }
+      if (mark.characterId && !shot.characterIds.includes(mark.characterId)) {
+        set({ castError: "调度里的角色不在这一镜的出场名单里。" });
+        return false;
+      }
+      if (mark.propId && !shot.propIds.includes(mark.propId)) {
+        set({ castError: "调度里的道具不在这一镜的道具名单里。" });
+        return false;
+      }
+      seen.add(key);
+    }
+
+    if (JSON.stringify(parsed.data) === JSON.stringify(shot.staging)) return false;
+
+    const event: ProjectEvent = {
+      type: "shot.updated",
+      at: new Date().toISOString(),
+      shotId: shot.id,
+      patch: { staging: parsed.data },
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
   toggleShotCharacter: (shotId, characterId) => {
     if (get().readOnly) return false;
     const { project, events } = get();
@@ -1374,7 +1491,11 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
         assetId,
         shotId: shot.id,
         job: { kind: "keyframe", frame },
-        body: { kind: "keyframe", frame, shot: shotMaterial(project, shot) },
+        body: {
+          kind: "keyframe",
+          frame,
+          shot: shotMaterial(project, shot, { frame }),
+        },
         referenceAssetIds: shotAnchors(project, shot).refs.map((ref) => ref.assetId),
         after: (id, at) => ({
           type: "shot.updated",
@@ -3117,6 +3238,7 @@ export const useWorkbench = create<WorkbenchState>()((set, get) => ({
       propIds: [],
       dialogueIds: [],
       takeIds: [],
+      staging: [],
       keyframes: {},
       locked: false,
     };

@@ -3,6 +3,8 @@
 > 决策：3D 灰盒最小版进 MVP（ADR-0016）。
 > 本文定首批模板清单与规格。模板不是写实场景，是**带锚点的灰盒**：够用来摆位、定机位、查轴线、导出 depth。
 
+> **实现现状（2026-11-11，ADR-0103）**：已落地的只是"轻量预设"——10 个模板作为提示词素材进 `Location.templateId`，提供尺寸、锚点名、默认机位名、光线描述，让空间与主光跨镜头一致。3D 几何、自动摆位、越轴检测、depth 导出仍归 B13，留到 Phase 1。落地字段见本文 §七。
+
 ---
 
 ## 一、选模板的原则
@@ -149,3 +151,30 @@ interface TemplateCamera {
 - [ ] 导出 depth / edge 图，可用于关键帧结构条件。
 - [ ] 拖动人物或机位后，同场镜头自动重校验。
 - [ ] 模板切换时保留已有关键帧，只提示需要重生成。
+
+---
+
+## 七、轻量预设的落地形态（ADR-0103，2026-11-11）
+
+已实现的是**提示词预设**，不是几何：
+
+```ts
+// packages/pipeline/src/scene-templates.ts
+interface SceneTemplate {
+  id: string;
+  name: string;
+  category: "interior" | "exterior";
+  dimensions: [number, number, number];      // 宽 × 深 × 高，仅用于说明
+  anchors: string[];                          // "窗（左）" "沙发（中左）" 这类可读锚点
+  cameras: { label: string; focalMm: number }[]; // 机位名 + 焦段，不进 Shot.camera
+  lighting: string;                           // "窗光 + 顶灯；4300K；光比 3:1"
+  tags: string[];
+  plots: string[];                            // 能承载的剧情类型
+}
+```
+
+- 10 个模板全部落地（MVP 6 + v1 4），清单与本文 §二 / §三 一致；`apartment-living` 是 `living-room` 的别名。
+- 挂载方式：`Location.templateId`。主镜 / 镜头提示词追加 `场景：走廊（公寓客厅模板（窗光 + 顶灯；4300K；光比 3:1；关键位置：窗（左）、沙发（中左）…））`。
+- 定妆台地点行的编辑表单分两组列出模板（场景模板 / 旧模板），选中或展示时给出 `名称 · 宽×深×高 · 光线 · 机位`。
+- 旧 id（`corridor` / `doorway` / `table` / `door`）继续可用，只是不带模板说明。
+- **未做**：坐标、锚点类型、标注要求、自动摆位、3 机位建议、越轴检测、depth / edge 导出。§五 与 §六 的验收项仍然等 B13。

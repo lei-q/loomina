@@ -3228,6 +3228,128 @@ describe("分镜节拍与镜头目的（ADR-0096）", () => {
   });
 });
 
+describe("表演设计与镜头调度（B16 / B17 / ADR-0103）", () => {
+  beforeEach(() => {
+    state().reset();
+  });
+
+  const performance = {
+    objective: "让她相信自己没有被出卖",
+    emotion: { surface: "克制", subtext: "其实在试探" },
+    beats: [
+      { phase: "before" as const, micro: "眼神躲开", body: "手指扣住门框", startMs: 0, endMs: 800 },
+      { phase: "after" as const, micro: "嘴角松下来", body: "肩膀落下", startMs: 1600, endMs: 2400 },
+    ],
+    gaze: { target: "character" as const, targetId: "c-zhou", direction: "right" as const },
+    intensity: 4,
+    avoid: ["不要哭出来"],
+  };
+
+  it("写表演设计：一条 shot.updated，回放一致，提示词跟着变", () => {
+    const before = state().events.length;
+    const promptBefore = toStageView(state().project, { currentShotId: "s-02" }).shots.find(
+      (shot) => shot.id === "s-02",
+    )!.prompts.video;
+
+    expect(state().setShotPerformance("s-02", performance)).toBe(true);
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.updated",
+      shotId: "s-02",
+      patch: { performance },
+    });
+    expect(state().project.shots.find((shot) => shot.id === "s-02")?.performance).toMatchObject({
+      objective: "让她相信自己没有被出卖",
+      gaze: { target: "character", targetId: "c-zhou", direction: "right" },
+      intensity: 4,
+    });
+    expect(rebuild(state().events)).toEqual(state().project);
+
+    const promptAfter = toStageView(state().project, { currentShotId: "s-02" }).shots.find(
+      (shot) => shot.id === "s-02",
+    )!.prompts.video;
+    expect(promptBefore).not.toContain("表演：");
+    expect(promptAfter).toContain("表演：");
+    expect(promptAfter).toContain("看人周");
+    expect(promptAfter).toContain("起：眼神躲开，手指扣住门框");
+  });
+
+  it("值没变、清空不存在的表演、锁定镜头：都不写日志", () => {
+    state().setShotPerformance("s-02", performance);
+    const after = state().events.length;
+    expect(state().setShotPerformance("s-02", performance)).toBe(false);
+    expect(state().setShotPerformance("s-01", undefined)).toBe(false);
+    expect(state().setShotPerformance("s-08", performance)).toBe(false);
+    expect(state().castError).toContain("已锁定");
+    expect(state().events).toHaveLength(after);
+  });
+
+  it("清空表演设计：写一条把 performance 置空的事件", () => {
+    state().setShotPerformance("s-02", performance);
+    expect(state().setShotPerformance("s-02", undefined)).toBe(true);
+    expect(state().project.shots.find((shot) => shot.id === "s-02")?.performance).toBeUndefined();
+  });
+
+  it("视线指向不存在的对象、或看人却没给 id：拒绝写入", () => {
+    const before = state().events.length;
+    expect(
+      state().setShotPerformance("s-02", {
+        ...performance,
+        gaze: { target: "character", targetId: "c-404", direction: "left" },
+      }),
+    ).toBe(false);
+    expect(state().castError).toContain("不在这部片里");
+
+    expect(
+      state().setShotPerformance("s-02", {
+        ...performance,
+        gaze: { target: "character", direction: "left" } as never,
+      }),
+    ).toBe(false);
+    expect(state().events).toHaveLength(before);
+  });
+
+  it("写镜头内调度：角色与道具各一条，回放一致，提示词出现调度", () => {
+    const before = state().events.length;
+    expect(
+      state().setShotStaging("s-02", [
+        { characterId: "c-lin", side: "left", depth: "foreground", note: "背对门" },
+      ]),
+    ).toBe(true);
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.updated",
+      shotId: "s-02",
+      patch: {
+        staging: [{ characterId: "c-lin", side: "left", depth: "foreground", note: "背对门" }],
+      },
+    });
+    expect(rebuild(state().events)).toEqual(state().project);
+
+    const prompt = toStageView(state().project, { currentShotId: "s-02" }).shots.find(
+      (shot) => shot.id === "s-02",
+    )!.prompts.video;
+    expect(prompt).toContain("调度：林在画面左（前景），背对门");
+  });
+
+  it("调度里有没出场的人 / 道具：拒绝写入", () => {
+    const before = state().events.length;
+    expect(
+      state().setShotStaging("s-02", [
+        { characterId: "c-zhou", side: "right", depth: "background", note: "" },
+      ]),
+    ).toBe(false);
+    expect(state().castError).toContain("出场名单");
+    expect(
+      state().setShotStaging("s-02", [
+        { propId: "p-cup", side: "center", depth: "foreground", note: "" },
+      ]),
+    ).toBe(false);
+    expect(state().castError).toContain("道具名单");
+    expect(state().events).toHaveLength(before);
+  });
+});
+
 describe("阶段闸门与单镜预算（F8 / F9 / H10）", () => {
   beforeEach(() => {
     state().reset();

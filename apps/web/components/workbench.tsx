@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AnimaticOverlay } from "@/components/animatic";
 import { ConsistencyPanel } from "@/components/consistency-panel";
+import { PerformancePanel } from "@/components/performance-panel";
 import { ReelBar } from "@/components/reel-bar";
 import { Stage } from "@/components/stage";
 import { StoryboardPanel } from "@/components/storyboard-panel";
@@ -29,6 +30,8 @@ export function Workbench() {
   const setShotLock = useWorkbench((state) => state.setShotLock);
   const setShotBudget = useWorkbench((state) => state.setShotBudget);
   const setShotPlan = useWorkbench((state) => state.setShotPlan);
+  const setShotPerformance = useWorkbench((state) => state.setShotPerformance);
+  const setShotStaging = useWorkbench((state) => state.setShotStaging);
   const toggleShotCharacter = useWorkbench((state) => state.toggleShotCharacter);
   const toggleShotProp = useWorkbench((state) => state.toggleShotProp);
   const moveShotCharacter = useWorkbench((state) => state.moveShotCharacter);
@@ -71,6 +74,8 @@ export function Workbench() {
       }),
     [project, view.requoteAll.totalCny],
   );
+  // 表演与调度（B16 / B17，ADR-0103）：一镜的表演设计、视线与站位
+  const [performanceOpen, setPerformanceOpen] = useState(false);
   // 一致性体检（ADR-0097）：只看结构化锚点与溯源
   const [consistencyOpen, setConsistencyOpen] = useState(false);
   const consistency = useMemo(() => analyzeConsistency(project), [project]);
@@ -79,7 +84,7 @@ export function Workbench() {
 
   // 键盘：← → 换格，⌘⏎ 留用；输入框里只让 ⌘⏎ 生效；预演 / 检查打开时让给它们
   useEffect(() => {
-    if (previewOpen || checkOpen || consistencyOpen) return;
+    if (previewOpen || checkOpen || consistencyOpen || performanceOpen) return;
     function onKeyDown(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
       const typing =
@@ -105,7 +110,7 @@ export function Workbench() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [view, select, decide, previewOpen, checkOpen, consistencyOpen]);
+  }, [view, select, decide, previewOpen, checkOpen, consistencyOpen, performanceOpen]);
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg text-text">
@@ -125,15 +130,29 @@ export function Workbench() {
           view.shots.length > 0
             ? () => {
                 setConsistencyOpen(false);
+                setPerformanceOpen(false);
                 setCheckOpen(true);
               }
             : undefined
         }
         checkCount={storyboard.summary.errors + storyboard.summary.warnings}
+        onPerformance={
+          view.shots.length > 0
+            ? () => {
+                setCheckOpen(false);
+                setConsistencyOpen(false);
+                setPerformanceOpen(true);
+              }
+            : undefined
+        }
+        performanceCount={
+          project.shots.filter((shot) => !shot.performance?.objective.trim()).length
+        }
         onConsistency={
           view.shots.length > 0
             ? () => {
                 setCheckOpen(false);
+                setPerformanceOpen(false);
                 setConsistencyOpen(true);
               }
             : undefined
@@ -204,6 +223,19 @@ export function Workbench() {
           onSelect={select}
           onPlanChange={(patch) => setShotPlan(view.shots[view.current]!.id, patch)}
           onClose={() => setCheckOpen(false)}
+        />
+      )}
+      {performanceOpen && view.shots.length > 0 && (
+        <PerformancePanel
+          project={project}
+          shotId={view.shots[view.current]!.id}
+          prompt={view.shots[view.current]!.prompts.video}
+          readOnly={readOnly ?? false}
+          onSavePerformance={(performance) =>
+            setShotPerformance(view.shots[view.current]!.id, performance)
+          }
+          onSaveStaging={(staging) => setShotStaging(view.shots[view.current]!.id, staging)}
+          onClose={() => setPerformanceOpen(false)}
         />
       )}
       {consistencyOpen && view.shots.length > 0 && (

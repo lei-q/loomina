@@ -104,7 +104,7 @@ function required(flag: string, value: string | undefined): string {
 const SHOT_BANK: Array<
   Omit<
     Shot,
-    "id" | "sceneId" | "index" | "takeIds" | "keyframes" | "promptNotes"
+    "id" | "sceneId" | "index" | "takeIds" | "keyframes" | "promptNotes" | "staging"
   >
 > = [
   {

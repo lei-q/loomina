@@ -784,6 +784,7 @@ describe("新建场次与镜头（ADR-0064）", () => {
         propIds: [],
         dialogueIds: [],
         takeIds: [],
+        staging: [],
         keyframes: {},
         locked: false,
       },
@@ -850,6 +851,7 @@ describe("新建场次与镜头（ADR-0064）", () => {
       propIds: [],
       dialogueIds: [],
       takeIds: [],
+      staging: [],
       keyframes: {},
       locked: false,
     };
@@ -915,6 +917,7 @@ describe("中间插入场次与镜头（ADR-0068）", () => {
         propIds: [],
         dialogueIds: [],
         takeIds: [],
+        staging: [],
         keyframes: {},
         locked: false,
       },
@@ -966,6 +969,7 @@ describe("中间插入场次与镜头（ADR-0068）", () => {
       propIds: [],
       dialogueIds: [],
       takeIds: [],
+      staging: [],
       keyframes: {},
       locked: false,
     };
@@ -1255,6 +1259,111 @@ describe("character.removed / prop.removed（ADR-0073）", () => {
     expect(() =>
       applyEvent(inUse, { type: "prop.removed", at: AT, propId: "prop-key" }),
     ).toThrow(/用着这件道具/);
+  });
+});
+
+describe("shot.updated 携带表演与调度（B16 / B17 / ADR-0103）", () => {
+  it("写入表演设计：补默认值，重放后一致", () => {
+    const project = load();
+    const event: ProjectEvent = {
+      type: "shot.updated",
+      at: AT,
+      shotId: "sh-1",
+      patch: {
+        performance: {
+          objective: "让她留下来",
+          gaze: { target: "character", targetId: "c-zhou", direction: "left" },
+        } as never,
+      },
+    };
+    const after = applyEvent(project, event);
+    const performance = after.shots.find((shot) => shot.id === "sh-1")?.performance;
+    expect(performance).toMatchObject({
+      objective: "让她留下来",
+      emotion: { surface: "", subtext: "" },
+      intensity: 3,
+      avoid: [],
+      beats: [],
+      gaze: { target: "character", targetId: "c-zhou", direction: "left" },
+    });
+    expect(rebuild([created(project), event])).toEqual(after);
+  });
+
+  it("看人却没给 id：拒绝", () => {
+    const project = load();
+    expect(() =>
+      applyEvent(project, {
+        type: "shot.updated",
+        at: AT,
+        shotId: "sh-1",
+        patch: { performance: { objective: "x", gaze: { target: "character", direction: "left" } } as never },
+      }),
+    ).toThrow(/看人 \/ 看道具/);
+  });
+
+  it("看镜头却带了 id：拒绝", () => {
+    const project = load();
+    expect(() =>
+      applyEvent(project, {
+        type: "shot.updated",
+        at: AT,
+        shotId: "sh-1",
+        patch: {
+          performance: {
+            objective: "x",
+            gaze: { target: "camera", targetId: "c-lin", direction: "center" },
+          } as never,
+        },
+      }),
+    ).toThrow(/不该带 id/);
+  });
+
+  it("表演节拍结束时间早于开始：拒绝", () => {
+    const project = load();
+    expect(() =>
+      applyEvent(project, {
+        type: "shot.updated",
+        at: AT,
+        shotId: "sh-1",
+        patch: {
+          performance: {
+            objective: "x",
+            gaze: { target: "camera", direction: "center" },
+            beats: [
+              { phase: "before", micro: "", body: "", startMs: 900, endMs: 300 },
+            ],
+          } as never,
+        },
+      }),
+    ).toThrow(/结束时间/);
+  });
+
+  it("写入镜头调度并重放；角色与道具同时挂：拒绝", () => {
+    const project = load();
+    const event: ProjectEvent = {
+      type: "shot.updated",
+      at: AT,
+      shotId: "sh-1",
+      patch: {
+        staging: [{ characterId: "c-lin", side: "left", depth: "foreground", note: "" }],
+      },
+    };
+    const after = applyEvent(project, event);
+    expect(after.shots.find((shot) => shot.id === "sh-1")?.staging).toEqual([
+      { characterId: "c-lin", side: "left", depth: "foreground", note: "" },
+    ]);
+    expect(rebuild([created(project), event])).toEqual(after);
+
+    expect(() =>
+      applyEvent(project, {
+        type: "shot.updated",
+        at: AT,
+        shotId: "sh-1",
+        patch: {
+          staging: [{ characterId: "c-lin", propId: "p-x", side: "left", depth: "foreground", note: "" }],
+        },
+      }),
+    ).toThrow(/只挂一个/);
   });
 });
 

@@ -4,10 +4,11 @@
  * 三件事共用一份读模型：
  * - A11 Beat 分析：每镜归到哪一拍；没有显式标注的旧项目按镜序推断；
  * - A12 覆盖率：每一拍有没有信息镜头与情绪 / 反应镜头；
- * - A13 分镜校验：V1 / V2 / V4 / V5 / V6 / V8。
+ * - A13 分镜校验：V1 / V2 / V4 / V5 / V6 / V8 / V10。
  *
  * 推断只在读模型里发生，不写回 IR；作者在检查面板里改过的值才落 `shot.updated`。
  * V3（180° 轴线）、V7（切率曲线）、V9（模型能力）需要 3D 走位与能力矩阵，这一轮不做。
+ * V10 查表演设计（B16 / B17）；题干里的「不拦生成」是这一轮的有意取舍（ADR-0103）。
  */
 
 import type {
@@ -95,7 +96,7 @@ export type BeatSpan = {
   hasEmotion: boolean;
 };
 
-export type StoryboardRule = "V1" | "V2" | "V4" | "V5" | "V6" | "V8";
+export type StoryboardRule = "V1" | "V2" | "V4" | "V5" | "V6" | "V8" | "V10";
 
 export type StoryboardIssue = {
   rule: StoryboardRule;
@@ -362,6 +363,24 @@ export function validateStoryboard(
       runSize = 1;
       runStart = index;
     }
+  }
+
+  // V10：表演设计（B16 / B17）。不拦生成，只在检查里点名：
+  // 存量项目没有 PerformanceSpec，硬拦会把已有片子锁死（ADR-0103）。
+  const missingPerformance = plans.filter((plan) => {
+    const shot = shotById.get(plan.shotId);
+    return !shot?.performance || !shot.performance.objective.trim();
+  });
+  if (missingPerformance.length > 0) {
+    const nos = missingPerformance.map((plan) => `第 ${plan.no} 镜`);
+    const shown = nos.slice(0, 8).join("、");
+    const tail = nos.length > 8 ? ` 等 ${nos.length} 镜` : "";
+    issues.push({
+      rule: "V10",
+      severity: "warning",
+      message: `${shown}${tail}还没有表演设计：补上 objective 与视线，首尾帧与视频提示词才会写到表情和看谁。`,
+      shotIds: missingPerformance.map((plan) => plan.shotId),
+    });
   }
 
   // V8：整片重做一遍的报价超过预算

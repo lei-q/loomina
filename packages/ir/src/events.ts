@@ -1,4 +1,6 @@
+import { z } from "zod";
 import { clone } from "./clone";
+import { PerformanceSpecSchema, StagingMarkSchema } from "./schema";
 import type {
   Approval,
   Asset,
@@ -427,8 +429,29 @@ export function applyEvent(
       ) {
         throw new Error(`单镜预算必须大于 0：${event.patch.budgetCny}`);
       }
+      // 表演与调度（B16 / B17）：结构不合法就不该进日志，回放时才发现就晚了
+      let patch = event.patch;
+      if (event.patch.performance !== undefined) {
+        const parsed = PerformanceSpecSchema.safeParse(event.patch.performance);
+        if (!parsed.success) {
+          throw new Error(
+            `表演设计不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`,
+          );
+        }
+        // 补上默认值再落库：回放拿到的结构与新建时一致
+        patch = { ...patch, performance: parsed.data };
+      }
+      if (event.patch.staging !== undefined) {
+        const parsed = z.array(StagingMarkSchema).safeParse(event.patch.staging);
+        if (!parsed.success) {
+          throw new Error(
+            `镜头调度不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`,
+          );
+        }
+        patch = { ...patch, staging: parsed.data };
+      }
       const shots = current.shots.map((shot) =>
-        shot.id === event.shotId ? { ...shot, ...event.patch } : shot,
+        shot.id === event.shotId ? { ...shot, ...patch } : shot,
       );
       return { ...current, shots };
     }

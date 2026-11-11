@@ -15,8 +15,11 @@ import {
   buildKeyframePrompt,
   buildShotPrompt,
   buildVideoPrompt,
+  describeSceneTemplate,
   parseInstruction,
   runMinimalChain,
+  SCENE_TEMPLATES,
+  sceneTemplateById,
   shotMaterial,
 } from "../src/index";
 
@@ -314,5 +317,96 @@ describe("一句话指令（ADR-0039）", () => {
 
     expect(prompt).toContain("补充：整体提亮，补足曝光，阴影保留细节");
     expect(buildShotPrompt({ ...project, shots: [withNote] }, withNote)).toContain("补充：");
+  });
+});
+
+describe("表演、视线与调度进提示词（B16 / B17 / ADR-0103）", () => {
+  function withPerformance(project: Project) {
+    const shot = project.shots[0]!;
+    shot.performance = {
+      objective: "让她相信自己没有被出卖",
+      emotion: { surface: "克制", subtext: "其实在试探" },
+      beats: [
+        { phase: "before", micro: "眼神躲开", body: "手指扣住门框", startMs: 0, endMs: 800 },
+        { phase: "after", micro: "嘴角松下来", body: "肩膀落下", startMs: 1800, endMs: 2500 },
+      ],
+      gaze: { target: "character", targetId: "c-zhou", direction: "right" },
+      intensity: 4,
+      avoid: ["不要哭出来"],
+    };
+    return shot;
+  }
+
+  it("视频提示词写清目的、情绪、视线与起转落", () => {
+    const project = load();
+    const shot = withPerformance(project);
+    const prompt = buildVideoPrompt(shotMaterial(project, shot));
+
+    expect(prompt).toContain("表演：目的：让她相信自己没有被出卖");
+    expect(prompt).toContain("表面情绪：克制");
+    expect(prompt).toContain("潜台词：其实在试探");
+    expect(prompt).toContain("视线：看人周野，向右");
+    expect(prompt).toContain("表演强度 4/5");
+    expect(prompt).toContain("不要：不要哭出来");
+    expect(prompt).toContain("表演节拍：起：眼神躲开，手指扣住门框；落：嘴角松下来，肩膀落下");
+    expect(prompt).not.toContain("c-zhou");
+  });
+
+  it("首帧只对起、尾帧只对落（不变量 24）", () => {
+    const project = load();
+    const shot = withPerformance(project);
+    const first = buildKeyframePrompt(shotMaterial(project, shot, { frame: "first" }), "first");
+    const last = buildKeyframePrompt(shotMaterial(project, shot, { frame: "last" }), "last");
+
+    expect(first).toContain("这一帧的表演：起：眼神躲开，手指扣住门框");
+    expect(first).not.toContain("这一帧的表演：落：");
+    expect(last).toContain("这一帧的表演：落：嘴角松下来，肩膀落下");
+    expect(last).not.toContain("表演节拍：");
+    expect(last).not.toContain("起：眼神躲开");
+  });
+
+  it("调度写左右与前后，不带 id", () => {
+    const project = load();
+    const shot = project.shots[0]!;
+    shot.staging = [
+      { characterId: "c-lin", side: "left", depth: "foreground", note: "背对门" },
+      { propId: "p-cup", side: "right", depth: "background", note: "" },
+    ];
+    project.props = [
+      { id: "p-cup", name: "搪瓷杯", description: "", referenceImages: [] },
+    ];
+    const prompt = buildShotPrompt(project, shot);
+
+    expect(prompt).toContain("调度：林晚在画面左（前景），背对门；搪瓷杯在画面右（后景）");
+    expect(prompt).not.toContain("c-lin");
+    expect(prompt).not.toContain("p-cup");
+  });
+
+  it("没有表演设计时提示词不凭空补情绪", () => {
+    const project = load();
+    const prompt = buildVideoPrompt(shotMaterial(project, project.shots[0]!));
+    expect(prompt).not.toContain("表演：");
+    expect(prompt).not.toContain("视线：");
+  });
+});
+
+describe("场景模板进提示词（B15 / ADR-0103）", () => {
+  it("十个模板齐全，说明里有尺寸、光线与机位", () => {
+    expect(SCENE_TEMPLATES).toHaveLength(10);
+    expect(SCENE_TEMPLATES.map((template) => template.id)).toContain("elevator");
+    const living = sceneTemplateById("living-room")!;
+    expect(describeSceneTemplate(living)).toContain("5×4×2.8m");
+    expect(describeSceneTemplate(living)).toContain("4300K");
+    expect(describeSceneTemplate(living)).toContain("沙发正面");
+    expect(sceneTemplateById("apartment-living")?.id).toBe("living-room");
+    expect(sceneTemplateById("corridor")).toBeUndefined();
+  });
+
+  it("场景模板写进镜头提示词：空间、主光与锚点", () => {
+    const project = load();
+    const prompt = buildShotPrompt(project, project.shots[0]!);
+
+    expect(prompt).toContain("场景：公寓客厅（公寓客厅模板（窗光 + 顶灯；4300K；光比 3:1；关键位置：");
+    expect(prompt).toContain("沙发（中左）");
   });
 });

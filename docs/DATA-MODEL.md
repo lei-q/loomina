@@ -926,6 +926,13 @@ interface GazeTarget {
 23. **表演动作必须与模型能力矩阵兼容**；超范围动作必须拆段或改设计。
 24. **首尾帧的表情/姿态必须与 `PerformanceSpec` 的起止一致**，否则关键帧不合格。
 
+**落地形态（ADR-0103，2026-11-11）**
+
+- 实际 IR 中没有独立的 `PerformanceSpec.shotId`：它是 `Shot.performance?: PerformanceSpec`，镜头本身是宿主，避免 id 与宿主不一致。
+- `Shot` 同时新增 `staging: StagingMark[]`（默认 `[]`）：一条只挂 `characterId` 或 `propId`（二选一），带 `side`（左/中/右）、`depth`（前/中/后景）与 `note`。
+- 写入走 `shot.updated { performance? , staging? }`，`applyEvent` 做 zod 校验并把默认值补进事件，保证实时与回放逐字段一致。
+- `performance` 是可选的：存量项目不受影响；不变量 21 / 22 目前由分镜检查 V10 warning 提示，不阻断生成（见 ADR-0103 决策 6）。
+
 ## 12. 声音层（ADR-0020 / SOUND.md）
 
 ```ts

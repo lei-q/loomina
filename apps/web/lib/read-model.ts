@@ -198,6 +198,18 @@ const artByTemplate: Record<string, SceneKind> = {
   doorway: "door",
   door: "door",
   table: "table",
+  // 场景模板（B15 / ADR-0103）：剪影只求一眼能认出空间类型
+  "living-room": "table",
+  bedroom: "table",
+  office: "table",
+  elevator: "door",
+  street: "corridor",
+  cafe: "table",
+  "hospital-corridor": "corridor",
+  "car-interior": "two",
+  rooftop: "corridor",
+  classroom: "table",
+  "apartment-living": "table",
 };
 
 function shotState(shot: Shot, take: Take | undefined): ShotState {
@@ -278,6 +290,9 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
       ? assetById.get(shot.keyframes.lastAssetId)
       : undefined;
     const material = shotMaterial(project, shot);
+    // 首尾帧各对表演设计的起点与落点（B16 / ADR-0103）
+    const firstMaterial = shotMaterial(project, shot, { frame: "first" });
+    const lastMaterial = shotMaterial(project, shot, { frame: "last" });
     const takes: StageTake[] = shot.takeIds.flatMap((id, i) => {
       const item = takesById.get(id);
       if (!item) return [];
@@ -312,8 +327,8 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
       angle: SHOT_ANGLE_CN[shot.camera.angle],
       notes: shot.promptNotes,
       prompts: {
-        first: buildKeyframePrompt(material, "first"),
-        last: buildKeyframePrompt(material, "last"),
+        first: buildKeyframePrompt(firstMaterial, "first"),
+        last: buildKeyframePrompt(lastMaterial, "last"),
         video: buildVideoPrompt(material),
       },
       anchors: {

@@ -59,6 +59,10 @@ export type TopBarProps = {
   onCheck?: () => void;
   /** 检查里要看的条数（错误 + 提示），显示在按钮右上 */
   checkCount?: number;
+  /** 打开表演与调度面板（B16 / B17，ADR-0103）；给了才出现「表演」 */
+  onPerformance?: () => void;
+  /** 还没写表演设计的镜头数，显示在按钮右上 */
+  performanceCount?: number;
   /** 打开一致性体检（ADR-0097）；给了才出现「体检」 */
   onConsistency?: () => void;
   /** 待复核 + 不达标的镜头数，显示在按钮右上 */
@@ -86,6 +90,8 @@ export function TopBar({
   onPreview,
   onCheck,
   checkCount,
+  onPerformance,
+  performanceCount,
   onConsistency,
   consistencyCount,
 }: TopBarProps) {
@@ -352,6 +358,19 @@ export function TopBar({
             体检
             {consistencyCount !== undefined && consistencyCount > 0 && (
               <span className="tnum text-[9px] text-pick">{consistencyCount}</span>
+            )}
+          </button>
+        )}
+        {onPerformance && (
+          <button
+            type="button"
+            onClick={onPerformance}
+            title="写这一镜的表演设计、视线与站位：不花钱"
+            className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            表演
+            {performanceCount !== undefined && performanceCount > 0 && (
+              <span className="tnum text-[9px] text-pick">{performanceCount}</span>
             )}
           </button>
         )}

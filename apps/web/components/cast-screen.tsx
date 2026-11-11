@@ -2,6 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { SHEET_LABELS, type SheetView } from "@loomina/ir";
+import {
+  describeSceneTemplate,
+  SCENE_TEMPLATES,
+  sceneTemplateById,
+} from "@loomina/pipeline";
 import { fetchImagePrice } from "@/lib/image-price";
 import { Bust } from "@/components/bust";
 import { PropObject } from "@/components/prop-object";
@@ -31,13 +36,23 @@ function clock(iso?: string): string {
   });
 }
 
-/** 地点模板：只决定主镜画哪种剪影；名字才是给人看的（ADR-0059） */
+/**
+ * 地点模板（B15 / ADR-0103）：上半是 SCENE-TEMPLATES.md 的 10 个场景模板，
+ * 决定主镜提示词里的空间、主光与锚点；下半是旧的方位模板，只决定剪影（ADR-0059）。
+ */
 const LOCATION_TEMPLATES = [
-  { id: "corridor", label: "走廊" },
-  { id: "doorway", label: "门口" },
-  { id: "table", label: "桌边" },
-  { id: "door", label: "门厅" },
-] as const;
+  ...SCENE_TEMPLATES.map((template) => ({
+    id: template.id,
+    label: template.name,
+    group: "scene" as const,
+    hint: describeSceneTemplate(template),
+  })),
+  { id: "apartment-living", label: "公寓客厅（旧 id）", group: "legacy" as const, hint: "" },
+  { id: "corridor", label: "走廊（旧方位）", group: "legacy" as const, hint: "" },
+  { id: "doorway", label: "门口（旧方位）", group: "legacy" as const, hint: "" },
+  { id: "table", label: "桌边（旧方位）", group: "legacy" as const, hint: "" },
+  { id: "door", label: "门厅（旧方位）", group: "legacy" as const, hint: "" },
+];
 
 function StatusChip({
   status,
@@ -697,12 +712,27 @@ function LocationRow({
                 aria-label="地点模板"
                 className="w-full rounded-token border border-line bg-surface px-2 py-1.5 text-[11.5px] text-muted focus:border-pick focus:outline-none"
               >
-                {LOCATION_TEMPLATES.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.label}
-                  </option>
-                ))}
+                <optgroup label="场景模板">
+                  {LOCATION_TEMPLATES.filter((item) => item.group === "scene").map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.label}
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="旧方位模板">
+                  {LOCATION_TEMPLATES.filter((item) => item.group === "legacy").map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.label}
+                    </option>
+                  ))}
+                </optgroup>
               </select>
+              {(() => {
+                const hint = LOCATION_TEMPLATES.find((item) => item.id === draftTemplate)?.hint;
+                return hint ? (
+                  <p className="text-[8.5px] leading-[1.55] text-muted-2">{hint}</p>
+                ) : null;
+              })()}
               <div className="flex gap-1.5">
                 <button
                   type="submit"
@@ -757,6 +787,14 @@ function LocationRow({
                   </button>
                 )}
               </div>
+              {(() => {
+                const template = sceneTemplateById(location.templateId);
+                return template ? (
+                  <p className="mt-1.5 max-w-[168px] text-[8.5px] leading-[1.55] text-muted-2">
+                    {describeSceneTemplate(template)}
+                  </p>
+                ) : null;
+              })()}
               {deleting ? (
                 <form
                   className="mt-2 flex flex-col gap-1.5"

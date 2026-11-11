@@ -270,3 +270,57 @@ describe("分镜校验", () => {
     expect(report.issues.filter((issue) => issue.rule === "V5")).toHaveLength(0);
   });
 });
+
+describe("V10 表演设计（B16 / B17 / ADR-0103）", () => {
+  it("没写表演设计的镜头会被点名，但不升级成错误", () => {
+    const project = makeProject([
+      { beat: "setup", purpose: "information" },
+      { beat: "turn", purpose: "emotion" },
+    ]);
+    const report = analyzeStoryboard(project);
+    const issue = report.issues.find((item) => item.rule === "V10");
+    expect(issue?.severity).toBe("warning");
+    expect(issue?.message).toContain("第 1 镜");
+    expect(issue?.message).toContain("第 2 镜");
+    expect(issue?.shotIds).toEqual(["s-1", "s-2"]);
+    expect(report.summary.errors).toBe(0);
+  });
+
+  it("objective 空白也算没写；补上 objective 与视线后不再提示", () => {
+    const blank = makeProject([
+      {
+        beat: "setup",
+        purpose: "information",
+        performance: {
+          objective: "  ",
+          emotion: { surface: "", subtext: "" },
+          beats: [],
+          gaze: { target: "camera" as const, direction: "center" as const },
+          intensity: 3,
+          avoid: [],
+        },
+      },
+    ]);
+    expect(
+      analyzeStoryboard(blank).issues.some((issue) => issue.rule === "V10"),
+    ).toBe(true);
+
+    const project = makeProject([
+      {
+        beat: "setup",
+        purpose: "information",
+        performance: {
+          objective: "让她留下来",
+          emotion: { surface: "克制", subtext: "在试探" },
+          beats: [],
+          gaze: { target: "character" as const, targetId: "c-b", direction: "right" as const },
+          intensity: 4,
+          avoid: [],
+        },
+      },
+    ]);
+    expect(
+      analyzeStoryboard(project).issues.some((issue) => issue.rule === "V10"),
+    ).toBe(false);
+  });
+});

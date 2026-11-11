@@ -239,6 +239,89 @@ export const ShotPurposeSchema = z.enum([
 ]);
 export type ShotPurpose = z.infer<typeof ShotPurposeSchema>;
 
+/**
+ * 视线目标（B17 / PERFORMANCE.md 十二）。
+ *
+ * 「他看哪」不是形容词，是一个可以检查的引用：看人 / 看道具时必须带上 id，
+ * 看镜头或画外时不该带——两头都校验，避免 id 对不上却一路带进提示词。
+ */
+export const GazeTargetSchema = z
+  .object({
+    target: z.enum(["character", "prop", "camera", "off-screen"]),
+    targetId: Id.optional(),
+    direction: z.enum(["left", "right", "up", "down", "center"]),
+  })
+  .superRefine((value, ctx) => {
+    if ((value.target === "character" || value.target === "prop") && !value.targetId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "看人 / 看道具时必须指定是谁 / 哪件道具",
+      });
+    }
+    if ((value.target === "camera" || value.target === "off-screen") && value.targetId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "看镜头 / 画外时不该带 id",
+      });
+    }
+  });
+export type GazeTarget = z.infer<typeof GazeTargetSchema>;
+
+/** 起 / 转 / 落三段表演节拍（B16 / ADR-0019）。 */
+export const ActionBeatSchema = z
+  .object({
+    phase: z.enum(["before", "during", "after"]),
+    /** 微表情：嘴角、眼睑、呼吸这些镜头里看得见的小动作 */
+    micro: z.string().default(""),
+    /** 姿态 / 手：身体怎么摆、手在干什么 */
+    body: z.string().default(""),
+    action: z.string().optional(),
+    startMs: z.number().int().nonnegative(),
+    endMs: z.number().int().nonnegative(),
+  })
+  .refine((beat) => beat.endMs >= beat.startMs, {
+    message: "表演节拍的结束时间不能早于开始时间",
+  });
+export type ActionBeat = z.infer<typeof ActionBeatSchema>;
+
+/**
+ * 表演设计（B16 / ADR-0019）：一镜一个 objective，一个情绪转折，起转落三段。
+ *
+ * 可选字段：存量项目没有表演设计，生成照旧；分镜检查会把缺失列成待补，
+ * 新写的镜头在检查面板里补一次即可（ADR-0103）。
+ */
+export const PerformanceSpecSchema = z.object({
+  /** 这一镜他要什么：只能一个 */
+  objective: z.string().default(""),
+  emotion: z
+    .object({
+      surface: z.string().default(""),
+      subtext: z.string().default(""),
+    })
+    .default({}),
+  beats: z.array(ActionBeatSchema).max(3).default([]),
+  /** 必填：缺失时这一镜的提示词不知道该让角色看哪 */
+  gaze: GazeTargetSchema,
+  intensity: z.number().int().min(1).max(5).default(3),
+  /** 明确不做什么：防过火、防手部畸变 */
+  avoid: z.array(z.string()).default([]),
+});
+export type PerformanceSpec = z.infer<typeof PerformanceSpecSchema>;
+
+/** 镜头内的一条站位：左右 × 前后，道具也可以有（B17）。 */
+export const StagingMarkSchema = z
+  .object({
+    characterId: Id.optional(),
+    propId: Id.optional(),
+    side: z.enum(["left", "center", "right"]).default("center"),
+    depth: z.enum(["foreground", "midground", "background"]).default("midground"),
+    note: z.string().default(""),
+  })
+  .refine((mark) => Boolean(mark.characterId) !== Boolean(mark.propId), {
+    message: "一条调度只挂一个角色或一件道具",
+  });
+export type StagingMark = z.infer<typeof StagingMarkSchema>;
+
 export const ShotSchema = z.object({
   id: Id,
   sceneId: Id,
@@ -256,6 +339,13 @@ export const ShotSchema = z.object({
    */
   beat: BeatKindSchema.optional(),
   purpose: ShotPurposeSchema.optional(),
+  /**
+   * 表演设计（B16 / B17，ADR-0103）。可选：存量项目没有，生成照旧，
+   * 分镜检查会把缺失列出来；补过之后才进提示词。
+   */
+  performance: PerformanceSpecSchema.optional(),
+  /** 镜头内调度（B17）：谁在左 / 右、前 / 后；道具也可以标 */
+  staging: z.array(StagingMarkSchema).default([]),
   characterIds: z.array(Id).default([]),
   /** 关键道具：有叙事作用、需要跨镜头保持一致的东西（ADR-0030） */
   propIds: z.array(Id).default([]),
