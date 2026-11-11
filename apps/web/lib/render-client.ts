@@ -12,6 +12,7 @@ import {
   isAudioMime,
   isImageMime,
   isVideoMime,
+  noSubtitleFileName,
   parseDataUri,
   renderFileName,
   type RenderAudio,
@@ -158,11 +159,18 @@ function badgeOverlay(totalMs: number, width: number, height: number): RenderOve
   return { image: el.toDataURL("image/png"), startMs: 0, endMs: totalMs };
 }
 
+/** 导出选项：目前只有「要不要字幕」。角标永远带（H5 的显式标识不能关）。 */
+export type RenderOptions = {
+  /** 默认带字幕；关掉只去掉字幕叠加层，AI 角标仍在 */
+  subtitles?: boolean;
+};
+
 export function buildRenderManifest(
   view: EditView,
   styleId: SubtitleStyleId,
   compliance: RenderCompliance,
   quality: RenderQuality = "final",
+  options: RenderOptions = {},
 ): RenderBuild {
   const profile = RENDER_PROFILES[quality];
   const ordered = [...view.clips].sort((a, b) => a.startMs - b.startMs);
@@ -229,9 +237,12 @@ export function buildRenderManifest(
     music.push({ audio: cue.uri, ...common });
   }
 
+  // 角标永远带：AI 生成标识是合规要求，不能跟着字幕一起关
   const overlays = [
     badgeOverlay(view.totalMs, profile.width, profile.height),
-    ...subtitleOverlays(view, styleId, profile.width, profile.height),
+    ...(options.subtitles === false
+      ? []
+      : subtitleOverlays(view, styleId, profile.width, profile.height)),
   ];
   return {
     manifest: {
@@ -300,9 +311,10 @@ export async function exportMp4(
   compliance: RenderCompliance,
   quality: RenderQuality,
   onStage?: (stage: string) => void,
+  options: RenderOptions = {},
 ): Promise<RenderResult> {
-  onStage?.("正在排版字幕与占位画面…");
-  const { manifest } = buildRenderManifest(view, styleId, compliance, quality);
+  onStage?.(options.subtitles === false ? "正在排版画面与占位图（无字幕）…" : "正在排版字幕与占位画面…");
+  const { manifest } = buildRenderManifest(view, styleId, compliance, quality, options);
 
   onStage?.("正在提交渲染任务…");
   const submit = await fetch("/api/render", {
@@ -357,7 +369,10 @@ export async function exportMp4(
     file.headers.get("x-loomina-placeholders") ?? state.placeholders ?? 0,
   );
   const blob = await file.blob();
-  const fileName = state.fileName || renderFileName(view.title);
+  // 无字幕版单独起名，否则两版下到同一个文件夹里分不出来
+  const baseName = state.fileName || renderFileName(view.title);
+  const fileName =
+    options.subtitles === false ? noSubtitleFileName(baseName) : baseName;
   download(blob, fileName);
   return {
     bytes: blob.size,

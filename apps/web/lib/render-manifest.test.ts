@@ -3,6 +3,7 @@ import {
   RENDER_FPS,
   RENDER_HEIGHT,
   RENDER_WIDTH,
+  noSubtitleFileName,
   parseDataUri,
   renderFileName,
   validateRenderManifest,
@@ -249,5 +250,12 @@ describe("成片渲染清单（E6）", () => {
   it("文件名去掉路径分隔符", () => {
     expect(renderFileName("夜班 / 第一集")).toBe("夜班-第一集-成片.mp4");
     expect(renderFileName("   ")).toBe("成片-成片.mp4");
+  });
+
+  it("无字幕版另起名，不覆盖带字幕那版", () => {
+    expect(noSubtitleFileName("夜班-成片.mp4")).toBe("夜班-成片-无字幕.mp4");
+    expect(noSubtitleFileName("夜班-成片.MP4")).toBe("夜班-成片-无字幕.mp4");
+    // 没有 .mp4 结尾时也要能拼出可用名字，不吞掉原名的尾巴
+    expect(noSubtitleFileName("夜班-成片")).toBe("夜班-成片-无字幕.mp4");
   });
 });

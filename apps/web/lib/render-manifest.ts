@@ -494,3 +494,11 @@ export function renderFileName(title: string): string {
   const safe = title.replace(/[\\/:*?"<>|\s]+/g, "-").replace(/^-+|-+$/g, "");
   return `${safe || "成片"}-成片.mp4`;
 }
+
+/**
+ * 无字幕版的文件名（E6）：在两版之间一眼能分出来，不覆盖带字幕那版。
+ * 只认 `.mp4` 结尾，别把「-成片」误当成扩展名。
+ */
+export function noSubtitleFileName(fileName: string): string {
+  return fileName.replace(/\.mp4$/i, "") + "-无字幕.mp4";
+}

@@ -50,6 +50,7 @@ function Current({
   onMoveCharacter,
   onMoveProp,
   onSetBudget,
+  onRemoveTake,
 }: {
   shot: StageShot;
   subtitle: string;
@@ -81,6 +82,8 @@ function Current({
   onMoveProp: (propId: string, delta: -1 | 1) => void;
   /** 单镜金额上限（H10）；空值表示取消 */
   onSetBudget: (cny: number | undefined) => void;
+  /** 删一拍 take（B5） */
+  onRemoveTake: (takeId: string) => void;
 }) {
   // 出场的人按点名顺序排在前面：顺序就是提示词里的顺序（ADR-0077）
   const ordered = [
@@ -100,6 +103,8 @@ function Current({
   const [shown, setShown] = useState<Frame | "video">("first");
   // 多 Take 时点某一拍就切到那一拍；没点就跟随最近一拍
   const [shownTakeId, setShownTakeId] = useState<string | undefined>();
+  // 删一拍要两步：这一版花了钱，点一下就走太容易误触（B5）
+  const [deletingTake, setDeletingTake] = useState<string | null>(null);
   const [draftUri, setDraftUri] = useState("");
   const [budgetDraft, setBudgetDraft] = useState(
     shot.budgetCny === undefined ? "" : String(shot.budgetCny),
@@ -221,30 +226,32 @@ function Current({
                 key={take.id}
                 type="button"
                 aria-pressed={active}
-                disabled={!take.uri}
                 onClick={() => {
                   setShownTakeId(take.id);
                   setShown("video");
                 }}
                 title={
                   take.uri
-                    ? `看第 ${take.no} 拍 · ${TAKE_STATUS_CN[take.status] ?? take.status}${
+                    ? `看第 ${take.no} 拍 · ${TAKE_STATUS_CN[take.status] ?? take.status} · ¥${take.costCny.toFixed(2)}${
                         take.stalePrompt ? " · 提示词里没有当前台词" : ""
                       }`
-                    : `第 ${take.no} 拍还没有片子`
+                    : `第 ${take.no} 拍还没有片子 · ${TAKE_STATUS_CN[take.status] ?? take.status} · ¥${take.costCny.toFixed(2)}（可以选它再删掉）`
                 }
                 className={cn(
                   "tnum flex items-baseline gap-1 rounded-[1px] border px-1.5 py-[1px] text-[9.5px] transition-colors duration-[var(--dur)]",
                   active
                     ? "border-line-2 bg-surface text-text"
                     : "border-line text-muted-2 hover:border-line-2 hover:text-text",
-                  "disabled:pointer-events-none disabled:opacity-35",
+                  !take.uri && "opacity-70",
                 )}
               >
                 <span>{take.no}</span>
                 <span className="text-[8.5px] text-muted-2">
                   {TAKE_STATUS_CN[take.status] ?? take.status}
                 </span>
+                {take.costCny > 0 && (
+                  <span className="text-[8.5px] text-muted-2">¥{take.costCny.toFixed(2)}</span>
+                )}
                 {take.stalePrompt && (
                   <span className="text-[8.5px] text-pick" title="出片时的提示词里没有当前台词">
                     旧词
@@ -253,6 +260,58 @@ function Current({
               </button>
             );
           })}
+        </div>
+      )}
+
+      {/* 逐拍花费对比（B5）：一拍一条，贵的那条一眼能看见；删一拍只删这一版，资产不动 */}
+      {shot.takes.length > 1 && (
+        <div className="flex max-w-[360px] flex-wrap items-baseline justify-center gap-x-2 gap-y-1 text-[9px] text-muted-2">
+          <span>
+            这一镜共 {shot.takes.length} 拍 · 合计 ¥
+            {shot.takes.reduce((sum, take) => sum + take.costCny, 0).toFixed(2)}
+          </span>
+          <span>最贵 ¥{Math.max(...shot.takes.map((take) => take.costCny)).toFixed(2)}</span>
+        </div>
+      )}
+
+      {displayTake && videoShown && !readOnly && (
+        <div className="flex items-center gap-1.5 text-[9px]">
+          {deletingTake === displayTake.id ? (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  onRemoveTake(displayTake.id);
+                  setDeletingTake(null);
+                  setShownTakeId(undefined);
+                }}
+                className="rounded-token border border-pick/70 px-1.5 py-px text-pick transition-colors duration-[var(--dur)] hover:border-pick"
+              >
+                确认删这一拍
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeletingTake(null)}
+                className="rounded-token border border-line px-1.5 py-px text-muted-2 transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+              >
+                取消
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              disabled={shot.locked}
+              onClick={() => setDeletingTake(displayTake.id)}
+              title={
+                shot.locked
+                  ? "这一镜已锁定，先解锁才能删这一拍"
+                  : "只删这一拍 take（资产不动，历史里能回滚）"
+              }
+              className="rounded-token border border-line px-1.5 py-px text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              删这一拍
+            </button>
+          )}
         </div>
       )}
 
@@ -699,6 +758,8 @@ export type StageProps = {
   onMoveCharacter: (characterId: string, delta: -1 | 1) => void;
   onMoveProp: (propId: string, delta: -1 | 1) => void;
   onSetBudget: (cny: number | undefined) => void;
+  /** 删一拍 take（B5）：镜头锁定或只读时不给点 */
+  onRemoveTake: (takeId: string) => void;
 };
 
 export function Stage({
@@ -718,6 +779,7 @@ export function Stage({
   onMoveCharacter,
   onMoveProp,
   onSetBudget,
+  onRemoveTake,
 }: StageProps) {
   const current = view.shots[view.current]!;
   const prev = view.shots[view.current - 1];
@@ -757,6 +819,7 @@ export function Stage({
           onMoveCharacter={onMoveCharacter}
           onMoveProp={onMoveProp}
           onSetBudget={onSetBudget}
+          onRemoveTake={onRemoveTake}
         />
         {next && <Neighbour shot={next} />}
       </div>

@@ -74,6 +74,38 @@ describe("审片台 store", () => {
     expect(state().events).toHaveLength(1);
   });
 
+  it("删一拍写一条 take.removed，只少这一条", () => {
+    state().select("s-03");
+    const before = state().events.length;
+    expect(state().removeTake("t-03")).toBe(true);
+
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "take.removed", takeId: "t-03" });
+    expect(state().project.takes.some((take) => take.id === "t-03")).toBe(false);
+    // 同镜的另一拍不受影响
+    expect(state().project.takes.some((take) => take.id === "t-04")).toBe(true);
+    expect(rebuild(state().events).takes.some((take) => take.id === "t-03")).toBe(false);
+  });
+
+  it("删一拍连带摘掉它在时间线上的片段", () => {
+    const takeId = state().project.timeline.items[0]!.takeId;
+    const itemId = state().project.timeline.items[0]!.id;
+    expect(state().removeTake(takeId)).toBe(true);
+    expect(state().project.timeline.items.some((item) => item.id === itemId)).toBe(false);
+  });
+
+  it("锁定的镜头不删这一拍，也不发事件", () => {
+    state().select("s-08");
+    const before = state().events.length;
+    expect(state().removeTake("t-08")).toBe(false);
+    expect(state().events).toHaveLength(before);
+    expect(state().project.takes.some((take) => take.id === "t-08")).toBe(true);
+  });
+
+  it("删不存在的 take 返回 false", () => {
+    expect(state().removeTake("t-nope")).toBe(false);
+  });
+
   it("锁定定妆写一条闸门事件，锁住四格与参考图", () => {
     state().lockCast("character", "c-lin");
 

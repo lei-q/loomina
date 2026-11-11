@@ -1976,6 +1976,62 @@ describe("全局回滚（F2 / ADR-0109）", () => {
   });
 });
 
+describe("删一拍 take（B5）", () => {
+  it("摘掉 take、镜头上的引用与时间线片段，资产留着", () => {
+    const project = load();
+    const take = makeTake();
+    const before = project.assets.length;
+    const withTake = rebuild([
+      created(project),
+      { type: "take.added", at: AT, take },
+    ]);
+    // 先给它排进时间线，验证片段一起被摘掉
+    const timed: ProjectEvent = {
+      type: "timeline.updated",
+      at: AT,
+      items: [{ id: "ti-1", shotId: take.shotId, takeId: take.id, startMs: 0, durationMs: 1000 }],
+    };
+    const after = rebuild([
+      created(project),
+      { type: "take.added", at: AT, take },
+      timed,
+      { type: "take.removed", at: AT, takeId: take.id },
+    ]);
+
+    expect(withTake.shots[0]!.takeIds).toContain(take.id);
+    // 示例项目自带的 take 不受影响，只少掉刚删的那一拍
+    expect(after.takes.map((item) => item.id)).not.toContain(take.id);
+    expect(after.takes).toHaveLength(project.takes.length);
+    expect(after.shots[0]!.takeIds).not.toContain(take.id);
+    expect(after.timeline.items).toHaveLength(0);
+    // 资产是另一件事：删 take 不回收素材（F4）
+    expect(after.assets).toHaveLength(before);
+  });
+
+  it("指向不存在的 take 直接报错", () => {
+    expect(() =>
+      applyEvent(load(), { type: "take.removed", at: AT, takeId: "take-nope" }),
+    ).toThrow(/不存在的 take/);
+  });
+
+  it("只删指定的一拍，同镜其他 take 不动", () => {
+    const project = load();
+    const a = makeTake();
+    const b = { ...makeTake(), id: "take-4" };
+    const after = rebuild([
+      created(project),
+      { type: "take.added", at: AT, take: a },
+      { type: "take.added", at: AT, take: b },
+      { type: "take.removed", at: AT, takeId: a.id },
+    ]);
+    const ids = after.takes.map((item) => item.id);
+    expect(ids).not.toContain(a.id);
+    expect(ids).toContain(b.id);
+    expect(after.shots[0]!.takeIds).not.toContain(a.id);
+    expect(after.shots[0]!.takeIds).toContain(b.id);
+  });
+});
+
 describe("项目版本随事件递增（F1 / ADR-0113）", () => {
   it("created 带来自己的起始版本，不再加一", () => {
     const project = load();

@@ -165,6 +165,10 @@ export function describeEvent(before: Project, event: ProjectEvent): string {
       const where = take ? shotName(before, take.shotId) : "某一镜";
       return `改 ${where} 的 take：${fieldsCn(TAKE_FIELD_CN, event.patch)}`;
     }
+    case "take.removed": {
+      const take = before.takes.find((item) => item.id === event.takeId);
+      return `删 ${take ? shotName(before, take.shotId) : "某一镜"} 的一拍 take`;
+    }
     case "approval.updated": {
       const target =
         event.approval.targetType === "character"

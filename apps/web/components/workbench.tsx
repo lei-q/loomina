@@ -47,6 +47,7 @@ export function Workbench() {
   const generateVideo = useWorkbench((state) => state.generateVideo);
   const mode = useWorkbench((state) => state.mode);
   const attachVideo = useWorkbench((state) => state.attachVideo);
+  const removeTake = useWorkbench((state) => state.removeTake);
 
   useEffect(() => {
     void hydrate();
@@ -199,6 +200,7 @@ export function Workbench() {
             }
             onMoveProp={(propId, delta) => moveShotProp(view.shots[view.current]!.id, propId, delta)}
             onSetBudget={(cny) => setShotBudget(view.shots[view.current]!.id, cny)}
+            onRemoveTake={removeTake}
           />
           <ReelBar
             view={view}

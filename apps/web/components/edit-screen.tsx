@@ -212,6 +212,8 @@ export function EditScreen() {
   const [rendering, setRendering] = useState(false);
   const [renderStage, setRenderStage] = useState("");
   const [quality, setQuality] = useState<RenderQuality>("draft");
+  /** 要不要把字幕烧进画面。默认带；关掉导出一版无字幕的，给要自己加字幕的平台 */
+  const [burnSubtitles, setBurnSubtitles] = useState(true);
   /** 最近一次成功导出的成片：发布包用它填视频位，不重置、不伪造 */
   const [lastRender, setLastRender] = useState<{
     fileName: string;
@@ -444,6 +446,7 @@ export function EditScreen() {
         renderComplianceOf(report, acknowledged),
         quality,
         setRenderStage,
+        { subtitles: burnSubtitles },
       );
       const mb = formatSize(result.bytes);
       const notes: string[] = [];
@@ -458,9 +461,9 @@ export function EditScreen() {
         renderedAt: new Date().toISOString(),
       });
       setNotice(
-        `${profile.label}成片已导出：${mb} MB · ${profile.width}×${profile.height} / ${profile.fps}fps · 带字幕与「AI 生成」角标${
-          notes.length > 0 ? `。${notes.join("；")}` : ""
-        }。`,
+        `${profile.label}成片已导出：${mb} MB · ${profile.width}×${profile.height} / ${profile.fps}fps · ${
+          burnSubtitles ? "带字幕" : "无字幕"
+        }与「AI 生成」角标${notes.length > 0 ? `。${notes.join("；")}` : ""}。`,
       );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "渲染失败");
@@ -1382,6 +1385,22 @@ export function EditScreen() {
                         ? "定稿已解锁：先在草稿上看节奏，确认成片后再导定稿。"
                         : "定稿要先在页面底部确认这一版成片；没确认时只能导草稿。"}
                     </p>
+
+                    <label className="mt-2 flex items-start gap-2 text-[10px] leading-[1.7] text-muted">
+                      <input
+                        id="burn-subtitles"
+                        type="checkbox"
+                        checked={burnSubtitles}
+                        onChange={(event) => setBurnSubtitles(event.target.checked)}
+                        className="mt-[3px] accent-[var(--pick)]"
+                      />
+                      <span>
+                        把字幕烧进画面
+                        <span className="ml-1 text-[9.5px] text-muted-2">
+                          关掉导出一版无字幕的（文件名带「-无字幕」），适合平台自己加字幕或要二次剪辑；「AI 生成」角标始终保留。
+                        </span>
+                      </span>
+                    </label>
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-2">
@@ -1440,7 +1459,7 @@ export function EditScreen() {
                   </p>
 
                   <p className="mt-3 text-[9.5px] leading-[1.7] text-muted-2">
-                    成片 MP4 由本机 ffmpeg 渲染：草稿 540×960 / 24fps 出处快、定稿 1080×1920 / 30fps 画质高，都带字幕与「AI 生成」角标。
+                    成片 MP4 由本机 ffmpeg 渲染：草稿 540×960 / 24fps 出处快、定稿 1080×1920 / 30fps 画质高；字幕可选烧进画面，「AI 生成」角标始终保留。
                     提交后进入渲染队列，同一时间只跑一条，排队位置与编码进度显示在按钮下方；
                     远端素材只从白名单域名下载，取不到时用首帧或占位图顶上并计数。
                   </p>

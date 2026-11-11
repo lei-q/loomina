@@ -258,6 +258,11 @@ type WorkbenchState = {
   /** 一步留用并锁定：写一条 take.updated + 一条 shot.updated（ADR-0041 附记） */
   approveAndLock: (shotId: string) => void;
   decide: (status: Decision) => void;
+  /**
+   * 删一拍 take（B5）：写一条 `take.removed`，连带摘掉它在时间线上的片段。
+   * 资产不动——资产可能还被别处引用；回滚能把这一拍找回来。
+   */
+  removeTake: (takeId: string) => boolean;
   /** 定妆闸门：锁定 / 解锁一个角色、场景或道具 */
   lockCast: (targetType: ApprovalTargetType, targetId: string) => void;
   unlockCast: (targetType: ApprovalTargetType, targetId: string) => void;
@@ -1122,6 +1127,26 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       events: [...events, event],
       currentShotId: nextOpenShotId(next, currentShotId),
     });
+  },
+
+  removeTake: (takeId) => {
+    if (get().readOnly) return false;
+    const { project, events, currentShotId } = get();
+    const take = project.takes.find((item) => item.id === takeId);
+    if (!take) return false;
+    const shot = project.shots.find((item) => item.id === take.shotId);
+    // 锁定的镜头不动：与留用 / 淘汰一致，先解锁再说
+    if (!shot || shot.locked) return false;
+
+    const event: ProjectEvent = { type: "take.removed", at: stamp(), takeId };
+    const next = applyEvent(project, event);
+    set({
+      project: next,
+      events: [...events, event],
+      castError: undefined,
+      currentShotId,
+    });
+    return true;
   },
 
   setShotLock: (shotId, locked) => {

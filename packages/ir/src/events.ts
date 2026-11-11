@@ -220,6 +220,17 @@ export type ProjectEvent =
     }
   | { type: "take.added"; at: string; take: Take }
   | {
+      /**
+       * 删一拍（B5）：这一版不要了。
+       *
+       * 只摘 take 与它在时间线上的片段，不删资产——资产可能还被别处引用，
+       * 回收是另一件事（F4）。删掉的 take 仍留在日志里，历史回滚能找回来。
+       */
+      type: "take.removed";
+      at: string;
+      takeId: Id;
+    }
+  | {
       /** 闸门：定妆锁定 / 解锁。同一目标只保留一条，按 (targetType, targetId) 覆盖。 */
       type: "approval.updated";
       at: string;
@@ -973,6 +984,28 @@ function applyEventCore(
         ...current,
         shots,
         takes: [...current.takes, event.take],
+      };
+    }
+
+    case "take.removed": {
+      if (!current) throw new Error("take.removed 之前必须有 project.created");
+      const take = current.takes.find((item) => item.id === event.takeId);
+      if (!take) {
+        throw new Error(`take.removed 指向不存在的 take: ${event.takeId}`);
+      }
+      return {
+        ...current,
+        // 镜头上的 takeIds 与时间线项都跟着摘掉，否则回放会出现悬空引用
+        shots: current.shots.map((shot) =>
+          shot.id === take.shotId
+            ? { ...shot, takeIds: shot.takeIds.filter((id) => id !== event.takeId) }
+            : shot,
+        ),
+        takes: current.takes.filter((item) => item.id !== event.takeId),
+        timeline: {
+          ...current.timeline,
+          items: current.timeline.items.filter((item) => item.takeId !== event.takeId),
+        },
       };
     }
 
