@@ -450,6 +450,89 @@ describe("V3 轴线近似（B17 调度 / ADR-0108）", () => {
   });
 });
 
+describe("V3 精确越轴（B13.1 / ADR-0126）：有坐标时不再说「像」", () => {
+  function geometric(
+    placements: ([number, number, number] | null)[],
+  ): Project {
+    const project = makeProject(
+      placements.map(() => ({
+        characterIds: ["c-a", "c-b"],
+        blocking: {
+          actors: [
+            { characterId: "c-a", position: [-1, 0, 0] as [number, number, number], facingRad: 0 },
+            { characterId: "c-b", position: [1, 0, 0] as [number, number, number], facingRad: Math.PI },
+          ],
+          props: [],
+        },
+      })),
+    );
+    project.locations[0]!.space = {
+      dimensions: [5, 4, 2.8],
+      anchors: [],
+    };
+    placements.forEach((placement, index) => {
+      if (!placement) return;
+      const shot = project.shots[index]!;
+      shot.camera = {
+        ...shot.camera,
+        placement: { position: placement, target: [0, 1.2, 0] },
+      };
+    });
+    return project;
+  }
+
+  it("机位分居轴线两侧：报「越轴」，不说「像」", () => {
+    const project = geometric([
+      [0, 1.5, 1.2],
+      [0, 1.5, -1.2],
+    ]);
+    const v3 = analyzeStoryboard(project).issues.filter((issue) => issue.rule === "V3");
+    expect(v3).toHaveLength(1);
+    expect(v3[0]!.message).toContain("越轴");
+    expect(v3[0]!.message).not.toContain("像越过了");
+    expect(v3[0]!.shotIds).toEqual(["s-1", "s-2"]);
+  });
+
+  it("机位同侧不报；有坐标时不再用调度近似重复报一次", () => {
+    const sameSide = geometric([
+      [0, 1.5, 1.2],
+      [0.6, 1.5, 1.1],
+    ]);
+    // 同时给了相反的调度：精确版判同侧，调度近似不该再插一脚
+    sameSide.shots[0]!.staging = [
+      { characterId: "c-a", side: "left", depth: "midground", note: "" },
+      { characterId: "c-b", side: "right", depth: "midground", note: "" },
+    ];
+    sameSide.shots[1]!.staging = [
+      { characterId: "c-a", side: "right", depth: "midground", note: "" },
+      { characterId: "c-b", side: "left", depth: "midground", note: "" },
+    ];
+    expect(
+      analyzeStoryboard(sameSide).issues.some((issue) => issue.rule === "V3"),
+    ).toBe(false);
+  });
+
+  it("没有坐标的场次仍走调度近似，文案是「像越轴」", () => {
+    const project = makeProject([
+      {
+        staging: [
+          { characterId: "c-a", side: "left", depth: "midground", note: "" },
+          { characterId: "c-b", side: "right", depth: "midground", note: "" },
+        ],
+      },
+      {
+        staging: [
+          { characterId: "c-a", side: "right", depth: "midground", note: "" },
+          { characterId: "c-b", side: "left", depth: "midground", note: "" },
+        ],
+      },
+    ]);
+    const v3 = analyzeStoryboard(project).issues.filter((issue) => issue.rule === "V3");
+    expect(v3).toHaveLength(1);
+    expect(v3[0]!.message).toContain("像越过了");
+  });
+});
+
 describe("V7 切率（ADR-0108）", () => {
   it("该碎的拍只有一镜 4 秒以上，提示补反应镜", () => {
     const project = makeProject([

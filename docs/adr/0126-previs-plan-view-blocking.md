@@ -187,3 +187,58 @@ export interface DepthExporter {
 | 越界坐标悄悄夹取到边界 | 作者以为放对了，实际位置被改过；宁可拒绝并报错 |
 | 把俯视图叫「预演」 | 它没有相机高度与遮挡，叫预演会让作者以为看到的就是画面 |
 | 先做 depth 导出再做走位 | depth 依赖 3D 渲染器，而走位不依赖任何东西，顺序应该反过来 |
+
+## 落地（B13.1 俯视走位板，2026-11-12）
+
+### 1. 几何校验只有一个实现
+
+| 文件 | 做什么 |
+| --- | --- |
+| `packages/ir/src/geometry.ts`（新，纯函数） | `boundsOf` / `insideSpace` / `distance` / `spaceOfShot` / `blockingProblem` / `placementProblem` / `spaceProblem` |
+| `packages/ir/src/events.ts` | `location.updated` 收 `space`、`shot.updated` 收 `blocking` 与 `camera.placement`，都调上面的函数 |
+| `apps/web/lib/workbench-store.ts` | 写事件**之前**先调同一组函数，把技术错误翻成人话再提示 |
+
+`geometry.ts` 不碰 fs、不碰事件，所以 `applyEvent`、store、测试共用同一份边界判断。越界是 0.1 m 容差（`SPACE_TOLERANCE_M`），机位与目标重合的最小视线距离是 0.05 m（`MIN_SIGHT_DISTANCE_M`）。
+
+错误文案按对象分开，不共用一个「坐标不合法」：`走位里的人不在这一镜出场：…`、`走位坐标超出场地：(x, y, z)`、`机位和目标是同一个点：没有视线方向`、`锚点「id」超出场地：…`。作者看到哪句就知道改哪里。
+
+### 2. `space: null` 才是「清掉几何」
+
+`location.updated` 的 patch 类型是 `space?: LocationSpace | null`。`undefined` 走 JSON 会整个消失，重放时旧几何会留在原地——作者以为清了，其实没清。所以清空必须显式写 `null`，`applyEvent` 里用 `delete merged.space` 而不是赋 `undefined`。
+
+### 3. 模板几何与作者改动分开合并
+
+`templateSpace(template)` 把模板转成 IR 形状；`mergeTemplateSpace(previous, next)` 在换模板时按锚点 id + kind 保留作者挪过的 `position` / `facingRad`，`capacity` 取 `old.capacity || anchor.capacity`（作者填过就不被模板覆盖）。新模板没有的锚点丢掉，旧几何没有的按模板补上。换模板不该把作者摆好的沙发弹回默认值。
+
+### 4. 存量地点要有一条补几何的路
+
+B13.1 之前选过模板的地点只有 `templateId`，没有 `space`。定妆页地点行在「有模板、没坐标、非只读」时出现「补空间坐标」，点一下写 `location.updated { space: templateSpace(template) }`；store 的 `editLocation` 里对 `patch.templateId !== undefined && !location.space` 也补一次，两条路都通。
+
+### 5. 建议可以夹取，作者输入不可以
+
+`suggestBlocking()` 的结果先过 `fitInside()` 夹进房间——它是提示，夹到边界内才能用。作者手写 / 拖动产生的坐标一律走 `blockingProblem`，越界直接拒绝。这一条与 ADR 正文的「越界拒绝、不夹取」不冲突：拒绝的是事实，夹取的是建议。
+
+### 6. 拖动只决定 X / Z，Y 由调用方保留
+
+俯视图看不出高度。`BlockingBoard` 的 `toPoint(event, keepY)` 只换算 X / Z，Y 由调用方给：拖人物保留原高度（地面为 0），拖机位保留原机位高度（默认 1.5 m）。没有这一步，拖一下机位就会掉到地上，`placementProblem` 还可能因为与目标同高而改变视线方向。
+
+拖动不调 `setPointerCapture`：捕获之后 `pointermove` 只发给被拖的圆点，SVG 上的监听收不到，拖不动。
+
+### 7. V3 按「对」升级，不按「项目」升级
+
+`analyzeStoryboard` 先跑精确版，把判定过的镜对记进 `precisePairs`，近似版跳过这些对。同一个项目里，有坐标的场次说「越轴了——机位跨到了 180° 轴线另一侧（按走位坐标判定）」，没坐标的场次继续说「像越轴」。不会出现同一对报两条。
+
+### 8. 验证
+
+- 单测 **873** 全过（IR 172 + gateway 28 + pipeline 67 + web 606），新增 36 条：`geometry.test.ts` 7、`events.test.ts` 5、`blocking.test.ts` 16、`workbench-store.test.ts` 5、`storyboard.test.ts` 3。`pnpm typecheck`、`next build` 全过。
+- 浏览器（生产 3100）：定妆页「桌边」→「补空间坐标」→ 分镜页「走位」抽屉 →「用这个摆位」→ 提示「已把这一场的摆位与机位写进 2 镜」，平面图出现两个机位视锥（`2.2 / 1.5 / 0.6`、`0.9 / 1.6 / 1.7`）→ 把 SH-02 的机位拖到轴线另一侧（`-2.0 / 1.6 / 0.4`）→ 分镜检查出现 V3「第 4 → 5 镜：越轴了——机位跨到了 180° 轴线另一侧（按走位坐标判定）…」。
+- 锚点标签在 5×4 m 客厅上不重叠、不出框：`窗（左）`、`沙发（中左）`、`茶几`、`电视墙（前）`、`入户门（右后）`、`顶灯`。
+- **没验到的**：真实项目里的拖动精度（CDP 合成的 `pointermove` 只覆盖了整像素级的位移）；`camera.angle` 与几何的一致性（第一版按设计不改写 `angle`）。
+
+### 9. 已知缺口
+
+- **B13.2 立面与遮挡没做**：图上没有相机高度与前后遮挡关系，`suggestBlocking` 也不考虑家具挡住视线。所以界面固定写「这是俯视走位图，不是最终画面」。
+- **建议是启发式**：`INTIMATE` / `POWER` 两个正则扫 `story.relationships` 的文本，命中就给「同侧相邻」或「桌后 / 桌前」，不命中给「隔桌对面」。写的是通用规律，不是这一场的调度方案（R51）。
+- **模板坐标是经验值**：10 个模板的尺寸与锚点位置是估的，不是实测。作者可以在平面图上拖，但拖完的坐标同样没有真实性保证。
+- **换模板会丢掉旧模板独有的锚点**：`mergeTemplateSpace` 只保留 id + kind 都对的锚点，其余按新模板走。走位（`Shot.blocking`）不跟着动——换模板后可能有人站在新房间之外，`applyEvent` 不会因为换模板去回扫已有走位。
+- **B13.3 depth 导出仍是接口**：没有 WebGL 渲染器，没有 `DepthExporter` 实现，界面不出现入口（R48）。

@@ -1,6 +1,13 @@
 import { z } from "zod";
 import { clone } from "./clone";
-import { PerformanceSpecSchema, StagingMarkSchema } from "./schema";
+import {
+  BlockingSchema,
+  CameraSchema,
+  LocationSpaceSchema,
+  PerformanceSpecSchema,
+  StagingMarkSchema,
+} from "./schema";
+import { blockingProblem, placementProblem, spaceProblem, spaceOfShot } from "./geometry";
 import type {
   Approval,
   Asset,
@@ -9,6 +16,7 @@ import type {
   GateStage,
   Id,
   Location,
+  LocationSpace,
   MusicCue,
   Project,
   Prop,
@@ -151,7 +159,13 @@ export type ProjectEvent =
       type: "location.updated";
       at: string;
       locationId: Id;
-      patch: Partial<Pick<Location, "name" | "templateId" | "description">>;
+      /**
+       * `space: null` 表示清掉几何（换成没有坐标的旧模板时用）。
+       * 用 null 而不是 undefined：undefined 存进 JSON 就消失了，回放会留下旧几何。
+       */
+      patch: Partial<Pick<Location, "name" | "templateId" | "description">> & {
+        space?: LocationSpace | null;
+      };
     }
   | {
       /** 删地点（ADR-0061）：还有场次指向它时拒绝，不留悬挂引用 */
@@ -594,6 +608,27 @@ function applyEventCore(
         }
         patch = { ...patch, staging: parsed.data };
       }
+      // 走位与机位坐标（B13）：越界、不在场、两点重合都不进日志
+      if (event.patch.blocking !== undefined) {
+        const parsed = BlockingSchema.safeParse(event.patch.blocking);
+        if (!parsed.success) {
+          throw new Error(`走位不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`);
+        }
+        const target = current.shots.find((shot) => shot.id === event.shotId)!;
+        const problem = blockingProblem(spaceOfShot(current, target), target, parsed.data);
+        if (problem) throw new Error(`走位不合法：${problem.message}`);
+        patch = { ...patch, blocking: parsed.data };
+      }
+      if (event.patch.camera?.placement !== undefined) {
+        const parsed = CameraSchema.safeParse(event.patch.camera);
+        if (!parsed.success) {
+          throw new Error(`机位不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`);
+        }
+        const target = current.shots.find((shot) => shot.id === event.shotId)!;
+        const problem = placementProblem(spaceOfShot(current, target), parsed.data.placement!);
+        if (problem) throw new Error(`机位不合法：${problem.message}`);
+        patch = { ...patch, camera: parsed.data };
+      }
       const shots = current.shots.map((shot) =>
         shot.id === event.shotId ? { ...shot, ...patch } : shot,
       );
@@ -795,9 +830,27 @@ function applyEventCore(
       if (event.patch.name !== undefined && event.patch.name.trim().length === 0) {
         throw new Error("地点总得有个名字");
       }
-      const locations = current.locations.map((location) =>
-        location.id === event.locationId ? { ...location, ...event.patch } : location,
-      );
+      // 场地几何（B13）：尺寸必须为正，锚点必须落在场地里；null 表示清掉
+      let patch: Partial<Location> = {};
+      if (event.patch.name !== undefined) patch.name = event.patch.name;
+      if (event.patch.templateId !== undefined) patch.templateId = event.patch.templateId;
+      if (event.patch.description !== undefined) patch.description = event.patch.description;
+      if (event.patch.space !== undefined && event.patch.space !== null) {
+        const parsed = LocationSpaceSchema.safeParse(event.patch.space);
+        if (!parsed.success) {
+          throw new Error(`场地几何不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`);
+        }
+        const problem = spaceProblem(parsed.data);
+        if (problem) throw new Error(`场地几何不合法：${problem.message}`);
+        patch = { ...patch, space: parsed.data };
+      }
+      const clearSpace = event.patch.space === null;
+      const locations = current.locations.map((location) => {
+        if (location.id !== event.locationId) return location;
+        const merged: Location = { ...location, ...patch };
+        if (clearSpace) delete merged.space;
+        return merged;
+      });
       return { ...current, locations };
     }
 

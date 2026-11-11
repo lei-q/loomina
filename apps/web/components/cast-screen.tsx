@@ -6,8 +6,10 @@ import {
   describeSceneTemplate,
   SCENE_TEMPLATES,
   sceneTemplateById,
+  templateSpace,
 } from "@loomina/pipeline";
 import { fetchImagePrice } from "@/lib/image-price";
+import { BlockingBoard } from "@/components/blocking-board";
 import { Bust } from "@/components/bust";
 import { PropObject } from "@/components/prop-object";
 import { Scene } from "@/components/scene";
@@ -639,6 +641,7 @@ function LocationRow({
   onRename,
   onDescribe,
   onRemove,
+  onBuildSpace,
   otherLocations,
   history,
   onRestoreText,
@@ -656,6 +659,8 @@ function LocationRow({
   onRename: (name: string, templateId: string) => boolean;
   /** 改场景描述：成功返回 true，表单据此收起（ADR-0063） */
   onDescribe: (description: string) => boolean;
+  /** 存量地点补几何（B13.1）：按模板写一条 location.updated { space } */
+  onBuildSpace: () => void;
   /** 删掉这个地点：成功返回 true（ADR-0061 / ADR-0062） */
   onRemove: (moveToId?: string) => boolean;
   /** 还有哪些地点可以搬：这一行自己不在里面 */
@@ -672,6 +677,7 @@ function LocationRow({
   const [draftTemplate, setDraftTemplate] = useState(location.templateId ?? "doorway");
   const [describing, setDescribing] = useState(false);
   const [draftDescription, setDraftDescription] = useState("");
+  const [showSpace, setShowSpace] = useState(false);
 
   const beginDescribe = () => {
     setDraftDescription(location.description);
@@ -796,6 +802,25 @@ function LocationRow({
                   </p>
                 ) : null;
               })()}
+              {location.space ? (
+                <button
+                  type="button"
+                  onClick={() => setShowSpace((value) => !value)}
+                  aria-expanded={showSpace}
+                  className="mt-1.5 text-[9px] text-muted-2 underline decoration-line-2 underline-offset-2 transition-colors duration-[var(--dur)] hover:text-text"
+                >
+                  {showSpace ? "收起空间" : "看空间"}
+                </button>
+              ) : sceneTemplateById(location.templateId) && !readOnly ? (
+                <button
+                  type="button"
+                  onClick={onBuildSpace}
+                  title="按模板生成锚点坐标：之后才能在分镜页摆位、判越轴"
+                  className="mt-1.5 text-left text-[9px] text-muted-2 underline decoration-line-2 underline-offset-2 transition-colors duration-[var(--dur)] hover:text-text"
+                >
+                  补空间坐标
+                </button>
+              ) : null}
               {deleting ? (
                 <form
                   className="mt-2 flex flex-col gap-1.5"
@@ -994,6 +1019,31 @@ function LocationRow({
           )}
         </div>
       </div>
+      {showSpace && location.space && (
+        <div className="mt-4 flex flex-wrap items-start gap-4">
+          <BlockingBoard
+            space={location.space}
+            actors={[]}
+            className="w-[300px] shrink-0"
+            caption="场地几何 · 锚点与尺寸"
+          />
+          <div className="max-w-[38ch] text-[9px] leading-[1.7] text-muted-2">
+            <p>
+              坐标单位米，原点在房间中心地面。人物与机位的摆位在分镜页的「走位」里做——
+              那里才有镜头。
+            </p>
+            <p className="mt-1.5">
+              {location.space.anchors.length} 个锚点：
+              {location.space.anchors
+                .slice(0, 6)
+                .map((anchor) => anchor.label || anchor.id)
+                .join("、")}
+              {location.space.anchors.length > 6 ? "…" : ""}
+            </p>
+            <p className="mt-1.5">这是俯视平面图，不是最终画面：没有相机高度与遮挡。</p>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -1585,6 +1635,10 @@ export function CastScreen() {
                 onUnlock={() => unlockCast("location", location.id)}
                 onRename={(name, templateId) => editLocation(location.id, { name, templateId })}
                 onDescribe={(description) => editLocation(location.id, { description })}
+                onBuildSpace={() => {
+                  const template = sceneTemplateById(location.templateId);
+                  if (template) editLocation(location.id, { space: templateSpace(template) });
+                }}
                 onRemove={(moveToId) => removeLocation(location.id, moveToId)}
                 otherLocations={cast.locations
                   .filter((item) => item.id !== location.id)

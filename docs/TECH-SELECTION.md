@@ -90,6 +90,8 @@ loomina/
 - 风险：WebCodecs/WebGPU 兼容性与大文件处理。用 540p 代理 + 降级到 `<video>` 兜底。
 
 > **落地口径（E7 / ADR-0127，2026-11-11）**：分三级。**E7.1 时间轴预览零依赖**（`<video>` + Canvas，到镜准确、镜内近似）；**E7.2 帧级找点需要 mp4box.js（约 100 KB，MIT，依赖待确认）**，WebCodecs 是平台 API 不算依赖；**E7.3 WebGPU 合成暂不做**——当前时间线只有硬切，Canvas 2D 够用，等 E1 支持转场时再与 B13.3 的 depth 渲染一起选型。上表「WebCodecs + WebGPU」的选型意向仍然成立，只是分阶段落地。
+>
+> **落地口径（B13.1 / ADR-0126，2026-11-12）**：俯视走位板**没有引入任何 3D 依赖**——平面图是手写 SVG（`apps/web/components/blocking-board.tsx`，约 330 行），几何运算全是 `Math.hypot` / 叉积级别的纯函数（`packages/ir/src/geometry.ts`），视锥按焦段算水平视角（9:16 竖幅、短边 9.6 mm 估）。Three.js / WebGL 只在 **B13.3 depth / edge 导出**时才需要，仍待确认（R48）；那之前不引入。
 - 若后期预览性能不够，用 **Tauri** 包一层（复用同一套 Web 代码）；不选 Electron（体积/内存大）。
 
 ### 2. 单体还是微服务？

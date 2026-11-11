@@ -4003,3 +4003,167 @@ describe("本机资产库（H3 / ADR-0128）", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("走位与场地几何（B13.1 / ADR-0126）", () => {
+  beforeEach(() => {
+    useWorkbench.setState({ readOnly: false });
+    state().reset();
+  });
+
+  const SPACE = {
+    dimensions: [5, 4, 2.8] as [number, number, number],
+    anchors: [
+      { id: "door", kind: "door" as const, position: [2.5, 0, -1.6] as [number, number, number], facingRad: 0, capacity: 0 },
+    ],
+  };
+
+  it("换到带几何的模板：一条 location.updated 写进 space", () => {
+    const snapshot = state().events.length;
+    expect(state().editLocation("loc-table", { templateId: "living-room" })).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 1);
+    const event = state().events.at(-1) as { type: string; patch: { space?: unknown } };
+    expect(event.type).toBe("location.updated");
+    expect(event.patch.space).toBeTruthy();
+    const space = state().project.locations.find((item) => item.id === "loc-table")?.space;
+    expect(space?.dimensions).toEqual([5, 4, 2.8]);
+    expect(space?.anchors.some((anchor) => anchor.id === "door")).toBe(true);
+    // 回放后一致
+    expect(rebuild(state().events).locations.find((item) => item.id === "loc-table")?.space).toEqual(
+      space,
+    );
+  });
+
+  it("换回没有几何的旧模板：space 用 null 清掉，回放后真的没有", () => {
+    expect(state().editLocation("loc-table", { templateId: "living-room" })).toBe(true);
+    expect(state().project.locations.find((item) => item.id === "loc-table")?.space).toBeTruthy();
+
+    expect(state().editLocation("loc-table", { templateId: "table" })).toBe(true);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "location.updated",
+      patch: { space: null },
+    });
+    expect(state().project.locations.find((item) => item.id === "loc-table")?.space).toBeUndefined();
+    expect(
+      "space" in (rebuild(state().events).locations.find((item) => item.id === "loc-table") ?? {}),
+    ).toBe(false);
+  });
+
+  it("写走位：一条 shot.updated，回放后一致；不在场与越界都不写", () => {
+    expect(state().editLocation("loc-table", { space: SPACE })).toBe(true);
+    const snapshot = state().events.length;
+
+    // s-04 出场 c-lin + c-zhou
+    expect(
+      state().setShotBlocking("s-04", {
+        actors: [
+          { characterId: "c-lin", position: [0, 0, 0.8], facingRad: Math.PI },
+          { characterId: "c-zhou", position: [0, 0, -0.8], facingRad: 0 },
+        ],
+        props: [],
+      }),
+    ).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "shot.updated", shotId: "s-04" });
+    expect(rebuild(state().events).shots.find((shot) => shot.id === "s-04")?.blocking).toEqual({
+      actors: [
+        { characterId: "c-lin", position: [0, 0, 0.8], facingRad: Math.PI },
+        { characterId: "c-zhou", position: [0, 0, -0.8], facingRad: 0 },
+      ],
+      props: [],
+    });
+
+    // s-05 只出场 c-zhou，写 c-lin 的走位不合法
+    expect(
+      state().setShotBlocking("s-05", {
+        actors: [{ characterId: "c-lin", position: [0, 0, 0], facingRad: 0 }],
+        props: [],
+      }),
+    ).toBe(false);
+    expect(state().castError).toContain("不在这一镜出场");
+
+    // 越界
+    expect(
+      state().setShotBlocking("s-04", {
+        actors: [{ characterId: "c-lin", position: [9, 0, 0], facingRad: 0 }],
+        props: [],
+      }),
+    ).toBe(false);
+    expect(state().castError).toContain("超出场地");
+    expect(state().events).toHaveLength(snapshot + 1);
+  });
+
+  it("机位坐标随走位一起写；锁定与只读都不写", () => {
+    expect(state().editLocation("loc-table", { space: SPACE })).toBe(true);
+    const snapshot = state().events.length;
+    const placement = {
+      position: [0, 1.5, 1.5] as [number, number, number],
+      target: [0, 1.2, 0] as [number, number, number],
+    };
+    expect(
+      state().setShotBlocking(
+        "s-04",
+        {
+          actors: [{ characterId: "c-lin", position: [0, 0, 0.8], facingRad: 0 }],
+          props: [],
+        },
+        placement,
+      ),
+    ).toBe(true);
+    const camera = state().project.shots.find((shot) => shot.id === "s-04")?.camera;
+    expect(camera?.placement).toEqual(placement);
+    // 角度不因为坐标自动改写
+    expect(camera?.angle).toBe("eye");
+
+    // s-08 已锁定
+    expect(
+      state().setShotBlocking("s-08", {
+        actors: [{ characterId: "c-lin", position: [0, 0, 0], facingRad: 0 }],
+        props: [],
+      }),
+    ).toBe(false);
+    expect(state().castError).toContain("锁定");
+
+    useWorkbench.setState({ readOnly: true });
+    const after = state().events.length;
+    expect(
+      state().setShotBlocking("s-04", {
+        actors: [{ characterId: "c-lin", position: [0, 0, 1], facingRad: 0 }],
+        props: [],
+      }),
+    ).toBe(false);
+    expect(state().events).toHaveLength(after);
+  });
+});
+
+describe("存量地点补几何（B13.1 / ADR-0126）", () => {
+  beforeEach(() => {
+    useWorkbench.setState({ readOnly: false });
+    state().reset();
+  });
+
+  it("模板早就选好但没有 space：存名字时顺手补上", () => {
+    // 示例项目里 loc-table 的模板是旧 id "table"，先换成带几何的模板但不给 space
+    expect(state().editLocation("loc-table", { templateId: "living-room" })).toBe(true);
+    expect(state().project.locations.find((item) => item.id === "loc-table")?.space).toBeTruthy();
+
+    // 模拟存量：把 space 去掉，模板保持 living-room
+    const cleared = state().events.length;
+    expect(state().editLocation("loc-table", { space: undefined })).toBe(false);
+    // 用事件直接把几何清掉，模拟 B13.1 之前存下来的项目
+    useWorkbench.setState((current) => ({
+      project: {
+        ...current.project,
+        locations: current.project.locations.map((item) =>
+          item.id === "loc-table" ? { ...item, space: undefined } : item,
+        ),
+      },
+    }));
+    expect(state().project.locations.find((item) => item.id === "loc-table")?.space).toBeUndefined();
+
+    // 再存一次名字（模板没变）：几何按模板补上
+    expect(state().editLocation("loc-table", { name: "餐桌边", templateId: "living-room" })).toBe(true);
+    const location = state().project.locations.find((item) => item.id === "loc-table");
+    expect(location?.space?.dimensions).toEqual([5, 4, 2.8]);
+    expect(state().events.length).toBeGreaterThan(cleared);
+  });
+});

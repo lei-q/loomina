@@ -21,6 +21,7 @@ export * from "./dialogue";
 export * from "./story";
 export * from "./story-kit";
 export * from "./scene-templates";
+export * from "./blocking";
 
 export interface PriceTable {
   imageCny: number;

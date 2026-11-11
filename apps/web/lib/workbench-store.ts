@@ -3,7 +3,10 @@
 import {
   applyEvent,
   castReadiness,
+  BlockingSchema,
+  blockingProblem,
   PerformanceSpecSchema,
+  placementProblem,
   rebuild,
   REFERENCE_IMAGES_MAX,
   SHEET_ANGLES,
@@ -17,6 +20,8 @@ import {
   type GateStage,
   type Location,
   type MusicCue,
+  type Blocking,
+  type CameraPlacement,
   type PerformanceSpec,
   type Project,
   type Prop,
@@ -34,7 +39,10 @@ import {
 import {
   parseInstruction,
   projectFromStoryDraft,
+  mergeTemplateSpace,
+  sceneTemplateById,
   shotMaterial,
+  templateSpace,
   type Frame,
   type StoryDraft,
 } from "@loomina/pipeline";
@@ -251,6 +259,11 @@ type WorkbenchState = {
   setShotPerformance: (shotId: string, performance: PerformanceSpec | undefined) => boolean;
   /** 写这一镜的镜头内调度（B17）：一条 `shot.updated { staging }` */
   setShotStaging: (shotId: string, staging: StagingMark[]) => boolean;
+  setShotBlocking: (
+    shotId: string,
+    blocking: Blocking,
+    placement?: CameraPlacement,
+  ) => boolean;
   /** 这一镜里谁出场：一条 `shot.updated { characterIds }`（ADR-0065） */
   toggleShotCharacter: (shotId: string, characterId: string) => boolean;
   /** 道具出场：点一下把这件道具加进或移出这一镜（ADR-0066） */
@@ -409,10 +422,10 @@ type WorkbenchState = {
     templateId?: string,
     description?: string,
   ) => string | undefined;
-  /** 改地点名字 / 模板 / 描述：一条 `location.updated`（ADR-0059 / ADR-0063） */
+  /** 改地点名字 / 模板 / 描述 / 几何：一条 `location.updated`（ADR-0059 / ADR-0063 / ADR-0126） */
   editLocation: (
     locationId: string,
-    patch: Partial<Pick<Location, "name" | "templateId" | "description">>,
+    patch: Partial<Pick<Location, "name" | "templateId" | "description" | "space">>,
   ) => boolean;
   /** 加一个人物：一条 `character.added`（ADR-0071） */
   addCharacter: (name: string, appearance?: string) => string | undefined;
@@ -1374,6 +1387,65 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       at: stamp(),
       shotId: shot.id,
       patch: { staging: parsed.data },
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  setShotBlocking: (shotId, blocking, placement) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) {
+      set({ castError: "找不到这一镜。" });
+      return false;
+    }
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定，先解锁再改走位。" });
+      return false;
+    }
+
+    const parsed = BlockingSchema.safeParse(blocking);
+    if (!parsed.success) {
+      set({ castError: `走位不合法：${parsed.error.issues[0]?.message ?? "未知原因"}` });
+      return false;
+    }
+    // 越界、不在场由 applyEvent 兜底；这里先给一句人话，免得只看到原始报错
+    const space = project.locations.find(
+      (location) =>
+        location.id === project.scenes.find((scene) => scene.id === shot.sceneId)?.locationId,
+    )?.space;
+    const problem = blockingProblem(space, shot, parsed.data);
+    if (problem) {
+      set({ castError: problem.message });
+      return false;
+    }
+
+    const patch: Partial<Shot> = { blocking: parsed.data };
+    if (placement) {
+      const placementIssue = placementProblem(space, placement);
+      if (placementIssue) {
+        set({ castError: placementIssue.message });
+        return false;
+      }
+      patch.camera = { ...shot.camera, placement };
+    }
+    if (
+      JSON.stringify(parsed.data) === JSON.stringify(shot.blocking) &&
+      (!placement || JSON.stringify(placement) === JSON.stringify(shot.camera.placement))
+    ) {
+      return false;
+    }
+
+    const event: ProjectEvent = {
+      type: "shot.updated",
+      at: stamp(),
+      shotId: shot.id,
+      patch,
     };
     set({
       project: applyEvent(project, event),
@@ -3094,7 +3166,10 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       set({ castError: "找不到这个地点。" });
       return false;
     }
-    const next: Partial<Pick<Location, "name" | "templateId" | "description">> = {};
+    // 用 null 表示「清掉几何」：undefined 存进 JSON 就消失，回放会留下旧几何
+    const next: Partial<Pick<Location, "name" | "templateId" | "description">> & {
+      space?: Location["space"] | null;
+    } = {};
     if (patch.name !== undefined) {
       const trimmed = patch.name.trim();
       if (!trimmed) {
@@ -3111,6 +3186,18 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     }
     if (patch.templateId !== undefined && patch.templateId !== location.templateId) {
       next.templateId = patch.templateId;
+      // 换模板顺带换几何（B13.1）：新模板有坐标就写进 space，没有就清掉旧的，
+      // 免得旧房间的锚点留在新模板上。作者改过的位置按锚点 id 保留（ADR-0126）。
+      const template = sceneTemplateById(patch.templateId);
+      next.space = template ? mergeTemplateSpace(location.space, templateSpace(template)) : null;
+    } else if (patch.templateId !== undefined && !location.space) {
+      // 存量项目：模板早就选好了，但那时还没有坐标（B13.1 之前）。
+      // 作者再存一次名字 / 描述时顺手把几何补上，不用专门换一次模板。
+      const template = sceneTemplateById(patch.templateId);
+      if (template) next.space = templateSpace(template);
+    }
+    if (patch.space !== undefined) {
+      next.space = patch.space;
     }
     if (patch.description !== undefined) {
       const trimmedDescription = patch.description.trim();

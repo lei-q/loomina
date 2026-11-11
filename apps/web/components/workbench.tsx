@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AnimaticOverlay } from "@/components/animatic";
+import { BlockingPanel } from "@/components/blocking-panel";
 import { ConsistencyPanel } from "@/components/consistency-panel";
 import { PerformancePanel } from "@/components/performance-panel";
 import { ReelBar } from "@/components/reel-bar";
@@ -33,6 +34,7 @@ export function Workbench() {
   const setShotPlan = useWorkbench((state) => state.setShotPlan);
   const setShotPerformance = useWorkbench((state) => state.setShotPerformance);
   const setShotStaging = useWorkbench((state) => state.setShotStaging);
+  const setShotBlocking = useWorkbench((state) => state.setShotBlocking);
   const toggleShotCharacter = useWorkbench((state) => state.toggleShotCharacter);
   const toggleShotProp = useWorkbench((state) => state.toggleShotProp);
   const moveShotCharacter = useWorkbench((state) => state.moveShotCharacter);
@@ -81,13 +83,15 @@ export function Workbench() {
   const [performanceOpen, setPerformanceOpen] = useState(false);
   // 一致性体检（ADR-0097）：只看结构化锚点与溯源
   const [consistencyOpen, setConsistencyOpen] = useState(false);
+  // 走位（B13.1 / ADR-0126）：俯视平面图 + 自动摆位 + 精确越轴
+  const [blockingOpen, setBlockingOpen] = useState(false);
   const consistency = useMemo(() => analyzeConsistency(project), [project]);
   const currentShot = view.shots[view.current];
   const videoJob = currentShot ? jobs[`${currentShot.id}:video`] : undefined;
 
   // 键盘：← → 换格，⌘⏎ 留用；输入框里只让 ⌘⏎ 生效；预演 / 检查打开时让给它们
   useEffect(() => {
-    if (previewOpen || checkOpen || consistencyOpen || performanceOpen) return;
+    if (previewOpen || checkOpen || consistencyOpen || performanceOpen || blockingOpen) return;
     function onKeyDown(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
       const typing =
@@ -113,7 +117,7 @@ export function Workbench() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [view, select, decide, previewOpen, checkOpen, consistencyOpen, performanceOpen]);
+  }, [view, select, decide, previewOpen, checkOpen, consistencyOpen, performanceOpen, blockingOpen]);
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg text-text">
@@ -134,6 +138,7 @@ export function Workbench() {
             ? () => {
                 setConsistencyOpen(false);
                 setPerformanceOpen(false);
+                setBlockingOpen(false);
                 setCheckOpen(true);
               }
             : undefined
@@ -144,6 +149,7 @@ export function Workbench() {
             ? () => {
                 setCheckOpen(false);
                 setConsistencyOpen(false);
+                setBlockingOpen(false);
                 setPerformanceOpen(true);
               }
             : undefined
@@ -156,10 +162,22 @@ export function Workbench() {
             ? () => {
                 setCheckOpen(false);
                 setPerformanceOpen(false);
+                setBlockingOpen(false);
                 setConsistencyOpen(true);
               }
             : undefined
         }
+        onBlocking={
+          view.shots.length > 0
+            ? () => {
+                setCheckOpen(false);
+                setPerformanceOpen(false);
+                setConsistencyOpen(false);
+                setBlockingOpen(true);
+              }
+            : undefined
+        }
+        blockingCount={storyboard.issues.filter((issue) => issue.rule === "V3").length}
         consistencyCount={consistency.summary.review + consistency.summary.fail}
         onPreview={view.shots.length > 0 ? () => setPreviewOpen(true) : undefined}
       />
@@ -242,6 +260,16 @@ export function Workbench() {
           }
           onSaveStaging={(staging) => setShotStaging(view.shots[view.current]!.id, staging)}
           onClose={() => setPerformanceOpen(false)}
+        />
+      )}
+      {blockingOpen && view.shots.length > 0 && (
+        <BlockingPanel
+          project={project}
+          currentShotId={view.shots[view.current]!.id}
+          readOnly={readOnly ?? false}
+          onSelect={select}
+          onApply={(shotId, blocking, placement) => setShotBlocking(shotId, blocking, placement)}
+          onClose={() => setBlockingOpen(false)}
         />
       )}
       {consistencyOpen && view.shots.length > 0 && (

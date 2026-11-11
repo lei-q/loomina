@@ -988,6 +988,7 @@ interface LocationSpace {
   anchors: {
     id: ID;
     kind: "door" | "window" | "furniture" | "prop" | "light" | "mirror" | "wall";
+    label?: string;                     // 人话名字（"沙发（中左）"）；旧数据没有就显示 id
     position: Vec3;
     facingRad: number;
     capacity: number;                   // 可站 / 坐人数；0 = 不可承载
@@ -1011,6 +1012,14 @@ interface CameraPlacement {
 - `camera.angle` 不从几何反推：角度是摄影意图，几何只是执行（ADR-0126 决策 2）。
 - `suggestBlocking()` / `checkAxis()` 是纯函数，只给建议、不写事件。越轴检查在**有坐标时用精确版**，没有坐标时退回 ADR-0108 的调度近似版，文案区分「越轴」与「像越轴」。
 - depth / edge 导出（B13.3）需要 WebGL 渲染器，依赖未确认；`DepthExporter` 接口先定，实现留空。
+
+**落地细节（B13.1，2026-11-12）**
+
+- 校验在 `applyEvent`：`location.updated { space }` 查尺寸为正、锚点 id 不重复且落在场地内；`shot.updated { blocking }` 查在场 / 不重复 / 不越界；`shot.updated { camera }` 查两点不重合（< 5 cm）且都在场地内。纯计算放在 `packages/ir/src/geometry.ts`，事件与 store 共用同一份。
+- `space: null` 表示**清掉几何**（换成没有坐标的旧模板时用）。不用 `undefined`：它存进 JSON 就消失，回放会留下旧几何。
+- 换模板时按锚点 id 合并：作者挪过的位置留着，新模板没有的锚点丢掉（`mergeTemplateSpace`）。存量地点（模板早就选好、但没有 `space`）在再存一次名字 / 描述时顺手补上。
+- 10 个场景模板的锚点坐标与朝向落在 `packages/pipeline/src/scene-templates.ts`；`templateSpace()` 把它转成 IR 形状。
+- 俯视图只决定 X / Z。拖人物时 Y 保留 0（地面），拖机位时保留原高度——不然机位会被压到地上。
 
 **新增不变量**
 

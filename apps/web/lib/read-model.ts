@@ -7,6 +7,7 @@ import {
   SHEET_LABELS,
   type CastStatus,
   type Id,
+  type LocationSpace,
   type Project,
   type ProjectEvent,
   type SheetView,
@@ -1441,6 +1442,8 @@ export type CastLocationView = {
   masterUri?: string;
   /** 出图之后改过场景描述（ADR-0075），界面挂「过期」小签 */
   masterStale?: StaleMark;
+  /** 场地几何（B13.1 / ADR-0126）：有它才能画俯视走位图、判精确越轴 */
+  space?: LocationSpace;
   lockedAt?: string;
 };
 
@@ -1529,6 +1532,7 @@ export function toCastView(project: Project, events?: ProjectEvent[]): CastView 
         masterAssetId: location.masterShotId,
         masterUri: assetById.get(location.masterShotId ?? "")?.uri,
         masterStale: staleMaster.get(location.id),
+        space: location.space,
         lockedAt:
           item.approval?.status === "approved" ? item.approval.approvedAt : undefined,
       },

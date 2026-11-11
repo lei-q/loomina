@@ -1425,8 +1425,7 @@ describe("location.added / location.updated（ADR-0059）", () => {
 
   it("重复的 id、空名字、不存在的地点、空 patch 都拒绝", () => {
     const project = load();
-    const existing = project.locations[0]!;
-    expect(() =>
+    const existing = project.locations[0]!;    expect(() =>
       applyEvent(project, {
         type: "location.added",
         at: AT,
@@ -2330,5 +2329,154 @@ describe("故事层改写（A16）", () => {
       patch: { tone: "" },
     });
     expect(cleared.story.tone).toBe("");
+  });
+});
+
+describe("坐标进 IR（B13.1 / ADR-0126）", () => {
+  const space = {
+    dimensions: [5, 4, 2.8] as [number, number, number],
+    anchors: [
+      { id: "door", kind: "door" as const, position: [2.5, 0, -1.6] as [number, number, number], facingRad: 0, capacity: 0 },
+      { id: "sofa", kind: "furniture" as const, position: [-1.2, 0.45, 0.9] as [number, number, number], facingRad: 0, capacity: 3 },
+    ],
+  };
+
+  it("location.updated 写入几何，重放后一致", () => {
+    const project = load();
+    const event: ProjectEvent = {
+      type: "location.updated",
+      at: AT,
+      locationId: "loc-living",
+      patch: { space },
+    };
+    const after = applyEvent(project, event);
+    expect(after.locations[0]!.space).toEqual(space);
+    expect(rebuild([created(project), event])).toEqual(after);
+  });
+
+  it("space: null 清掉几何，重放后也真的没有", () => {
+    const project = load();
+    const withSpace: ProjectEvent = {
+      type: "location.updated",
+      at: AT,
+      locationId: "loc-living",
+      patch: { space },
+    };
+    const cleared: ProjectEvent = {
+      type: "location.updated",
+      at: AT,
+      locationId: "loc-living",
+      patch: { space: null },
+    };
+    const after = rebuild([created(project), withSpace, cleared]);
+    expect(after.locations[0]!.space).toBeUndefined();
+    // null 不是「改成 null」：回放后字段整个消失，而不是留一个空壳
+    expect("space" in after.locations[0]!).toBe(false);
+  });
+
+  it("尺寸非正、锚点越界、锚点重复都拒绝", () => {
+    const project = load();
+    const bad = (patch: Record<string, unknown>) =>
+      applyEvent(project, {
+        type: "location.updated",
+        at: AT,
+        locationId: "loc-living",
+        patch: patch as never,
+      });
+    expect(() => bad({ space: { ...space, dimensions: [0, 4, 2.8] } })).toThrow(/尺寸/);
+    expect(() =>
+      bad({ space: { ...space, anchors: [{ ...space.anchors[0]!, position: [9, 0, 0] }] } }),
+    ).toThrow(/超出场地/);
+    expect(() =>
+      bad({ space: { ...space, anchors: [space.anchors[0]!, space.anchors[0]!] } }),
+    ).toThrow(/重复/);
+  });
+
+  it("shot.updated 写入走位：坐标落在场地内才收；不在场的人拒绝", () => {
+    const project = rebuild([
+      created(load()),
+      { type: "location.updated", at: AT, locationId: "loc-living", patch: { space } },
+    ]);
+    const event: ProjectEvent = {
+      type: "shot.updated",
+      at: AT,
+      shotId: "sh-1",
+      patch: {
+        blocking: {
+          actors: [{ characterId: "c-lin", position: [0, 0, 0], facingRad: 0 }],
+          props: [],
+        },
+      },
+    };
+    const after = applyEvent(project, event);
+    expect(after.shots.find((shot) => shot.id === "sh-1")?.blocking).toEqual({
+      actors: [{ characterId: "c-lin", position: [0, 0, 0], facingRad: 0 }],
+      props: [],
+    });
+    expect(rebuild([created(project), event])).toEqual(after);
+
+    // sh-2 出场的是 c-zhou，写 c-lin 的走位就是不合法
+    expect(() =>
+      applyEvent(project, {
+        type: "shot.updated",
+        at: AT,
+        shotId: "sh-2",
+        patch: {
+          blocking: {
+            actors: [{ characterId: "c-lin", position: [0, 0, 0], facingRad: 0 }],
+            props: [],
+          },
+        },
+      }),
+    ).toThrow(/不在这一镜出场/);
+
+    expect(() =>
+      applyEvent(project, {
+        type: "shot.updated",
+        at: AT,
+        shotId: "sh-1",
+        patch: {
+          blocking: {
+            actors: [{ characterId: "c-lin", position: [9, 0, 0], facingRad: 0 }],
+            props: [],
+          },
+        },
+      }),
+    ).toThrow(/超出场地/);
+  });
+
+  it("机位坐标：两点重合拒绝，越界拒绝，合法则落库", () => {
+    const project = rebuild([
+      created(load()),
+      { type: "location.updated", at: AT, locationId: "loc-living", patch: { space } },
+    ]);
+    const camera = { angle: "eye" as const, movement: "static" as const, focalMm: 35 };
+    expect(() =>
+      applyEvent(project, {
+        type: "shot.updated",
+        at: AT,
+        shotId: "sh-1",
+        patch: { camera: { ...camera, placement: { position: [0, 1.5, 1], target: [0, 1.5, 1] } } },
+      }),
+    ).toThrow(/同一个点/);
+    expect(() =>
+      applyEvent(project, {
+        type: "shot.updated",
+        at: AT,
+        shotId: "sh-1",
+        patch: { camera: { ...camera, placement: { position: [9, 1.5, 1], target: [0, 1.2, 0] } } },
+      }),
+    ).toThrow(/超出场地/);
+
+    const placement = { position: [0, 1.5, 1.5] as [number, number, number], target: [0, 1.2, 0] as [number, number, number] };
+    const after = applyEvent(project, {
+      type: "shot.updated",
+      at: AT,
+      shotId: "sh-1",
+      patch: { camera: { ...camera, placement } },
+    });
+    expect(after.shots.find((shot) => shot.id === "sh-1")?.camera.placement).toEqual(placement);
+    // 角度是意图，不因为坐标自动改写
+    expect(after.shots.find((shot) => shot.id === "sh-1")?.camera.angle).toBe("eye");
   });
 });

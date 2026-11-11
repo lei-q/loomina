@@ -15,6 +15,36 @@ export const ProvenanceSchema = z.object({
 });
 export type Provenance = z.infer<typeof ProvenanceSchema>;
 
+/** 三维坐标：地点局部坐标，米，右手系，Y 向上（B13 / ADR-0126） */
+export const Vec3Schema = z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]);
+export type Vec3 = z.infer<typeof Vec3Schema>;
+
+/** 地点里的一处固定物：门、窗、桌……（B13 / ADR-0126） */
+export const LocationAnchorSchema = z.object({
+  id: Id,
+  kind: z.enum(["door", "window", "furniture", "prop", "light", "mirror", "wall"]),
+  /** 人话名字（"沙发（中左）"）；俯视图上标得出来，也方便作者对上模板。旧数据没有就显示 id */
+  label: z.string().optional(),
+  position: Vec3Schema,
+  /** 绕 Y 轴朝向，弧度 */
+  facingRad: z.number().finite().default(0),
+  /** 可站 / 坐人数；0 表示不可承载 */
+  capacity: z.number().int().nonnegative().default(0),
+});
+export type LocationAnchor = z.infer<typeof LocationAnchorSchema>;
+
+/**
+ * 地点几何（B13 / ADR-0126）：坐标是事实，不是提示词。
+ *
+ * 只有选了带几何的场景模板才有；没有的项目照旧走 ADR-0108 的调度近似越轴。
+ */
+export const LocationSpaceSchema = z.object({
+  /** 宽 × 深 × 高（米） */
+  dimensions: Vec3Schema,
+  anchors: z.array(LocationAnchorSchema).default([]),
+});
+export type LocationSpace = z.infer<typeof LocationSpaceSchema>;
+
 export const LocationSchema = z.object({
   id: Id,
   name: z.string().min(1),
@@ -25,6 +55,8 @@ export const LocationSchema = z.object({
   masterShotId: Id.optional(),
   /** 其他机位/细节参考图 */
   referenceImages: z.array(Id).default([]),
+  /** 几何事实（B13）：模板带的尺寸与锚点；没有就没有坐标 */
+  space: LocationSpaceSchema.optional(),
 });
 export type Location = z.infer<typeof LocationSchema>;
 
@@ -207,12 +239,39 @@ export const DialogueLineSchema = z.object({
 });
 export type DialogueLine = z.infer<typeof DialogueLineSchema>;
 
+/** 机位在场地里的位置（B13 / ADR-0126）：几何事实，不改写 `angle` */
+export const CameraPlacementSchema = z.object({
+  position: Vec3Schema,
+  target: Vec3Schema,
+});
+export type CameraPlacement = z.infer<typeof CameraPlacementSchema>;
+
 export const CameraSchema = z.object({
   angle: z.enum(["eye", "low", "high", "top"]),
   movement: z.enum(["static", "push", "pull", "pan", "tilt", "handheld"]),
   focalMm: z.number().positive(),
+  /**
+   * 机位坐标（B13）：有它才能算「在轴线哪一侧」。
+   * 与 `angle` 分开——角度是摄影意图，坐标只是几何事实。
+   */
+  placement: CameraPlacementSchema.optional(),
 });
 export type Camera = z.infer<typeof CameraSchema>;
+
+/** 一镜的走位（B13 / ADR-0126）：谁在哪、朝哪；坐标是场地局部坐标 */
+export const BlockingSchema = z.object({
+  actors: z
+    .array(
+      z.object({
+        characterId: Id,
+        position: Vec3Schema,
+        facingRad: z.number().finite(),
+      }),
+    )
+    .default([]),
+  props: z.array(z.object({ propId: Id, position: Vec3Schema })).default([]),
+});
+export type Blocking = z.infer<typeof BlockingSchema>;
 
 /** 首/尾帧（ADR-0037）：视频生成先有一张定住这一刻的图。 */
 export const KeyframesSchema = z.object({
@@ -351,6 +410,8 @@ export const ShotSchema = z.object({
   performance: PerformanceSpecSchema.optional(),
   /** 镜头内调度（B17）：谁在左 / 右、前 / 后；道具也可以标 */
   staging: z.array(StagingMarkSchema).default([]),
+  /** 这一镜的走位（B13）：谁在哪、朝哪；坐标是场地局部坐标 */
+  blocking: BlockingSchema.optional(),
   characterIds: z.array(Id).default([]),
   /** 关键道具：有叙事作用、需要跨镜头保持一致的东西（ADR-0030） */
   propIds: z.array(Id).default([]),

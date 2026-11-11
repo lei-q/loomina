@@ -35,13 +35,21 @@ const STAGE_MODELS: Partial<Record<StageName, Modality[]>> = {
 };
 
 /** 每个阶段用得上的工具（F8）：阶段式只露这些，自由工作台全开 */
-type StageTool = "ledger" | "budget" | "export" | "preview" | "check" | "performance" | "consistency";
+type StageTool =
+  | "ledger"
+  | "budget"
+  | "export"
+  | "preview"
+  | "check"
+  | "performance"
+  | "consistency"
+  | "blocking";
 
 const STAGE_TOOLS: Record<StageName, StageTool[]> = {
   故事: [],
   剧本: ["export"],
   定妆: ["ledger", "budget"],
-  分镜: ["ledger", "budget", "export", "preview", "check", "performance", "consistency"],
+  分镜: ["ledger", "budget", "export", "preview", "check", "performance", "consistency", "blocking"],
   关键帧: ["ledger", "budget", "preview"],
   声音: ["ledger", "budget", "preview"],
   成片: ["ledger", "budget", "export"],
@@ -83,6 +91,10 @@ export type TopBarProps = {
   onConsistency?: () => void;
   /** 待复核 + 不达标的镜头数，显示在按钮右上 */
   consistencyCount?: number;
+  /** 打开走位（B13.1 / ADR-0126）；给了才出现「走位」 */
+  onBlocking?: () => void;
+  /** 越轴的镜头对数，显示在按钮右上 */
+  blockingCount?: number;
 };
 
 function Money({ value }: { value?: number }) {
@@ -110,6 +122,8 @@ export function TopBar({
   performanceCount,
   onConsistency,
   consistencyCount,
+  onBlocking,
+  blockingCount,
 }: TopBarProps) {
   const [draftBudget, setDraftBudget] = useState<string>("");
   const [ledgerOpen, setLedgerOpen] = useState(false);
@@ -458,6 +472,19 @@ export function TopBar({
             体检
             {consistencyCount !== undefined && consistencyCount > 0 && (
               <span className="tnum text-[9px] text-pick">{consistencyCount}</span>
+            )}
+          </button>
+        )}
+        {shows("blocking") && onBlocking && (
+          <button
+            type="button"
+            onClick={onBlocking}
+            title="俯视走位图、自动摆位与越轴检查：不花钱"
+            className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            走位
+            {blockingCount !== undefined && blockingCount > 0 && (
+              <span className="tnum text-[9px] text-pick">{blockingCount}</span>
             )}
           </button>
         )}

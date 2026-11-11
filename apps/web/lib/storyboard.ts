@@ -20,7 +20,7 @@ import type {
   Shot,
   ShotPurpose,
 } from "@loomina/ir";
-import { SHOT_SIZE_CN } from "@loomina/pipeline";
+import { SHOT_SIZE_CN, checkAxis } from "@loomina/pipeline";
 
 export const BEAT_ORDER: BeatKind[] = [
   "hook",
@@ -413,11 +413,39 @@ export function validateStoryboard(
   }
 
   // V3：同一场相邻两镜里，两个角色的左右关系不能翻。
-  // 没有 3D 坐标，只能拿 B17 的 left / center / right 近似；中间机位与没标的人不参与。
+  // 有坐标（B13.1）时用几何判精确越轴；没有坐标时退回 B17 的 left / right 近似，
+  // 文案区分「越轴」与「像越轴」。
+  const precisePairs = new Set<string>();
+  for (const scene of [...project.scenes].sort((a, b) => a.index - b.index)) {
+    if (!project.locations.find((item) => item.id === scene.locationId)?.space) continue;
+    const report = checkAxis(project, scene.id);
+    if (report.checked === 0) continue;
+    const byId = new Map(project.shots.map((shot) => [shot.id, shot]));
+    for (let index = 1; index < scene.shotIds.length; index += 1) {
+      const previous = scene.shotIds[index - 1]!;
+      const current = scene.shotIds[index]!;
+      if (!byId.get(previous)?.camera.placement || !byId.get(current)?.camera.placement) continue;
+      precisePairs.add(`${previous}|${current}`);
+    }
+    for (const violation of report.violations) {
+      const [previous, current] = violation.shotIds as [string, string];
+      const beforeNo = plans.find((plan) => plan.shotId === previous)?.no ?? 0;
+      const afterNo = plans.find((plan) => plan.shotId === current)?.no ?? 0;
+      issues.push({
+        rule: "V3",
+        severity: "warning",
+        message: `第 ${beforeNo} → ${afterNo} 镜：越轴了——机位跨到了 180° 轴线另一侧（按走位坐标判定）：插一个中性镜，或把其中一镜挪回同一侧。`,
+        shotIds: violation.shotIds,
+      });
+    }
+  }
+
   for (let index = 1; index < plans.length; index += 1) {
     const previous = plans[index - 1]!;
     const current = plans[index]!;
     if (previous.sceneId !== current.sceneId) continue;
+    // 有坐标的那一对已经精确判过，不再用调度近似重复报
+    if (precisePairs.has(`${previous.shotId}|${current.shotId}`)) continue;
     const beforeShot = shotById.get(previous.shotId);
     const afterShot = shotById.get(current.shotId);
     if (!beforeShot || !afterShot) continue;
