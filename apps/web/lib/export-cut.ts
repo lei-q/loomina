@@ -1,5 +1,6 @@
 import type { AILabel } from "@loomina/ir";
 import type { RenderCompliance } from "./compliance";
+import type { CoverArt } from "./cover";
 import {
   AI_LABEL,
   aiLabelRecordFor,
@@ -473,6 +474,8 @@ export type PublishOptions = {
   style: SubtitleStyleId;
   /** 草稿 / 定稿 */
   kind: "draft" | "final";
+  /** 已经生成过的封面（G6）：发布包里记文件名与用的哪一帧，不内嵌二进制 */
+  coverArt?: CoverArt;
   /** 目标平台（G7）；缺省抖音 */
   platform?: PlatformId;
   /** 导出前预检证据（G8）；发布包里留一份，便于回溯 */
@@ -500,6 +503,8 @@ export type PublishPackage = {
   video: PublishVideo | null;
   videoNote: string;
   cover?: string;
+  /** 封面出图记录（G6）：文件名、字节数、第几镜第几毫秒；没生成就没有 */
+  coverArt?: CoverArt;
   title: string;
   description: string;
   topics: string[];
@@ -581,6 +586,7 @@ export function buildPublishPackage(
       ? `${video.quality === "final" ? "定稿" : "草稿"}成片 ${video.fileName}（${(video.bytes / 1024 / 1024).toFixed(1)} MB）已在本机导出；发布包只记文件信息，不内嵌二进制。`
       : "发布包是清单，不含视频文件；先在成片页导出一次 MP4（草稿或定稿），再回来打发布包，视频位会带上文件名、字节数与档位。",
     ...(cover ? { cover } : {}),
+    ...(options.coverArt ? { coverArt: options.coverArt } : {}),
     title,
     description: options.description.trim(),
     topics,

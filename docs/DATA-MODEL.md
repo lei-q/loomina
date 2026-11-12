@@ -807,7 +807,9 @@ interface PublishPackage {
 }
 ```
 
-写入只走 `publish.recorded { package }`：id 唯一、平台非空、AI 标识完整、字节数为非负整数；通过后追加，不覆盖旧记录。发布包下载 JSON 的完整内容（标题、简介、话题、字幕、`platformChecks`、`warnings`、`compliance`、`video`）仍只在本机文件里，不进事件日志。
+写入只走 `publish.recorded { package }`：id 唯一、平台非空、AI 标识完整、字节数为非负整数；通过后追加，不覆盖旧记录。发布包下载 JSON 的完整内容（标题、简介、话题、字幕、`platformChecks`、`warnings`、`compliance`、`video`、`coverArt`）仍只在本机文件里，不进事件日志。
+
+**封面（G6 / ADR-0139）**：封面 PNG 是导出物，不进 IR；发布包 JSON 的 `coverArt` 只记文件名、字节数、第几镜、第几毫秒、尺寸、平台与生成时间，用来核对「发出去的是哪一张」。
 
 **导出**：预览 HTML、OTIO、SRT、发布包 JSON 都是本地生成的文件；只有发布包 JSON 会额外写一条 `publish.recorded`（ADR-0102）。视频渲染已由 E6 / H13 实现，发布包视频位在导出过成片后带文件名、字节数与档位。
 

@@ -36,9 +36,9 @@ describe("帧级找点：地址与换算（E7.2 / ADR-0129）", () => {
     expect(frameMs(9000, 5000)).toBe(5000);
   });
 
-  it("宽度夹在 120–720 之间", () => {
+  it("宽度夹在 120–1080 之间（上限留给封面）", () => {
     expect(clampFrameWidth(10)).toBe(120);
-    expect(clampFrameWidth(2000)).toBe(720);
+    expect(clampFrameWidth(2000)).toBe(1080);
     expect(clampFrameWidth(360)).toBe(360);
     expect(clampFrameWidth(Number.NaN)).toBe(360);
   });
@@ -115,7 +115,7 @@ describe("ffmpeg 切帧参数", () => {
 
   it("宽度先夹住再写进参数", () => {
     const args = frameArgsOf({ src: "/tmp/a.mp4", atMs: 0, width: 5000 });
-    expect(args[args.indexOf("-vf") + 1]).toBe("scale=720:-2");
+    expect(args[args.indexOf("-vf") + 1]).toBe("scale=1080:-2");
   });
 });
 

@@ -14,10 +14,11 @@ import { isStoredAssetUri } from "@/lib/asset-uri";
 export const FRAME_WIDTH = 360;
 /** 拖动时两次切帧至少隔 60ms：约每秒 16 张，够跟手又不会把 ffmpeg 排满 */
 export const FRAME_THROTTLE_MS = 60;
+/** 上限留到封面出图（1080）：预演默认仍只取 360，大图只在封面那条路用 */
 /** 逐帧步进的一步：源片帧率不进 IR，按渲染用的 30fps 估 */
 export const FRAME_STEP_MS = 33;
 export const FRAME_MIN_WIDTH = 120;
-export const FRAME_MAX_WIDTH = 720;
+export const FRAME_MAX_WIDTH = 1080;
 /** 探测结果缓存 5 分钟：ffmpeg 装没装不会在一分钟内变 */
 export const FRAME_PROBE_TTL_MS = 5 * 60 * 1000;
 

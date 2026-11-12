@@ -53,6 +53,19 @@ import {
   type PlatformId,
 } from "@/lib/platforms";
 import { badgeCornerLabel, badgePlacementOf } from "@/lib/ai-label";
+import {
+  COVER_HEIGHT,
+  COVER_WIDTH,
+  coverArtOf,
+  coverFileNameOf,
+  coverFrameUrlOf,
+  coverHookOf,
+  dataUrlBytes,
+  downloadCover,
+  drawCover,
+  type CoverArt,
+} from "@/lib/cover";
+import { canPreviewFrames } from "@/lib/preview-frame";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
 
@@ -118,6 +131,17 @@ function readMusicFile(file: File): Promise<{
       audio.src = uri;
     };
     reader.readAsDataURL(file);
+  });
+}
+
+/** 封面取帧：同源图片才读得进画布；读不到就退回纯排版封面（G6） */
+function loadCoverImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.crossOrigin = "anonymous";
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("这一帧读不出来"));
+    image.src = src;
   });
 }
 
@@ -406,6 +430,11 @@ export function EditScreen() {
     renderMs?: number;
   }>();
   const [loudness, setLoudness] = useState<LoudnessReport>();
+  /** 封面（G6）：用哪一镜的哪一帧，以及出好的 PNG */
+  const [coverShotId, setCoverShotId] = useState<string>();
+  const [coverPos, setCoverPos] = useState(0.3);
+  const [cover, setCover] = useState<{ dataUrl: string; art: CoverArt }>();
+  const [coverBusy, setCoverBusy] = useState(false);
   const [musicFile, setMusicFile] = useState<{
     name: string;
     size: number;
@@ -485,6 +514,20 @@ export function EditScreen() {
   const selectedIndex = selected
     ? view.clips.findIndex((clip) => clip.id === selected.id)
     : -1;
+  // 封面（G6）：默认选当前这一镜；没有画面的镜不进选项
+  const coverClips = view.clips.filter((clip) => clip.hasPicture);
+  const coverClip =
+    coverClips.find((clip) => clip.id === coverShotId) ??
+    coverClips.find((clip) => clip.id === selected?.id) ??
+    coverClips[0];
+  // 只有资产库里的视频才切得动帧；静态图没有「第几毫秒」
+  const coverCanSeek = Boolean(coverClip?.uri && canPreviewFrames(coverClip.uri));
+  const coverAtMs = coverClip && coverCanSeek ? Math.round(coverClip.durationMs * coverPos) : 0;
+  const coverTitle = title.trim() || view.title;
+  // 标题或平台改过，封面上的字与角标就跟不上了：提示重新生成，但不偷偷改图
+  const coverStale = cover
+    ? cover.art.platform !== platform || cover.art.title !== coverTitle
+    : false;
   const currentCue = view.cues.find(
     (cue) =>
       elapsed >= cue.startMs && elapsed < cue.startMs + cue.durationMs,
@@ -772,6 +815,69 @@ export function EditScreen() {
     );
   };
 
+  const generateCover = async () => {
+    if (!coverClip) {
+      setNotice("这一版还没有能当封面的画面：先给某一镜出图或出视频。");
+      return;
+    }
+    if (!gateOpen) {
+      setNotice(gateReason);
+      return;
+    }
+    setCoverBusy(true);
+    setNotice("正在出封面…");
+    try {
+      // 视频走服务端精确切帧；静态图直接读；都读不到就出纯标题封面，不拿占位图冒充
+      const src =
+        coverClip.uri && canPreviewFrames(coverClip.uri)
+          ? coverFrameUrlOf(coverClip.uri, coverAtMs, COVER_WIDTH)
+          : coverClip.stillUri
+            ? assetHref(coverClip.stillUri)
+            : undefined;
+      const image = src ? await loadCoverImage(src).catch(() => null) : null;
+      const canvas = document.createElement("canvas");
+      canvas.width = COVER_WIDTH;
+      canvas.height = COVER_HEIGHT;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("浏览器没有给出画布");
+      drawCover(ctx, {
+        title: coverTitle,
+        hook: coverHookOf(description),
+        platform,
+        image,
+        imageWidth: image?.naturalWidth,
+        imageHeight: image?.naturalHeight,
+      });
+      const dataUrl = canvas.toDataURL("image/png");
+      const art = coverArtOf({
+        title: coverTitle,
+        shotNo: coverClip.shotNo,
+        atMs: coverAtMs,
+        bytes: dataUrlBytes(dataUrl),
+        platform,
+      });
+      setCover({ dataUrl, art });
+      setNotice(
+        `封面已生成：${
+          image
+            ? `第 ${coverClip.shotNo} 镜 ${fmtSec(coverAtMs)} 的画面`
+            : "这一镜没有可用的画面，出的是纯标题封面"
+        } · ${COVER_WIDTH}×${COVER_HEIGHT} · ${formatSize(art.bytes)}。`,
+      );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "封面没出成");
+    } finally {
+      setCoverBusy(false);
+    }
+  };
+
+  const saveCover = () => {
+    if (!cover) return;
+    const fileName = coverFileNameOf(cover.art.title);
+    downloadCover(cover.dataUrl, fileName);
+    setNotice(`封面已下载：${fileName}（${formatSize(cover.art.bytes)}）。`);
+  };
+
   const exportPackage = async () => {
     if (!gateOpen) {
       setNotice(gateReason);
@@ -788,6 +894,7 @@ export function EditScreen() {
       platform,
       compliance: renderComplianceOf(report, acknowledged),
       ...(lastRender ? { video: lastRender } : {}),
+      ...(cover ? { coverArt: cover.art } : {}),
     });
     downloadFile(
       safeFileName(view.title, "发布包.json"),
@@ -802,7 +909,9 @@ export function EditScreen() {
       ...(lastRender?.renderMs !== undefined ? { renderMs: lastRender.renderMs } : {}),
       contentHash: pack.aiLabelRecord?.contentHash,
     });
-    const tail = recorded ? "已记进项目的发布记录。" : "项目是只读的，这次没有记进发布记录。";
+    const tail = `${recorded ? "已记进项目的发布记录。" : "项目是只读的，这次没有记进发布记录。"}${
+      coverStale ? "封面是按改之前的标题 / 平台出的，重新生成一张再发。" : ""
+    }`;
     setNotice(
       `${
         pack.warnings.length > 0
@@ -2070,6 +2179,78 @@ export function EditScreen() {
                         </span>
                       </span>
                     </label>
+                  </div>
+
+                  <div className="mt-3 border-t border-line pt-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[9px] tracking-[.06em] text-muted-2">封面</span>
+                      <select
+                        aria-label="封面用哪一镜"
+                        value={coverClip?.id ?? ""}
+                        onChange={(event) => setCoverShotId(event.target.value)}
+                        disabled={coverClips.length === 0}
+                        className="rounded-token border border-line bg-transparent px-1.5 py-0.5 text-[10px] text-text focus:border-line-2 focus:outline-none disabled:opacity-40"
+                      >
+                        {coverClips.map((clip) => (
+                          <option key={clip.id} value={clip.id} className="bg-surface">
+                            第 {clip.shotNo} 镜 · {clip.takeNo} 版
+                          </option>
+                        ))}
+                      </select>
+                      {coverCanSeek ? (
+                        <>
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            value={Math.round(coverPos * 100)}
+                            onChange={(event) => setCoverPos(Number(event.target.value) / 100)}
+                            aria-label="封面取帧位置"
+                            className="w-24 accent-[var(--pick)]"
+                          />
+                          <span className="text-[9px] text-muted-2">{fmtSec(coverAtMs)}</span>
+                        </>
+                      ) : (
+                        <span className="text-[9px] text-muted-2">静态图 · 不切帧</span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void generateCover()}
+                        disabled={coverBusy || !gateOpen || !coverClip}
+                        className="rounded-token border border-line px-2.5 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {coverBusy ? "正在出封面…" : "生成封面"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={saveCover}
+                        disabled={!cover}
+                        className="rounded-token border border-line px-2.5 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        下载 PNG
+                      </button>
+                    </div>
+                    {cover && (
+                      <div className="mt-2 flex items-start gap-2.5">
+                        <img
+                          src={cover.dataUrl}
+                          alt="封面预览"
+                          className="aspect-[9/16] w-[60px] border border-line object-cover"
+                        />
+                        <p className="text-[9.5px] leading-[1.7] text-muted">
+                          {COVER_WIDTH}×{COVER_HEIGHT} · 第 {cover.art.shotNo} 镜{" "}
+                          {fmtSec(cover.art.atMs)} · {formatSize(cover.art.bytes)}
+                          {coverStale && (
+                            <span className="text-pick"> · 标题或平台改过了，重新生成才会带上新的</span>
+                          )}
+                        </p>
+                      </div>
+                    )}
+                    <p className="mt-1.5 text-[9.5px] leading-[1.7] text-muted-2">
+                      封面 = 抽一帧 + 项目标题 + 简介第一行（钩子）；「AI 生成」角标按目标平台摆在
+                      {badgeCornerLabel(badgePlacement.corner)}，和成片同一张表。拖上面那条找回最像封面的一帧；
+                      发布包会记下用的是第几镜、第几毫秒。
+                    </p>
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-2">
