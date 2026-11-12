@@ -37,6 +37,7 @@ import {
   type ReviewSubject,
 } from "@/lib/asset-review";
 import { shotLabel, spendOf, toStageView } from "@/lib/read-model";
+import { clampedDeltaMs, dragDeltaMs } from "@/lib/track-drag";
 import { cancelRender, exportMp4 } from "@/lib/render-client";
 import { hydrateView } from "@/lib/asset-hydrate";
 import { assetHref } from "@/lib/asset-uri";
@@ -309,6 +310,11 @@ function signedMs(ms: number): string {
   return `${sign}${(Math.abs(ms) / 1000).toFixed(1)}s`;
 }
 
+/** 拖动的 10ms 档位：不到 1 秒时按毫秒写，免得全是 `+0.0s` */
+function signedOffset(ms: number): string {
+  return Math.abs(ms) >= 1000 ? signedMs(ms) : `${ms > 0 ? "+" : "−"}${Math.abs(ms)}ms`;
+}
+
 /**
  * 一句台词的一条叠加层微调（E1 / ADR-0131）。
  *
@@ -447,6 +453,16 @@ export function EditScreen() {
   const [musicBusy, setMusicBusy] = useState(false);
   const [musicError, setMusicError] = useState("");
   const musicPreviewRef = useRef<HTMLAudioElement>(null);
+  /** 正在拖动的字幕（E1 / ADR-0145）：只在本机预览，松手才写一次事件 */
+  const [cueDrag, setCueDrag] = useState<{ lineId: string; deltaMs: number } | null>(null);
+  const cueLaneRef = useRef<HTMLDivElement>(null);
+  const cueDragRef = useRef<{
+    lineId: string;
+    startX: number;
+    moved: boolean;
+    deltaMs: number;
+  } | null>(null);
+  const skipCueClick = useRef(false);
   /** 确认的是哪一版预检：文案一改，指纹变，确认自动失效 */
   const [ackSignature, setAckSignature] = useState<string>();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -606,6 +622,61 @@ export function EditScreen() {
     if (!line) return;
     setCueLineId(lineId);
     setCueDraft(line.cues.map((cue) => cue.text));
+  };
+
+  /** 每一句现在被挪了多少（E1）：拖动从原值上算增量 */
+  const subtitleOffsetByLine = useMemo(
+    () =>
+      new Map(
+        view.clips
+          .flatMap((clip) => clip.lines)
+          .map((line) => [line.id, line.subtitleOffsetMs]),
+      ),
+    [view.clips],
+  );
+
+  /**
+   * 字幕条上的整句拖动（E1 / ADR-0145）：按下只记起点，挪动只更新本机预览，
+   * 松手才写一次 `dialogue.updated`——拖一次不该在日志里留下一百条事件。
+   */
+  const startCueDrag = (event: React.PointerEvent<HTMLButtonElement>, lineId: string) => {
+    if (readOnly) return;
+    cueDragRef.current = { lineId, startX: event.clientX, moved: false, deltaMs: 0 };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const moveCueDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = cueDragRef.current;
+    if (!drag) return;
+    const dx = event.clientX - drag.startX;
+    // 3px 以内当点击：手一抖不该把字幕挪走
+    if (!drag.moved && Math.abs(dx) < 3) return;
+    drag.moved = true;
+    const laneWidth = cueLaneRef.current?.clientWidth ?? 0;
+    const current = subtitleOffsetByLine.get(drag.lineId) ?? 0;
+    drag.deltaMs = clampedDeltaMs(current, dragDeltaMs(dx, laneWidth, view.totalMs));
+    setCueDrag({ lineId: drag.lineId, deltaMs: drag.deltaMs });
+  };
+
+  const endCueDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = cueDragRef.current;
+    cueDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (!drag) return;
+    setCueDrag(null);
+    if (!drag.moved) return;
+    // 拖动之后浏览器还会补一个 click：别让它顺手把断句编辑器打开
+    skipCueClick.current = true;
+    if (drag.deltaMs !== 0 && shiftLineTrack(drag.lineId, "subtitle", drag.deltaMs)) {
+      setNotice(`字幕整句挪了 ${signedOffset(drag.deltaMs)}：松手才写一次，还能继续拖或按 ↺ 归位。`);
+    }
+  };
+
+  const cancelCueDrag = () => {
+    cueDragRef.current = null;
+    setCueDrag(null);
   };
 
   /** 保存手改断句：时长按字数分，整句时长不变（D2） */
@@ -1221,34 +1292,49 @@ export function EditScreen() {
                     </label>
                   </div>
                   {/* 按绝对时间定位：字幕被挪过时，条上能看见它离开原来的位置（E1） */}
-                  <div className="relative mt-2 h-[26px] w-full overflow-hidden rounded-token border border-line bg-surface">
-                    {view.cues.map((cue) => (
-                      <button
-                        key={cue.id}
-                        type="button"
-                        onClick={() => {
-                          seekTo(cue.startMs);
-                          openCueEditor(cue.lineId);
-                        }}
-                        title={`${timecode(cue.startMs)} · ${cue.characterName}：${cue.text}${cue.manual ? "（手改过）" : ""} · 点开改断句`}
-                        style={{
-                          left: `${(cue.startMs / Math.max(1, view.totalMs)) * 100}%`,
-                          width: `${(cue.durationMs / Math.max(1, view.totalMs)) * 100}%`,
-                        }}
-                        className={cn(
-                          "absolute top-0 flex h-full min-w-[2px] items-center justify-center overflow-hidden border-r border-bg px-0.5 text-[8px] transition-colors duration-[var(--dur)]",
-                          elapsed >= cue.startMs &&
-                            elapsed < cue.startMs + cue.durationMs
-                            ? "bg-text/20 text-text"
-                            : "bg-line/50 text-muted hover:bg-line-2",
-                        )}
-                      >
-                        <span className="truncate">
-                          {cue.manual && <span className="mr-0.5 text-text">·</span>}
-                          {cue.text}
-                        </span>
-                      </button>
-                    ))}
+                  <div
+                    ref={cueLaneRef}
+                    className="relative mt-2 h-[26px] w-full overflow-hidden rounded-token border border-line bg-surface"
+                  >
+                    {view.cues.map((cue) => {
+                      const previewDelta = cueDrag?.lineId === cue.lineId ? cueDrag.deltaMs : 0;
+                      return (
+                        <button
+                          key={cue.id}
+                          type="button"
+                          onClick={() => {
+                            if (skipCueClick.current) {
+                              skipCueClick.current = false;
+                              return;
+                            }
+                            seekTo(cue.startMs);
+                            openCueEditor(cue.lineId);
+                          }}
+                          onPointerDown={(event) => startCueDrag(event, cue.lineId)}
+                          onPointerMove={moveCueDrag}
+                          onPointerUp={endCueDrag}
+                          onPointerCancel={cancelCueDrag}
+                          title={`${timecode(cue.startMs)} · ${cue.characterName}：${cue.text}${cue.manual ? "（手改过）" : ""} · 拖动整句挪位（10ms 一档），点一下改断句`}
+                          style={{
+                            left: `${((cue.startMs + previewDelta) / Math.max(1, view.totalMs)) * 100}%`,
+                            width: `${(cue.durationMs / Math.max(1, view.totalMs)) * 100}%`,
+                          }}
+                          className={cn(
+                            "absolute top-0 flex h-full min-w-[2px] cursor-grab touch-none items-center justify-center overflow-hidden border-r border-bg px-0.5 text-[8px] select-none transition-colors duration-[var(--dur)] active:cursor-grabbing",
+                            previewDelta !== 0 && "z-10 ring-1 ring-pick",
+                            elapsed >= cue.startMs &&
+                              elapsed < cue.startMs + cue.durationMs
+                              ? "bg-text/20 text-text"
+                              : "bg-line/50 text-muted hover:bg-line-2",
+                          )}
+                        >
+                          <span className="truncate">
+                            {cue.manual && <span className="mr-0.5 text-text">·</span>}
+                            {cue.text}
+                          </span>
+                        </button>
+                      );
+                    })}
                     {view.cues.length === 0 && (
                       <span className="flex h-full items-center px-2 text-[9px] text-muted-2">
                         时间线里还没有台词
@@ -1256,7 +1342,8 @@ export function EditScreen() {
                     )}
                   </div>
                   <p className="mt-1 text-[8.5px] leading-[1.6] text-muted-2">
-                    按标点断句，时间按字数分；改字数档位，断句会立刻重排。点一条字幕跳到那一句，同时打开手改。
+                    按标点断句，时间按字数分；改字数档位，断句会立刻重排。点一条字幕跳到那一句，同时打开手改；
+                    按住一条左右拖，整句挪位（10ms 一档，松手才写入；几十毫秒的微调仍用下面的 ‹ ›）。
                   </p>
 
                   {editingLine && (
@@ -1569,9 +1656,9 @@ export function EditScreen() {
                               </div>
                               {shifted && (
                                 <span className="shrink-0 text-[8.5px] text-muted">
-                                  {line.voiceOffsetMs !== 0 && `配音 ${signedMs(line.voiceOffsetMs)}`}
+                                  {line.voiceOffsetMs !== 0 && `配音 ${signedOffset(line.voiceOffsetMs)}`}
                                   {line.voiceOffsetMs !== 0 && line.subtitleOffsetMs !== 0 && " · "}
-                                  {line.subtitleOffsetMs !== 0 && `字幕 ${signedMs(line.subtitleOffsetMs)}`}
+                                  {line.subtitleOffsetMs !== 0 && `字幕 ${signedOffset(line.subtitleOffsetMs)}`}
                                 </span>
                               )}
                             </li>

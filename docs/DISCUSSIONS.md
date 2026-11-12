@@ -4508,3 +4508,28 @@ C12 剩下的「分段响度」：整片 loudnorm 只保证全片积分响度到
 
 **边界**
 - 「删掉某一格」还没有独立入口；占位资产会占资产库位置（回收归 H3）；`sheet` 指向悬空 id 的脏数据不修。
+
+## 第一百五十九次 · 2026-11-12 · E1 字幕条上的整句拖动
+
+**议题**
+E1 的「自由拖动起点」一直没做：按句偏移只有 `‹ ›` 按钮，挪 1.5 秒要按 15 下。字幕条已经按绝对时间画出每一句，最直接的交互是拽它。
+
+**结论**
+- **只拖字幕轨**：画面轨必须首尾相接不能挪；配音没有自己的条，继续用按钮。拖一条改的是那一句的 `subtitleOffsetMs`。
+- **换算成纯函数**：`dragDeltaMs(dx, laneWidth, totalMs)` 按轨道宽度线性换算、10ms 取整；`clampedDeltaMs` 把目标值夹进 ±30 秒再折回增量，贴边同向拖为 0。
+- **松手才写**：pointermove 只改本机预览（字幕实时跟手），pointerup 调一次 `shiftLineTrack`，日志里一次拖动只留一条事件。
+- **点击与拖动分开**：3px 以内算点击（跳转 + 打开手改断句），拖动后的 click 被吞掉；只读时不接管 pointerdown。
+- **按钮保留**：几十毫秒的精调仍用 `‹ ›` / Shift / `↺`，两种手感落在同一个字段上。不新增 IR 字段或事件类型。
+
+**验证**
+- `track-drag.test.ts` 4 条（线性换算与取整、无效输入、±30 秒夹取、跨零回拉）。
+- 全仓 1228 条测试全过（IR 212 / gateway 28 / pipeline 98 / web 890）；`tsc --noEmit` 与 `next build` 干净。
+- 浏览器：拖第一句向右 40px → 条上实时跟手、聚焦描边 → 松手只多一条 `dialogue.updated { subtitleOffsetMs: 440 }`、提示「字幕整句挪了 +440ms」、列表写「字幕 +440ms」；点一下同一句仍打开「手改断句」；`↺` 写 `subtitleOffsetMs: null` 归位。
+
+**产物**
+- `apps/web/lib/track-drag.ts`：`dragDeltaMs` / `clampedDeltaMs` / `DRAG_SNAP_MS`
+- `apps/web/components/edit-screen.tsx`：字幕条拖动、点击/拖动判定、提示与文案
+- ADR-0145
+
+**边界**
+- 配音轨不能拖；没有吸附 / 卡点；独立多轨画外音层仍未做。
