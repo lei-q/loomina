@@ -50,6 +50,7 @@ export function ScriptScreen() {
   const lastSwap = useWorkbench((state) => state.lastSwap);
   const moveDialogue = useWorkbench((state) => state.moveDialogue);
   const editAction = useWorkbench((state) => state.editAction);
+  const adoptDoctorItem = useWorkbench((state) => state.adoptDoctorItem);
   const editScene = useWorkbench((state) => state.editScene);
   const editSceneCode = useWorkbench((state) => state.editSceneCode);
   const undoLastRemoval = useWorkbench((state) => state.undoLastRemoval);
@@ -1684,6 +1685,8 @@ export function ScriptScreen() {
                 ?.scrollIntoView({ block: "center", behavior: "smooth" });
             }, 0);
           }}
+          onAdopt={(item) => adoptDoctorItem(item)}
+          readOnly={Boolean(readOnly)}
           onClose={() => setDoctorOpen(false)}
         />
       )}

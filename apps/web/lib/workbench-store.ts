@@ -54,6 +54,7 @@ import {
 import { create } from "zustand";
 import { diffEvents, getEventLog, migrateLog } from "@/lib/event-log";
 import { estimateDialogueMs } from "@/lib/dialogue";
+import type { DoctorRewriteItem } from "@/lib/doctor-ai";
 import { askInstructionAi, describeAiPatch, shotSnapshotOf } from "@/lib/instruction-ai";
 import { autoCut, timelineEquals } from "@/lib/edit";
 import { planMusicFill } from "@/lib/music-curve";
@@ -563,6 +564,11 @@ type WorkbenchState = {
    * 只改传进来的字段；没改的字段与 `provenance` 都不动。
    */
   editStory: (patch: StoryPatch) => boolean;
+  /**
+   * 采用剧本医生的一条改写（A18 / ADR-0123）：台词走 `editDialogue`、
+   * 动作走 `editAction`、故事层走 `editStory`——同一个决定只用一套写入口。
+   */
+  adoptDoctorItem: (item: DoctorRewriteItem) => boolean;
   /** 改某个角色的一条弧光字段（A16）：整组弧光替换，只动这一条 */
   editArc: (characterId: string, patch: Partial<Omit<StoryArc, "characterId">>) => boolean;
   /** 改一对关系张力（A16）；`tension` 为空表示删掉这条关系 */
@@ -4333,6 +4339,14 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       editError: undefined,
     });
     return true;
+  },
+
+  adoptDoctorItem: (item) => {
+    if (get().readOnly) return false;
+    // 采用不是「更聪明的写入口」：三种改动各走各的既有校验（锁镜、时长重估、空文本）
+    if (item.kind === "dialogue") return get().editDialogue(item.lineId, item.text);
+    if (item.kind === "shot") return get().editAction(item.shotId, item.text);
+    return get().editStory({ [item.field]: item.text } as StoryPatch);
   },
 
   editStory: (patch) => {

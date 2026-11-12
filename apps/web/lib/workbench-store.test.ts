@@ -3891,6 +3891,95 @@ describe("故事层单独编辑（A16）", () => {
   });
 });
 
+describe("采用剧本医生的改写（A18 / ADR-0123）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("台词改走 editDialogue：写一条 dialogue.updated", () => {
+    expect(
+      state().adoptDoctorItem({
+        kind: "dialogue",
+        lineId: "d-01",
+        text: "你早就知道了，对吧。",
+        target: "SH-01 · 周",
+      }),
+    ).toBe(true);
+    // 改台词会顺带按字数重估镜头时长，所以最后一条是 shot.updated
+    expect(
+      state().events.filter((event) => event.type === "dialogue.updated").at(-1),
+    ).toMatchObject({
+      type: "dialogue.updated",
+      lineId: "d-01",
+      patch: { text: "你早就知道了，对吧。" },
+    });
+    expect(state().project.dialogue.find((line) => line.id === "d-01")?.text).toBe(
+      "你早就知道了，对吧。",
+    );
+  });
+
+  it("动作改走 editAction：写一条 shot.updated { description }", () => {
+    expect(
+      state().adoptDoctorItem({
+        kind: "shot",
+        shotId: "s-01",
+        text: "周把灯关掉，回头看监控。",
+        target: "SH-01 · 动作",
+      }),
+    ).toBe(true);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.updated",
+      shotId: "s-01",
+      patch: { description: "周把灯关掉，回头看监控。" },
+    });
+  });
+
+  it("故事层改走 editStory：写一条 story.updated", () => {
+    expect(
+      state().adoptDoctorItem({
+        kind: "story",
+        field: "logline",
+        text: "两个夜班保安互相试探。",
+        target: "一句话梗概",
+      }),
+    ).toBe(true);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "story.updated",
+      patch: { logline: "两个夜班保安互相试探。" },
+    });
+  });
+
+  it("和原文一样就返回 false、不写事件", () => {
+    const before = state().project.dialogue.find((line) => line.id === "d-01")!.text;
+    const snapshot = state().events.length;
+    expect(
+      state().adoptDoctorItem({
+        kind: "dialogue",
+        lineId: "d-01",
+        text: before,
+        target: "SH-01 · 周",
+      }),
+    ).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+  });
+
+  it("只读时拒绝", () => {
+    const snapshot = state().events.length;
+    useWorkbench.setState({ readOnly: true });
+    expect(
+      state().adoptDoctorItem({
+        kind: "story",
+        field: "tone",
+        text: "冷",
+        target: "调性",
+      }),
+    ).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+    useWorkbench.setState({ readOnly: false });
+  });
+});
+
 describe("分镜节拍与镜头目的（ADR-0096）", () => {
   beforeEach(() => {
     state().reset();

@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Project } from "@loomina/ir";
+import { doctorSnapshotOf, type DoctorRewrite, type DoctorRewriteItem } from "@/lib/doctor-ai";
+import { toScriptView } from "@/lib/read-model";
 import {
   DOCTOR_MODE_LABEL,
   analyzeScript,
   type DoctorDimension,
+  type DoctorMode,
   type DoctorSuggestion,
 } from "@/lib/script-doctor";
 import { cn } from "@/lib/utils";
@@ -38,17 +41,81 @@ export type DoctorPanelProps = {
   project: Project;
   /** 点建议里的镜号跳到那一镜；不传就不显示跳转 */
   onSelectShot?: (shotId: string) => void;
+  /** 采用一条模型改写；不传就不显示「采用」 */
+  onAdopt?: (item: DoctorRewriteItem) => boolean;
+  readOnly?: boolean;
   onClose: () => void;
 };
 
+function itemKey(item: DoctorRewriteItem): string {
+  if (item.kind === "dialogue") return `d:${item.lineId}`;
+  if (item.kind === "shot") return `s:${item.shotId}`;
+  return `t:${item.field}`;
+}
+
 /**
- * 剧本医生抽屉（A18 / ADR-0123）——第一档本地报告。
+ * 剧本医生抽屉（A18 / ADR-0123）。
  *
- * 每次打开现算：报告不进 IR，改一个字就变。10 维本地可算，两项如实标未测。
- * 六种改写模式只给方向，不改字：模型改写（第二档）还没接。
+ * 第一档是本地报告；第二档是模型改写：作者点一个模式才调用，建议不进 IR，
+ * 点「采用」才走 `dialogue.updated` / `shot.updated` / `story.updated`。
+ * 每次打开现算，改一个字就变。
  */
-export function DoctorPanel({ project, onSelectShot, onClose }: DoctorPanelProps) {
+export function DoctorPanel({
+  project,
+  onSelectShot,
+  onAdopt,
+  readOnly = false,
+  onClose,
+}: DoctorPanelProps) {
   const report = useMemo(() => analyzeScript(project), [project]);
+  /** 正在让模型读哪个模式；一次只发一个请求 */
+  const [busyMode, setBusyMode] = useState<DoctorMode>();
+  const [rewrite, setRewrite] = useState<DoctorRewrite>();
+  const [modelError, setModelError] = useState<string>();
+  const [adopted, setAdopted] = useState<Set<string>>(() => new Set());
+  const [adoptNote, setAdoptNote] = useState<string>();
+
+  /** 第二档（A18）：点一个模式才调用模型；建议不进 IR */
+  const askModel = async (mode: DoctorMode) => {
+    if (busyMode || readOnly) return;
+    setBusyMode(mode);
+    setModelError(undefined);
+    setAdoptNote(undefined);
+    try {
+      const snapshot = doctorSnapshotOf(project, toScriptView(project), report, mode);
+      const response = await fetch("/api/doctor", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ snapshot }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | DoctorRewrite
+        | { error?: string }
+        | null;
+      if (!response.ok) {
+        const error = payload && "error" in payload ? payload.error : undefined;
+        setModelError(error ?? `模型没回话（${response.status}）。`);
+        return;
+      }
+      setRewrite(payload as DoctorRewrite);
+    } catch {
+      setModelError("没连上服务端：检查开发服务器，或稍后再点。");
+    } finally {
+      setBusyMode(undefined);
+    }
+  };
+
+  const adopt = (item: DoctorRewriteItem) => {
+    if (!onAdopt || readOnly) return;
+    const key = itemKey(item);
+    const ok = onAdopt(item);
+    if (ok) {
+      setAdopted((current) => new Set(current).add(key));
+      setAdoptNote("已按这条改写写进剧本。");
+    } else {
+      setAdoptNote("没写进去：这一镜可能锁着，或原文就是这一版。");
+    }
+  };
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -222,6 +289,86 @@ export function DoctorPanel({ project, onSelectShot, onClose }: DoctorPanelProps
                 />
               ))}
             </ul>
+          </section>
+
+          <section className="mt-4">
+            <h3 className="text-[10.5px] tracking-[.06em] text-text">让模型改一版</h3>
+            <p className="mt-1 text-[9px] leading-[1.65] text-muted-2">
+              点一个模式，模型最多给三条能直接替换原文的改写；点「采用」才写进项目。
+              减人物 / 减场景只给合并与改写，不会替你删角色或场次。
+            </p>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {report.suggestions.map((suggestion) => (
+                <button
+                  key={suggestion.mode}
+                  type="button"
+                  disabled={readOnly || Boolean(busyMode)}
+                  onClick={() => void askModel(suggestion.mode)}
+                  className={cn(
+                    "rounded-token border px-2 py-0.5 text-[9px] transition-colors duration-[var(--dur)] disabled:opacity-40",
+                    busyMode === suggestion.mode
+                      ? "border-pick text-pick"
+                      : "border-line text-muted enabled:hover:border-line-2 enabled:hover:text-text",
+                  )}
+                >
+                  {busyMode === suggestion.mode
+                    ? `${DOCTOR_MODE_LABEL[suggestion.mode]} · 读剧本中…`
+                    : DOCTOR_MODE_LABEL[suggestion.mode]}
+                </button>
+              ))}
+            </div>
+            {modelError && (
+              <p className="mt-2 text-[9px] leading-[1.65] text-pick">{modelError}</p>
+            )}
+            {rewrite && (
+              <div className="mt-2 border-t border-line pt-2">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="text-[9.5px] text-text">
+                    {DOCTOR_MODE_LABEL[rewrite.mode]} · {rewrite.items.length} 条
+                  </span>
+                  <span className="text-[8.5px] text-muted-2">
+                    {rewrite.model}
+                  </span>
+                </div>
+                {rewrite.reason && (
+                  <p className="mt-0.5 text-[9px] leading-[1.65] text-muted-2">
+                    {rewrite.reason}
+                  </p>
+                )}
+                <ul className="mt-1 divide-y divide-line">
+                  {rewrite.items.map((item) => {
+                    const key = itemKey(item);
+                    const done = adopted.has(key);
+                    return (
+                      <li key={key} className="py-2">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="text-[9px] text-muted-2">{item.target}</span>
+                          <button
+                            type="button"
+                            disabled={readOnly || done || !onAdopt}
+                            onClick={() => adopt(item)}
+                            className="shrink-0 rounded-token border border-line px-1.5 py-0.5 text-[8.5px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:opacity-40"
+                          >
+                            {done ? "已采用" : "采用"}
+                          </button>
+                        </div>
+                        <p className="mt-1 break-words text-[9.5px] leading-[1.65] text-text">
+                          {item.text}
+                        </p>
+                        {item.why && (
+                          <p className="mt-0.5 break-words text-[9px] leading-[1.65] text-muted-2">
+                            {item.why}
+                          </p>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+                {adoptNote && (
+                  <p className="mt-1 text-[9px] leading-[1.65] text-muted-2">{adoptNote}</p>
+                )}
+              </div>
+            )}
           </section>
 
           <p className="mt-4 border-t border-line pt-3 text-[9px] leading-[1.7] text-muted-2">
