@@ -1606,6 +1606,58 @@ describe("音轨与字幕轨（E1 / ADR-0131）", () => {
   });
 });
 
+describe("生成结果复核（H6 / ADR-0132）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("标「已看」写一条 asset.reviewed，资产上带复核记录", () => {
+    expect(state().reviewAsset("a-lin-front", "passed")).toBe(true);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "asset.reviewed",
+      assetId: "a-lin-front",
+      status: "passed",
+    });
+    const asset = state().project.assets.find((item) => item.id === "a-lin-front")!;
+    expect(asset.review?.status).toBe("passed");
+  });
+
+  it("标「不可用」时带上原因", () => {
+    expect(state().reviewAsset("a-lin-front", "rejected", "  多了一只手  ")).toBe(true);
+    const asset = state().project.assets.find((item) => item.id === "a-lin-front")!;
+    expect(asset.review).toMatchObject({ status: "rejected", note: "多了一只手" });
+  });
+
+  it("收回复核：字段真的消失，不是留着 undefined", () => {
+    state().reviewAsset("a-lin-front", "passed");
+    expect(state().reviewAsset("a-lin-front", null)).toBe(true);
+    const asset = state().project.assets.find((item) => item.id === "a-lin-front")!;
+    expect("review" in asset).toBe(false);
+  });
+
+  it("不存在的资产不写事件", () => {
+    const snapshot = state().events.length;
+    expect(state().reviewAsset("a-gone", "passed")).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+  });
+
+  it("只读模式不写事件", () => {
+    const snapshot = state().events.length;
+    useWorkbench.setState({ readOnly: true });
+    expect(state().reviewAsset("a-lin-front", "passed")).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("复核结果随日志回放：刷新后还在", () => {
+    state().reviewAsset("a-lin-front", "passed");
+    const replayed = rebuild(state().events);
+    const asset = replayed.assets.find((item) => item.id === "a-lin-front")!;
+    expect(asset.review?.status).toBe("passed");
+  });
+});
+
 describe("台词增删（ADR-0045）", () => {
   beforeEach(() => {
     state().reset();

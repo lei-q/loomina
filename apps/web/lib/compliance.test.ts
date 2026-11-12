@@ -84,13 +84,14 @@ describe("项目文本收集", () => {
 });
 
 describe("导出前预检（G8）", () => {
-  it("干净项目通过，四项检查都在", () => {
+  it("干净项目通过，五项检查都在", () => {
     const report = preflightProject(project(), { durationMs: 60_000, at: AT });
     expect(report.ok).toBe(true);
     expect(report.blocked).toBe(0);
     expect(report.checks.map((check) => check.id)).toEqual([
       "ai-label",
       "safety",
+      "review",
       "rights",
       "spec",
     ]);

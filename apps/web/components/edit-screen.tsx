@@ -32,6 +32,10 @@ import {
   renderComplianceOf,
   type ComplianceCheck,
 } from "@/lib/compliance";
+import {
+  reviewSummaryOf,
+  type ReviewSubject,
+} from "@/lib/asset-review";
 import { shotLabel, spendOf, toStageView } from "@/lib/read-model";
 import { cancelRender, exportMp4 } from "@/lib/render-client";
 import { hydrateView } from "@/lib/asset-hydrate";
@@ -149,6 +153,99 @@ function PlatformRow({ check }: { check: PlatformCheck }) {
   );
 }
 
+/**
+ * 生成结果复核（H6 / ADR-0132）。
+ *
+ * 提示词在发出前已经扫过（ADR-0105），像素与视频没有模型审核服务，只能人看。
+ * 这里把「会进成片的每一条生成结果」摆出来，逐条标「已看 / 不可用」；
+ * 「不可用」会拦住导出，「还没看」只提醒——示例项目不该一上来就卡死。
+ */
+function ReviewPanel({
+  subjects,
+  readOnly,
+  onReview,
+}: {
+  subjects: ReviewSubject[];
+  readOnly: boolean;
+  onReview: (assetId: string, status: "passed" | "rejected" | null) => void;
+}) {
+  if (subjects.length === 0) return null;
+  return (
+    <ul className="mt-1.5 border-t border-line">
+      {subjects.map((subject) => {
+        const status = subject.review?.status;
+        return (
+          <li
+            key={subject.assetId}
+            className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-line py-1.5 last:border-b-0"
+          >
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-[2px] border border-line bg-bg">
+              {subject.kind === "video" && subject.uri ? (
+                <video
+                  src={assetHref(subject.uri)}
+                  muted
+                  playsInline
+                  preload="metadata"
+                  className="h-full w-full object-cover"
+                />
+              ) : subject.kind === "image" && subject.uri ? (
+                <img
+                  src={assetHref(subject.uri)}
+                  alt={subject.where}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <span className="text-[8px] text-muted-2">{subject.kind === "audio" ? "音" : "空"}</span>
+              )}
+            </span>
+            <span className="min-w-0 flex-1 text-[9.5px] text-text">{subject.where}</span>
+            {!subject.exists ? (
+              <span className="shrink-0 text-[8.5px] text-pick">资产不存在</span>
+            ) : (
+              !subject.hasMedia && (
+                <span className="shrink-0 text-[8.5px] text-pick">没有文件</span>
+              )
+            )}
+            {subject.review?.status === "rejected" && subject.review.note && (
+              <span className="shrink-0 text-[8.5px] text-muted-2">{subject.review.note}</span>
+            )}
+            <span className="flex shrink-0 items-center gap-1">
+              <button
+                type="button"
+                onClick={() => onReview(subject.assetId, status === "passed" ? null : "passed")}
+                disabled={readOnly || !subject.exists}
+                title={status === "passed" ? "取消「已看」，回到还没看" : "看过这一条，没问题"}
+                className={cn(
+                  "rounded-token border px-1.5 py-0.5 text-[8.5px] transition-colors duration-[var(--dur)] disabled:opacity-40",
+                  status === "passed"
+                    ? "border-line-2 text-text"
+                    : "border-line text-muted hover:border-line-2 hover:text-text",
+                )}
+              >
+                已看
+              </button>
+              <button
+                type="button"
+                onClick={() => onReview(subject.assetId, status === "rejected" ? null : "rejected")}
+                disabled={readOnly || !subject.exists}
+                title={status === "rejected" ? "取消「不可用」" : "这一条不能用：会拦住导出"}
+                className={cn(
+                  "rounded-token border px-1.5 py-0.5 text-[8.5px] transition-colors duration-[var(--dur)] disabled:opacity-40",
+                  status === "rejected"
+                    ? "border-pick text-pick"
+                    : "border-line text-muted hover:border-line-2 hover:text-text",
+                )}
+              >
+                不可用
+              </button>
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function CheckRow({ check }: { check: ComplianceCheck }) {
   return (
     <li className="flex items-start gap-2.5 py-1.5">
@@ -262,6 +359,7 @@ export function EditScreen() {
   const editSubtitles = useWorkbench((state) => state.editSubtitles);
   const setSubtitleLayout = useWorkbench((state) => state.setSubtitleLayout);
   const shiftLineTrack = useWorkbench((state) => state.shiftLineTrack);
+  const reviewAsset = useWorkbench((state) => state.reviewAsset);
   const addMusic = useWorkbench((state) => state.addMusic);
   const updateMusic = useWorkbench((state) => state.updateMusic);
   const removeMusic = useWorkbench((state) => state.removeMusic);
@@ -340,6 +438,8 @@ export function EditScreen() {
       }),
     [project, title, description, topics, view.totalMs, platform, lastRender],
   );
+  // 生成结果复核（H6）：会进成片的每一条，逐条给作者看
+  const review = useMemo(() => reviewSummaryOf(project), [project]);
   const platformValidation = useMemo(
     () =>
       validatePlatform(platformSpecOf(platform), {
@@ -1801,6 +1901,27 @@ export function EditScreen() {
                         <CheckRow key={check.id} check={check} />
                       ))}
                     </ul>
+
+                    {/* 生成结果复核（H6）：只有这一项能在这里直接处理 */}
+                    {review.total > 0 && (
+                      <div className="mt-1 border-t border-line pt-1.5">
+                        <div className="flex flex-wrap items-baseline justify-between gap-2">
+                          <span className="text-[9px] tracking-[.06em] text-muted-2">
+                            逐条复核 · {review.passed}/{review.total} 已看
+                            {review.rejected > 0 && ` · ${review.rejected} 条不可用`}
+                          </span>
+                          <span className="text-[8.5px] text-muted-2">
+                            像素与视频没有模型审核，只有人看得见
+                          </span>
+                        </div>
+                        {/* 全部列出：通过的排最后。藏起来的话「已看」就撤不掉了 */}
+                        <ReviewPanel
+                          subjects={review.subjects}
+                          readOnly={Boolean(readOnly)}
+                          onReview={(assetId, status) => reviewAsset(assetId, status)}
+                        />
+                      </div>
+                    )}
 
                     {report.findings.length > 0 && (
                       <div className="mt-1 border-t border-line pt-2">

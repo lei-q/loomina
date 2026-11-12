@@ -159,6 +159,21 @@ export type AssetKind = z.infer<typeof AssetKindSchema>;
  * 语义（"这是三视图的侧面"）不在资产上，而在引用它的一侧——
  * 同一张图可能既是某人的侧面，又是某场戏的参考。
  */
+/**
+ * 生成结果的人工复核（H6 / ADR-0132）。
+ *
+ * 像素与视频没有可用的模型审核服务，所以这一层由作者自己看：每一张会进成片的
+ * 生成结果要么标「已看」，要么标「不可用」。没有记录 = 还没复核。
+ * 审核结果进 IR：它是作者对这条片子做过的判断，刷新、换设备、回放日志都得在。
+ */
+export const AssetReviewSchema = z.object({
+  status: z.enum(["passed", "rejected"]),
+  at: z.string().min(1),
+  /** 标「不可用」时写清原因；标「已看」可以不写 */
+  note: z.string().optional(),
+});
+export type AssetReview = z.infer<typeof AssetReviewSchema>;
+
 export const AssetSchema = z.object({
   id: Id,
   kind: AssetKindSchema,
@@ -175,6 +190,8 @@ export const AssetSchema = z.object({
    * 价目表里没有这个模型就不写：未知不等于免费。
    */
   costCny: z.number().nonnegative().optional(),
+  /** 人工复核结果（H6）；缺省表示还没看 */
+  review: AssetReviewSchema.optional(),
   createdAt: z.string().min(1),
 });
 export type Asset = z.infer<typeof AssetSchema>;

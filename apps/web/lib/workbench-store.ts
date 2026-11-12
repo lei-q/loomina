@@ -428,6 +428,11 @@ type WorkbenchState = {
    */
   editSubtitles: (lineId: string, cues: { text: string; durationMs: number }[] | null) => boolean;
   /**
+   * 复核一条生成结果（H6 / ADR-0132）：`passed` 表示看过没问题，
+   * `rejected` 表示不能用（会拦导出），`null` 表示收回复核、回到「还没看」。
+   */
+  reviewAsset: (assetId: string, status: "passed" | "rejected" | null, note?: string) => boolean;
+  /**
    * 调字幕版式（D3）：传 `null` 清掉某一项、回到模板值。
    * 越界数值被拒（不夹取），界面把错误显示出来。
    */
@@ -3228,6 +3233,41 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       });
     } catch (error) {
       set({ editError: error instanceof Error ? error.message : "挪不动这条轨道。" });
+      return false;
+    }
+    return true;
+  },
+
+  reviewAsset: (assetId, status, note) => {
+    if (get().readOnly) {
+      set({ editError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    const { project, events } = get();
+    const asset = project.assets.find((item) => item.id === assetId);
+    if (!asset) {
+      // 静默返回 false 会让界面上的按钮看起来像坏了：说清是资产没了
+      set({ editError: `资产 ${assetId} 不在项目里：复核记不上去。` });
+      return false;
+    }
+    const at = stamp();
+    const trimmed = note?.trim();
+    // 复核走独立事件：`asset.updated` 是合并语义，删不掉「收回复核」的字段
+    const event: ProjectEvent = {
+      type: "asset.reviewed",
+      at,
+      assetId,
+      status,
+      ...(status === "rejected" && trimmed ? { note: trimmed } : {}),
+    };
+    try {
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        editError: undefined,
+      });
+    } catch (error) {
+      set({ editError: error instanceof Error ? error.message : "复核没有写进去。" });
       return false;
     }
     return true;

@@ -261,6 +261,14 @@ export function describeEvent(before: Project, event: ProjectEvent): string {
             : before.props.find((item) => item.id === event.approval.targetId)?.name;
       return `${event.approval.status === "approved" ? "锁定" : "解锁"}「${target ?? event.approval.targetId}」`;
     }
+    case "asset.reviewed": {
+      const asset = before.assets.find((item) => item.id === event.assetId);
+      const where = asset ? `${asset.kind === "video" ? "视频" : asset.kind === "audio" ? "音频" : "图片"} ${asset.id}` : event.assetId;
+      if (event.status === null) return `收回复核：${where}`;
+      return event.status === "passed"
+        ? `复核通过：${where}`
+        : `标为不可用：${where}${event.note ? `（${event.note}）` : ""}`;
+    }
     case "asset.updated": {
       const kind = event.asset.kind === "image" ? "图片" : event.asset.kind === "video" ? "视频" : "音频";
       return `落一条${kind}资产`;

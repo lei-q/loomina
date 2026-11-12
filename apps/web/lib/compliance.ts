@@ -12,6 +12,7 @@
 import type { Project } from "@loomina/ir";
 import { fnv1a } from "./fnv";
 import { platformCheckDetail, platformSpecOf, validatePlatform, type PlatformId } from "./platforms";
+import { reviewSummaryOf } from "./asset-review";
 
 export type ComplianceSeverity = "block" | "review";
 export type ComplianceCategory =
@@ -42,7 +43,7 @@ export type ComplianceFinding = {
 };
 
 export type ComplianceCheck = {
-  id: "ai-label" | "safety" | "rights" | "spec";
+  id: "ai-label" | "safety" | "review" | "rights" | "spec";
   label: string;
   status: "pass" | "review" | "block";
   detail: string;
@@ -443,7 +444,48 @@ export function preflightProject(
           ? `全长 ${seconds.toFixed(1)} 秒，超过 180 秒上限：回时间线删减`
           : platformCheckDetail(validation),
   };
-  const checks = [aiLabel, safety, rights.check, specCheck];
+  // 生成结果复核（H6 / ADR-0132）：像素与视频没有模型审核，靠作者逐条看过。
+  // 「不可用」是硬阻断；「还没看」算待确认——不静默放行，也不一上来卡死。
+  const assetReview = reviewSummaryOf(project);
+  const reviewCheck: ComplianceCheck = {
+    id: "review",
+    label: "生成结果复核",
+    status: assetReview.status,
+    detail: assetReview.summary,
+  };
+  const assetReviewFindings: ComplianceFinding[] = assetReview.rejectedSubjects.map((subject) => ({
+    severity: "block" as const,
+    category: "其他" as const,
+    ruleId: "review-rejected",
+    path: subject.where,
+    term: subject.assetId,
+    excerpt: subject.review?.note ?? "被标为不可用",
+    message: "这一条生成结果被标为不可用：换掉或重生成，不能进成片。",
+  }));
+  // 还没看的只算「待确认」：导出前勾一下确认，就不会静默放行
+  const unreviewedFindings: ComplianceFinding[] = assetReview.unreviewedSubjects.map(
+    (subject) => ({
+      severity: "review" as const,
+      category: "其他" as const,
+      ruleId: "review-pending",
+      path: subject.where,
+      term: subject.assetId,
+      excerpt: "还没有复核记录",
+      message: "这一条会进成片但还没人看过：看完再导出。",
+    }),
+  );
+  const missingFindings: ComplianceFinding[] = assetReview.missingSubjects.map((subject) => ({
+    severity: "review" as const,
+    category: "其他" as const,
+    ruleId: "review-missing",
+    path: subject.where,
+    term: subject.assetId,
+    excerpt: "资产不在项目里",
+    message: "这一条引用的资产不在项目里：成片里这一格会是空的，确认能接受再导出。",
+  }));
+  findings.push(...assetReviewFindings, ...unreviewedFindings, ...missingFindings);
+
+  const checks = [aiLabel, safety, reviewCheck, rights.check, specCheck];
   const blocked = findings.filter((finding) => finding.severity === "block").length;
   const review = findings.length - blocked;
   const signature = fnv1a(

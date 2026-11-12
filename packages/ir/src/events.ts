@@ -363,6 +363,21 @@ export type ProjectEvent =
     }
   | {
       /**
+       * 生成结果的人工复核（H6 / ADR-0132）。
+       *
+       * 单独一条事件而不是复用 `asset.updated`：那条是合并语义，
+       * `undefined` 过 JSON 会消失，所以「收回复核」删不掉字段——
+       * 资产会永远停在上一次的复核状态。`null` 在这里明确表示「回到还没看」。
+       */
+      type: "asset.reviewed";
+      at: string;
+      assetId: Id;
+      status: "passed" | "rejected" | null;
+      /** 标「不可用」时的原因；标「已看」可以不写 */
+      note?: string;
+    }
+  | {
+      /**
        * 整条时间线换掉（ADR-0086）。
        *
        * 初剪、换 take 都产出一条「整条替换」的事件，而不是逐项增删：
@@ -1452,6 +1467,30 @@ function applyEventCore(
           )
         : [...current.assets, event.asset];
       return { ...current, assets };
+    }
+
+    case "asset.reviewed": {
+      if (!current) throw new Error("asset.reviewed 之前必须有 project.created");
+      const asset = current.assets.find((item) => item.id === event.assetId);
+      if (!asset) throw new Error(`asset.reviewed 指向不存在的资产: ${event.assetId}`);
+      const note = event.note?.trim();
+      // null 是「收回复核」：整块删掉，不留 undefined 让回放形状漂移
+      const { review: _previous, ...withoutReview } = asset;
+      const reviewed: Asset =
+        event.status === null
+          ? withoutReview
+          : {
+              ...withoutReview,
+              review: {
+                status: event.status,
+                at: event.at,
+                ...(event.status === "rejected" && note ? { note } : {}),
+              },
+            };
+      return {
+        ...current,
+        assets: current.assets.map((item) => (item.id === event.assetId ? reviewed : item)),
+      };
     }
 
     case "voice.take.added": {

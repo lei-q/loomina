@@ -575,10 +575,18 @@ interface Asset {
   source: AssetSource;      // 上传 / 生成 / 素材库
   provenance?: Take;
   costCny?: number;         // 生成这张实际花了多少；没价目就不写（ADR-0033）
+  review?: AssetReview;     // 生成结果的人工复核（H6 / ADR-0132）；缺省 = 还没看
   createdAt: ISODate;
 }
 
 type AssetSource = "upload" | "generated" | "library" | "imported";
+
+/** 生成结果的人工复核（H6 / ADR-0132）：像素与视频没有模型审核，作者终审 */
+interface AssetReview {
+  status: "passed" | "rejected";
+  at: ISODate;
+  note?: string;            // 标「不可用」时的原因
+}
 
 /**
  * 资产地址的三种形态（H3 / ADR-0128）：
@@ -1075,6 +1083,14 @@ interface CameraPlacement {
 **新增不变量**
 
 无。立面与遮挡是提示，不是事实：同一份坐标下结论可以随锚点高度估计变化，所以不进不变量、不拦生成（R51 / R56）。
+
+**落地细节（H6 生成结果复核，2026-11-12，ADR-0132）**
+
+- **只审会进成片的三类**：画面轨上的 take、首尾帧（没有视频的镜头会拿它当画面）、台词配音。定妆三视图、参考图、场景主镜不进成片，不审——它们影响的是下一次生成。
+- **三态**：没有 `review` = 还没看（进「待确认」，导出前要勾一下）；`passed` = 看过；`rejected` = 不能用（**硬阻断**导出）。「还没看」不硬拦是有意的：示例项目与刚生成的结果一上来全是没看，硬拦会让导出按钮第一天就点不动。
+- **事件是 `asset.reviewed`，不复用 `asset.updated`**：后者是合并语义（`{ ...item, ...event.asset }`），`undefined` 过 JSON 会消失，所以「收回复核」删不掉字段。`asset.reviewed { status: null }` 明确表示回到还没看，handler 里解构掉整个 `review`。
+- **缺资产单独一类**：引用了不存在资产的条目照样列出（`exists: false`），按钮禁用、写「资产不存在」，并进「待确认」——成片里那一格会是空的，得有人认下来。
+- **预检多一项 `review`**：`preflightProject` 的检查从四项变五项，复核结论以三种 `ruleId` 进 `findings`（`review-rejected` block / `review-pending` review / `review-missing` review），与别的合规项共用指纹与确认机制。
 
 **落地细节（H3 对象存储，2026-11-12）**
 

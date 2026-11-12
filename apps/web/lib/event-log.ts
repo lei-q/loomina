@@ -74,6 +74,7 @@ const EVENT_TYPES: Record<ProjectEvent["type"], true> = {
   "take.updated": true,
   "take.removed": true,
   "asset.updated": true,
+  "asset.reviewed": true,
   "timeline.updated": true,
   "timeline.music.updated": true,
   "motif.updated": true,

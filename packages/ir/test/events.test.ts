@@ -2214,6 +2214,89 @@ describe("手改断句（D2）", () => {
   });
 });
 
+describe("生成结果复核（H6 / ADR-0132）", () => {
+  const asset = {
+    id: "a-1",
+    kind: "video" as const,
+    uri: "loomina://assets/1.mp4",
+    source: "generated" as const,
+    createdAt: AT,
+  };
+
+  function withAsset() {
+    const project = load();
+    return rebuild([
+      created(project),
+      { type: "asset.updated", at: AT, asset },
+    ]);
+  }
+
+  it("标「已看」：资产上带复核记录", () => {
+    const after = rebuild([
+      created(load()),
+      { type: "asset.updated", at: AT, asset },
+      { type: "asset.reviewed", at: AT, assetId: "a-1", status: "passed" },
+    ]);
+    expect(after.assets.find((item) => item.id === "a-1")!.review).toEqual({
+      status: "passed",
+      at: AT,
+    });
+  });
+
+  it("标「不可用」带上原因；原因为空不写空串", () => {
+    const after = rebuild([
+      created(load()),
+      { type: "asset.updated", at: AT, asset },
+      { type: "asset.reviewed", at: AT, assetId: "a-1", status: "rejected", note: "  手  " },
+    ]);
+    expect(after.assets.find((item) => item.id === "a-1")!.review).toEqual({
+      status: "rejected",
+      at: AT,
+      note: "手",
+    });
+
+    const blank = rebuild([
+      created(load()),
+      { type: "asset.updated", at: AT, asset },
+      { type: "asset.reviewed", at: AT, assetId: "a-1", status: "rejected", note: "   " },
+    ]);
+    expect("note" in blank.assets.find((item) => item.id === "a-1")!.review!).toBe(false);
+  });
+
+  it("null 收回复核：字段真的消失", () => {
+    const after = rebuild([
+      created(load()),
+      { type: "asset.updated", at: AT, asset },
+      { type: "asset.reviewed", at: AT, assetId: "a-1", status: "passed" },
+      { type: "asset.reviewed", at: AT, assetId: "a-1", status: null },
+    ]);
+    expect("review" in after.assets.find((item) => item.id === "a-1")!).toBe(false);
+  });
+
+  it("指向不存在的资产被拒", () => {
+    expect(() =>
+      rebuild([
+        created(load()),
+        { type: "asset.reviewed", at: AT, assetId: "a-gone", status: "passed" },
+      ]),
+    ).toThrow(/不存在/);
+  });
+
+  it("复核不碰资产的其它字段", () => {
+    const before = withAsset();
+    const after = rebuild([
+      created(load()),
+      { type: "asset.updated", at: AT, asset },
+      { type: "asset.reviewed", at: AT, assetId: "a-1", status: "passed" },
+    ]);
+    const a = before.assets.find((item) => item.id === "a-1")!;
+    const b = after.assets.find((item) => item.id === "a-1")!;
+    expect(b.uri).toBe(a.uri);
+    expect(b.kind).toBe(a.kind);
+    expect(b.createdAt).toBe(a.createdAt);
+  });
+});
+
 describe("音轨与字幕轨偏移（E1 / ADR-0131）", () => {
   it("默认没有这两个字段；旧日志读出来按 0 处理", () => {
     const project = load();
