@@ -35,7 +35,11 @@ export async function videoPriceInfo(modelId?: string): Promise<VideoPriceInfo> 
     model: model.model,
     modelId: model.id,
     ...(resolution ? { resolution } : {}),
-    ...(quote ? { cnyPerSecond: quote.cnyPerSecond } : {}),
+    ...(model.perSecondCny !== undefined
+      ? { cnyPerSecond: model.perSecondCny }
+      : quote
+        ? { cnyPerSecond: quote.cnyPerSecond }
+        : {}),
   };
 }
 
@@ -97,7 +101,8 @@ export async function generateShotVideo(
   request: ShotVideoRequest,
   modelId?: string,
 ): Promise<GeneratedVideo> {
-  const config = gatewayConfigOf(await resolveModel("video", modelId));
+  const resolved = await resolveModel("video", modelId);
+  const config = gatewayConfigOf(resolved);
   // 单次 HTTP 超时收到 60 秒：轮询本身是短请求，卡住的往往是连接
   const client = new TreecloudClient({
     ...config,
@@ -165,9 +170,11 @@ export async function generateShotVideo(
     durationMs: output.durationMs || request.durationMs,
     cny:
       output.costCny ??
-      (config.videoResolution
-        ? videoCostCny(output.provenance.modelId, config.videoResolution, request.durationMs)
-        : undefined),
+      (resolved.model.perSecondCny !== undefined
+        ? Math.round((request.durationMs / 1000) * resolved.model.perSecondCny * 100) / 100
+        : config.videoResolution
+          ? videoCostCny(output.provenance.modelId, config.videoResolution, request.durationMs)
+          : undefined),
     moderation,
   };
 }

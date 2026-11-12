@@ -54,6 +54,8 @@ type ModelDraft = {
   voice: string;
   /** 按用量计价的单价（H4）：文本元 / 百万 token，配音元 / 千字；空表示不知道 */
   unitPrice: string;
+  /** 自定义媒体单价（H22）：图像元 / 张、视频元 / 秒；空表示用价目表 */
+  mediaPrice: string;
   /** 商用条款 / 能力备注（B12）；空表示未确认 */
   terms: string;
 };
@@ -114,6 +116,12 @@ function draftsFrom(config: PublicConfig) {
     resolution: model.resolution ?? "",
     voice: model.voice ?? "",
     unitPrice: model.unitPriceCny !== undefined ? String(model.unitPriceCny) : "",
+    mediaPrice:
+      model.perImageCny !== undefined
+        ? String(model.perImageCny)
+        : model.perSecondCny !== undefined
+          ? String(model.perSecondCny)
+          : "",
     terms: model.terms ?? "",
   }));
   const defaults: Partial<Record<Modality, string>> = {};
@@ -291,6 +299,7 @@ export function SettingsScreen() {
       resolution: "",
       voice: "",
       unitPrice: "",
+      mediaPrice: "",
       terms: "",
     };
     // 该模态第一个模型自动成为默认，避免保存时还要回头点一次
@@ -414,6 +423,13 @@ export function SettingsScreen() {
         Number.isFinite(Number(model.unitPrice)) &&
         model.unitPrice.trim() !== ""
           ? { unitPriceCny: Math.max(0, Number(model.unitPrice)) }
+          : {}),
+        ...((model.modality === "image" || model.modality === "video") &&
+        Number.isFinite(Number(model.mediaPrice)) &&
+        model.mediaPrice.trim() !== ""
+          ? model.modality === "image"
+            ? { perImageCny: Math.max(0, Number(model.mediaPrice)) }
+            : { perSecondCny: Math.max(0, Number(model.mediaPrice)) }
           : {}),
         ...(model.terms.trim() ? { terms: model.terms.trim() } : {}),
       })),
@@ -792,6 +808,23 @@ export function SettingsScreen() {
                                   }
                                   inputMode="decimal"
                                   placeholder="未知"
+                                  className={`${inputClass} tnum`}
+                                />
+                              </Field>
+                            )}
+                            {(modality === "image" || modality === "video") && (
+                              <Field
+                                label={modality === "image" ? "单价（元/张）" : "单价（元/秒）"}
+                                className="w-[132px]"
+                                hint="填了盖过价目表；按账单或测绘实测填，不填就报不出价"
+                              >
+                                <input
+                                  value={model.mediaPrice}
+                                  onChange={(event) =>
+                                    updateModel(model.key, { mediaPrice: event.target.value })
+                                  }
+                                  inputMode="decimal"
+                                  placeholder="用价目表"
                                   className={`${inputClass} tnum`}
                                 />
                               </Field>

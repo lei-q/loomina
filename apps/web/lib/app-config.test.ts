@@ -124,6 +124,51 @@ describe("normalizeConfig", () => {
     expect(result.config.models[2]!.unitPriceCny).toBeUndefined();
   });
 
+  it("自定义图价 / 视频价只收对应模态，负数与非数字当没填（H22）", () => {
+    const result = normalizeConfig(
+      {
+        ...VALID,
+        models: [
+          { ...VALID.models[0]!, perImageCny: 0.2, perSecondCny: 0.9 }, // 文本：两个字段都无意义
+          {
+            ...VALID.models[2]!,
+            id: "relay:image",
+            modality: "image" as const,
+            model: "gpt-image-2-c",
+            perImageCny: 0.2,
+            perSecondCny: 0.9,
+          },
+          {
+            ...VALID.models[2]!,
+            id: "relay:video-custom",
+            model: "seedance-2.0",
+            perSecondCny: 0.66,
+          },
+          {
+            ...VALID.models[2]!,
+            id: "relay:video-bad",
+            model: "wan3.0-video",
+            perSecondCny: -1,
+          },
+        ],
+        defaults: {
+          text: "deepseek:deepseek-v4.1-pro",
+          image: "relay:image",
+          video: "relay:video-custom",
+        },
+      },
+      PREVIOUS,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.models[0]!.perImageCny).toBeUndefined();
+    expect(result.config.models[0]!.perSecondCny).toBeUndefined();
+    expect(result.config.models[1]!.perImageCny).toBe(0.2);
+    expect(result.config.models[1]!.perSecondCny).toBeUndefined();
+    expect(result.config.models[2]!.perSecondCny).toBe(0.66);
+    expect(result.config.models[3]!.perSecondCny).toBeUndefined();
+  });
+
   it("单价为 0 是合法的：免费模型照样能算账", () => {
     const result = normalizeConfig(
       {

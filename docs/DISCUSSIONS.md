@@ -4709,3 +4709,23 @@ A13 / A18 / B12 / C10 / C12 / D3 / E1 的状态一直挂着「开发中」，但
 **验证**
 - IR 216 条、pipeline 98 条、gateway 28 条、web 928 条（含 4 条跳过）测试通过；新增用例覆盖固定 / 取消 / 重放、重复值不写、只读不改、请求体带固定 id、取消后不带。
 - 浏览器 `/keyframes`：选一个模型后点「钉住」，按钮变「已钉住」并显示为选中色；IndexedDB 最后一条事件为 `project.updated { models: { image: "env:gpt-image-2-c" } }`。
+
+## 第一百六十八次 · 2026-11-12 · 自定义媒体单价
+
+**议题**
+价目表只收公开按张 / 按秒计价的模型，seedance 这类按 token 结算的视频模型永远「单价未知」：按钮不标价、预算拦不住、账上只数次数。S1 测绘的「每镜实付」是图 + 视频的总花费，自动回写会把口径搅混（H16 的结论）。
+
+**结论**
+- `ModelRecord` 新增 `perImageCny`（图像，元 / 张）与 `perSecondCny`（视频，元 / 秒），按模态收、非负数、有限值；`unitPriceCny` 仍只管文本与配音。
+- 报价优先级：自定义单价 > 价目表 > 不知道；记账优先级：供应商回执真实花费 > 自定义单价 > 价目表。
+- 能力矩阵区分「作者填的自定义单价」与价目表来源；设置页图像 / 视频模型各多一个输入框，占位「用价目表」。
+- 不做多维价目、不做价目表编辑、不从测绘自动回写。
+
+**产物**
+- `apps/web/lib/config-types.ts`、`apps/web/lib/app-config.ts`、`apps/web/lib/generate-image.ts`、`apps/web/lib/generate-video.ts`、`apps/web/lib/capabilities.ts`、`apps/web/components/settings-screen.tsx`
+- `apps/web/lib/app-config.test.ts`、`apps/web/lib/capabilities.test.ts`
+- `docs/adr/0151-custom-media-prices.md`、`docs/FEATURES.md`、`docs/ROADMAP.md`、`docs/DISCUSSIONS.md`
+
+**验证**
+- 新增配置校验与能力矩阵用例通过；web 930 条（含 4 条跳过）全量通过。
+- 浏览器 `/settings`：图像模型显示「单价（元 / 张）」、视频显示「单价（元 / 秒）」，占位「用价目表」，现有两项未填。

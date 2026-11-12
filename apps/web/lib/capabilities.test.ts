@@ -191,3 +191,43 @@ describe("buildCapabilityMatrix", () => {
     expect(response.groups).toHaveLength(5);
   });
 });
+
+describe("自定义单价（H22）", () => {
+  it("视频填元/秒、图像填元/张时盖过价目表", () => {
+    const matrix = buildCapabilityMatrix(
+      {
+        ...CONFIG,
+        models: MODELS.map((model) => {
+          if (model.id === "relay:minimax-h3") return { ...model, perSecondCny: 0.9 };
+          if (model.id === "relay:gpt-image-2-c") return { ...model, perImageCny: 0.2 };
+          if (model.id === "relay:seedance-2.0") return { ...model, perSecondCny: 0.66 };
+          return model;
+        }),
+      },
+      [],
+    );
+    const video = matrix.groups
+      .flatMap((group) => group.models)
+      .find((model) => model.id === "relay:minimax-h3")!;
+    expect(video.price).toMatchObject({
+      kind: "known",
+      cny: 0.9,
+      unit: "per_second",
+      basis: "作者填的自定义单价",
+    });
+    const image = matrix.groups
+      .flatMap((group) => group.models)
+      .find((model) => model.id === "relay:gpt-image-2-c")!;
+    expect(image.price).toMatchObject({
+      kind: "known",
+      cny: 0.2,
+      unit: "per_image",
+      basis: "作者填的自定义单价",
+    });
+    // 价目表里没有的 seedance：填了就能报价
+    const seedance = matrix.groups
+      .flatMap((group) => group.models)
+      .find((model) => model.id === "relay:seedance-2.0")!;
+    expect(seedance.price).toMatchObject({ kind: "known", cny: 0.66 });
+  });
+});

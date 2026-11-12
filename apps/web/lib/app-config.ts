@@ -270,6 +270,21 @@ export function normalizeConfig(
       item.unitPriceCny >= 0
         ? item.unitPriceCny
         : undefined;
+    // 自定义图价 / 视频价（H22）：只对相应模态有意义；填错类型就是没填
+    const perImageCny =
+      modality === "image" &&
+      typeof item.perImageCny === "number" &&
+      Number.isFinite(item.perImageCny) &&
+      item.perImageCny >= 0
+        ? item.perImageCny
+        : undefined;
+    const perSecondCny =
+      modality === "video" &&
+      typeof item.perSecondCny === "number" &&
+      Number.isFinite(item.perSecondCny) &&
+      item.perSecondCny >= 0
+        ? item.perSecondCny
+        : undefined;
     // 商用条款 / 能力备注：自由文本，只在能力矩阵里显示；空串等于没写
     const terms =
       typeof item.terms === "string" ? item.terms.trim().slice(0, 240) || undefined : undefined;
@@ -283,6 +298,8 @@ export function normalizeConfig(
       ...(resolution ? { resolution } : {}),
       ...(voice ? { voice } : {}),
       ...(unitPriceCny !== undefined ? { unitPriceCny } : {}),
+      ...(perImageCny !== undefined ? { perImageCny } : {}),
+      ...(perSecondCny !== undefined ? { perSecondCny } : {}),
       ...(terms ? { terms } : {}),
     });
   }

@@ -228,6 +228,15 @@ function factsOf(model: ModelRecord): CapabilityFact[] {
 
 function priceOf(model: ModelRecord): PriceView {
   if (model.modality === "video") {
+    // 作者填的自定义单价优先（H22）：按 token 结算、价目表没有的模型也能报价
+    if (model.perSecondCny !== undefined) {
+      return {
+        kind: "known",
+        cny: model.perSecondCny,
+        unit: "per_second",
+        basis: "作者填的自定义单价",
+      };
+    }
     if (!model.resolution) {
       return { kind: "unknown", reason: "没有填分辨率，对不上价目表" };
     }
@@ -247,6 +256,14 @@ function priceOf(model: ModelRecord): PriceView {
   }
 
   if (model.modality === "image") {
+    if (model.perImageCny !== undefined) {
+      return {
+        kind: "known",
+        cny: model.perImageCny,
+        unit: "per_image",
+        basis: "作者填的自定义单价",
+      };
+    }
     const quote = imagePrice(model.model);
     if (!quote) {
       return {

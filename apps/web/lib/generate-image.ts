@@ -83,7 +83,11 @@ export type ImagePrice = {
  */
 export async function imagePrice(modelId?: string): Promise<ImagePrice> {
   const { model } = await resolveModel("image", modelId);
-  return { model: model.model, cny: imageCostCny(model.model), modelId: model.id };
+  return {
+    model: model.model,
+    cny: model.perImageCny ?? imageCostCny(model.model),
+    modelId: model.id,
+  };
 }
 
 export async function generateCastImage(
@@ -92,7 +96,8 @@ export async function generateCastImage(
   /** 作者手改过的提示词（ADR-0148）：给了就用它，不再拼默认那段 */
   promptOverride?: string,
 ): Promise<GeneratedImage> {
-  const config = gatewayConfigOf(await resolveModel("image", modelId));
+  const resolved = await resolveModel("image", modelId);
+  const config = gatewayConfigOf(resolved);
   // 路由的 maxDuration 是 180 秒：客户端超时留在它之内，别让上游把路由先掐掉。
   // 出图实测 48 秒到 2 分钟不等，120 秒会误杀慢样本（2026-11-10）。
   const client = new TreecloudClient({ ...config, timeoutMs: 170_000 });
@@ -113,7 +118,7 @@ export async function generateCastImage(
     uri: output.uri,
     model: output.provenance.modelId,
     prompt,
-    cny: imageCostCny(output.provenance.modelId),
+    cny: resolved.model.perImageCny ?? imageCostCny(output.provenance.modelId),
     moderation,
   };
 }
