@@ -1526,6 +1526,39 @@ describe("location.added / location.updated（ADR-0059）", () => {
     expect(location.templateId).toBe(before.templateId);
   });
 
+  it("挂参考图：写进 referenceImages，重复与不存在的资产都拒绝（B8）", () => {
+    const project = load();
+    const locationId = project.locations[0]!.id;
+    const assetId = project.assets.find((asset) => asset.kind === "image")?.id;
+    expect(assetId).toBeTruthy();
+    const after = applyEvent(project, {
+      type: "location.updated",
+      at: AT,
+      locationId,
+      patch: { referenceImages: [assetId!] },
+    });
+    expect(after.locations.find((item) => item.id === locationId)?.referenceImages).toEqual([
+      assetId,
+    ]);
+
+    expect(() =>
+      applyEvent(project, {
+        type: "location.updated",
+        at: AT,
+        locationId,
+        patch: { referenceImages: [assetId!, assetId!] },
+      }),
+    ).toThrow();
+    expect(() =>
+      applyEvent(project, {
+        type: "location.updated",
+        at: AT,
+        locationId,
+        patch: { referenceImages: ["a-nope"] },
+      }),
+    ).toThrow();
+  });
+
   it("旧项目没有 description，解析时补空串", () => {
     // minimal.json 写在这个字段之前：回放不该因为缺字段炸掉
     expect(load().locations[0]!.description).toBe("");

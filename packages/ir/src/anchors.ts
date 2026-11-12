@@ -165,12 +165,24 @@ export function shotAnchors(project: Project, shot: Shot): ShotAnchors {
     propRefs.push({ assetId: usableRefs[0]!, label: `${prop.name} · 参考图` });
   }
 
-  // 场景先占一个名额，人物再排；道具用剩下的名额。
+  // 地点自己的参考图（B8）：房间里别的角度 / 细节。排在道具之后拿剩下的名额，
+  // 不改变「脸与房间优先」的既有顺序。
+  const locationRefs: AnchorRef[] = [];
+  if (location) {
+    const lockedLocation = locked.get(key("location", location.id));
+    for (const assetId of location.referenceImages) {
+      if (lockedLocation && !lockedLocation.has(assetId)) continue;
+      locationRefs.push({ assetId, label: `${location.name} · 参考图` });
+    }
+  }
+
+  // 场景先占一个名额，人物再排；道具与地点参考图用剩下的名额。
   const identity = sceneRef ? refs.slice(0, MAX_ANCHORS - 1) : refs.slice(0, MAX_ANCHORS);
   const ordered = [
     ...identity,
     ...(sceneRef ? [sceneRef] : []),
     ...propRefs,
+    ...locationRefs,
   ].slice(0, MAX_ANCHORS);
 
   const seen = new Set<Id>();

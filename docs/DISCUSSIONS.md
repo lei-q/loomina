@@ -4748,3 +4748,24 @@ C1 只差「批量补缺」：声音页一句一个按钮，四句就要点四�
 **验证**
 - 新增用例：按顺序补、跳过锁定镜头、第二句失败即停、后续句子不动、错误写进 `castError`。
 - 浏览器 `/voice`：按钮显示「补缺 2 句」，点击后第一句就失败（TTS 模型分组 404），页面显示「补了 0 句，后面一句失败就停了」与供应商原因，按钮回到可点状态。
+
+## 第一百七十次 · 2026-11-12 · 地点参考图
+
+**议题**
+人物与道具都有多张参考图，地点只有一张主镜；`Location.referenceImages` 从第一版就在 schema 里，但事件与界面都没写过它（B8 的「地点参考图未做」）。
+
+**结论**
+- `location.updated` 的 `patch` 增加 `referenceImages`，整份替换，复用人物 / 道具的校验（去重、最多 8 张、资产必须存在）。
+- 挂图仍走「资产先落库」：`asset.updated` → `location.updated`，与 ADR-0079 同一条路。
+- 镜头锚点在地点主镜之后追加地点参考图，标签「地点 · 参考图」，排在道具之后拿剩余名额；地点锁定时只认锁定的那份。
+- 定妆页地点主镜下方加「参考」一排，可挂可摘；摘掉只删引用，资产留着。
+- 不改人物 / 道具的既有行为与锚点优先级。
+
+**产物**
+- `packages/ir/src/events.ts`、`packages/ir/src/anchors.ts`、`packages/ir/test/events.test.ts`、`packages/ir/test/anchors.test.ts`
+- `apps/web/lib/read-model.ts`、`apps/web/lib/workbench-store.ts`、`apps/web/lib/workbench-store.test.ts`、`apps/web/components/cast-screen.tsx`
+- `docs/adr/0152-location-reference-images.md`、`docs/DATA-MODEL.md`、`docs/FEATURES.md`、`docs/ROADMAP.md`、`docs/DISCUSSIONS.md`
+
+**验证**
+- IR 与 web 定向用例通过：事件校验（重复 / 不存在资产）、锚点追加顺序、store 挂摘与只读。
+- 浏览器 `/cast`：地点「走廊」主镜下方出现「参考」空态；贴一张 SVG 后出现 `ref 1`，事件为 `asset.updated` + `location.updated`；摘掉后引用清空。验证时误删了人物林的一张参考图，已用历史「回到这里」恢复，并重新确认林仍有 `ref 1`、走廊回到空态。

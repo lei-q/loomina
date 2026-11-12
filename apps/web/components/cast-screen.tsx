@@ -753,6 +753,8 @@ function LocationRow({
   onDescribe,
   onRemove,
   onBuildSpace,
+  onAddReference,
+  onRemoveReference,
   otherLocations,
   history,
   onRestoreText,
@@ -774,6 +776,9 @@ function LocationRow({
   onBuildSpace: () => void;
   /** 删掉这个地点：成功返回 true（ADR-0061 / ADR-0062） */
   onRemove: (moveToId?: string) => boolean;
+  /** 挂一张参考图：成功返回 true（B8） */
+  onAddReference: (uri: string) => boolean;
+  onRemoveReference: (assetId: string) => void;
   /** 还有哪些地点可以搬：这一行自己不在里面 */
   otherLocations: { id: string; name: string }[];
   /** 名字 / 场景描述改过哪几版（ADR-0082） */
@@ -1151,6 +1156,17 @@ function LocationRow({
         />
       </div>
 
+      <div className="mt-3 max-w-[560px]">
+        <ReferenceStrip
+          references={location.references}
+          startAt={1}
+          readOnly={readOnly}
+          emptyText="还没有参考图：同一个房间的别的角度、细节、光线参考都挂在这里。"
+          onAdd={onAddReference}
+          onRemove={onRemoveReference}
+        />
+      </div>
+
       {showSpace && location.space && (
         <div className="mt-4 flex flex-wrap items-start gap-4">
           <BlockingBoard
@@ -1480,6 +1496,8 @@ export function CastScreen() {
   const removeCharacterReference = useWorkbench((state) => state.removeCharacterReference);
   const addPropReference = useWorkbench((state) => state.addPropReference);
   const removePropReference = useWorkbench((state) => state.removePropReference);
+  const addLocationReference = useWorkbench((state) => state.addLocationReference);
+  const removeLocationReference = useWorkbench((state) => state.removeLocationReference);
   const editCharacter = useWorkbench((state) => state.editCharacter);
   const addProp = useWorkbench((state) => state.addProp);
   const editProp = useWorkbench((state) => state.editProp);
@@ -1794,6 +1812,10 @@ export function CastScreen() {
                   if (template) editLocation(location.id, { space: templateSpace(template) });
                 }}
                 onRemove={(moveToId) => removeLocation(location.id, moveToId)}
+                onAddReference={(uri) => addLocationReference(location.id, uri)}
+                onRemoveReference={(assetId) =>
+                  removeLocationReference(location.id, assetId)
+                }
                 otherLocations={cast.locations
                   .filter((item) => item.id !== location.id)
                   .map((item) => ({ id: item.id, name: item.name }))}

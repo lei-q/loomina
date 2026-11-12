@@ -3442,6 +3442,36 @@ describe("参考图多张与手动挂（ADR-0079）", () => {
     expect(lin.referenceImages).toHaveLength(8);
   });
 
+  it("地点：挂一张写 asset.updated 与 location.updated，再摘掉；只读时不动（B8）", () => {
+    const locationId = state().project.locations[0]!.id;
+    const refs = () =>
+      state().project.locations.find((item) => item.id === locationId)!.referenceImages;
+    expect(refs()).toEqual([]);
+    const count = state().events.length;
+
+    expect(state().addLocationReference(locationId, svg("loc"))).toBe(true);
+    expect(refs()).toHaveLength(1);
+    expect(state().events).toHaveLength(count + 2);
+    expect(state().events.at(-1)).toMatchObject({ type: "location.updated" });
+    expect(rebuild(state().events)).toEqual(state().project);
+
+    const added = refs()[0]!;
+    useWorkbench.setState({ readOnly: true });
+    expect(state().removeLocationReference(locationId, added)).toBe(false);
+    useWorkbench.setState({ readOnly: false });
+    expect(state().removeLocationReference(locationId, added)).toBe(true);
+    expect(refs()).toEqual([]);
+  });
+
+  it("地点参考图同样拒绝重复与超过 8 张", () => {
+    const locationId = state().project.locations[0]!.id;
+    expect(state().addLocationReference(locationId, svg("dup"))).toBe(true);
+    const count = state().events.length;
+    expect(state().addLocationReference(locationId, svg("dup"))).toBe(false);
+    expect(state().castError).toContain("已经挂过了");
+    expect(state().events).toHaveLength(count);
+  });
+
   it("道具：挂上再摘掉；只读时不动", () => {
     const refs = () =>
       state().project.props.find((item) => item.id === "p-lamp")!.referenceImages;

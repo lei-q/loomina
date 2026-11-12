@@ -70,6 +70,27 @@ function build(overrides: {
   });
 }
 
+describe("地点参考图进锚点（B8）", () => {
+  it("地点自己的参考图排在道具之后，同一张不重复", () => {
+    const project = build({
+      location: {
+        id: "loc-1",
+        name: "客厅",
+        masterShotId: "a-master",
+        referenceImages: ["a-misc-side"],
+      },
+    });
+    const anchors = shotAnchors(project, project.shots[0]!);
+    expect(anchors.assetIds).toEqual([
+      "a-lin-front",
+      "a-lin-34",
+      "a-master",
+      "a-misc-side",
+    ]);
+    expect(anchors.refs.at(-1)).toEqual({ assetId: "a-misc-side", label: "客厅 · 参考图" });
+  });
+});
+
 describe("镜头锚点装配", () => {
   it("单人近景取正面与 3/4，再加场景主镜", () => {
     const project = build();

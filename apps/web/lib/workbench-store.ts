@@ -620,6 +620,10 @@ type WorkbenchState = {
   moveSceneTo: (sceneId: string, toIndex: number) => boolean;
   /** 删一个地点；还有场次占着就先把它们搬到 `moveToId` 再删（ADR-0061 / ADR-0062） */
   removeLocation: (locationId: string, moveToId?: string) => boolean;
+  /** 给地点挂一张参考图（B8）：贴地址，建资产，写进 referenceImages */
+  addLocationReference: (locationId: string, uri: string) => boolean;
+  /** 摘掉地点的一张参考图：图留在资产里，可以再挂回来 */
+  removeLocationReference: (locationId: string, assetId: string) => boolean;
   /** 撤销最近一次删除：按前缀重放取回快照，再写补偿事件（ADR-0076） */
   undoLastRemoval: () => boolean;
   /** 回收站里恢复某一条删除：与撤销删除走同一条补偿逻辑（F2 / ADR-0109） */
@@ -4730,6 +4734,67 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       at: stamp(),
       sceneId,
       toIndex,
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  addLocationReference: (locationId, rawUri) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const location = project.locations.find((item) => item.id === locationId);
+    if (!location) {
+      set({ castError: "找不到这个地点。" });
+      return false;
+    }
+    if (location.referenceImages.length >= REFERENCE_IMAGES_MAX) {
+      set({ castError: `参考图最多 ${REFERENCE_IMAGES_MAX} 张：再多会把提示词挤爆。` });
+      return false;
+    }
+    const at = stamp();
+    const { asset, error } = makeReferenceAsset(rawUri, project.assets, at);
+    if (!asset) {
+      set({ castError: error ?? "这张图挂不上。" });
+      return false;
+    }
+    const existing = project.assets.filter((item) => location.referenceImages.includes(item.id));
+    if (existing.some((item) => item.uri === asset.uri)) {
+      set({ castError: "这张图已经挂过了。" });
+      return false;
+    }
+    const written: ProjectEvent[] = [
+      { type: "asset.updated", at, asset },
+      {
+        type: "location.updated",
+        at,
+        locationId,
+        patch: { referenceImages: [...location.referenceImages, asset.id] },
+      },
+    ];
+    set({
+      project: written.reduce(applyEvent, project),
+      events: [...events, ...written],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  removeLocationReference: (locationId, assetId) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const location = project.locations.find((item) => item.id === locationId);
+    if (!location || !location.referenceImages.includes(assetId)) return false;
+    const event: ProjectEvent = {
+      type: "location.updated",
+      at: stamp(),
+      locationId,
+      patch: {
+        referenceImages: location.referenceImages.filter((id) => id !== assetId),
+      },
     };
     set({
       project: applyEvent(project, event),

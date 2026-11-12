@@ -404,6 +404,8 @@ interface Budget {
 
 > **渲染清单（ADR-0101，2026-11-11）**：`/api/render` 的请求体是派生清单，不是 IR。`RenderManifest.quality: "draft" | "final"` 决定尺寸、帧率与编码参数：草稿 540×960 / 24fps / CRF 30 / ultrafast / 96k，定稿 1080×1920 / 30fps / CRF 20 / veryfast / 128k。服务端按档位校验尺寸与帧率，不自动换档；不带 `quality` 的旧清单按定稿处理。
 
+> **地点参考图（ADR-0152，2026-11-12）**：`Location.referenceImages` 不再只是 schema 里的字段——`location.updated` 的 `patch` 接受 `referenceImages`（整份替换，校验重复 / 上限 8 / 资产存在），挂图时先写 `asset.updated`。镜头锚点在地点主镜之后追加地点参考图（标签 `「地点名」 · 参考图`），排在道具之后；地点锁定时只认锁定版本里的图。
+
 ### 4.4 审片决定的写回（ADR-0027）
 
 审片台上只有两个动作会写数据：留用、淘汰。两者都是同一条事件：

@@ -1671,6 +1671,8 @@ export type CastLocationView = {
   masterStale?: StaleMark;
   /** 场地几何（B13.1 / ADR-0126）：有它才能画俯视走位图、判精确越轴 */
   space?: LocationSpace;
+  /** 主镜之外的角度 / 细节参考图（B8） */
+  references: CastReference[];
   lockedAt?: string;
 };
 
@@ -1767,6 +1769,10 @@ export function toCastView(project: Project, events?: ProjectEvent[]): CastView 
         masterUri: assetById.get(location.masterShotId ?? "")?.uri,
         masterStale: staleMaster.get(location.id),
         space: location.space,
+        references: location.referenceImages.map((id) => ({
+          assetId: id,
+          uri: assetById.get(id)?.uri,
+        })),
         lockedAt:
           item.approval?.status === "approved" ? item.approval.approvedAt : undefined,
       },

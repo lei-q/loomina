@@ -183,7 +183,7 @@ export type ProjectEvent =
       location: Location;
     }
   | {
-      /** 改地点（ADR-0059 / ADR-0063）：名字、模板与场景描述；主镜与参考图走资产那条路 */
+      /** 改地点（ADR-0059 / ADR-0063 / B8）：名字、模板、场景描述与参考图 */
       type: "location.updated";
       at: string;
       locationId: Id;
@@ -191,7 +191,9 @@ export type ProjectEvent =
        * `space: null` 表示清掉几何（换成没有坐标的旧模板时用）。
        * 用 null 而不是 undefined：undefined 存进 JSON 就消失了，回放会留下旧几何。
        */
-      patch: Partial<Pick<Location, "name" | "templateId" | "description">> & {
+      patch: Partial<
+        Pick<Location, "name" | "templateId" | "description" | "referenceImages">
+      > & {
         space?: LocationSpace | null;
       };
     }
@@ -1109,6 +1111,10 @@ function applyEventCore(
       if (event.patch.name !== undefined) patch.name = event.patch.name;
       if (event.patch.templateId !== undefined) patch.templateId = event.patch.templateId;
       if (event.patch.description !== undefined) patch.description = event.patch.description;
+      if (event.patch.referenceImages !== undefined) {
+        checkReferenceImages(event.patch.referenceImages, current.assets, "location.updated");
+        patch.referenceImages = event.patch.referenceImages;
+      }
       if (event.patch.space !== undefined && event.patch.space !== null) {
         const parsed = LocationSpaceSchema.safeParse(event.patch.space);
         if (!parsed.success) {
