@@ -3,6 +3,7 @@ import { ConfigError } from "@loomina/gateway";
 import { VideoGenerationError, generateShotVideo } from "@/lib/generate-video";
 import { recordHealthEvent } from "@/lib/health-events";
 import { PromptBlockedError } from "@/lib/moderation";
+import { withLongJobSlot } from "@/lib/long-job";
 import { parseShotMaterial } from "@/lib/request-shape";
 
 /**
@@ -48,9 +49,12 @@ export async function POST(request: Request) {
 
   const modelId = typeof body.modelId === "string" ? body.modelId : undefined;
   try {
-    const result = await generateShotVideo(
-      { shot, firstFrame, durationMs },
-      modelId,
+    // 出视频排进同一条长任务队列（H2 / ADR-0135）：渲染或出图正在跑时等一等。
+    // 供应商那边的任务本来就要轮询几十秒，排队不会额外增加多少总时长。
+    const result = await withLongJobSlot(
+      "video",
+      shot.description.slice(0, 20) || "一镜",
+      () => generateShotVideo({ shot, firstFrame, durationMs }, modelId),
     );
     // 健康检查（H11）：只记成没成，不记提示词
     void recordHealthEvent({

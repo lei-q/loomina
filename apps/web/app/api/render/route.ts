@@ -31,6 +31,7 @@ import {
 } from "@/lib/render-job-store";
 import { localPathOf } from "@/lib/asset-store";
 import { materializeAsset } from "@/lib/storage-runtime";
+import { withLongJobSlot, longJobSnapshot } from "@/lib/long-job";
 
 /**
  * 成片渲染任务队列（E6 / H2）。
@@ -718,7 +719,16 @@ function pump(): void {
     return;
   }
   activeJobId = nextId;
-  void runJob(job).finally(() => {
+  // 渲染也要排进同一条长任务队列（H2 / ADR-0135）：出图 / 出视频正在跑时，
+  // ffmpeg 等它跑完再开始，别让三条一起抢 CPU。真排上了队才改阶段。
+  void withLongJobSlot(
+    "render",
+    job.fileName,
+    () => runJob(job),
+    () => {
+      job.stage = "等前面的长任务跑完";
+    },
+  ).finally(() => {
     activeJobId = null;
     pump();
   });
@@ -738,6 +748,8 @@ function publicJob(job: RenderJob): Record<string, unknown> {
     placeholders: job.placeholders,
     loudness: job.loudness,
     error: job.error,
+    /** 同一条长任务队列里谁在占着（H2 / ADR-0135）：等待时界面要说得清在等谁 */
+    busyWith: longJobSnapshot().active,
   };
 }
 

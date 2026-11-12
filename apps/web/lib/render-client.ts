@@ -356,6 +356,8 @@ type JobState = {
   placeholders: number;
   loudness?: LoudnessReport;
   error?: string;
+  /** 同一条长任务队列里谁占着位置（H2 / ADR-0135）：渲染在等别人时要说清在等谁 */
+  busyWith?: { kind: string; label: string; seconds: number } | null;
 };
 
 async function errorOf(response: Response, fallback: string): Promise<string> {
@@ -413,8 +415,12 @@ export async function exportMp4(
         state.position > 0 ? `排队中（第 ${state.position} 位）…` : "排队中，马上开始…",
       );
     } else if (state.status === "running") {
+      // 在等别的长任务时阶段已经写明，这里不再叠一句
+      const waiting = state.busyWith && state.stage.includes("等前面的长任务");
       onStage?.(
-        `${state.stage}${state.progress > 0 ? ` · ${state.progress}%` : ""}…`,
+        waiting
+          ? `${state.stage}（${state.busyWith!.label} · ${state.busyWith!.seconds}s）…`
+          : `${state.stage}${state.progress > 0 ? ` · ${state.progress}%` : ""}…`,
       );
     }
   }

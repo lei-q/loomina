@@ -1,6 +1,7 @@
 import { loadConfig, probeProvider, type ProbeResult } from "./app-config";
 import { summarizeFailures, loadHealthEvents, type FailureGroup } from "./health-events";
 import { loadRenderJobs } from "./render-job-store";
+import { longJobSnapshot, LONG_JOB_LABEL, type LongJobKind } from "./long-job";
 
 /**
  * 健康检查（H11）：供应商连通性 + 最近失败率 + 渲染队列。
@@ -31,6 +32,14 @@ export type HealthReport = {
   providers: ProviderHealth[];
   failures: FailureGroup[];
   render: { queued: number; running: number; error: number; done: number };
+  /**
+   * 同一条长任务队列现在在跑什么、后面还排着谁（H2 / ADR-0135）。
+   * 渲染 / 出图 / 出视频共用这一个位置，所以它是「机器现在在忙什么」的唯一答案。
+   */
+  longJobs: {
+    active: { kind: LongJobKind; kindLabel: string; label: string; seconds: number } | null;
+    waiting: { kind: LongJobKind; kindLabel: string; label: string; seconds: number }[];
+  };
   alarms: string[];
 };
 
@@ -107,6 +116,7 @@ export async function buildHealthReport(force = false): Promise<HealthReport> {
   const jobs = await loadRenderJobs();
   const render = { queued: 0, running: 0, error: 0, done: 0 };
   for (const job of jobs) render[job.status] += 1;
+  const long = longJobSnapshot(now);
 
   return {
     checkedAt,
@@ -115,6 +125,15 @@ export async function buildHealthReport(force = false): Promise<HealthReport> {
     providers: probed,
     failures,
     render,
+    longJobs: {
+      active: long.active
+        ? { ...long.active, kindLabel: LONG_JOB_LABEL[long.active.kind] }
+        : null,
+      waiting: long.waiting.map((entry) => ({
+        ...entry,
+        kindLabel: LONG_JOB_LABEL[entry.kind],
+      })),
+    },
     alarms: alarmsOf(probed, failures),
   };
 }

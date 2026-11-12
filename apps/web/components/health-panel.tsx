@@ -44,6 +44,11 @@ type HealthReport = {
   providers: ProviderHealth[];
   failures: FailureGroup[];
   render: { queued: number; running: number; error: number; done: number };
+  /** 同一条长任务队列（H2 / ADR-0135）；旧服务端没有这个字段，按空闲处理 */
+  longJobs?: {
+    active: { kind: string; kindLabel: string; label: string; seconds: number } | null;
+    waiting: { kind: string; kindLabel: string; label: string; seconds: number }[];
+  };
   alarms: string[];
 };
 
@@ -242,6 +247,26 @@ export function HealthPanel() {
           </div>
 
           <div className="tnum mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-line pt-2 text-[9px] text-muted-2">
+            <span className="text-muted">长任务</span>
+            {report.longJobs?.active ? (
+              <span className="text-text">
+                {report.longJobs.active.kindLabel} · {report.longJobs.active.label}
+                <span className="ml-1 text-muted-2">{report.longJobs.active.seconds}s</span>
+              </span>
+            ) : (
+              <span>空闲</span>
+            )}
+            {(report.longJobs?.waiting.length ?? 0) > 0 && (
+              <span>排队 {report.longJobs!.waiting.length}</span>
+            )}
+            {(report.longJobs?.waiting ?? []).slice(0, 3).map((entry, index) => (
+              <span key={`${entry.kind}-${entry.label}-${index}`}>
+                {entry.kindLabel}：{entry.label}
+              </span>
+            ))}
+          </div>
+
+          <div className="tnum mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-line pt-2 text-[9px] text-muted-2">
             <span className="text-muted">渲染队列</span>
             <span>排队 {report.render.queued}</span>
             <span>渲染中 {report.render.running}</span>

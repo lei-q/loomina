@@ -4,6 +4,7 @@ import { SHEET_ANGLES, type SheetView } from "@loomina/ir";
 import { generateCastImage, type CastImageRequest } from "@/lib/generate-image";
 import { recordHealthEvent } from "@/lib/health-events";
 import { PromptBlockedError } from "@/lib/moderation";
+import { withLongJobSlot } from "@/lib/long-job";
 import { name, parseShotMaterial, text } from "@/lib/request-shape";
 
 /** 出图是 20–45 秒的事，别让它跑在 edge 的短超时里。 */
@@ -30,6 +31,14 @@ type Body = {
 
 function bad(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
+}
+
+/** 队列里显示的人话：出的哪一张（H2 / ADR-0135） */
+function labelOf(request: CastImageRequest): string {
+  if (request.kind === "sheet") return `${request.character.name} 的三视图（${request.angle}）`;
+  if (request.kind === "master") return `「${request.location.name}」主镜`;
+  if (request.kind === "prop") return `「${request.prop.name}」参考图`;
+  return `${request.frame === "last" ? "尾帧" : "首帧"}：${request.shot.description.slice(0, 20) || "一镜"}`;
 }
 
 function parse(body: Body | null): CastImageRequest | string {
@@ -92,7 +101,11 @@ export async function POST(request: Request) {
 
   const modelId = typeof body?.modelId === "string" ? body.modelId : undefined;
   try {
-    const result = await generateCastImage(parsed, modelId);
+    // 出图也排进同一条长任务队列（H2 / ADR-0135）：渲染正在跑时等它跑完，
+    // 别让 ffmpeg 与出图同时抢 CPU。队列只影响排队，失败语义不变。
+    const result = await withLongJobSlot("image", labelOf(parsed), () =>
+      generateCastImage(parsed, modelId),
+    );
     void recordHealthEvent({
       at: new Date().toISOString(),
       modality: "image",
