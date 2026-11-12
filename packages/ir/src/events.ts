@@ -362,19 +362,25 @@ export type ProjectEvent =
       asset: Asset;
     }
   | {
-      /**
-       * 生成结果的人工复核（H6 / ADR-0132）。
-       *
-       * 单独一条事件而不是复用 `asset.updated`：那条是合并语义，
-       * `undefined` 过 JSON 会消失，所以「收回复核」删不掉字段——
-       * 资产会永远停在上一次的复核状态。`null` 在这里明确表示「回到还没看」。
-       */
       type: "asset.reviewed";
       at: string;
       assetId: Id;
       status: "passed" | "rejected" | null;
       /** 标「不可用」时的原因；标「已看」可以不写 */
       note?: string;
+    }
+  | {
+      /**
+       * 删掉一条没人引用的资产（F4 / ADR-0136）。
+       *
+       * 只有「没人引用」的资产才能删：`referencedAssetIds` 那一套引用点
+       * 逐个查过才允许写这条事件，handler 里再查一次兜底。删掉的是记录，
+       * 盘上的文件由「清理没人引用的文件」单独处理——两件事分开，
+       * 才不会出现「记录没了但文件还在」或反过来的半截状态。
+       */
+      type: "asset.removed";
+      at: string;
+      assetId: Id;
     }
   | {
       /**
@@ -1490,6 +1496,17 @@ function applyEventCore(
       return {
         ...current,
         assets: current.assets.map((item) => (item.id === event.assetId ? reviewed : item)),
+      };
+    }
+
+    case "asset.removed": {
+      if (!current) throw new Error("asset.removed 之前必须有 project.created");
+      if (!current.assets.some((item) => item.id === event.assetId)) {
+        throw new Error(`asset.removed 指向不存在的资产: ${event.assetId}`);
+      }
+      return {
+        ...current,
+        assets: current.assets.filter((item) => item.id !== event.assetId),
       };
     }
 

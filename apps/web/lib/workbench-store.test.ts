@@ -1,9 +1,10 @@
-import { rebuild, type ProjectEvent } from "@loomina/ir";
+import { applyEvent, rebuild, type ProjectEvent } from "@loomina/ir";
 import { parseStoryDraft } from "@loomina/pipeline";
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 import { setEventLog, type EventLog } from "./event-log";
 import { claimWriter, releaseWriter } from "./writer-lock";
 import { toScriptView, toStageView } from "./read-model";
+import { referencedAssetIds } from "./asset-inventory";
 import { toEditView } from "./edit";
 import { stageStateOf } from "./stage-flow";
 import { resetPersistenceForTests, useWorkbench } from "./workbench-store";
@@ -4614,5 +4615,54 @@ describe("逐句表演参数与试听台（C2 / C9 / ADR-0124）", () => {
     expect(state().project.assets.some((asset) => asset.id === second!.assetId)).toBe(true);
     expect(rebuild(state().events)).toEqual(state().project);
     vi.unstubAllGlobals();
+  });
+});
+
+describe("删掉没人引用的资产（F4 / ADR-0136）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("没人引用就写一条 asset.removed，回放一致", () => {
+    // 造一条谁都不引用的资产
+    const at = "2026-11-12T10:00:00+08:00";
+    useWorkbench.setState((current) => ({
+      project: applyEvent(current.project, {
+        type: "asset.updated",
+        at,
+        asset: { id: "a-orphan", kind: "image", uri: "data:image/png;base64,QQ==", source: "generated", createdAt: at },
+      }),
+      events: [
+        ...current.events,
+        { type: "asset.updated", at, asset: { id: "a-orphan", kind: "image", uri: "data:image/png;base64,QQ==", source: "generated", createdAt: at } },
+      ],
+    }));
+
+    expect(state().removeAsset("a-orphan")).toBe(true);
+    expect(state().project.assets.some((asset) => asset.id === "a-orphan")).toBe(false);
+    expect(state().events.at(-1)).toMatchObject({ type: "asset.removed", assetId: "a-orphan" });
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("还在用的资产不删：引用点先摘掉", () => {
+    // 挑一条真的被引用、且真的在项目里的资产（示例项目里有引用了不存在的资产的镜头）
+    const referenced = referencedAssetIds(state().project);
+    const assetId = state().project.assets.find((asset) => referenced.has(asset.id))!.id;
+    const snapshot = state().events.length;
+    expect(state().removeAsset(assetId)).toBe(false);
+    expect(state().castError).toContain("还在用");
+    expect(state().events).toHaveLength(snapshot);
+    expect(state().project.assets.some((asset) => asset.id === assetId)).toBe(true);
+  });
+
+  it("找不到的资产、只读标签页都不写事件", () => {
+    const snapshot = state().events.length;
+    expect(state().removeAsset("a-nope")).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().removeAsset(state().project.assets[0]!.id)).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
   });
 });

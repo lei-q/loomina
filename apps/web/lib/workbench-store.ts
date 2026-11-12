@@ -70,7 +70,12 @@ import {
   type RemovalKind,
 } from "@/lib/read-model";
 import { persistAsset } from "@/lib/asset-client";
-import { inlineBytesOf, inventoryOf, type AssetInventory } from "@/lib/asset-inventory";
+import {
+  inlineBytesOf,
+  inventoryOf,
+  referencedAssetIds,
+  type AssetInventory,
+} from "@/lib/asset-inventory";
 import { isRemoteAssetUri, isStoredAssetUri } from "@/lib/asset-uri";
 import { getModelChoice } from "@/lib/model-choice";
 import { sampleProject } from "@/lib/sample-project";
@@ -568,6 +573,14 @@ type WorkbenchState = {
   migrateAssets: () => Promise<{ moved: number; failed: number; bytes: number }>;
   /** 素材清点（H3）：几个在日志里、几个已进资产库、哪些没人引用 */
   assetInventory: () => AssetInventory;
+  /**
+   * 删掉一条没人引用的资产（F4 / ADR-0136）：一条 `asset.removed`。
+   *
+   * 只在 `referencedAssetIds` 里确实没有它时才写——刚回滚、刚生成还没挂上的
+   * 资产看起来也像「没人用」，但那正是最不该删的时刻。盘上的文件不在这里删：
+   * 「清理没人引用的文件」是另一个显式动作。
+   */
+  removeAsset: (assetId: string) => boolean;
   reset: () => void;
 };
 
@@ -4877,6 +4890,27 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
   },
 
   assetInventory: () => inventoryOf(get().project),
+
+  removeAsset: (assetId) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const asset = project.assets.find((item) => item.id === assetId);
+    if (!asset) {
+      set({ castError: "找不到这条资产。" });
+      return false;
+    }
+    if (referencedAssetIds(project).has(assetId)) {
+      set({ castError: "这条资产还在用：先把它从引用它的地方摘掉，再删。" });
+      return false;
+    }
+    const event: ProjectEvent = { type: "asset.removed", at: stamp(), assetId };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
   migrateAssets: async () => {
     if (get().readOnly) return { moved: 0, failed: 0, bytes: 0 };
     let moved = 0;

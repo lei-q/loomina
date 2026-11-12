@@ -273,6 +273,11 @@ export function describeEvent(before: Project, event: ProjectEvent): string {
       const kind = event.asset.kind === "image" ? "图片" : event.asset.kind === "video" ? "视频" : "音频";
       return `落一条${kind}资产`;
     }
+    case "asset.removed": {
+      const asset = before.assets.find((item) => item.id === event.assetId);
+      const kind = asset ? (asset.kind === "image" ? "图片" : asset.kind === "video" ? "视频" : "音频") : "资产";
+      return `删掉没人用的${kind} ${event.assetId}`;
+    }
     case "timeline.updated":
       return `初剪：${event.items.length} 段`;
     case "timeline.music.updated":

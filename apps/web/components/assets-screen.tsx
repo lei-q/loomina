@@ -54,9 +54,14 @@ export function AssetsScreen() {
   const project = useWorkbench((state) => state.project);
   const hydrate = useWorkbench((state) => state.hydrate);
   const storageError = useWorkbench((state) => state.storageError);
+  const readOnly = useWorkbench((state) => state.readOnly);
+  const removeAsset = useWorkbench((state) => state.removeAsset);
   const [filter, setFilter] = useState<AssetFilter>("all");
   const [files, setFiles] = useState<Map<string, number>>();
   const [storeError, setStoreError] = useState<string>();
+  /** 两步确认：先点「删」再点「确认删」，与删场 / 删镜同一条规矩（ADR-0067） */
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [note, setNote] = useState<string>();
 
   useEffect(() => {
     void hydrate();
@@ -123,6 +128,9 @@ export function AssetsScreen() {
             </p>
           )}
           <Summary library={library} storeError={storeError} />
+          {note && (
+            <p className="mt-3 text-[9.5px] leading-[1.7] text-muted-2">{note}</p>
+          )}
           <ul className="mt-5 border-t border-line">
             {rows.length === 0 ? (
               <li className="py-8 text-center text-[10px] text-muted-2">
@@ -133,7 +141,28 @@ export function AssetsScreen() {
                     : "这个项目还没有素材。"}
               </li>
             ) : (
-              rows.map((row) => <Row key={row.assetId} row={row} />)
+              rows.map((row) => (
+                <Row
+                  key={row.assetId}
+                  row={row}
+                  readOnly={Boolean(readOnly)}
+                  confirming={confirming === row.assetId}
+                  onAskDelete={() => {
+                    setConfirming(row.assetId);
+                    setNote(undefined);
+                  }}
+                  onCancel={() => setConfirming(null)}
+                  onConfirm={() => {
+                    const ok = removeAsset(row.assetId);
+                    setConfirming(null);
+                    setNote(
+                      ok
+                        ? `删掉了 ${row.assetId}。盘上的文件还在：「清理没人引用的文件」会把它一起清掉。`
+                        : (useWorkbench.getState().castError ?? "删不掉这一条。"),
+                    );
+                  }}
+                />
+              ))
             )}
           </ul>
         </div>
@@ -229,9 +258,24 @@ function Summary({ library, storeError }: { library: LibraryView; storeError?: s
   );
 }
 
-function Row({ row }: { row: LibraryRow }) {
+function Row({
+  row,
+  readOnly,
+  confirming,
+  onAskDelete,
+  onCancel,
+  onConfirm,
+}: {
+  row: LibraryRow;
+  readOnly: boolean;
+  confirming: boolean;
+  onAskDelete: () => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
   const href = row.uri ? assetHref(row.uri) : undefined;
   const bytes = row.inlineBytes + (row.storeBytes ?? 0);
+  const deletable = row.usedBy.length === 0 && !readOnly;
   return (
     <li className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line py-2">
       <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[2px] border border-line bg-surface">
@@ -282,6 +326,37 @@ function Row({ row }: { row: LibraryRow }) {
       <span className="tnum shrink-0 text-[9px] text-muted-2">
         {row.createdAt.slice(5, 16).replace("T", " ")}
       </span>
+
+      {/* 删一条没人用的资产（F4 / ADR-0136）：两步确认，与删场 / 删镜同一规矩 */}
+      {deletable &&
+        (confirming ? (
+          <span className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={onConfirm}
+              title="从项目里删掉这条资产记录；盘上的文件由「清理没人引用的文件」处理"
+              className="tnum rounded-token border border-pick/70 px-1 py-px text-[9px] text-pick transition-colors duration-[var(--dur)] hover:bg-pick hover:text-bg"
+            >
+              确认删
+            </button>
+            <button
+              type="button"
+              onClick={onCancel}
+              className="tnum rounded-token border border-line px-1 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+            >
+              取消
+            </button>
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={onAskDelete}
+            title="没人引用的资产可以删：记录先删，盘上的文件另走「清理没人引用的文件」"
+            className="tnum shrink-0 rounded-token border border-line px-1 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:border-pick hover:text-pick"
+          >
+            删
+          </button>
+        ))}
     </li>
   );
 }
