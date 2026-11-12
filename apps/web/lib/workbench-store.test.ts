@@ -836,6 +836,62 @@ describe("镜头锁定（ADR-0041）", () => {
     expect(rebuild(state().events).shots.find((item) => item.id === id)?.locked).toBe(false);
   });
 
+  it("整段锁定：只锁留用过的镜头，跳过的照实说", () => {
+    const sceneId = state().project.scenes[0]!.id;
+    const shotIds = state().project.scenes[0]!.shotIds;
+    const before = state().events.length;
+
+    const result = state().setSceneLock(sceneId, true);
+    // 示例项目第 1 场只有 s-02 留用过（t-02 approved），另外两镜没留用
+    expect(result.locked).toBe(1);
+    expect(result.skipped).toBe(2);
+    expect(state().events.slice(before).map((event) => event.type)).toEqual(["shot.updated"]);
+    expect(state().project.shots.find((item) => item.id === "s-02")?.locked).toBe(true);
+    for (const id of shotIds.filter((item) => item !== "s-02")) {
+      expect(state().project.shots.find((item) => item.id === id)?.locked).toBe(false);
+    }
+    expect(state().castError).toContain("跳过");
+  });
+
+  it("整段解锁：把这一场锁着的全部打开", () => {
+    const sceneId = state().project.scenes[0]!.id;
+    const shotIds = state().project.scenes[0]!.shotIds;
+    for (const id of shotIds) {
+      state().select(id);
+      state().decide("approved");
+      state().setShotLock(id, true);
+    }
+    const before = state().events.length;
+    const result = state().setSceneLock(sceneId, false);
+    expect(result.locked).toBe(shotIds.length);
+    expect(state().events.length - before).toBe(shotIds.length);
+    for (const id of shotIds) {
+      expect(state().project.shots.find((item) => item.id === id)?.locked).toBe(false);
+    }
+    expect(rebuild(state().events).shots.find((item) => item.id === shotIds[0])?.locked).toBe(false);
+  });
+
+  it("一镜都锁不了时说清原因，不写事件", () => {
+    // 第 2 场：s-04 与 s-05，s-05 留用过；先把它淘汰掉再试
+    const sceneId = state().project.scenes[1]!.id;
+    state().select("s-05");
+    state().decide("rejected");
+    const before = state().events.length;
+    const result = state().setSceneLock(sceneId, true);
+    expect(result.locked).toBe(0);
+    expect(state().events).toHaveLength(before);
+    expect(state().castError).toContain("留用");
+  });
+
+  it("只读模式不写事件", () => {
+    const sceneId = state().project.scenes[0]!.id;
+    const before = state().events.length;
+    useWorkbench.setState({ readOnly: true });
+    expect(state().setSceneLock(sceneId, true)).toEqual({ locked: 0, skipped: 0 });
+    expect(state().events).toHaveLength(before);
+    useWorkbench.setState({ readOnly: false });
+  });
+
   it("一步留用并锁：写两条事件，锁定生效，选中照常前进", () => {
     const id = state().currentShotId;
     const before = state().events.length;

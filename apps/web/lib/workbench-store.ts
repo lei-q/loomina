@@ -252,6 +252,13 @@ type WorkbenchState = {
   select: (shotId: string) => void;
   /** 锁 / 解锁一镜：留用过的镜头才能锁；读写都留痕（ADR-0041） */
   setShotLock: (shotId: string, locked: boolean) => void;
+  /**
+   * 整段锁定 / 解锁（H20 / ADR-0133）：一场里所有「能锁」的镜头一次写完。
+   *
+   * 只锁留用过 take 的镜头——与单镜锁定同一条规则。锁不了的镜头不静默跳过：
+   * 返回值告诉界面锁了几条、跳了几条，跳过的原因写进 `castError`。
+   */
+  setSceneLock: (sceneId: string, locked: boolean) => { locked: number; skipped: number };
   /** 标这一镜的节拍与镜头目的（A11 / A12）：一条 `shot.updated`（ADR-0096） */
   setShotPlan: (
     shotId: string,
@@ -1309,6 +1316,56 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       events: [...events, event],
       castError: undefined,
     });
+  },
+
+  setSceneLock: (sceneId, locked) => {
+    if (get().readOnly) {
+      set({ editError: "另一个标签页正在编辑：这里只读。" });
+      return { locked: 0, skipped: 0 };
+    }
+    const { project, events } = get();
+    const scene = project.scenes.find((item) => item.id === sceneId);
+    if (!scene) return { locked: 0, skipped: 0 };
+    const takeById = new Map(project.takes.map((item) => [item.id, item]));
+    const at = stamp();
+    const written: ProjectEvent[] = [];
+    let skipped = 0;
+    for (const shotId of scene.shotIds) {
+      const shot = project.shots.find((item) => item.id === shotId);
+      if (!shot || Boolean(shot.locked) === locked) continue;
+      // 与单镜锁定同一条规则：没留用过 take 的镜头不许锁
+      if (locked) {
+        const take = latestTake(shot, takeById);
+        if (!take || take.status !== "approved") {
+          skipped += 1;
+          continue;
+        }
+      }
+      written.push({ type: "shot.updated", at, shotId, patch: { locked } });
+    }
+    if (written.length === 0) {
+      set({
+        castError:
+          locked && skipped > 0
+            ? `这一场有 ${skipped} 镜还没留用 take：先留用，再整段锁定。`
+            : locked
+              ? "这一场都已经锁上了。"
+              : "这一场没有锁着的镜头。",
+      });
+      return { locked: 0, skipped };
+    }
+    // 一次 applyEvent 多条会写很多次盘；这里逐条过一遍，日志顺序与单镜一致
+    let next = project;
+    for (const event of written) next = applyEvent(next, event);
+    set({
+      project: next,
+      events: [...events, ...written],
+      castError:
+        skipped > 0
+          ? `锁了 ${written.length} 镜，跳过 ${skipped} 镜（还没留用 take）。`
+          : undefined,
+    });
+    return { locked: written.length, skipped };
   },
 
   setShotPlan: (shotId, patch) => {

@@ -52,6 +52,8 @@ export function ScriptScreen() {
   const editScene = useWorkbench((state) => state.editScene);
   const editSceneCode = useWorkbench((state) => state.editSceneCode);
   const undoLastRemoval = useWorkbench((state) => state.undoLastRemoval);
+  const setSceneLock = useWorkbench((state) => state.setSceneLock);
+  const lockedShots = useWorkbench((state) => state.project.shots);
   const moveScene = useWorkbench((state) => state.moveScene);
   const moveSceneTo = useWorkbench((state) => state.moveSceneTo);
   const addScene = useWorkbench((state) => state.addScene);
@@ -79,6 +81,8 @@ export function ScriptScreen() {
   const [deletingShot, setDeletingShot] = useState<string | null>(null);
   /** 删除被拒的原因：贴在被删的那一场 / 那一镜下面，不塞进别的编辑器（ADR-0067） */
   const [deleteNote, setDeleteNote] = useState<{ id: string; text: string } | null>(null);
+  // 整段锁定的回执（H20）：锁了几镜、跳过几镜，得挂在那一场下面才看得见
+  const [lockNote, setLockNote] = useState<{ id: string; text: string } | null>(null);
   /** 这一镜里换人：正在换哪一位（镜头 + 被换的人，ADR-0070） */
   const [swappingCast, setSwappingCast] = useState<{ shotId: string; characterId: string } | null>(null);
   /** 换人被拒的原因，贴在那一镜的出场行下面 */
@@ -360,7 +364,12 @@ export function ScriptScreen() {
           )}
 
           <div className="mt-8 space-y-10">
-            {view.scenes.map((scene, at) => (
+            {view.scenes.map((scene, at) => {
+              // 这一场锁了几镜（H20）：整段锁定的按钮文案与计数都看它
+              const sceneLocked = scene.shots.filter((shot) =>
+                lockedShots.find((item) => item.id === shot.id)?.locked,
+              ).length;
+              return (
               <section
                 key={scene.id}
                 onDragOver={(event) => {
@@ -537,7 +546,30 @@ export function ScriptScreen() {
                   <h2 className="text-[13px] tracking-[.04em] text-text">{scene.place}</h2>
                   <span className="tnum ml-auto shrink-0 text-[9.5px] text-muted-2">
                     {scene.dur.toFixed(1)}s · {scene.shots.length} 镜
+                    {sceneLocked > 0 && ` · 锁 ${sceneLocked}`}
                   </span>
+                  {/* 整段锁定（H20 / ADR-0133）：一场里所有留用过的镜头一次锁上。
+                      有锁着的就显示「整段解锁」——若按「全锁才算解锁」，
+                      一场里只要有一镜没留用 take，就永远到不了全锁，也就永远解不开。 */}
+                  {!readOnly && scene.shots.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // 回执一律读 castError：锁了 / 跳过了 / 一个都锁不了，都写在里面
+                        setSceneLock(scene.id, sceneLocked === 0);
+                        const message = useWorkbench.getState().castError;
+                        setLockNote(message ? { id: scene.id, text: message } : null);
+                      }}
+                      title={
+                        sceneLocked > 0
+                          ? "这一场锁着的镜头一次解开"
+                          : "把这一场里留用过 take 的镜头一次锁上（没留用的跳过并告诉你）"
+                      }
+                      className="tnum shrink-0 rounded-token border border-line px-1 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text"
+                    >
+                      {sceneLocked > 0 ? "整段解锁" : "整段锁定"}
+                    </button>
+                  )}
                   {/* 调整场序（ADR-0060）：上移 / 下移一位，镜号跟着重排 */}
                   {!readOnly && (
                     <span className="flex shrink-0 items-center gap-1">
@@ -640,6 +672,9 @@ export function ScriptScreen() {
 
                 {deleteNote?.id === scene.id && (
                   <p className="mt-1.5 text-[9.5px] leading-[1.7] text-pick">{deleteNote.text}</p>
+                )}
+                {lockNote?.id === scene.id && (
+                  <p className="mt-1.5 text-[9.5px] leading-[1.7] text-muted-2">{lockNote.text}</p>
                 )}
 
                 {/* 场头改过几次（ADR-0058）：一场一件事，折叠在标题下面，不占正文 */}
@@ -1525,7 +1560,8 @@ export function ScriptScreen() {
                   </span>
                 )}
               </section>
-            ))}
+              );
+            })}
 
             {view.scenes.length === 0 && (
               <p className="rounded-token border border-dashed border-line px-3 py-6 text-center text-[10.5px] leading-[1.8] text-muted-2">
