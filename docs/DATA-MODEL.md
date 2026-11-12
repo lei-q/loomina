@@ -789,6 +789,7 @@ interface MusicCue {
 - 断句（ADR-0087）：每句台词按标点切小句、合并到每行不超过 `maxChars`（12 / 16 / 20，默认 16）个可见字，再按可见字数把 `durationMs` 分给各条 cue（每条至少 600ms，总和严格等于台词时长）。cue 是由读模型现算的，**不落 IR**：改字数档位只重算显示，不写事件。
 - 手改断句（D2 / ADR-0117）：作者改过的那一句以 `subtitleOverrides` 为准，没改过的仍走自动断句。覆盖按**整句**存，不按单条 cue 存——单条 cue 的 id 是「第几段」，改了每行字数就会错位。覆盖里的 `durationMs` 是相对权重，读模型按比例缩放到整句时长，舍入误差落在最后一条，所以时间总和永远等于 `line.durationMs`。改字数档位不影响已覆盖的句子。
 - 版式（D3 / ADR-0130）：`Project.subtitleLayout` 只存作者**改过**的项——`preset`（default / large）、`fontSizeCqw`、`bottomPct`、`strokeCqw`。没写的项跟着 `preset` 那档模板走，所以换模板时调过的字号留着、没调过的位置跟着换。读模型把两者合成 `EditView.subtitleStyle`，预览 HTML、ASS 与成片叠加层都用这同一份；`subtitleCustom` 只用来在界面上显示「已调」与「恢复模板」。越界（字号 2–12、离底边 2–45、描边 0–3）在 `applyEvent` 里拒绝而不夹取：夹取会把「填错了」悄悄改成另一个数。清空某一项写 `null`，不写 `undefined`（后者过 JSON 会消失）。
+- 按角色着色（D3 / ADR-0140）：`Project.subtitleLayout.speakerColors` 只存**开关**（缺省开、`false` 全白、`null` 清掉覆盖）；颜色本身不进 IR，读模型按 `project.characters` 的顺序从六色板取（前六个角色一定不撞色，之后轮回），没有说话人的句子用白色。`EditCue.speakerColor` 由读模型派生，编辑页、预览 HTML、ASS 行内覆盖与成片叠加层共用这一份。
 - 叠加层偏移（E1 / ADR-0131）：`DialogueLine.voiceOffsetMs` / `subtitleOffsetMs` 是**作者把这一句的配音 / 字幕相对「本该开始」的位置挪了多少毫秒**，可正可负，缺省 0。画面轨必须首尾相接（渲染清单要求片段时长之和严格等于成片全长），所以能自由挪的只有叠加层，而且**按句**挪而不是按轨挪——一条独立的「音频轨」需要另一套与画面解耦的时间轴，当前没有转场与叠画，做了也是空转。写入走既有 `dialogue.updated` 的 patch：`undefined` 不改、数字覆盖、`null` 归零；非整数或超过 ±30 秒在 `applyEvent` 里拒绝。读模型算出 `audioStartMs` / `cueStartMs`，并把起点夹进 `[0, totalMs - durationMs]`：IR 里留着作者填的原值，只在读模型夹，因为「填了 30 秒」是作者的事实，夹取发生在渲染边界。断句后的每一条 cue 的绝对起点都从 `cueStartMs` 起算。
 - 总数：全长 = 最晚片段终点；`missing` = 没进时间线的镜头数。
 

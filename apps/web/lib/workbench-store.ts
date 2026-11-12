@@ -457,6 +457,8 @@ type WorkbenchState = {
     fontSizeCqw?: number | null;
     bottomPct?: number | null;
     strokeCqw?: number | null;
+    /** 按角色着色（D3）：`null` 清掉覆盖、回到默认开 */
+    speakerColors?: boolean | null;
   }) => boolean;
   /**
    * 挪一句的配音或字幕（E1 / ADR-0131）：写一条 `dialogue.updated`。
@@ -3390,7 +3392,11 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       (layout.strokeCqw === undefined ||
         (layout.strokeCqw === null
           ? current.strokeCqw === undefined
-          : current.strokeCqw === layout.strokeCqw));
+          : current.strokeCqw === layout.strokeCqw)) &&
+      (layout.speakerColors === undefined ||
+        (layout.speakerColors === null
+          ? current.speakerColors === undefined
+          : (current.speakerColors ?? true) === layout.speakerColors));
     if (same) return false;
     const at = stamp();
     const event: ProjectEvent = { type: "subtitle.layout.updated", at, layout };

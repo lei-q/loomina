@@ -313,6 +313,8 @@ export type ProjectEvent =
         fontSizeCqw?: number | null;
         bottomPct?: number | null;
         strokeCqw?: number | null;
+        /** 按角色着色（D3）：`null` 清掉覆盖、回到默认开 */
+        speakerColors?: boolean | null;
       };
     }
   | {
@@ -1428,6 +1430,11 @@ function applyEventCore(
           throw new Error(`${key} 必须在 ${min}–${max} 之间：${value}`);
         }
         next[key] = Math.round(value * 100) / 100;
+      }
+      if (layout.speakerColors !== undefined) {
+        touched += 1;
+        if (layout.speakerColors === null) delete next.speakerColors;
+        else next.speakerColors = layout.speakerColors;
       }
       if (touched === 0) throw new Error("subtitle.layout.updated 没有要改的字段");
       return { ...current, subtitleLayout: next };

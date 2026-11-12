@@ -6,6 +6,7 @@ import type {
   TimelineItem,
 } from "@loomina/ir";
 import { toStageView, type SceneKind } from "./read-model";
+import { SPEAKER_DEFAULT_COLOR, speakerPaletteOf } from "./speaker-color";
 import { subtitleCues } from "./subtitle";
 
 // ── 字幕样式（D3）───────────────────────────────────────────────
@@ -21,6 +22,8 @@ export type SubtitleStyle = {
   bottomPct: number;
   /** 描边粗细（cqw）：浅色画面上也读得清 */
   strokeCqw: number;
+  /** 按角色着色（D3）：关掉时所有字幕回到白色 */
+  speakerColors: boolean;
 };
 
 export const SUBTITLE_STYLES: Record<SubtitleStyleId, SubtitleStyle> = {
@@ -30,6 +33,7 @@ export const SUBTITLE_STYLES: Record<SubtitleStyleId, SubtitleStyle> = {
     fontSizeCqw: 4.6,
     bottomPct: 14,
     strokeCqw: 0.55,
+    speakerColors: true,
   },
   large: {
     id: "large",
@@ -37,6 +41,7 @@ export const SUBTITLE_STYLES: Record<SubtitleStyleId, SubtitleStyle> = {
     fontSizeCqw: 5.8,
     bottomPct: 18,
     strokeCqw: 0.7,
+    speakerColors: true,
   },
 };
 
@@ -66,6 +71,7 @@ export function subtitleStyleOf(
     fontSizeCqw: layout.fontSizeCqw ?? base.fontSizeCqw,
     bottomPct: layout.bottomPct ?? base.bottomPct,
     strokeCqw: layout.strokeCqw ?? base.strokeCqw,
+    speakerColors: layout.speakerColors ?? base.speakerColors,
   };
 }
 
@@ -75,7 +81,8 @@ export function isCustomSubtitleLayout(layout?: SubtitleLayout): boolean {
   return (
     layout.fontSizeCqw !== undefined ||
     layout.bottomPct !== undefined ||
-    layout.strokeCqw !== undefined
+    layout.strokeCqw !== undefined ||
+    layout.speakerColors !== undefined
   );
 }
 
@@ -185,7 +192,11 @@ export type EditCue = {
   id: string;
   lineId: string;
   shotId: string;
+  /** 说话人；没有就是旁白 / 没标 */
+  characterId?: string;
   characterName: string;
+  /** 这一句字幕的颜色（D3）；关掉按角色着色时没有，按白色画 */
+  speakerColor?: string;
   text: string;
   /** 绝对时间：从整条片子的 0 点算起 */
   startMs: number;
@@ -354,6 +365,8 @@ export function toEditView(
     project.characters.map((character) => [character.id, character]),
   );
   const sceneById = new Map(project.scenes.map((scene) => [scene.id, scene]));
+  // 字幕颜色按角色顺序取（D3）：不存 IR，角色顺序不变颜色就不变
+  const colorByCharacter = speakerPaletteOf(project.characters.map((item) => item.id));
   const overrideByLine = new Map(
     project.subtitleOverrides.map((override) => [override.lineId, override]),
   );
@@ -396,6 +409,9 @@ export function toEditView(
           : undefined;
         const characterName =
           characterById.get(line.characterId)?.name ?? line.characterId;
+        const speakerColor = subtitleStyle.speakerColors
+          ? (colorByCharacter.get(line.characterId) ?? SPEAKER_DEFAULT_COLOR)
+          : undefined;
         const override = overrideByLine.get(line.id);
         const spans = override ? fitCues(override.cues, line.durationMs) : [];
         const cues: EditCue[] = override
@@ -403,7 +419,9 @@ export function toEditView(
               id: `${line.id}-m${index + 1}`,
               lineId: line.id,
               shotId: item.shotId,
+              characterId: line.characterId,
               characterName,
+              ...(speakerColor ? { speakerColor } : {}),
               text: cue.text.trim(),
               startMs: cueStartMs + spans[index]!.startMs,
               durationMs: spans[index]!.durationMs,
@@ -418,7 +436,9 @@ export function toEditView(
                     id: `${line.id}-${index + 1}`,
                     lineId: line.id,
                     shotId: item.shotId,
+                    characterId: line.characterId,
                     characterName,
+                    ...(speakerColor ? { speakerColor } : {}),
                     text,
                     startMs: cueStartMs + cue.startMs,
                     durationMs: cue.durationMs,

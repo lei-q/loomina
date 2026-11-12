@@ -1,6 +1,7 @@
 import { ProjectSchema } from "@loomina/ir";
 import { describe, expect, it } from "vitest";
 import { SUBTITLE_STYLES, autoCut, timelineEquals, timecode, toEditView } from "./edit";
+import { assColorOf } from "./speaker-color";
 import {
   buildOtio,
   buildPreviewHtml,
@@ -452,6 +453,7 @@ describe("字幕版式（D3）：作者调过的项进 IR，导出三处共用",
       fontSizeCqw: 6.4,
       bottomPct: 22,
       strokeCqw: 0.7,
+      speakerColors: true,
     });
   });
 
@@ -461,6 +463,74 @@ describe("字幕版式（D3）：作者调过的项进 IR，导出三处共用",
     expect(buildAss(view, "large")).toContain("Style: Default,PingFang SC,111,");
     expect(buildPreviewHtml(view, "large")).toContain("font-size:5.8cqw");
     expect(buildPreviewHtml(view, "large")).toContain("bottom:18%");
+  });
+});
+
+describe("按角色着色（D3）：颜色按角色顺序取，三处共用", () => {
+  // 样片的时间线只有周的一句；把林的 s-03 接上，才看得见两种颜色
+  const twoSpeakers = ProjectSchema.parse({
+    ...sampleProject,
+    timeline: {
+      ...sampleProject.timeline,
+      items: [
+        ...sampleProject.timeline.items,
+        { id: "tl-03", shotId: "s-03", takeId: "t-03", startMs: 5500, durationMs: 2100 },
+      ],
+    },
+  });
+  const off = ProjectSchema.parse({
+    ...sampleProject,
+    subtitleLayout: { preset: "default", speakerColors: false },
+  });
+
+  it("字幕带上说话人的颜色，同一个人同一个颜色", () => {
+    const view = toEditView(twoSpeakers);
+    const ids = [
+      ...new Set(
+        view.cues.map((cue) => cue.characterId).filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    expect(ids.length).toBeGreaterThanOrEqual(2);
+    const colorById = new Map<string, string | undefined>();
+    for (const cue of view.cues) {
+      if (!cue.characterId) continue;
+      if (!colorById.has(cue.characterId)) colorById.set(cue.characterId, cue.speakerColor);
+      expect(cue.speakerColor).toBe(colorById.get(cue.characterId));
+    }
+    // 两个说话人颜色一定不同：色板是按角色顺序取的，不按哈希
+    expect(new Set(ids.map((id) => colorById.get(id))).size).toBe(ids.length);
+  });
+
+  it("关掉之后字幕不带颜色，读模型说 speakerColors=false", () => {
+    const view = toEditView(off);
+    expect(view.subtitleStyle.speakerColors).toBe(false);
+    expect(view.cues.every((cue) => cue.speakerColor === undefined)).toBe(true);
+  });
+
+  it("ASS 用行内颜色覆盖，预览 HTML 的每条字幕带 color", () => {
+    const view = toEditView(twoSpeakers);
+    const colored = view.cues.find((cue) => cue.speakerColor)!;
+    expect(buildAss(view)).toContain(
+      `${assColorOf(colored.speakerColor!)}${colored.text.replace(/\r?\n/g, "\\N")}`,
+    );
+    expect(buildPreviewHtml(view)).toContain(`"color":"${colored.speakerColor}"`);
+  });
+
+  it("关掉之后 ASS 与预览 HTML 都不带颜色", () => {
+    const view = toEditView(off);
+    expect(buildAss(view)).not.toContain("{\\c&H");
+    expect(buildPreviewHtml(view)).not.toContain('"color"');
+  });
+
+  it("发布包记下这一版到底有没有按角色着色", () => {
+    const pack = buildPublishPackage(toEditView(off), {
+      title: "夜班",
+      description: "",
+      topics: [],
+      style: "default",
+      kind: "draft",
+    });
+    expect(pack.subtitleLayout.speakerColors).toBe(false);
   });
 });
 

@@ -143,7 +143,8 @@ function subtitleOverlays(
     ctx.lineJoin = "round";
     ctx.lineWidth = stroke;
     ctx.strokeStyle = "#000";
-    ctx.fillStyle = "#fff";
+    // 按角色着色（D3）：读模型关掉时 cue 上没有颜色，回到白色
+    ctx.fillStyle = cue.speakerColor ?? "#fff";
     ctx.strokeText(cue.text, width / 2, bottom);
     ctx.fillText(cue.text, width / 2, bottom);
     return {

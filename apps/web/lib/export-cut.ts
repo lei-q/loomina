@@ -16,6 +16,7 @@ import {
   type PlatformCheck,
   type PlatformId,
 } from "./platforms";
+import { assColorOf } from "./speaker-color";
 import {
   SAFE_AREA,
   resolveSubtitleStyle,
@@ -112,6 +113,8 @@ export function buildAss(
       startMs: cue.startMs,
       endMs: cue.startMs + cue.durationMs,
       text: cue.text.trim(),
+      // D3：按角色着色时用 ASS 行内覆盖；关掉就只有默认样式
+      color: style.speakerColors && cue.speakerColor ? assColorOf(cue.speakerColor) : "",
     }))
     .sort((a, b) => a.startMs - b.startMs);
 
@@ -136,7 +139,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   const events = cues
     .map(
       (cue) =>
-        `Dialogue: 0,${assTime(cue.startMs)},${assTime(cue.endMs)},Default,,0,0,0,,${cue.text.replace(/\r?\n/g, "\\N")}`,
+        `Dialogue: 0,${assTime(cue.startMs)},${assTime(cue.endMs)},Default,,0,0,0,,${cue.color}${cue.text.replace(/\r?\n/g, "\\N")}`,
     )
     .join("\n");
 
@@ -251,7 +254,7 @@ export type PreviewClip = {
   video?: string;
   still?: string;
   /** 相对这一片段的起点 */
-  subtitles: { startMs: number; endMs: number; text: string }[];
+  subtitles: { startMs: number; endMs: number; text: string; color?: string }[];
   /** 相对这一片段的起点 */
   audio: { startMs: number; uri: string; text: string }[];
 };
@@ -269,6 +272,7 @@ export function previewClips(view: EditView): PreviewClip[] {
         startMs: cue.startMs - clip.startMs,
         endMs: cue.startMs - clip.startMs + cue.durationMs,
         text: cue.text,
+        ...(cue.speakerColor ? { color: cue.speakerColor } : {}),
       })),
     ),
     audio: clip.lines.flatMap((line) =>
@@ -414,6 +418,7 @@ function render() {
   const inClip = elapsed - clip.startMs;
   const cue = clip.subtitles.find((s) => inClip >= s.startMs && inClip < s.endMs);
   subtitle.textContent = cue ? cue.text : "";
+  subtitle.style.color = cue && cue.color ? cue.color : "#fff";
   if (playing) {
     clip.audio.forEach((a, i) => {
       if (!audioFired[i] && inClip >= a.startMs) {
@@ -526,7 +531,13 @@ export type PublishPackage = {
   compliance?: RenderCompliance;
   subtitleStyle: SubtitleStyleId;
   /** 实际画出来的字号 / 底边距离 / 描边（D3）：调过版式时与档位默认值不同 */
-  subtitleLayout: { fontSizeCqw: number; bottomPct: number; strokeCqw: number };
+  subtitleLayout: {
+    fontSizeCqw: number;
+    bottomPct: number;
+    strokeCqw: number;
+    /** 这一版是否按角色着色（D3） */
+    speakerColors: boolean;
+  };
   subtitles: string;
   shots: { shotNo: number; takeNo: number; startMs: number; durationMs: number }[];
   /** 哪些地方还没做完：导入平台前该知道 */
@@ -608,6 +619,7 @@ export function buildPublishPackage(
       fontSizeCqw: view.subtitleStyle.fontSizeCqw,
       bottomPct: view.subtitleStyle.bottomPct,
       strokeCqw: view.subtitleStyle.strokeCqw,
+      speakerColors: view.subtitleStyle.speakerColors,
     },
     subtitles: buildSrt(view),
     shots: view.clips.map((clip) => ({

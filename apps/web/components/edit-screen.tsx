@@ -1063,6 +1063,7 @@ export function EditScreen() {
                         lineHeight: 1.38,
                         letterSpacing: ".02em",
                         textShadow: `0 0 ${style.strokeCqw}cqw #000, 0 0 ${style.strokeCqw}cqw #000, 0 ${style.strokeCqw * 0.5}cqw ${style.strokeCqw * 1.2}cqw #000`,
+                        color: currentCue.speakerColor ?? "#fff",
                       }}
                     >
                       {currentCue.text}
@@ -1919,6 +1920,24 @@ export function EditScreen() {
                         </span>
                       </label>
                     </div>
+                    <label className="mt-2 flex items-start gap-2 text-[9.5px] leading-[1.7] text-muted">
+                      <input
+                        id="speaker-colors"
+                        type="checkbox"
+                        checked={style.speakerColors}
+                        disabled={readOnly}
+                        onChange={(event) =>
+                          setSubtitleLayout({ speakerColors: event.target.checked })
+                        }
+                        className="mt-[3px] accent-[var(--pick)]"
+                      />
+                      <span>
+                        按角色着色
+                        <span className="ml-1 text-[8.5px] text-muted-2">
+                          每个角色一句一个颜色（六个轮回），多人对话一眼看出谁在说；关掉就全是白色。颜色按角色在项目里的顺序取，角色顺序不变颜色就不变。
+                        </span>
+                      </span>
+                    </label>
                     <div className="mt-1.5 flex flex-wrap items-center gap-2">
                       <button
                         type="button"
@@ -1927,6 +1946,7 @@ export function EditScreen() {
                             fontSizeCqw: null,
                             bottomPct: null,
                             strokeCqw: null,
+                            speakerColors: null,
                           })
                         }
                         disabled={readOnly || !styleCustom}

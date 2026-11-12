@@ -2484,6 +2484,22 @@ describe("字幕版式（D3）", () => {
     expect(after.subtitleLayout.strokeCqw).toBe(1.2);
   });
 
+  it("按角色着色可以关掉，也能清掉覆盖回到默认开（D3）", () => {
+    const project = load();
+    const off = rebuild([
+      created(project),
+      { type: "subtitle.layout.updated", at: AT, layout: { speakerColors: false } },
+    ]);
+    expect(off.subtitleLayout.speakerColors).toBe(false);
+
+    const cleared = rebuild([
+      created(project),
+      { type: "subtitle.layout.updated", at: AT, layout: { speakerColors: false } },
+      { type: "subtitle.layout.updated", at: AT, layout: { speakerColors: null } },
+    ]);
+    expect(cleared.subtitleLayout.speakerColors).toBeUndefined();
+  });
+
   it("换模板只改 preset，调过的项留着", () => {
     const project = load();
     const after = rebuild([

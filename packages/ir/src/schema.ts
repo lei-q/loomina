@@ -661,6 +661,13 @@ export const SubtitleLayoutSchema = z.object({
   bottomPct: z.number().min(2).max(45).optional(),
   /** 描边粗细（cqw） */
   strokeCqw: z.number().min(0).max(3).optional(),
+  /**
+   * 按角色给字幕着色（D3）：缺省开，显式 `false` 才是全白。
+   *
+   * 多人对话时颜色比名字好认；颜色本身不存 IR——按 `project.characters`
+   * 的顺序从固定色板取，角色顺序不变颜色就不变。
+   */
+  speakerColors: z.boolean().optional(),
 });
 export type SubtitleLayout = z.infer<typeof SubtitleLayoutSchema>;
 
