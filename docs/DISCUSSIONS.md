@@ -4627,3 +4627,21 @@ B1 从 ADR-0028 走到现在，只剩「资产回收未做」一条挂在状态�
 
 **边界**
 - 手改不持久、不做模板库 / 变量插值 / 版本历史；不检查提示词与项目设定是否一致。
+
+## 第一百六十四次 · 2026-11-12 · C12 自动二次归一
+
+**议题**
+两遍 loudnorm 之后复核不过就直接失败，偏差常常只有零点几 dB；作者只能改配乐、重导一遍。
+
+**结论**
+- 复核 fail 时先做一次二次归一：按实测响度差与真峰余额量算线性增益（取小者、0.1 dB 取整、夹 −12 … +6 dB），只重编码音轨，画面 copy，补完重新量，仍不过才失败。
+- 已经达标不补；静音与量不到不补；相位复核不过不触发（那是内容问题）。
+- 报告记 `passes` 1 / 2。
+
+**产物**
+- `docs/adr/0149-auto-second-normalization.md`
+- `apps/web/lib/render-audio.ts`（`correctionGainDb` / `secondPassAudioArgs`，+5 条测试）、`app/api/render/route.ts`
+- FEATURES C12、ROADMAP、DISCUSSIONS
+
+**边界**
+- 多声道 / 5.1、音效总线、句内压缩与限制器仍未做。

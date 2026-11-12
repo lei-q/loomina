@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -17,10 +17,12 @@ import {
 } from "@/lib/render-manifest";
 import {
   buildAudioMixCommand,
+  correctionGainDb,
   loudnormFilter,
   loudnessVerdict,
   parseLoudnessJson,
   parsePhaseMeter,
+  secondPassAudioArgs,
   segmentGainDb,
   type LoudnessMeasurement,
   type LoudnessReport,
@@ -676,17 +678,57 @@ async function runJob(job: RenderJob): Promise<void> {
       throw new Error(`ffmpeg 没渲出来：${tail || "未知错误"}`);
     }
 
-    const info = await stat(outFile);
     job.stage = "复核响度与相位";
-    const [outputLoudness, phase] = await Promise.all([
+    let [outputLoudness, phase] = await Promise.all([
       measureLoudness(outFile, job.manifest.totalMs),
       measurePhase(outFile, job.manifest.totalMs),
     ]);
-    const verdict = loudnessVerdict({
+    let verdict = loudnessVerdict({
       integratedLufs: outputLoudness?.inputI ?? null,
       truePeakDb: outputLoudness?.inputTp ?? null,
       outOfPhaseMs: phase.outOfPhaseMs,
     });
+    // 自动二次归一（C12）：复核不过时按实测偏差补一遍，只重编码音轨。
+    // 补完仍不过才如实失败——不会把不合格的成片交出去。
+    let passes = 1;
+    if (verdict.status === "fail") {
+      const gain = correctionGainDb({
+        integratedLufs: outputLoudness?.inputI ?? null,
+        truePeakDb: outputLoudness?.inputTp ?? null,
+      });
+      if (gain !== null) {
+        job.stage = `二次归一（${gain > 0 ? "+" : ""}${gain.toFixed(1)} dB）`;
+        job.progress = 15;
+        const fixedFile = path.join(/* turbopackIgnore: true */ dir, "out-fixed.mp4");
+        const fixed = await runFfmpeg(
+          secondPassAudioArgs({
+            inputFile: outFile,
+            outputFile: fixedFile,
+            gainDb: gain,
+            audioBitrate: RENDER_PROFILES[job.manifest.quality].audioBitrate,
+          }),
+          job.manifest.totalMs,
+          (percent) => {
+            job.progress = 15 + Math.floor(percent * 0.84);
+          },
+        );
+        if (fixed.code === 0) {
+          await rename(fixedFile, outFile);
+          [outputLoudness, phase] = await Promise.all([
+            measureLoudness(outFile, job.manifest.totalMs),
+            measurePhase(outFile, job.manifest.totalMs),
+          ]);
+          verdict = loudnessVerdict({
+            integratedLufs: outputLoudness?.inputI ?? null,
+            truePeakDb: outputLoudness?.inputTp ?? null,
+            outOfPhaseMs: phase.outOfPhaseMs,
+          });
+          passes = 2;
+        }
+      }
+    }
+
+    const info = await stat(outFile);
     job.loudness = {
       integratedLufs: outputLoudness?.inputI ?? null,
       truePeakDb: outputLoudness?.inputTp ?? null,
@@ -694,12 +736,17 @@ async function runJob(job: RenderJob): Promise<void> {
       outOfPhaseMs: phase.outOfPhaseMs,
       monoMs: phase.monoMs,
       ...(dialogueGains.length > 0 ? { dialogueGainsDb: dialogueGains } : {}),
+      passes,
       checkedAt: new Date().toISOString(),
       verdict: verdict.status,
       detail: verdict.detail,
     };
     if (verdict.status === "fail") {
-      throw new Error(`响度检查没通过，没有交付：${verdict.detail}`);
+      throw new Error(
+        passes === 2
+          ? `二次归一后响度仍不合格，没有交付：${verdict.detail}`
+          : `响度检查没通过，没有交付：${verdict.detail}`,
+      );
     }
 
     job.filePath = outFile;

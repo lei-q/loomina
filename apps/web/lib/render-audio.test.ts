@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   LOUDNESS_TARGET,
   buildAudioMixCommand,
+  correctionGainDb,
   duckVolumeExpression,
   loudnessVerdict,
   loudnormFilter,
   mergeIntervals,
   parseLoudnessJson,
   parsePhaseMeter,
+  secondPassAudioArgs,
   segmentGainDb,
 } from "./render-audio";
 
@@ -278,5 +280,42 @@ describe("响度（C12）", () => {
       outOfPhaseMs: null,
     });
     expect(verdict.status).toBe("unmeasured");
+  });
+});
+
+describe("自动二次归一（C12）", () => {
+  it("偏轻就往上补，偏响就往下压，按 0.1 dB 取整", () => {
+    expect(correctionGainDb({ integratedLufs: -12.4, truePeakDb: -4 })).toBe(-1.6);
+    expect(correctionGainDb({ integratedLufs: -16.34, truePeakDb: -4 })).toBe(2.3);
+  });
+
+  it("真峰值不够时以峰值为准，不为了响度顶破上限", () => {
+    // 响度只差 +1.0，但峰值已经 −0.5，要压到 −1.5 得退 −1.0
+    expect(correctionGainDb({ integratedLufs: -15, truePeakDb: -0.5 })).toBe(-1);
+  });
+
+  it("静音 / 量不到 / 已经对得上都不补", () => {
+    expect(correctionGainDb({ integratedLufs: null, truePeakDb: null })).toBeNull();
+    expect(correctionGainDb({ integratedLufs: -70, truePeakDb: -20 })).toBeNull();
+    expect(correctionGainDb({ integratedLufs: -14.05, truePeakDb: -1.6 })).toBeNull();
+  });
+
+  it("修正量夹在 −12 … +6 dB", () => {
+    expect(correctionGainDb({ integratedLufs: -40, truePeakDb: null })).toBe(6);
+    expect(correctionGainDb({ integratedLufs: -2, truePeakDb: -6 })).toBe(-12);
+  });
+
+  it("二次归一只重编码音轨，画面 copy、元数据跟着走", () => {
+    const args = secondPassAudioArgs({
+      inputFile: "out.mp4",
+      outputFile: "out-fixed.mp4",
+      gainDb: -1.6,
+      audioBitrate: "128k",
+    });
+    expect(args).toContain("-c:v");
+    expect(args[args.indexOf("-c:v") + 1]).toBe("copy");
+    expect(args[args.indexOf("-af") + 1]).toBe("volume=-1.6dB");
+    expect(args).toContain("aac");
+    expect(args).toContain("out-fixed.mp4");
   });
 });

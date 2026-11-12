@@ -59,6 +59,8 @@ export type LoudnessReport = {
   monoMs: number | null;
   /** 分段响度（C12）：每句对白实际用的增益；没有对白或一句都没量到时缺省 */
   dialogueGainsDb?: number[];
+  /** 自动二次归一（C12）：1 表示一遍过，2 表示复核不过后补了一遍 */
+  passes?: number;
   checkedAt: string;
   verdict: "pass" | "review" | "fail" | "unmeasured";
   detail: string;
@@ -271,6 +273,77 @@ export function loudnormFilter(
     `:measured_LRA=${measured.inputLra}:measured_thresh=${measured.inputThresh}` +
     `:offset=${measured.targetOffset ?? 0}:linear=true`
   );
+}
+
+/**
+ * 自动二次归一（C12）：复核不过时，按实测偏差算一个线性修正量。
+ *
+ * 先看响度差目标多少，再看真峰值还剩多少余量；取更小的那个，保证修完
+ * 既不超峰值也不把响度抬高。静音（≤ −70）与量不到的成片不动——没有
+ * 可修的东西，硬抬只会把底噪推上来。修正量按 0.1 dB 取整，夹 ±12 / +6 dB。
+ */
+export function correctionGainDb(output: {
+  integratedLufs: number | null;
+  truePeakDb: number | null;
+}): number | null {
+  const lufs = output.integratedLufs;
+  if (lufs === null || !Number.isFinite(lufs) || lufs <= -70) return null;
+  // 两条验收口径都已经过了就没什么可补的：别为了 0.05 LU 去重编码一遍
+  const loudnessOk =
+    Math.abs(lufs - LOUDNESS_TARGET.integratedLufs) <= LOUDNESS_TARGET.toleranceLu;
+  const peakOk =
+    output.truePeakDb === null ||
+    !Number.isFinite(output.truePeakDb) ||
+    output.truePeakDb <= LOUDNESS_TARGET.ceilingDb + 0.05;
+  if (loudnessOk && peakOk) return null;
+  const byLoudness = LOUDNESS_TARGET.integratedLufs - lufs;
+  const byPeak =
+    output.truePeakDb === null || !Number.isFinite(output.truePeakDb)
+      ? Number.POSITIVE_INFINITY
+      : LOUDNESS_TARGET.loudnormTruePeakDb - output.truePeakDb;
+  const wanted = Math.min(byLoudness, byPeak);
+  if (!Number.isFinite(wanted)) return null;
+  const clamped = Math.max(-12, Math.min(6, wanted));
+  const rounded = Math.round(clamped * 10) / 10;
+  return Math.abs(rounded) < 0.1 ? null : rounded;
+}
+
+/**
+ * 二次归一的命令：只重编码音轨，画面直接 copy。
+ *
+ * 第一遍已经把画面压好，第二遍只为响度；重新编码整段视频既慢又可能掉画质。
+ * 容器元数据（AI 标识、内容指纹）默认从输入继承。
+ */
+export function secondPassAudioArgs(input: {
+  inputFile: string;
+  outputFile: string;
+  gainDb: number;
+  audioBitrate: string;
+}): string[] {
+  return [
+    "-hide_banner",
+    "-y",
+    "-nostats",
+    "-i",
+    input.inputFile,
+    "-map",
+    "0:v:0",
+    "-map",
+    "0:a:0",
+    "-c:v",
+    "copy",
+    "-af",
+    `volume=${input.gainDb.toFixed(1)}dB`,
+    "-c:a",
+    "aac",
+    "-b:a",
+    input.audioBitrate,
+    "-ar",
+    "48000",
+    "-movflags",
+    "+faststart",
+    input.outputFile,
+  ];
 }
 
 /** ffmpeg 的 loudnorm JSON 输出夹在 stderr 里；取最后一个完整对象 */
