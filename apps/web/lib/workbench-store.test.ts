@@ -512,6 +512,14 @@ describe("视频与多 take（ADR-0083）", () => {
     expect(state().castError).toContain("http(s)://");
   });
 
+  it("本机资产库里的片子也能贴：帧级找点只认这种地址（E7.2 / ADR-0129）", () => {
+    const uri = `loomina://assets/${"a".repeat(64)}.mp4`;
+    expect(state().attachVideo("s-03", uri)).toBe(true);
+    const shot = state().project.shots.find((item) => item.id === "s-03")!;
+    const take = state().project.takes.find((item) => item.id === shot.takeIds.at(-1))!;
+    expect(state().project.assets.find((item) => item.id === take.assetId)?.uri).toBe(uri);
+  });
+
   it("没有首帧就不出视频，一次请求都不发", async () => {
     const calls = stub();
     const ok = await state().generateVideo("s-03");

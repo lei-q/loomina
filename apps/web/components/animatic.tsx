@@ -6,6 +6,15 @@ import { Scene } from "@/components/scene";
 import { shotLabel, type AnimaticView } from "@/lib/read-model";
 import { elapsedMsOf, locateInTimeline, totalMsOf } from "@/lib/animatic-clock";
 import { assetHref } from "@/lib/asset-uri";
+import {
+  canPreviewFrames,
+  createFrameThrottle,
+  frameKeyOf,
+  frameUrlOf,
+  probeFrameCapability,
+  stepFrame,
+  type FrameCapability,
+} from "@/lib/preview-frame";
 import { CloseIcon, PauseIcon, PlayIcon } from "@/components/icons";
 
 /**
@@ -50,6 +59,84 @@ export function AnimaticOverlay({
   const musicSrc = assetHref(music?.uri);
   /** 下一次「跳转」要把片子对到哪一毫秒；只有跳转时才有值 */
   const pendingSeek = useRef<number | undefined>(undefined);
+
+  // ── 帧级找点（E7.2 / ADR-0129）──────────────────────────────
+  // 服务端 ffmpeg 精确切帧；拿不到就停在 E7.1，界面写清为什么。
+  const [frameCapability, setFrameCapability] = useState<FrameCapability | undefined>(undefined);
+  const [frameMode, setFrameMode] = useState(false);
+  const [frameSrc, setFrameSrc] = useState<string | undefined>(undefined);
+  const [frameError, setFrameError] = useState<string | undefined>(undefined);
+  const [frameLoading, setFrameLoading] = useState(false);
+  const throttle = useRef(createFrameThrottle()).current;
+  const frameUri = segment?.videoUri;
+  const frameable = Boolean(frameCapability?.tier === "frame" && canPreviewFrames(frameUri));
+  /** 镜内毫秒：拖动找点与逐帧步进共用这一个位置 */
+  const shotMs = Math.round(offsetMs);
+  const shotMaxMs = Math.round((segment?.dur ?? 0) * 1000);
+
+  useEffect(() => {
+    let alive = true;
+    void probeFrameCapability().then((capability) => {
+      if (alive) setFrameCapability(capability);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  /** 要这一镜镜内第 `ms` 毫秒的那一帧 */
+  const requestFrame = useCallback(
+    (ms: number) => {
+      if (!frameUri) return;
+      const at = Math.min(Math.max(0, Math.round(ms)), shotMaxMs);
+      throttle.request(frameKeyOf(frameUri, at), () => {
+        setFrameError(undefined);
+        setFrameLoading(true);
+        setFrameSrc(frameUrlOf(frameUri, at));
+      });
+    },
+    [frameUri, shotMaxMs, throttle],
+  );
+
+  // 换镜 / 关掉 / 素材变了：旧帧不能留着冒充新镜。
+  // **必须排在「要这一帧」之前**：同一轮里先清、再要，否则刚取到的帧会被清掉。
+  useEffect(() => {
+    setFrameSrc(undefined);
+    setFrameError(undefined);
+    setFrameLoading(false);
+    throttle.cancel();
+    throttle.forget();
+  }, [index, frameMode, frameUri, throttle]);
+
+  // 开帧级找点时先要当前这一处；之后跟着镜内位置走
+  useEffect(() => {
+    if (!frameMode) return;
+    requestFrame(offsetMs);
+  }, [frameMode, index, offsetMs, requestFrame]);
+
+  /** 换到一镜没有片子 / 不在资产库的镜头：帧级找点自己关掉，不留一个勾着却用不了的开关 */
+  useEffect(() => {
+    if (frameMode && frameCapability !== undefined && !frameable) setFrameMode(false);
+  }, [frameMode, frameCapability, frameable]);
+
+  /** 帧级找点打开时暂停播放：一面在放、一面在定格，说不清看的是哪一帧 */
+  useEffect(() => {
+    if (frameMode) setPlaying(false);
+  }, [frameMode]);
+
+  /**
+   * 播放 / 暂停。**一按播放就退出帧级找点**：切帧最快 60ms 一次，冒充不了播放。
+   *
+   * 这里必须写成一个动作，不能靠「playing 变真就把 frameMode 关掉」的 effect：
+   * 打开帧级找点的那一瞬 playing 还是真，两个 effect 会互相抵消，
+   * 勾上立刻又弹回未勾。
+   */
+  const togglePlay = useCallback(() => {
+    setPlaying((value) => {
+      if (!value) setFrameMode(false);
+      return !value;
+    });
+  }, []);
 
   /** 跳到某一镜（镜内从头开始） */
   const jump = useCallback(
@@ -135,6 +222,8 @@ export function AnimaticOverlay({
     setOffsetMs(0);
     setSeekToken((value) => value + 1);
     setEnded(false);
+    // 再看一遍是「整条放」：帧级找点留着只会卡在第一帧
+    setFrameMode(false);
     setPlaying(true);
   };
 
@@ -203,20 +292,26 @@ export function AnimaticOverlay({
     else element.pause();
   }, [playing, musicOn, music?.uri, music?.volume, music?.loop]);
 
-  // 空格暂停 / 继续，左右切镜，Esc 关掉
+  // 空格暂停 / 继续，左右切镜，Esc 关掉；帧级找点时 , . 逐帧步进
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
       if (event.key === " ") {
         event.preventDefault();
-        setPlaying((value) => !value);
+        togglePlay();
       }
       if (event.key === "ArrowRight") jump(index + 1);
       if (event.key === "ArrowLeft") jump(index - 1);
+      if (frameMode && (event.key === "," || event.key === ".")) {
+        event.preventDefault();
+        const direction = event.key === "." ? 1 : -1;
+        const at = stepFrame(shotMs, direction, shotMaxMs);
+        seek(elapsedMsOf(view.segments, index, at));
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [index, jump, onClose]);
+  }, [index, jump, onClose, togglePlay, frameMode, shotMs, shotMaxMs, seek, view.segments]);
 
   const elapsed = elapsedMsOf(view.segments, index, offsetMs);
   const progress = totalMs > 0 ? Math.min(100, (elapsed / totalMs) * 100) : 0;
@@ -237,10 +332,21 @@ export function AnimaticOverlay({
           这不是成片
         </span>
         <span
-          className="rounded-token border border-line px-1.5 py-px text-[8.5px] text-muted-2"
-          title="时间轴到镜准确；镜内只能落到最近的关键帧之后，所以是近似"
+          className={cn(
+            "rounded-token border px-1.5 py-px text-[8.5px]",
+            frameMode && frameSrc
+              ? "border-line-2 text-text"
+              : "border-line text-muted-2",
+          )}
+          title={
+            frameMode && frameCapability?.tier === "frame"
+              ? "由服务端 ffmpeg 精确切帧，拖到哪一毫秒就是那一帧"
+              : "时间轴到镜准确；镜内只能落到最近的关键帧之后，所以是近似"
+          }
         >
-          到镜准确 · 镜内近似
+          {frameMode && frameCapability?.tier === "frame"
+            ? `帧级找点 · ffmpeg${frameCapability.ffmpeg ? ` ${frameCapability.ffmpeg}` : ""}`
+            : "到镜准确 · 镜内近似"}
         </span>
         <button
           type="button"
@@ -255,7 +361,22 @@ export function AnimaticOverlay({
 
       <div className="flex min-h-0 flex-1 items-center justify-center gap-8 px-6">
         <div className="relative aspect-[9/16] h-[min(68vh,620px)] overflow-hidden rounded-token border border-white/[.075] bg-surface">
-          {videoSrc ? (
+          {frameMode && frameSrc ? (
+            // 帧级找点：服务端切出来的那一帧，替换掉正在播的片子
+            <img
+              src={frameSrc}
+              alt={`${shotLabel(segment?.no ?? 1)} 第 ${shotMs} 毫秒`}
+              onLoad={() => setFrameLoading(false)}
+              onError={() => {
+                setFrameLoading(false);
+                setFrameError("这一帧切不出来：可能已经超过片子的时长");
+                // 失败后允许重试同一处
+                throttle.forget();
+                setFrameSrc(undefined);
+              }}
+              className="h-full w-full object-cover"
+            />
+          ) : videoSrc ? (
             <video
               key={segment?.id}
               ref={videoRef}
@@ -339,7 +460,7 @@ export function AnimaticOverlay({
           <div className="flex items-center gap-1.5">
             <button
               type="button"
-              onClick={() => setPlaying((value) => !value)}
+              onClick={togglePlay}
               className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
             >
               {playing ? <PauseIcon className="h-3 w-3" /> : <PlayIcon className="h-3 w-3" />}
@@ -362,6 +483,62 @@ export function AnimaticOverlay({
               下一镜
             </button>
           </div>
+
+          {/* 帧级找点（E7.2 / ADR-0129）：把镜内找点交给服务端 ffmpeg */}
+          <div className="rounded-token border border-line px-2 py-1.5">
+            <label className="flex items-start gap-2 text-[10px] leading-[1.6] text-muted">
+              <input
+                type="checkbox"
+                checked={frameMode}
+                disabled={!frameable}
+                onChange={(event) => setFrameMode(event.target.checked)}
+                className="mt-0.5 accent-current disabled:opacity-40"
+              />
+              <span className={cn(!frameable && "text-muted-2")}>
+                帧级找点
+                <span className="block text-[9px] leading-[1.6] text-muted-2">
+                  {frameCapability === undefined
+                    ? "在问这台机器能不能切帧…"
+                    : frameCapability.tier === "approx"
+                      ? frameCapability.reason
+                      : !canPreviewFrames(frameUri)
+                        ? segment?.videoUri
+                          ? "这一镜的片子还不在本机资产库里，只能到镜近似"
+                          : "这一镜没有片子：拖到镜内也只有一张图"
+                        : "服务端 ffmpeg 精确切帧；打开后暂停播放"}
+                </span>
+              </span>
+            </label>
+            {frameMode && frameable && (
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => seek(elapsedMsOf(view.segments, index, stepFrame(shotMs, -1, shotMaxMs)))}
+                  disabled={shotMs <= 0}
+                  className="rounded-token border border-line px-1.5 py-0.5 text-[9.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-35"
+                  title="退一帧（33ms）"
+                >
+                  ‹ 一帧
+                </button>
+                <button
+                  type="button"
+                  onClick={() => seek(elapsedMsOf(view.segments, index, stepFrame(shotMs, 1, shotMaxMs)))}
+                  disabled={shotMs >= shotMaxMs}
+                  className="rounded-token border border-line px-1.5 py-0.5 text-[9.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-35"
+                  title="进一帧（33ms）"
+                >
+                  一帧 ›
+                </button>
+                <span className="tnum ml-auto text-[9px] text-muted-2">
+                  镜内 {(shotMs / 1000).toFixed(2)}s
+                  {frameLoading ? " · 切帧中" : ""}
+                </span>
+              </div>
+            )}
+            {frameMode && frameError && (
+              <p className="mt-1 text-[9px] leading-[1.6] text-[#d98b6a]">{frameError}</p>
+            )}
+          </div>
           {music && (
             <label className="flex items-start gap-2 text-[9.5px] leading-[1.6] text-muted-2">
               <input
@@ -378,6 +555,7 @@ export function AnimaticOverlay({
           )}
           <p className="text-[9px] leading-[1.6] text-muted-2">
             空格暂停，← → 切镜，Esc 退出；拖下面的进度条找点
+            {frameMode && frameable ? "，, . 逐帧" : ""}
           </p>
         </div>
       </div>

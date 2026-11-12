@@ -457,7 +457,7 @@ function Current({
                     type="text"
                     value={draftUri}
                     onChange={(event) => setDraftUri(event.target.value)}
-                    placeholder="https://… 或 data:video/mp4;base64,…"
+                    placeholder="https://… / data:video/mp4;base64,… / loomina://assets/…"
                     className="w-[190px] rounded-token border border-line bg-surface px-2 py-1 text-[9.5px] text-text placeholder:text-muted-2 focus:border-line-2 focus:outline-none"
                   />
                   <button

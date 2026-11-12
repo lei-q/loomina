@@ -70,6 +70,8 @@ loomina/
 
 > **落地口径（H3 / ADR-0128，2026-11-11）**：先定边界再换实现。`AssetStore` 接口 + `LOOMINA_ASSET_STORE=local|s3`；第一刀 `LocalAssetStore` 零依赖（`.loomina/assets/`，内容寻址，单文件 200 MB），立刻把素材从事件日志里拿出来。S3 适配器只做 SigV4 预签名 PUT / GET，**不引 `@aws-sdk/client-s3`**；签名**自写**（ADR-0129：也不引 `aws4`，用 AWS 官方测试向量锁正确性）。
 >
+> **E7.2 已落地（2026-11-12，ADR-0129 落地节）**：`GET /api/preview/frame` 用服务端 ffmpeg `-ss`（在 `-i` 之前）精确切一帧回 JPEG，浏览器 `<img>` 直接显示；前端 60ms 节流去重，`?probe=1` 能力探测。没有 mp4box.js、没有 WebCodecs。
+>
 > **H3.1 已落地（2026-11-12）**：`apps/web/lib/asset-uri.ts`（纯函数，浏览器与 Node 共用）+ `apps/web/lib/asset-store.ts`（`LocalAssetStore`，`LOOMINA_ASSET_DIR` 可覆盖目录，测试用）。`audio/webm` 落 `.weba`，让扩展名能唯一反推 mime。生成路径按 128 KB 分流，导出前 `hydrateView()` 读回字节。S3 仍未做。
 | 数据库 | Postgres（托管） | JSONB 适合 IR，生态成熟 | — | 高 |
 | 缓存 | Redis（托管） | 限流/会话/缓存 | — | 高 |

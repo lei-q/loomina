@@ -2131,8 +2131,8 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       set({ castError: "先贴一条视频地址。" });
       return false;
     }
-    if (!/^(https?:\/\/|data:video\/)/i.test(uri)) {
-      set({ castError: "视频要先有地址：http(s):// 或 data:video/ 开头。" });
+    if (!/^(https?:\/\/|data:video\/|loomina:\/\/assets\/)/i.test(uri)) {
+      set({ castError: "视频要先有地址：http(s)://、data:video/ 或本机资产库地址开头。" });
       return false;
     }
     if (uri.length > VIDEO_URI_MAX) {
