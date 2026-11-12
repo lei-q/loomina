@@ -10,6 +10,7 @@ import {
   type DoctorDimension,
   type DoctorMode,
   type DoctorSuggestion,
+  type ScenePacing,
 } from "@/lib/script-doctor";
 import { cn } from "@/lib/utils";
 
@@ -36,6 +37,12 @@ function ScoreBar({ score }: { score: number | null }) {
 function shotLabel(no: number): string {
   return `SH-${String(no).padStart(2, "0")}`;
 }
+
+const PACING_LABEL: Record<NonNullable<ScenePacing["issue"]>, string> = {
+  slow: "偏慢",
+  rushed: "偏碎",
+  flat: "偏平",
+};
 
 export type DoctorPanelProps = {
   project: Project;
@@ -68,6 +75,9 @@ export function DoctorPanel({
   onClose,
 }: DoctorPanelProps) {
   const report = useMemo(() => analyzeScript(project), [project]);
+  /** 每一场的第一镜：点「去这一场」时跳过去 */
+  const firstShotOfScene = (sceneId: string): string | undefined =>
+    project.scenes.find((scene) => scene.id === sceneId)?.shotIds[0];
   /** 正在让模型读哪个模式；一次只发一个请求 */
   const [busyMode, setBusyMode] = useState<DoctorMode>();
   const [rewrite, setRewrite] = useState<DoctorRewrite>();
@@ -220,6 +230,95 @@ export function DoctorPanel({
                 </li>
               ))}
             </ul>
+          </section>
+
+          <section className="mt-4">
+            <div className="flex items-baseline justify-between gap-2">
+              <h3 className="text-[10.5px] tracking-[.06em] text-text">爽点与节奏</h3>
+              <span className="tnum text-[9px] text-muted-2">
+                {report.payoff.total} 处兑现线索
+              </span>
+            </div>
+
+            <div className="mt-1.5 border border-line px-3 py-2.5">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-[9px] text-muted-2">爽点密度曲线 · 约 5 秒一段</span>
+                {report.payoff.peakLabel && (
+                  <span className="tnum text-[9px] text-text">峰值 {report.payoff.peakLabel}</span>
+                )}
+              </div>
+              {report.payoff.windows.length > 0 ? (
+                <>
+                  <div className="mt-2 flex h-16 items-end gap-[3px]">
+                    {report.payoff.windows.map((window) => (
+                      <span
+                        key={window.startMs}
+                        title={`${window.label} · 权重 ${window.weight}`}
+                        className={cn(
+                          "flex-1 rounded-t-[1px]",
+                          window.score >= 60 ? "bg-pick" : "bg-line-2",
+                        )}
+                        style={{ height: `${Math.max(3, window.score)}%` }}
+                      />
+                    ))}
+                  </div>
+                  <div className="tnum mt-1 flex justify-between text-[8px] text-muted-2">
+                    <span>0s</span>
+                    <span>{report.seconds.toFixed(1)}s</span>
+                  </div>
+                </>
+              ) : (
+                <p className="mt-1.5 text-[9px] leading-[1.65] text-muted-2">
+                  还没有镜头，暂时画不出曲线。
+                </p>
+              )}
+              {report.payoff.windows.length > 0 && report.payoff.flat && (
+                <p className="mt-1.5 text-[9px] leading-[1.65] text-muted-2">
+                  全片没识别到打脸、揭露、反击这类当场兑现：结尾再响也救不回中段的平。
+                </p>
+              )}
+            </div>
+
+            <ul className="mt-1.5 border-t border-line">
+              {report.scenes.map((scene) => {
+                const firstShot = firstShotOfScene(scene.sceneId);
+                const no = firstShot ? report.shotNos[firstShot] : undefined;
+                return (
+                  <li key={scene.sceneId} className="border-b border-line py-2">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-[10px] text-text">{scene.label}</span>
+                      <span
+                        className={cn(
+                          "shrink-0 text-[8.5px]",
+                          scene.issue ? "text-pick" : "text-muted-2",
+                        )}
+                      >
+                        {scene.issue ? PACING_LABEL[scene.issue] : "正常"}
+                      </span>
+                    </div>
+                    <p className="tnum mt-0.5 text-[8.5px] text-muted-2">
+                      {scene.seconds.toFixed(1)}s · {scene.shots} 镜 · 均镜长{" "}
+                      {scene.aslSeconds.toFixed(1)}s · 爽点权重 {scene.payoff}
+                    </p>
+                    <p className="mt-1 break-words text-[9px] leading-[1.65] text-muted-2">
+                      {scene.advice}
+                    </p>
+                    {firstShot && onSelectShot && (
+                      <button
+                        type="button"
+                        onClick={() => onSelectShot(firstShot)}
+                        className="mt-1 text-[9px] text-muted-2 underline decoration-line-2 underline-offset-2 transition-colors duration-[var(--dur)] hover:text-text"
+                      >
+                        去这一场{no ? `（${shotLabel(no)}）` : ""}
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="mt-1.5 text-[8.5px] leading-[1.65] text-muted-2">
+              均镜长与兑现线索是结构提示，不是剪辑标准：快慢要跟着戏走。
+            </p>
           </section>
 
           <section className="mt-4">

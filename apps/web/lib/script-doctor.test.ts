@@ -219,3 +219,101 @@ describe("剧本医生：12 维报告（A18 / ADR-0123）", () => {
     );
   });
 });
+
+/**
+ * 爽点曲线与逐场节奏（A2 / ADR-0161）。
+ *
+ * 这两块仍然只回答结构问题：哪一段有兑现、哪一场太慢或太平。
+ * 权重来自拍子、目的和一组能被当场看见的词，不判断「好不好看」。
+ */
+describe("剧本医生：爽点曲线与逐场节奏（A2 / ADR-0161）", () => {
+  const CAMERA = { angle: "eye" as const, movement: "static" as const, focalMm: 35 };
+
+  it("有实拍镜头时给出曲线、峰值段与兑现总数", () => {
+    const report = analyzeScript(makeProject());
+    expect(report.payoff.flat).toBe(false);
+    expect(report.payoff.total).toBeGreaterThan(0);
+    expect(report.payoff.windows.length).toBe(Math.ceil(report.seconds / 5));
+    const peak = report.payoff.windows.find((window) => window.score === 100);
+    expect(peak).toBeDefined();
+    expect(report.payoff.peakLabel).toBe(peak!.label);
+    // 每一段都有可读的秒数标签，分数封在 0–100
+    for (const window of report.payoff.windows) {
+      expect(window.label).toMatch(/^\d+\.\ds$/);
+      expect(window.score).toBeGreaterThanOrEqual(0);
+      expect(window.score).toBeLessThanOrEqual(100);
+    }
+  });
+
+  it("把一句兑现写进镜头，总权重会涨：曲线认的是场面里的动作", () => {
+    const base = makeProject();
+    const spicyShots = base.shots.map((shot) =>
+      shot.id === "s-3"
+        ? { ...shot, description: "她当场把账本摔在桌上，揭穿了签字的人" }
+        : shot,
+    );
+    const spicy = analyzeScript(makeProject({ shots: spicyShots }));
+    expect(spicy.payoff.total).toBeGreaterThan(analyzeScript(base).payoff.total);
+  });
+
+  it("没有镜头时曲线是平的，不伪造波形", () => {
+    const report = analyzeScript(
+      makeProject({ shots: [], scenes: [{ id: "sc-1", index: 0, locationId: "loc-1", shotIds: [] }] }),
+    );
+    expect(report.payoff.flat).toBe(true);
+    expect(report.payoff.windows).toEqual([]);
+    expect(report.scenes[0]!.issue).toBe("flat");
+    expect(report.scenes[0]!.advice).toContain("还没有镜头");
+  });
+
+  it("逐场诊断：偏慢 / 偏碎 / 偏平各有各的结论", () => {
+    const shots = [
+      { id: "s-1", sceneId: "sc-1", index: 0, durationMs: 6000, description: "她坐下来", shotSize: "wide" as const, camera: CAMERA, characterIds: ["c-a"], dialogueIds: [], beat: "setup" as const },
+      { id: "s-2", sceneId: "sc-2", index: 1, durationMs: 500, description: "门开", shotSize: "close" as const, camera: CAMERA, characterIds: ["c-a"], dialogueIds: [], beat: "setup" as const },
+      { id: "s-3", sceneId: "sc-2", index: 2, durationMs: 500, description: "他回头", shotSize: "close" as const, camera: CAMERA, characterIds: ["c-a"], dialogueIds: [], beat: "setup" as const },
+      { id: "s-4", sceneId: "sc-2", index: 3, durationMs: 500, description: "灯灭", shotSize: "wide" as const, camera: CAMERA, characterIds: [], dialogueIds: [], beat: "setup" as const },
+      { id: "s-5", sceneId: "sc-3", index: 4, durationMs: 2000, description: "两人坐下", shotSize: "medium" as const, camera: CAMERA, characterIds: ["c-a", "c-b"], dialogueIds: [], beat: "resolution" as const },
+      { id: "s-6", sceneId: "sc-3", index: 5, durationMs: 2000, description: "窗外下雨", shotSize: "wide" as const, camera: CAMERA, characterIds: [], dialogueIds: [], beat: "resolution" as const },
+    ];
+    const report = analyzeScript(
+      makeProject({
+        shots,
+        scenes: [
+          { id: "sc-1", index: 0, locationId: "loc-1", shotIds: ["s-1"] },
+          { id: "sc-2", index: 1, locationId: "loc-1", shotIds: ["s-2", "s-3", "s-4"] },
+          { id: "sc-3", index: 2, locationId: "loc-1", shotIds: ["s-5", "s-6"] },
+        ],
+      }),
+    );
+    expect(report.scenes).toHaveLength(3);
+
+    const [slow, rushed, flat] = report.scenes;
+    expect(slow!.issue).toBe("slow");
+    expect(slow!.aslSeconds).toBe(6);
+    expect(slow!.advice).toContain("平均镜长偏慢");
+
+    expect(rushed!.issue).toBe("rushed");
+    expect(rushed!.aslSeconds).toBeCloseTo(0.5, 5);
+    expect(rushed!.advice).toContain("偏碎");
+
+    expect(flat!.issue).toBe("flat");
+    expect(flat!.payoff).toBe(0);
+    expect(flat!.advice).toContain("加一次拒绝");
+  });
+
+  it("同一场里拍子越重，兑现权重越高；节奏结论不影响 12 维", () => {
+    const base = makeProject();
+    const report = analyzeScript(base);
+    const dims = report.dims.map((dim) => `${dim.key}:${dim.score}`);
+    const heavier = analyzeScript(
+      makeProject({
+        shots: base.shots.map((shot) =>
+          shot.id === "s-2" ? { ...shot, beat: "climax" as const } : shot,
+        ),
+      }),
+    );
+    expect(heavier.payoff.total).toBeGreaterThan(report.payoff.total);
+    // 新增报告字段不改原有 12 维结论
+    expect(heavier.dims.map((dim) => `${dim.key}:${dim.score}`)).toEqual(dims);
+  });
+});

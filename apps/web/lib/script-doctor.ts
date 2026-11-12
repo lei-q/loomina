@@ -92,6 +92,10 @@ export type ScriptDoctorReport = {
   };
   /** 全片时长（秒），按镜头时长累加 */
   seconds: number;
+  /** 爽点密度曲线（A2）：约 5 秒一段，最多 18 段 */
+  payoff: PayoffCurve;
+  /** 逐场节奏与改写建议（A2） */
+  scenes: ScenePacing[];
   /** 镜 id → 全片镜号；抽屉点「去这一镜」用 */
   shotNos: Record<string, number>;
 };
@@ -139,6 +143,148 @@ function rate(filled: number, total: number): number {
 
 function percent(value: number): string {
   return `${Math.round(value * 100)}%`;
+}
+
+// ── 爽点密度与节奏（A2）─────────────────────────────────────────
+
+/**
+ * 爽点词：只认短剧里能被观众当场感知的兑现动作。
+ *
+ * 「不是」「原来」这类太常见，故意不放进表里，避免每个句子都被算成爽点。
+ */
+const PAYOFF_WORDS = [
+  "打脸", "反转", "揭露", "真相", "身份", "反击", "拒绝", "甩", "怼", "认亲",
+  "跪下", "道歉", "巴掌", "离婚", "开除", "报警", "监控", "账本", "秘密", "竟",
+  "当场", "凭什么", "闭嘴", "滚", "揭穿", "夺回", "翻盘",
+];
+
+/** 一拍的兑现权重：高潮最重，铺垫最轻 */
+const BEAT_WEIGHT: Record<string, number> = {
+  hook: 1.5,
+  setup: 0.5,
+  escalation: 1.5,
+  turn: 2.5,
+  climax: 3,
+  endHook: 2,
+};
+
+function payoffWordsOf(text: string): string[] {
+  return PAYOFF_WORDS.filter((word) => text.includes(word));
+}
+
+export type PayoffWindow = {
+  startMs: number;
+  endMs: number;
+  /** 这一段的原始权重 */
+  weight: number;
+  /** 按全片最高权重归一到 0–100 */
+  score: number;
+  label: string;
+};
+
+export type PayoffCurve = {
+  windows: PayoffWindow[];
+  peakLabel?: string;
+  /** 全片没有识别到任何兑现 */
+  flat: boolean;
+  /** 识别到的兑现线索总数（镜头 + 台词） */
+  total: number;
+};
+
+export type ScenePacing = {
+  sceneId: string;
+  label: string;
+  seconds: number;
+  shots: number;
+  /** 平均镜长（秒） */
+  aslSeconds: number;
+  /** 这一场识别到的兑现权重合计 */
+  payoff: number;
+  issue: "slow" | "rushed" | "flat" | null;
+  advice: string;
+};
+
+/** 一镜的兑现权重：拍子 + 目的 + 具体词 */
+function payoffWeightOf(
+  project: Project,
+  plan: { shotId: string; beat: string; purpose: string },
+): number {
+  const shot = project.shots.find((item) => item.id === plan.shotId);
+  if (!shot) return 0;
+  const dialogue = shot.dialogueIds
+    .map((id) => project.dialogue.find((line) => line.id === id)?.text ?? "")
+    .join(" ");
+  const words = payoffWordsOf(`${shot.description} ${dialogue}`);
+  const emotion = plan.purpose === "emotion" || plan.purpose === "reaction" ? 1 : 0;
+  return (BEAT_WEIGHT[plan.beat] ?? 0) + emotion + Math.min(3, words.length);
+}
+
+function payoffCurveOf(
+  plans: { shotId: string; startMs: number; durationMs: number }[],
+  weights: Map<string, number>,
+  totalMs: number,
+): PayoffCurve {
+  const total = [...weights.values()].reduce((sum, value) => sum + value, 0);
+  if (totalMs <= 0 || plans.length === 0) {
+    return { windows: [], flat: true, total };
+  }
+  const bins = Math.min(18, Math.max(1, Math.ceil(totalMs / 5000)));
+  const binMs = totalMs / bins;
+  const values = new Array<number>(bins).fill(0);
+  for (const plan of plans) {
+    const center = plan.startMs + plan.durationMs / 2;
+    const index = Math.min(bins - 1, Math.max(0, Math.floor(center / binMs)));
+    values[index] = (values[index] ?? 0) + (weights.get(plan.shotId) ?? 0);
+  }
+  const max = Math.max(...values);
+  const windows: PayoffWindow[] = values.map((weight, index) => ({
+    startMs: Math.round(index * binMs),
+    endMs: Math.round((index + 1) * binMs),
+    weight: Math.round(weight * 10) / 10,
+    score: max > 0 ? Math.round((weight / max) * 100) : 0,
+    label: `${(index * binMs / 1000).toFixed(1)}s`,
+  }));
+  const peak = windows[values.indexOf(max)];
+  return {
+    windows,
+    ...(peak && max > 0 ? { peakLabel: peak.label } : {}),
+    flat: max === 0,
+    total,
+  };
+}
+
+function scenePacingOf(
+  project: Project,
+  plans: { shotId: string; sceneId: string; sceneLabel: string; durationMs: number }[],
+  weights: Map<string, number>,
+): ScenePacing[] {
+  return project.scenes.map((scene) => {
+    const list = plans.filter((plan) => plan.sceneId === scene.id);
+    const seconds = list.reduce((sum, plan) => sum + plan.durationMs, 0) / 1000;
+    const shots = list.length;
+    const aslSeconds = shots > 0 ? seconds / shots : 0;
+    const payoff = Math.round(
+      list.reduce((sum, plan) => sum + (weights.get(plan.shotId) ?? 0), 0) * 10,
+    ) / 10;
+    const label = `第 ${scene.code || scene.index + 1} 场`;
+
+    let issue: ScenePacing["issue"] = null;
+    let advice = "节奏与爽点都正常；优先改别的场。";
+    if (shots === 0) {
+      issue = "flat";
+      advice = "这一场还没有镜头：先拆成 1–3 个能拍的镜头。";
+    } else if (aslSeconds >= 5) {
+      issue = "slow";
+      advice = "平均镜长偏慢：把解释压成一个动作，或拆出反应镜头。";
+    } else if (aslSeconds < 1) {
+      issue = "rushed";
+      advice = "平均镜长不到 1 秒，偏碎：给关键动作留一个反应镜头。";
+    } else if (payoff === 0) {
+      issue = "flat";
+      advice = "没有识别到爽点 / 反转：加一次拒绝、揭露或反击。";
+    }
+    return { sceneId: scene.id, label, seconds, shots, aslSeconds, payoff, issue, advice };
+  });
 }
 
 /**
@@ -522,6 +668,12 @@ export function analyzeScript(
   const warn = findings.filter((item) => item.severity === "warn").length;
   const info = findings.length - warn;
 
+  const weights = new Map(
+    plans.map((plan) => [plan.shotId, payoffWeightOf(project, plan)]),
+  );
+  const payoff = payoffCurveOf(plans, weights, seconds * 1000);
+  const scenePacing = scenePacingOf(project, plans, weights);
+
   return {
     dims,
     overall,
@@ -538,6 +690,8 @@ export function analyzeScript(
         overall === null ? "未测" : overall >= 4 ? "不错" : overall >= 3 ? "及格" : "偏低",
     },
     seconds,
+    payoff,
+    scenes: scenePacing,
     shotNos: Object.fromEntries(plans.map((plan) => [plan.shotId, plan.no])),
   };
 }
