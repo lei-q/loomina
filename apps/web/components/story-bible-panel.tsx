@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { HOOK_TYPES, scoreHook, type HookPosition } from "@/lib/hooks";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
 
@@ -23,6 +24,11 @@ const ARC_FIELDS: { key: ArcKey; label: string; hint: string }[] = [
 ];
 
 type ArcKey = "want" | "need" | "wound" | "flaw" | "secret" | "agency" | "arc";
+
+const HOOK_ROWS: { pos: HookPosition; label: string; hint: string }[] = [
+  { pos: "opening", label: "开场钩子", hint: "前 3 秒：让人不划走" },
+  { pos: "ending", label: "结尾钩子", hint: "最后一秒：让人点下一集" },
+];
 
 export function StoryBiblePanel() {
   const project = useWorkbench((state) => state.project);
@@ -58,6 +64,28 @@ export function StoryBiblePanel() {
   const commitText = (key: string) => {
     const ok = editStory({ [key]: draft } as Parameters<typeof editStory>[0]);
     if (ok) close();
+  };
+
+  /** 钩子单独走：编辑态与其它字段分开，存的时候仍只写一条 `story.updated` */
+  const [hookEditing, setHookEditing] = useState<HookPosition>();
+  const [hookDraft, setHookDraft] = useState("");
+
+  const openHook = (pos: HookPosition) => {
+    setHookEditing(pos);
+    setHookDraft(story.hooks[pos]);
+  };
+
+  /** 类型库的例子只填进编辑框，不直接保存：作者改完再按「存」 */
+  const applyHookExample = (pos: HookPosition, example: string) => {
+    setHookEditing(pos);
+    setHookDraft(example);
+  };
+
+  const commitHook = () => {
+    if (!hookEditing) return;
+    const key = hookEditing === "opening" ? "openingHook" : "endingHook";
+    const ok = editStory({ [key]: hookDraft } as Parameters<typeof editStory>[0]);
+    if (ok) setHookEditing(undefined);
   };
 
   const commitArc = (characterId: string, field: ArcKey) => {
@@ -156,6 +184,155 @@ export function StoryBiblePanel() {
           );
         })}
       </div>
+
+      <div className="mt-5 flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="text-[10px] tracking-[.12em] text-muted-2">钩子设计器</h3>
+        <span className="tnum text-[9px] text-muted-2">A19 · 分数只是形状，不阻断生成</span>
+      </div>
+      <p className="mt-1 text-[9.5px] leading-[1.7] text-muted-2">
+        开场钩子决定前 3 秒，结尾钩子决定下一集。四个分项是规则打分，不是审美判断；
+        改完按「存」才写一条 <code>story.updated</code>。
+      </p>
+
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        {HOOK_ROWS.map((row) => {
+          const editing = hookEditing === row.pos;
+          const value = editing ? hookDraft : story.hooks[row.pos];
+          const score = scoreHook(value, row.pos);
+          return (
+            <div
+              key={row.pos}
+              className="rounded-token border border-line bg-bg px-2.5 py-2"
+              aria-label={`${row.label}评分`}
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-[10px] text-text">{row.label}</span>
+                  <span className="text-[8.5px] text-muted-2">{row.hint}</span>
+                </div>
+                {!editing && !readOnly && (
+                  <button
+                    type="button"
+                    onClick={() => openHook(row.pos)}
+                    className="text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
+                  >
+                    {value.trim() ? "改" : "写"}
+                  </button>
+                )}
+              </div>
+
+              {editing ? (
+                <div className="mt-1 flex items-start gap-1">
+                  <textarea
+                    value={hookDraft}
+                    onChange={(event) => setHookDraft(event.target.value)}
+                    rows={2}
+                    maxLength={120}
+                    aria-label={`${row.label}（可编辑）`}
+                    className="min-w-0 flex-1 resize-none rounded-token border border-line bg-transparent px-1.5 py-1 text-[10.5px] leading-[1.7] text-text focus:border-line-2 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={commitHook}
+                    className="shrink-0 rounded-token border border-line-2 bg-text/10 px-1.5 py-0.5 text-[9px] text-text hover:bg-text/20"
+                  >
+                    存
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setHookEditing(undefined)}
+                    className="shrink-0 rounded-token border border-line px-1.5 py-0.5 text-[9px] text-muted hover:border-line-2 hover:text-text"
+                  >
+                    撤
+                  </button>
+                </div>
+              ) : (
+                <p
+                  className={cn(
+                    "mt-0.5 text-[10.5px] leading-[1.7]",
+                    value.trim() ? "text-muted" : "text-muted-2",
+                  )}
+                >
+                  {value.trim() || "还没写"}
+                </p>
+              )}
+
+              {value.trim() && (
+                <>
+                  <div className="mt-1.5 flex flex-wrap items-baseline gap-2">
+                    <span className="tnum text-[14px] text-text">{score.total}</span>
+                    <span className="text-[8.5px] text-muted-2">分</span>
+                    <span className="text-[8.5px] text-muted-2">
+                      {score.types.length > 0 ? score.types.join(" / ") : "未命中固定类型"}
+                    </span>
+                  </div>
+                  <dl className="mt-1 grid grid-cols-4 gap-1">
+                    {(
+                      [
+                        ["好奇", score.curiosity],
+                        ["紧迫", score.urgency],
+                        ["可视", score.visual],
+                        ["新鲜", score.novelty],
+                      ] as const
+                    ).map(([label, number]) => (
+                      <div key={label}>
+                        <dt className="tnum text-[8px] text-muted-2">
+                          {label} {number}
+                        </dt>
+                        <dd className="mt-0.5 h-[2px] w-full bg-line">
+                          <span
+                            className="block h-full bg-text/50"
+                            style={{ width: `${number}%` }}
+                          />
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <p className="mt-1 text-[8.5px] leading-[1.6] text-muted-2">
+                    {score.notes.slice(0, 2).join(" ")}
+                  </p>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <details className="mt-2 rounded-token border border-line bg-bg px-3 py-2">
+        <summary className="cursor-pointer text-[10px] leading-[1.7] text-muted">
+          钩子类型库 · {HOOK_TYPES.length} 种写法与例子
+        </summary>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          {HOOK_TYPES.map((type) => (
+            <div key={type.id} className="rounded-token border border-line px-2.5 py-1.5">
+              <div className="flex flex-wrap items-baseline gap-1.5">
+                <span className="text-[10px] text-text">{type.name}</span>
+                <span className="text-[8.5px] text-muted-2">
+                  {type.positions.map((pos) => (pos === "opening" ? "开场" : "结尾")).join(" / ")}
+                </span>
+              </div>
+              <p className="mt-0.5 text-[9px] leading-[1.6] text-muted-2">{type.note}</p>
+              <p className="mt-0.5 text-[9px] leading-[1.6] text-muted">{type.pattern}</p>
+              <p className="mt-0.5 text-[8.5px] leading-[1.6] text-muted-2">
+                例：{type.example}
+              </p>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {type.positions.map((pos) => (
+                  <button
+                    key={pos}
+                    type="button"
+                    disabled={readOnly}
+                    onClick={() => applyHookExample(pos, type.example)}
+                    className="rounded-token border border-line px-1.5 py-0.5 text-[8.5px] text-muted-2 transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+                  >
+                    填进{pos === "opening" ? "开场" : "结尾"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </details>
 
       <h3 className="mt-5 text-[10px] tracking-[.12em] text-muted-2">人物弧光</h3>
       {story.arcs.length === 0 ? (
