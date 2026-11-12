@@ -37,6 +37,7 @@ import {
   type ReviewSubject,
 } from "@/lib/asset-review";
 import { shotLabel, spendOf, toStageView } from "@/lib/read-model";
+import { SPEAKER_COLORS, speakerColorAt } from "@/lib/speaker-color";
 import { clampedDeltaMs, dragDeltaMs } from "@/lib/track-drag";
 import { cancelRender, exportMp4 } from "@/lib/render-client";
 import { hydrateView } from "@/lib/asset-hydrate";
@@ -2035,10 +2036,82 @@ export function EditScreen() {
                       <span>
                         按角色着色
                         <span className="ml-1 text-[8.5px] text-muted-2">
-                          每个角色一句一个颜色（六个轮回），多人对话一眼看出谁在说；关掉就全是白色。颜色按角色在项目里的顺序取，角色顺序不变颜色就不变。
+                          每个角色一句一个颜色（六个轮回），多人对话一眼看出谁在说；关掉就全是白色。默认按角色在项目里的顺序取，也可以下面逐个点名。
                         </span>
                       </span>
                     </label>
+                    {style.speakerColors && project.characters.length > 0 && (
+                      <div className="mt-2 rounded-token border border-line bg-surface/60 p-2">
+                        <div className="flex flex-wrap items-baseline justify-between gap-2">
+                          <span className="text-[9px] text-muted">每个角色的颜色</span>
+                          <span className="text-[8.5px] text-muted-2">
+                            点色块点名；「默认」回到按顺序取
+                          </span>
+                        </div>
+                        <ul className="mt-1.5 space-y-1">
+                          {project.characters.map((character, index) => {
+                            const fallbackColor = speakerColorAt(index);
+                            const overrides = style.speakerColorOverrides ?? {};
+                            const color = overrides[character.id] ?? fallbackColor;
+                            const named = overrides[character.id] !== undefined;
+                            return (
+                              <li
+                                key={character.id}
+                                className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[9.5px]"
+                              >
+                                <span className="w-[64px] shrink-0 truncate text-text">
+                                  {character.name}
+                                </span>
+                                <span className="flex items-center gap-1">
+                                  {SPEAKER_COLORS.map((option) => (
+                                    <button
+                                      key={option}
+                                      type="button"
+                                      disabled={readOnly}
+                                      onClick={() =>
+                                        setSubtitleLayout({
+                                          speakerColorOverrides: {
+                                            ...overrides,
+                                            [character.id]: option,
+                                          },
+                                        })
+                                      }
+                                      title={`把「${character.name}」的字幕改成 ${option}`}
+                                      aria-label={`${character.name} ${option}`}
+                                      aria-pressed={color === option}
+                                      style={{ backgroundColor: option }}
+                                      className={cn(
+                                        "h-3.5 w-3.5 rounded-full border transition-transform duration-[var(--dur)] disabled:opacity-40",
+                                        color === option
+                                          ? "scale-110 border-text"
+                                          : "border-line-2 hover:scale-105",
+                                      )}
+                                    />
+                                  ))}
+                                </span>
+                                <span className="tnum text-[8.5px] text-muted-2">{color}</span>
+                                {named ? (
+                                  <button
+                                    type="button"
+                                    disabled={readOnly}
+                                    onClick={() => {
+                                      const next = { ...overrides };
+                                      delete next[character.id];
+                                      setSubtitleLayout({ speakerColorOverrides: next });
+                                    }}
+                                    className="rounded-token border border-line px-1 py-0.5 text-[8.5px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:opacity-40"
+                                  >
+                                    默认
+                                  </button>
+                                ) : (
+                                  <span className="text-[8.5px] text-muted-2">按顺序</span>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    )}
                     <div className="mt-1.5 flex flex-wrap items-center gap-2">
                       <button
                         type="button"
@@ -2048,6 +2121,7 @@ export function EditScreen() {
                             bottomPct: null,
                             strokeCqw: null,
                             speakerColors: null,
+                            speakerColorOverrides: null,
                           })
                         }
                         disabled={readOnly || !styleCustom}

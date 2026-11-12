@@ -537,6 +537,8 @@ export type PublishPackage = {
     strokeCqw: number;
     /** 这一版是否按角色着色（D3） */
     speakerColors: boolean;
+    /** 作者点名指定的角色颜色（D3 / ADR-0146）：没改过的角色不列 */
+    speakerColorOverrides?: Record<string, string>;
   };
   subtitles: string;
   shots: { shotNo: number; takeNo: number; startMs: number; durationMs: number }[];
@@ -620,6 +622,10 @@ export function buildPublishPackage(
       bottomPct: view.subtitleStyle.bottomPct,
       strokeCqw: view.subtitleStyle.strokeCqw,
       speakerColors: view.subtitleStyle.speakerColors,
+      ...(view.subtitleStyle.speakerColorOverrides &&
+      Object.keys(view.subtitleStyle.speakerColorOverrides).length > 0
+        ? { speakerColorOverrides: view.subtitleStyle.speakerColorOverrides }
+        : {}),
     },
     subtitles: buildSrt(view),
     shots: view.clips.map((clip) => ({

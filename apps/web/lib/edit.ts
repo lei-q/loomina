@@ -24,6 +24,8 @@ export type SubtitleStyle = {
   strokeCqw: number;
   /** 按角色着色（D3）：关掉时所有字幕回到白色 */
   speakerColors: boolean;
+  /** 作者点名指定的角色颜色（D3 / ADR-0146）：缺省按色板顺序 */
+  speakerColorOverrides?: Record<string, string>;
 };
 
 export const SUBTITLE_STYLES: Record<SubtitleStyleId, SubtitleStyle> = {
@@ -72,6 +74,9 @@ export function subtitleStyleOf(
     bottomPct: layout.bottomPct ?? base.bottomPct,
     strokeCqw: layout.strokeCqw ?? base.strokeCqw,
     speakerColors: layout.speakerColors ?? base.speakerColors,
+    ...(layout.speakerColorOverrides && Object.keys(layout.speakerColorOverrides).length > 0
+      ? { speakerColorOverrides: layout.speakerColorOverrides }
+      : {}),
   };
 }
 
@@ -82,7 +87,9 @@ export function isCustomSubtitleLayout(layout?: SubtitleLayout): boolean {
     layout.fontSizeCqw !== undefined ||
     layout.bottomPct !== undefined ||
     layout.strokeCqw !== undefined ||
-    layout.speakerColors !== undefined
+    layout.speakerColors !== undefined ||
+    (layout.speakerColorOverrides !== undefined &&
+      Object.keys(layout.speakerColorOverrides).length > 0)
   );
 }
 
@@ -367,6 +374,12 @@ export function toEditView(
   const sceneById = new Map(project.scenes.map((scene) => [scene.id, scene]));
   // 字幕颜色按角色顺序取（D3）：不存 IR，角色顺序不变颜色就不变
   const colorByCharacter = speakerPaletteOf(project.characters.map((item) => item.id));
+  // 作者点名指定的颜色（D3 / ADR-0146）：只对还在项目里的角色生效
+  for (const [characterId, color] of Object.entries(
+    subtitleStyle.speakerColorOverrides ?? {},
+  )) {
+    if (colorByCharacter.has(characterId)) colorByCharacter.set(characterId, color);
+  }
   const overrideByLine = new Map(
     project.subtitleOverrides.map((override) => [override.lineId, override]),
   );

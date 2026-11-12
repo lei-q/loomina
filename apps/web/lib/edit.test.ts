@@ -1,7 +1,7 @@
 import { ProjectSchema } from "@loomina/ir";
 import { describe, expect, it } from "vitest";
 import { SUBTITLE_STYLES, autoCut, timelineEquals, timecode, toEditView } from "./edit";
-import { assColorOf } from "./speaker-color";
+import { assColorOf, speakerColorAt } from "./speaker-color";
 import {
   buildOtio,
   buildPreviewHtml,
@@ -520,6 +520,37 @@ describe("按角色着色（D3）：颜色按角色顺序取，三处共用", ()
     const view = toEditView(off);
     expect(buildAss(view)).not.toContain("{\\c&H");
     expect(buildPreviewHtml(view)).not.toContain('"color"');
+  });
+
+  it("作者点名的颜色优先于色板顺序，没点名的照旧（ADR-0146）", () => {
+    const named = ProjectSchema.parse({
+      ...twoSpeakers,
+      subtitleLayout: {
+        preset: "default",
+        speakerColorOverrides: { "c-lin": "#FFA6C9" },
+      },
+    });
+    const view = toEditView(named);
+    const linCues = view.cues.filter((cue) => cue.characterId === "c-lin");
+    expect(linCues.length).toBeGreaterThan(0);
+    expect(linCues.every((cue) => cue.speakerColor === "#FFA6C9")).toBe(true);
+    // 周没被点名：仍是按角色顺序取到的第二色
+    expect(view.cues.find((cue) => cue.characterId === "c-zhou")?.speakerColor).toBe(
+      speakerColorAt(1),
+    );
+    // 四处的颜色同源：ASS 与预览也跟着点名后的颜色走
+    expect(buildAss(view)).toContain(
+      `${assColorOf("#FFA6C9")}${linCues[0]!.text.replace(/\r?\n/g, "\\N")}`,
+    );
+    expect(buildPreviewHtml(view)).toContain('"color":"#FFA6C9"');
+    const pack = buildPublishPackage(view, {
+      title: "夜班",
+      description: "",
+      topics: [],
+      style: "default",
+      kind: "draft",
+    });
+    expect(pack.subtitleLayout.speakerColorOverrides).toEqual({ "c-lin": "#FFA6C9" });
   });
 
   it("发布包记下这一版到底有没有按角色着色", () => {

@@ -2500,6 +2500,56 @@ describe("字幕版式（D3）", () => {
     expect(cleared.subtitleLayout.speakerColors).toBeUndefined();
   });
 
+  it("角色配色整份替换、统一大写，`null` 与空对象都清掉（D3 / ADR-0146）", () => {
+    const project = load();
+    const after = rebuild([
+      created(project),
+      {
+        type: "subtitle.layout.updated",
+        at: AT,
+        layout: { speakerColorOverrides: { "c-lin": "#ffd666" } },
+      },
+      {
+        type: "subtitle.layout.updated",
+        at: AT,
+        layout: { speakerColorOverrides: { "c-zhou": "#7FD8FF" } },
+      },
+    ]);
+    // 整份替换：第二条覆盖掉第一条，而不是合并
+    expect(after.subtitleLayout.speakerColorOverrides).toEqual({ "c-zhou": "#7FD8FF" });
+
+    const cleared = rebuild([
+      created(project),
+      {
+        type: "subtitle.layout.updated",
+        at: AT,
+        layout: { speakerColorOverrides: { "c-lin": "#FFD666" } },
+      },
+      { type: "subtitle.layout.updated", at: AT, layout: { speakerColorOverrides: null } },
+    ]);
+    expect(cleared.subtitleLayout.speakerColorOverrides).toBeUndefined();
+
+    const emptied = rebuild([
+      created(project),
+      { type: "subtitle.layout.updated", at: AT, layout: { speakerColorOverrides: {} } },
+    ]);
+    expect(emptied.subtitleLayout.speakerColorOverrides).toBeUndefined();
+  });
+
+  it("角色配色的非法颜色被拒绝（D3 / ADR-0146）", () => {
+    const project = load();
+    expect(() =>
+      rebuild([
+        created(project),
+        {
+          type: "subtitle.layout.updated",
+          at: AT,
+          layout: { speakerColorOverrides: { "c-lin": "red" } },
+        },
+      ]),
+    ).toThrow(/字幕颜色必须是 #RRGGBB/);
+  });
+
   it("换模板只改 preset，调过的项留着", () => {
     const project = load();
     const after = rebuild([

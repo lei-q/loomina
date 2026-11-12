@@ -673,6 +673,15 @@ export const SubtitleLayoutSchema = z.object({
    * 的顺序从固定色板取，角色顺序不变颜色就不变。
    */
   speakerColors: z.boolean().optional(),
+  /**
+   * 给某个角色指定颜色（D3 / ADR-0146）：角色 id → `#RRGGBB`。
+   *
+   * 缺省时按 `project.characters` 的顺序从固定色板取；只存作者改过的角色，
+   * 删掉某个键就回到色板默认。界面只提供色板里的六个颜色，IR 只校验格式。
+   */
+  speakerColorOverrides: z
+    .record(z.string().min(1), z.string().regex(/^#[0-9a-fA-F]{6}$/))
+    .optional(),
 });
 export type SubtitleLayout = z.infer<typeof SubtitleLayoutSchema>;
 

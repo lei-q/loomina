@@ -1630,6 +1630,34 @@ describe("字幕版式（D3）", () => {
     expect(state().project.subtitleLayout.fontSizeCqw).toBeUndefined();
   });
 
+  it("点名角色颜色写一条事件，颜色统一大写、同样一份不重复写（ADR-0146）", () => {
+    expect(
+      state().setSubtitleLayout({ speakerColorOverrides: { "c-lin": "#ffd666" } }),
+    ).toBe(true);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "subtitle.layout.updated",
+      layout: { speakerColorOverrides: { "c-lin": "#FFD666" } },
+    });
+    expect(rebuild(state().events).subtitleLayout.speakerColorOverrides).toEqual({
+      "c-lin": "#FFD666",
+    });
+
+    const snapshot = state().events.length;
+    // 键序不同也算同一份
+    expect(
+      state().setSubtitleLayout({ speakerColorOverrides: { "c-lin": "#FFD666" } }),
+    ).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+  });
+
+  it("清空角色配色：空对象与 null 都回到色板默认（ADR-0146）", () => {
+    state().setSubtitleLayout({ speakerColorOverrides: { "c-lin": "#FFD666" } });
+    expect(state().setSubtitleLayout({ speakerColorOverrides: {} })).toBe(true);
+    expect(state().project.subtitleLayout.speakerColorOverrides).toBeUndefined();
+    // 已经是默认：再清一次不写事件
+    expect(state().setSubtitleLayout({ speakerColorOverrides: null })).toBe(false);
+  });
+
   it("越界被拒并把原因写到 editError，项目不变", () => {
     const snapshot = state().events.length;
     expect(state().setSubtitleLayout({ fontSizeCqw: 99 })).toBe(false);

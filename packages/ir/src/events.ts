@@ -59,6 +59,14 @@ export const GATE_NOTE_MAX = 240;
 export const TRACK_OFFSET_MAX_MS = 30_000;
 
 /**
+ * 角色配色最多记多少条（D3 / ADR-0146）。
+ *
+ * 一条 60–180 秒的短剧不会有二十四个需要区分颜色的说话人；这个上限
+ * 只防手滑把整份角色表灌进版式里。
+ */
+export const SPEAKER_COLOR_OVERRIDES_MAX = 24;
+
+/**
  * 事件日志（ADR-0011）。
  *
  * 第一版只做“可回放”：
@@ -321,6 +329,11 @@ export type ProjectEvent =
         strokeCqw?: number | null;
         /** 按角色着色（D3）：`null` 清掉覆盖、回到默认开 */
         speakerColors?: boolean | null;
+        /**
+         * 给某个角色指定颜色（D3 / ADR-0146）：整份替换，`null` 清掉全部。
+         * 空对象与 `null` 等价——「一个都没改」不该被当成自定义。
+         */
+        speakerColorOverrides?: Record<string, string> | null;
       };
     }
   | {
@@ -1451,6 +1464,31 @@ function applyEventCore(
         touched += 1;
         if (layout.speakerColors === null) delete next.speakerColors;
         else next.speakerColors = layout.speakerColors;
+      }
+      if (layout.speakerColorOverrides !== undefined) {
+        touched += 1;
+        if (layout.speakerColorOverrides === null) {
+          delete next.speakerColorOverrides;
+        } else {
+          const entries = Object.entries(layout.speakerColorOverrides);
+          if (entries.length > SPEAKER_COLOR_OVERRIDES_MAX) {
+            throw new Error(
+              `subtitle.layout.updated 的角色配色超过 ${SPEAKER_COLOR_OVERRIDES_MAX} 条`,
+            );
+          }
+          const clean: Record<string, string> = {};
+          for (const [characterId, color] of entries) {
+            if (characterId.trim().length === 0) {
+              throw new Error("subtitle.layout.updated 的角色配色缺角色 id");
+            }
+            if (!/^#[0-9a-fA-F]{6}$/.test(color)) {
+              throw new Error(`字幕颜色必须是 #RRGGBB：${color}`);
+            }
+            clean[characterId] = color.toUpperCase();
+          }
+          if (Object.keys(clean).length === 0) delete next.speakerColorOverrides;
+          else next.speakerColorOverrides = clean;
+        }
       }
       if (touched === 0) throw new Error("subtitle.layout.updated 没有要改的字段");
       return { ...current, subtitleLayout: next };

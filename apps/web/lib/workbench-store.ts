@@ -476,6 +476,8 @@ type WorkbenchState = {
     strokeCqw?: number | null;
     /** 按角色着色（D3）：`null` 清掉覆盖、回到默认开 */
     speakerColors?: boolean | null;
+    /** 给某个角色指定颜色（D3）：整份替换，`null` / `{}` 清掉全部 */
+    speakerColorOverrides?: Record<string, string> | null;
   }) => boolean;
   /**
    * 挪一句的配音或字幕（E1 / ADR-0131）：写一条 `dialogue.updated`。
@@ -698,6 +700,20 @@ function restack(items: TimelineItem[]): TimelineItem[] {
     cursor += item.durationMs;
     return next;
   });
+}
+
+/**
+ * 角色配色的规范形状（D3 / ADR-0146）：大写十六进制、按角色 id 排序。
+ *
+ * 排序只为了让「和当前值一样」的比较稳定——对象键序不该决定写不写事件。
+ */
+function canonicalSpeakerColors(
+  value?: Record<string, string> | null,
+): Record<string, string> | undefined {
+  if (!value) return undefined;
+  const ids = Object.keys(value).filter((id) => id.trim().length > 0).sort();
+  if (ids.length === 0) return undefined;
+  return Object.fromEntries(ids.map((id) => [id, value[id]!.toUpperCase()]));
 }
 
 /** 当前镜之后第一格还没定的；到末尾就回到开头找；全定完了就原地不动。 */
@@ -3469,6 +3485,13 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     const { project, events } = get();
     // 和当前值一样就不写事件：拖滑块时每一步都记一条，日志会被噪声灌满
     const current = project.subtitleLayout;
+    const currentOverrides = canonicalSpeakerColors(current.speakerColorOverrides);
+    const overridesProvided = layout.speakerColorOverrides !== undefined;
+    const requestedOverrides = overridesProvided
+      ? canonicalSpeakerColors(layout.speakerColorOverrides)
+      : undefined;
+    // 传了但规范化后为空（`null` / `{}`）：要清掉，不能当成「没提这一项」
+    const overridesPatch = overridesProvided ? (requestedOverrides ?? null) : undefined;
     const same =
       (layout.preset === undefined || layout.preset === current.preset) &&
       (layout.fontSizeCqw === undefined ||
@@ -3486,10 +3509,16 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       (layout.speakerColors === undefined ||
         (layout.speakerColors === null
           ? current.speakerColors === undefined
-          : (current.speakerColors ?? true) === layout.speakerColors));
+          : (current.speakerColors ?? true) === layout.speakerColors)) &&
+      (overridesPatch === undefined ||
+        JSON.stringify(requestedOverrides) === JSON.stringify(currentOverrides));
     if (same) return false;
     const at = stamp();
-    const event: ProjectEvent = { type: "subtitle.layout.updated", at, layout };
+    const nextLayout =
+      overridesPatch === undefined
+        ? layout
+        : { ...layout, speakerColorOverrides: overridesPatch };
+    const event: ProjectEvent = { type: "subtitle.layout.updated", at, layout: nextLayout };
     try {
       set({
         project: applyEvent(project, event),
