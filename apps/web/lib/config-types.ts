@@ -61,12 +61,52 @@ export type ModelRecord = {
   terms?: string;
 };
 
+/**
+ * 对象存储配置（H3 / ADR-0128 §7）。
+ *
+ * 密钥只落在 `.loomina/config.json`（0600）或服务端环境变量里，
+ * `PublicStorage` 是脱敏后的形状：浏览器只该知道「配没配、连的是谁」。
+ */
+export type StorageRecord = {
+  kind: "s3";
+  /** 不带结尾斜杠，例如 `https://s3.us-east-1.amazonaws.com` */
+  endpoint: string;
+  bucket: string;
+  region: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  /** MinIO 与自建网关只认 path-style */
+  pathStyle: boolean;
+  /** 临时凭据才需要 */
+  sessionToken?: string;
+};
+
+export type PublicStorage = {
+  configured: boolean;
+  kind: "s3" | null;
+  /** 完整 Endpoint：校验时就不许带账号密码，所以它不是凭据 */
+  endpoint: string | null;
+  /** 只给主机名，能力接口与标题栏用 */
+  endpointHost: string | null;
+  bucket: string | null;
+  region: string | null;
+  pathStyle: boolean | null;
+  /** 配置从哪来：文件 / 环境变量 */
+  source: "file" | "env" | null;
+  /** 现在实际在用的资产库实现 */
+  active: "local" | "s3";
+  /** 已配置但没启用时的原因 */
+  note?: string;
+};
+
 export type ConfigFile = {
   version: 1;
   providers: ProviderRecord[];
   models: ModelRecord[];
   /** 每种模态至少一个默认；没有该模态模型时缺省 */
   defaults: Partial<Record<Modality, string>>;
+  /** 对象存储；缺省表示只用本机资产库 */
+  storage?: StorageRecord;
 };
 
 export type PublicProvider = Omit<ProviderRecord, "apiKey"> & {
@@ -86,6 +126,8 @@ export type PublicConfig = {
   path: string;
   /** 配置文件是否已落盘；false 表示当前是环境变量生成的临时视图 */
   saved: boolean;
+  /** 对象存储（H3）；只到「配没配、连的是谁」 */
+  storage: PublicStorage;
 };
 
 export type ConfigSaveInput = {
@@ -99,6 +141,8 @@ export type ConfigSaveInput = {
   }[];
   models: (Omit<ModelRecord, "label"> & { label?: string })[];
   defaults: Partial<Record<Modality, string>>;
+  /** `null` = 清掉对象存储配置，回到本机资产库 */
+  storage?: Partial<StorageRecord> | null;
 };
 
 export function modalityOf(value: unknown): Modality | null {

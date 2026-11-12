@@ -73,11 +73,12 @@ export function stepFrame(
 /**
  * 能不能对这一镜切帧。
  *
- * 只认本机资产库的地址：`data:` 的片子有几十 MB，塞不进查询串，
- * 而且它本来就该先迁进资产库（H3 / ADR-0128）。
+ * 只认资产库里的片子：`loomina://`（本机）与 `s3://`（对象存储）。
+ * `data:` 的片子有几十 MB，塞不进查询串，而且它本来就该先迁进资产库
+ * （H3 / ADR-0128）；`https://` 要另开一条受控下载的路。
  */
 export function canPreviewFrames(uri?: string): boolean {
-  return Boolean(uri && isStoredAssetUri(uri));
+  return Boolean(uri && (isStoredAssetUri(uri) || uri.startsWith("s3://")));
 }
 
 export type FrameThrottle = {
@@ -162,14 +163,15 @@ export type FrameRequestResult =
   | { ok: false; error: string };
 
 /**
- * 校验切帧请求。地址只认本机资产库：`data:` 有几十 MB，塞不进查询串；
- * 远端地址要另开一条受控下载的路（渲染路由已经有，不在这一层重复）。
+ * 校验切帧请求。地址只认资产库（`loomina://` 本机、`s3://` 对象存储）：
+ * `data:` 有几十 MB，塞不进查询串；远端地址要另开一条受控下载的路
+ * （渲染路由已经有，不在这一层重复）。
  */
 export function parseFrameRequest(params: URLSearchParams): FrameRequestResult {
   const asset = params.get("asset")?.trim() ?? "";
   if (!asset) return { ok: false, error: "没给素材地址" };
-  if (!isStoredAssetUri(asset)) {
-    return { ok: false, error: "帧级找点只认本机资产库里的片子：先把素材迁进资产库" };
+  if (!canPreviewFrames(asset)) {
+    return { ok: false, error: "帧级找点只认资产库里的片子：先把素材迁进资产库" };
   }
   const rawAt = params.get("at");
   if (rawAt === null || rawAt.trim() === "") return { ok: false, error: "没给要找的时刻" };

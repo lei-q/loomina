@@ -153,3 +153,75 @@ ffmpeg -v error -ss <at/1000, 3 位小数> -i <src> -frames:v 1 -an -sn -dn \
 - 依赖服务端 ffmpeg。没有 ffmpeg 的环境降到 E7.1，界面写明原因，不假装。
 - 逐帧步进是 33ms 的估步：源片 24fps 时一步会落在两帧之间，ffmpeg 取该时刻所在的那一帧。
 - 一帧一次 HTTP 往返。本地 20–60 ms，远端部署会明显变慢——这条在 ADR-0129 决策时已知，真到部署阶段要评估是否加代理视频（E7.2 原设计的 540p 代理仍然值得做）。
+
+## 落地（H3 对象存储 SigV4，2026-11-12）
+
+### 1. 签名自己写，对着官方向量锁
+
+`apps/web/lib/s3-sigv4.ts`，只做预签名：
+
+| 函数 | 职责 | 易错点 |
+| --- | --- | --- |
+| `uriEncode` | AWS 的 URI 编码 | 只保留 `A-Z a-z 0-9 - _ . ~`；空格是 `%20` 不是 `+`；`*` `!` 也要转义 |
+| `canonicalQueryString` | 规范化查询串 | **先编码再排序**，同名按值排 |
+| `canonicalRequest` | 规范化请求 | 头名小写排序、头值压空白、路径**只编码一次** |
+| `signingKey` | 四层派生密钥 | 漏一层不报错，只是签名对不上 |
+| `presignUrl` | 拼整条 URL | 载荷用 `UNSIGNED-PAYLOAD`，不是空串的 sha256 |
+
+单测 28 条，其中三条是 AWS 官方文档里的完整示例，逐字比对：
+
+- **GET Object**：规范化请求的 sha256 `7344ae5b…`、签名 `f0e8bdb8…`；
+- **PUT Object**：载荷 sha256 `44ce7dd6…`、签名 `98ad7217…`；
+- **预签名 GET**：整条 URL（含 `X-Amz-Signature=aeeed9bb…`）与文档一致。
+
+这三条的意义不是「我们和文档一样」，而是「任何第三方实现（botocore、SDK）算出来的也是这个值」——测试里用的是文档公开的示例凭据，不是任何真实账号的密钥。
+
+### 2. 存储实现只做四件事
+
+`apps/web/lib/s3-store.ts`：`putS3Object` / `readS3Object` / `removeS3Object` / `listS3Objects`，全部走预签名 URL 再 `fetch`。没有 SDK 的对象模型、没有重试、没有分片上传——200 MB 上限内的单次 PUT 够用。
+
+- key 形状 `<prefix>/<前两位>/<sha256>.<ext>`：内容寻址，同一段字节只存一份；`HEAD` 判存在，命中就不重传。
+- 列桶用 ListObjectsV2，按 `continuation-token` 分页，最多 100 页。
+- 上传前的 `HEAD` 也用预签名 URL，**方法必须写 HEAD**（第一版写成 GET，服务端收到 HEAD 但签名里是 GET，直接 403）。
+
+### 3. 地址与读取路径
+
+| 场景 | 怎么做 |
+| --- | --- |
+| IR 里存什么 | `s3://<bucket>/<key>`，与其他两种地址并列，引用方不改 |
+| 浏览器显示 | `assetHref()` → `/api/storage?uri=…`，服务端签一条短期 GET 再流回字节 |
+| 渲染 / 切帧 | `materializeAsset()` 先拉到 `.loomina/assets/cache/`，同一个 key 只下载一次 |
+| 导出（自包含） | `hydrateView()` 走 `/api/storage?uri=` 读回字节换成 data URI |
+
+**不把预签名 URL 直接给 `<img src>`**：URL 十分钟就过期，而地址要能长期引用；服务端代读多一次本机往返，换来的是一条稳定的地址。
+
+### 4. 凭据边界
+
+- 只从 `.loomina/config.json` 的 `storage` 段（0600）或服务端 `LOOMINA_S3_*` 环境变量读。
+- `/api/config` 回 `endpoint` / `endpointHost` / `bucket` / `region` / `pathStyle` / `source` / `active`，**没有 AK/SK**。
+- endpoint 在校验时就不许带账号密码与查询串，所以它本身不是凭据，可以完整回传给表单预填。
+- 设置页的 Secret 输入框是 `type=password`，已配置时占位符写「已保存」，保存后拿不回来。
+
+### 5. 端到端跑出一个单测看不见的 bug
+
+`objectUrlOf` 把 key 编码成 `%E9%A1%B9…`，`canonicalRequest` 又编码一次变成 `%25E9…`。单测里两边都调同一个函数，所以「算得对」——但 MinIO 按单次编码重算，签名对不上，**中文 key 的 PUT 直接 403**。
+
+修法：`objectUrlOf` 同时返回 `path`（原始，进规范化请求）与 `encodedPath`（编码后，进 URL），调用方不许混用。补了两条回归：URL 里不许出现 `%25`，规范化请求第一行必须是单次编码。
+
+这条记在这里的理由是它说明**单测与端到端测的不是同一件事**：单测锁「实现自洽」，端到端锁「服务端认不认」。
+
+### 6. 验证
+
+- 单测 **1050** 全过（IR 184 + gateway 28 + pipeline 98 + web 740，另 4 条 e2e 默认跳过）。
+- MinIO 端到端（`LOOMINA_S3_E2E=1` 开启）：写 / 读 / 列 / 删、同一段字节写两次地址不变、中文与特殊字符 key、不存在的对象读回 null、过期签名被服务端拒绝。
+- 接口：`PUT /api/storage` 存配置并脱敏回传；`?probe=1` 列桶报 2 个对象 33 KB；`/api/config` 序列化里搜不到 AK/SK。
+- 浏览器：设置页「对象存储」区显示 `127.0.0.1:9000 / loomina-assets · us-east-1`，探测写「连通 · 2 个对象 · 33 KB · 1 ms」；表单预填 Endpoint / 桶 / 区域，AK 与 SK 为空且 SK 是密码框。
+- 渲染：带 `s3://` 图片素材的清单提交后 `done`，ffprobe 1080×1920 h264 1.000s，抽帧就是桶里那张图。
+- 帧级找点：SH-02 的 take 换成 `s3://` 片子后开关可用，勾上切出 360×640 彩条，逐帧步进 0 → 33 → 66。
+- **没验到的**：真实云厂商（AWS / OSS / COS）的桶——本地只有 MinIO；`virtual-hosted` 寻址在 MinIO 上不成立，只做了单测；>5 GB 的分片上传（不做）。
+
+### 7. 边界
+
+- **对象存储不是项目同步**：项目仍在浏览器 IndexedDB 里，桶里只有素材。换机器能拿回素材，拿不回项目。
+- 桶里的孤儿对象没有清理界面：本机库的「清理没人引用的文件」只动 `.loomina/assets/`，不冒充桶的回收站（`removeS3Object` 已实现，只差界面）。
+- 缓存目录 `.loomina/assets/cache/` 不自动清：按内容哈希命名，同一个对象只下载一次，删 `.loomina/` 时一起删。

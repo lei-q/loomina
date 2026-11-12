@@ -258,3 +258,87 @@ describe("toPublicConfig", () => {
     expect(JSON.stringify(publicConfig)).not.toContain("sk-from-env");
   });
 });
+
+describe("对象存储配置（H3 / ADR-0128 §7）", () => {
+  const STORAGE = {
+    kind: "s3" as const,
+    endpoint: "http://127.0.0.1:9000",
+    bucket: "loomina-assets",
+    region: "us-east-1",
+    accessKeyId: "test-access-key",
+    secretAccessKey: "test-secret-key",
+    pathStyle: true,
+  };
+
+  it("存下来之后整份替换，path-style 原样保留", () => {
+    const result = normalizeConfig({ ...VALID, storage: STORAGE }, PREVIOUS);
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.config.storage).toEqual(STORAGE);
+  });
+
+  it("不传 storage 就沿用上一份", () => {
+    const withStorage: ConfigFile = { ...PREVIOUS, storage: STORAGE };
+    const result = normalizeConfig(VALID, withStorage);
+    expect(result.ok && result.config.storage).toEqual(STORAGE);
+  });
+
+  it("传 null 表示清掉，回到本机资产库", () => {
+    const withStorage: ConfigFile = { ...PREVIOUS, storage: STORAGE };
+    const result = normalizeConfig({ ...VALID, storage: null }, withStorage);
+    expect(result.ok && result.config.storage).toBeUndefined();
+  });
+
+  it("密钥缺省表示沿用已保存的", () => {
+    const withStorage: ConfigFile = { ...PREVIOUS, storage: STORAGE };
+    const { secretAccessKey: _omit, ...withoutSecret } = STORAGE;
+    const result = normalizeConfig({ ...VALID, storage: withoutSecret }, withStorage);
+    expect(result.ok && result.config.storage?.secretAccessKey).toBe("test-secret-key");
+  });
+
+  it("endpoint 必须是 http(s)，且不带账号、查询串", () => {
+    const bad = (endpoint: string) =>
+      normalizeConfig({ ...VALID, storage: { ...STORAGE, endpoint } }, PREVIOUS);
+    expect(bad("ftp://127.0.0.1:9000").ok).toBe(false);
+    expect(bad("http://user:pass@127.0.0.1:9000").ok).toBe(false);
+    expect(bad("http://127.0.0.1:9000/?a=1").ok).toBe(false);
+    expect(bad("not a url").ok).toBe(false);
+  });
+
+  it("桶名按 S3 规则校验", () => {
+    const bad = (bucket: string) =>
+      normalizeConfig({ ...VALID, storage: { ...STORAGE, bucket } }, PREVIOUS);
+    expect(bad("AB").ok).toBe(false); // 大写与太短
+    expect(bad("UPPER-case").ok).toBe(false);
+    expect(bad("has_underscore").ok).toBe(false);
+    expect(bad("ok-bucket").ok).toBe(true);
+  });
+
+  it("区域与 Access Key 必填", () => {
+    const noRegion = normalizeConfig({ ...VALID, storage: { ...STORAGE, region: "" } }, PREVIOUS);
+    expect(noRegion.ok).toBe(false);
+    const noKey = normalizeConfig({ ...VALID, storage: { ...STORAGE, accessKeyId: "" } }, PREVIOUS);
+    expect(noKey.ok).toBe(false);
+    // 首次配置时没有可沿用的密钥：必须填
+    const noSecret = normalizeConfig(
+      { ...VALID, storage: { ...STORAGE, secretAccessKey: "" } },
+      PREVIOUS,
+    );
+    expect(noSecret.ok).toBe(false);
+  });
+
+  it("脱敏后的配置只有主机与桶，没有任何密钥", () => {
+    const loaded = {
+      config: { ...PREVIOUS, storage: STORAGE },
+      path: "/tmp/config.json",
+      saved: true,
+    };
+    const publicConfig = toPublicConfig(loaded, {});
+    expect(publicConfig.storage.configured).toBe(true);
+    expect(publicConfig.storage.endpointHost).toBe("127.0.0.1:9000");
+    expect(publicConfig.storage.endpoint).toBe("http://127.0.0.1:9000");
+    expect(publicConfig.storage.bucket).toBe("loomina-assets");
+    const serialized = JSON.stringify(publicConfig);
+    expect(serialized).not.toContain("test-secret-key");
+    expect(serialized).not.toContain("test-access-key");
+  });
+});

@@ -1058,6 +1058,13 @@ interface CameraPlacement {
 
 无。立面与遮挡是提示，不是事实：同一份坐标下结论可以随锚点高度估计变化，所以不进不变量、不拦生成（R51 / R56）。
 
+**落地细节（H3 对象存储，2026-11-12）**
+
+- **地址多一种形状，不加字段**。`Asset.uri` 仍是字符串：`data:`（旧项目）、`loomina://assets/<sha256>.<ext>`（本机库）、`s3://<bucket>/<key>`（对象存储）。引用方（`Shot.keyframes`、`Take.assetId`、`DialogueLine.audioAssetId`、`MusicCue.assetId`、`Character.sheet`、`referenceImages`）一个都不用改。
+- key 形状 `<prefix>/<前两位>/<sha256>.<ext>`：内容寻址，同一个对象只存一份；前两位做目录是为了单个前缀下的对象数不炸。
+- **凭据不进 IR、不进日志、不回浏览器**：`.loomina/config.json` 的 `storage` 段（0600）或服务端 `LOOMINA_S3_*` 环境变量。`/api/config` 只回 `endpoint` / `endpointHost` / `bucket` / `region` / `pathStyle` / `source` / `active`。
+- `ConfigFile.storage?` 是唯一新增的配置字段，可选；没有它就是只用本机资产库。
+
 **落地细节（B13.3 结构参考图，2026-11-12）**
 
 - **同样不加字段**。结构参考图读的是 `Location.space` + `Shot.camera.placement` + `Shot.blocking`，输出的是图元（`StructureFrame`），不落库、不进事件。

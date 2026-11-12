@@ -45,6 +45,7 @@ describe("帧级找点：地址与换算（E7.2 / ADR-0129）", () => {
 
   it("只有本机资产库里的片子能切帧：data URI 塞不进查询串", () => {
     expect(canPreviewFrames(STORED)).toBe(true);
+    expect(canPreviewFrames("s3://loomina/assets/ab/abc.mp4")).toBe(true);
     expect(canPreviewFrames("data:video/mp4;base64,AAAA")).toBe(false);
     expect(canPreviewFrames("https://cdn.example.com/a.mp4")).toBe(false);
     expect(canPreviewFrames(undefined)).toBe(false);
@@ -80,7 +81,13 @@ describe("切帧请求校验", () => {
   it("data URI 被拒绝，并说清怎么办", () => {
     const result = parse({ asset: "data:video/mp4;base64,AAAA", at: "0" });
     expect(result.ok).toBe(false);
-    expect(result.ok === false && result.error).toContain("本机资产库");
+    expect(result.ok === false && result.error).toContain("资产库");
+  });
+
+  it("对象存储里的片子也能切帧（H3 / s3://）", () => {
+    const result = parse({ asset: "s3://loomina/assets/ab/abc.mp4", at: "1500" });
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.value.atMs).toBe(1500);
   });
 
   it("缺时刻、负时刻、离谱的时刻都拒绝", () => {

@@ -323,3 +323,56 @@ describe("清单里的本机资产库地址（H3 / ADR-0128）", () => {
     expect(ok.ok).toBe(false);
   });
 });
+
+describe("清单里的对象存储地址（H3 / s3://）", () => {
+  it("s3:// 的图片片段通过，体积记 0（字节不在请求里）", () => {
+    const ok = validateRenderManifest(
+      manifest({
+        clips: [
+          { durationMs: 1000, media: "s3://loomina/assets/ab/abcd.png", mediaKind: "image" },
+        ],
+      }),
+    );
+    expect(ok.ok).toBe(true);
+  });
+
+  it("扩展名与 mediaKind 对不上一样要拒", () => {
+    const ok = validateRenderManifest(
+      manifest({
+        clips: [
+          { durationMs: 1000, media: "s3://loomina/assets/ab/abcd.mp3", mediaKind: "video" },
+        ],
+      }),
+    );
+    expect(ok.ok).toBe(false);
+    if (ok.ok) return;
+    expect(ok.error).toContain("标成视频但不是视频格式");
+  });
+
+  it("音轨与配乐也认对象存储地址", () => {
+    const ok = validateRenderManifest(
+      manifest({
+        audio: [{ audio: "s3://loomina/assets/ab/abcd.mp3", startMs: 0, durationMs: 1000 }],
+        music: [
+          {
+            audio: "s3://loomina/assets/ab/abcd.mp3",
+            startMs: 0,
+            endMs: 1000,
+            gainDb: -18,
+            duckDb: 15,
+            ducking: true,
+            loop: false,
+          },
+        ],
+      }),
+    );
+    expect(ok.ok).toBe(true);
+  });
+
+  it("没有扩展名的 s3 地址认不出类型，按不可读拒", () => {
+    const ok = validateRenderManifest(
+      manifest({ clips: [{ durationMs: 1000, media: "s3://loomina/assets/ab/abcd", mediaKind: "image" }] }),
+    );
+    expect(ok.ok).toBe(false);
+  });
+});

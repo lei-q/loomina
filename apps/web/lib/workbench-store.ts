@@ -71,7 +71,7 @@ import {
 } from "@/lib/read-model";
 import { persistAsset } from "@/lib/asset-client";
 import { inlineBytesOf, inventoryOf, type AssetInventory } from "@/lib/asset-inventory";
-import { isStoredAssetUri } from "@/lib/asset-uri";
+import { isRemoteAssetUri, isStoredAssetUri } from "@/lib/asset-uri";
 import { getModelChoice } from "@/lib/model-choice";
 import { sampleProject } from "@/lib/sample-project";
 import { stageMetaOf, stageSignature } from "@/lib/stage-flow";
@@ -2131,8 +2131,8 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       set({ castError: "先贴一条视频地址。" });
       return false;
     }
-    if (!/^(https?:\/\/|data:video\/|loomina:\/\/assets\/)/i.test(uri)) {
-      set({ castError: "视频要先有地址：http(s)://、data:video/ 或本机资产库地址开头。" });
+    if (!/^(https?:\/\/|data:video\/|loomina:\/\/assets\/|s3:\/\/)/i.test(uri)) {
+      set({ castError: "视频要先有地址：http(s)://、data:video/、本机资产库或对象存储地址开头。" });
       return false;
     }
     if (uri.length > VIDEO_URI_MAX) {
@@ -4696,11 +4696,11 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     let bytes = 0;
     // 逐个搬、逐个写事件：中途失败也能停在半个项目的状态上，而不是全丢
     const targets = get().project.assets.filter(
-      (asset) => asset.uri && !isStoredAssetUri(asset.uri) && asset.uri.startsWith("data:"),
+      (asset) => asset.uri && !isStoredAssetUri(asset.uri) && !isRemoteAssetUri(asset.uri) && asset.uri.startsWith("data:"),
     );
     for (const asset of targets) {
       const uri = await persistAsset(asset.uri!, { force: true });
-      if (!isStoredAssetUri(uri)) {
+      if (!isStoredAssetUri(uri) && !isRemoteAssetUri(uri)) {
         failed += 1;
         continue;
       }

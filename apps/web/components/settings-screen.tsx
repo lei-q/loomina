@@ -10,6 +10,7 @@ import {
   MODALITY_LABEL,
   type Modality,
   type PublicConfig,
+  type PublicStorage,
   type VideoApiName,
 } from "@/lib/config-types";
 import { fetchModelConfig, invalidateModelConfig } from "@/lib/model-choice";
@@ -174,6 +175,8 @@ export function SettingsScreen() {
   const [capability, setCapability] = useState<CapabilityResponse>();
   const [capabilityLoading, setCapabilityLoading] = useState(true);
   const [capabilityError, setCapabilityError] = useState<string>();
+  /** 对象存储（H3）：这块单独保存，见 ObjectStorageSection */
+  const [storage, setStorage] = useState<PublicStorage>();
 
   const applyConfig = useCallback((config: PublicConfig) => {
     const next = draftsFrom(config);
@@ -182,6 +185,7 @@ export function SettingsScreen() {
     setDefaults(next.defaults);
     setPath(config.path);
     setSaved(config.saved);
+    if (config.storage) setStorage(config.storage);
   }, []);
 
   const load = useCallback(async () => {
@@ -898,6 +902,15 @@ export function SettingsScreen() {
 
         <AssetStoreSection readOnly={Boolean(readOnly)} />
 
+        <ObjectStorageSection
+          readOnly={Boolean(readOnly)}
+          storage={storage}
+          onSaved={(next) => {
+            setStorage(next);
+            void loadCapability();
+          }}
+        />
+
         <section className="mt-8 border-t border-line pt-4 text-[9.5px] leading-[1.8] text-muted-2">
           <p>
             页面里怎么切换：每个阶段顶栏的下拉只作用于当前浏览器，不选就用该模态的默认。
@@ -1090,7 +1103,7 @@ function LocalProjectSection({
       </div>
       <p className="mt-1 max-w-[640px] text-[9.5px] leading-[1.7] text-muted-2">
         项目就是这条事件日志，存在这个浏览器的 IndexedDB 里。清浏览器数据、换浏览器或换设备都会看不到它；
-        云端对象存储还没接（F4 / H3），所以这里没有「同步」。
+        项目本身没有云同步（F4 未做）；素材可以进对象存储，但那只是素材，不是项目。
       </p>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -1274,7 +1287,10 @@ function AssetStoreSection({ readOnly }: { readOnly: boolean }) {
         </div>
         <div>
           <dt className="text-[9px] text-muted-2">已进资产库</dt>
-          <dd className="tnum text-muted">{inventory.stored} 个</dd>
+          <dd className="tnum text-muted">
+            {inventory.stored} 个
+            {inventory.remote > 0 ? ` · 对象存储 ${inventory.remote} 个` : ""}
+          </dd>
         </div>
         <div>
           <dt className="text-[9px] text-muted-2">没人引用</dt>
@@ -1344,6 +1360,296 @@ function AssetStoreSection({ readOnly }: { readOnly: boolean }) {
           </button>
         )}
       </div>
+
+      {notice && <p className="mt-2 text-[9.5px] leading-[1.7] text-muted">{notice}</p>}
+      {error && <p className="mt-2 text-[9.5px] leading-[1.7] text-pick">{error}</p>}
+    </section>
+  );
+}
+
+/**
+ * 对象存储（H3 / ADR-0128 §3 / ADR-0129 §3）。
+ *
+ * 这一块和「本机资产库」是同一件事的两种落地：配好对象存储之后，
+ * 新素材进桶、地址变成 `s3://`，本机那份可以清掉。
+ *
+ * 密钥的规矩与供应商一样：输入框只显示「有没有」，保存后拿不回来；
+ * 缺省表示沿用已保存的，空串表示清空。界面上**永远不显示 AK/SK**。
+ */
+function ObjectStorageSection({
+  readOnly,
+  storage,
+  onSaved,
+}: {
+  readOnly: boolean;
+  storage: PublicStorage | undefined;
+  onSaved: (next: PublicStorage) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [endpoint, setEndpoint] = useState("");
+  const [bucket, setBucket] = useState("");
+  const [region, setRegion] = useState("us-east-1");
+  const [accessKeyId, setAccessKeyId] = useState("");
+  const [secretKey, setSecretKey] = useState("");
+  const [pathStyle, setPathStyle] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const [notice, setNotice] = useState<string>();
+  const [probe, setProbe] = useState<{
+    configured: boolean;
+    target?: string;
+    objects?: number;
+    bytes?: number;
+    ms?: number;
+    note?: string;
+    error?: string;
+  }>();
+
+  // 打开表单时用已保存的值预填；密钥永远不回填
+  useEffect(() => {
+    if (!open) return;
+    setEndpoint(storage?.endpoint ?? "");
+    setBucket(storage?.bucket ?? "");
+    setRegion(storage?.region ?? "us-east-1");
+    setPathStyle(storage?.pathStyle ?? true);
+    setAccessKeyId("");
+    setSecretKey("");
+  }, [open, storage]);
+
+  const probeNow = async () => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const response = await fetch("/api/storage?probe=1", { cache: "no-store" });
+      const payload = (await response.json()) as {
+        configured?: boolean;
+        target?: string;
+        objects?: number;
+        bytes?: number;
+        ms?: number;
+        note?: string;
+        error?: string;
+      };
+      setProbe({ configured: Boolean(payload.configured), ...payload });
+    } catch (caught) {
+      setProbe({ configured: false, error: caught instanceof Error ? caught.message : "探测失败" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const save = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      const response = await fetch("/api/storage", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          storage: {
+            kind: "s3",
+            endpoint: endpoint.trim(),
+            bucket: bucket.trim(),
+            region: region.trim(),
+            accessKeyId: accessKeyId.trim(),
+            // 空串 = 沿用已保存的密钥；要清空请点「清掉对象存储」
+            ...(secretKey.trim() ? { secretAccessKey: secretKey.trim() } : {}),
+            pathStyle,
+          },
+        }),
+      });
+      const payload = (await response.json()) as { storage?: PublicStorage; error?: string };
+      if (!response.ok || !payload.storage) {
+        throw new Error(payload.error || `保存失败（${response.status}）`);
+      }
+      onSaved(payload.storage);
+      setSecretKey("");
+      setNotice("已保存。新素材会进对象存储，地址变成 s3://…；已有素材不动。");
+      void probeNow();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "保存失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clear = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      const response = await fetch("/api/storage", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storage: null }),
+      });
+      const payload = (await response.json()) as { storage?: PublicStorage; error?: string };
+      if (!response.ok || !payload.storage) {
+        throw new Error(payload.error || `清空失败（${response.status}）`);
+      }
+      onSaved(payload.storage);
+      setProbe(undefined);
+      setNotice("已清掉对象存储配置：回到本机资产库。桶里的对象没有被删。");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "清空失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const active = storage?.active === "s3";
+
+  return (
+    <section className="mt-9 border-t border-line pt-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-[12px] tracking-[.04em]">对象存储</h2>
+          <span className="tnum text-[9px] text-muted-2">H3</span>
+        </div>
+        <span className="tnum text-[9.5px] text-muted-2">
+          {active
+            ? `${storage?.endpointHost ?? "—"} / ${storage?.bucket ?? "—"} · ${storage?.region ?? ""}`
+            : storage?.configured
+              ? "已配置 · 未启用"
+              : "未配置 · 用本机资产库"}
+        </span>
+      </div>
+
+      <p className="mt-1 max-w-[640px] text-[9.5px] leading-[1.7] text-muted-2">
+        S3 兼容的对象存储（AWS S3 / 阿里云 OSS / 腾讯云 COS / MinIO）。
+        配好之后新素材直接进桶，地址是 <code className="text-muted">s3://桶/路径</code>；
+        签名在服务端算（SigV4 预签名），浏览器拿到的只是一条十分钟内有效的地址。
+        <span className="text-muted"> 密钥只写在服务端配置文件里，回给浏览器的只有主机与桶名。</span>
+      </p>
+
+      {storage?.note && (
+        <p className="mt-1.5 text-[9.5px] leading-[1.7] text-pick">{storage.note}</p>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => void probeNow()}
+          disabled={busy}
+          className="rounded-token border border-line px-2.5 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+        >
+          {busy ? "探测中…" : "探测连通"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          disabled={readOnly}
+          className="rounded-token border border-line px-2.5 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+        >
+          {open ? "收起" : storage?.configured ? "改配置" : "配置对象存储"}
+        </button>
+        {storage?.configured && (
+          <button
+            type="button"
+            onClick={() => void clear()}
+            disabled={readOnly || busy}
+            title="只清掉配置；桶里的对象不会被删"
+            className="rounded-token border border-line px-2.5 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-pick hover:text-pick disabled:opacity-40"
+          >
+            清掉对象存储
+          </button>
+        )}
+      </div>
+
+      {probe && (
+        <p className="mt-2 text-[9.5px] leading-[1.7] text-muted">
+          {probe.error
+            ? `连不上：${probe.error}`
+            : !probe.configured
+              ? probe.note ?? "还没配置对象存储"
+              : `连通 · ${probe.target ?? ""} · ${probe.objects ?? 0} 个对象 · ${fmtBytes(
+                  probe.bytes ?? 0,
+                )}${probe.ms !== undefined ? ` · ${probe.ms} ms` : ""}`}
+        </p>
+      )}
+
+      {open && (
+        <div className="mt-3 grid max-w-[640px] gap-3 border-t border-line pt-3 sm:grid-cols-2">
+          <Field label="Endpoint" hint="http(s)，不带结尾斜杠。MinIO 例：http://127.0.0.1:9000">
+            <input
+              id="storage-endpoint"
+              value={endpoint}
+              onChange={(event) => setEndpoint(event.target.value)}
+              placeholder="https://s3.us-east-1.amazonaws.com"
+              className={inputClass}
+            />
+          </Field>
+          <Field label="桶" hint="3–63 个小写字母、数字、点、连字符">
+            <input
+              id="storage-bucket"
+              value={bucket}
+              onChange={(event) => setBucket(event.target.value)}
+              placeholder="loomina-assets"
+              className={inputClass}
+            />
+          </Field>
+          <Field label="区域" hint="例如 us-east-1、ap-east-1">
+            <input
+              id="storage-region"
+              value={region}
+              onChange={(event) => setRegion(event.target.value)}
+              placeholder="us-east-1"
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Access Key ID">
+            <input
+              id="storage-ak"
+              value={accessKeyId}
+              onChange={(event) => setAccessKeyId(event.target.value)}
+              placeholder={storage?.configured ? "改填就换掉；留空不动" : "AKIA…"}
+              autoComplete="off"
+              className={inputClass}
+            />
+          </Field>
+          <Field
+            label="Secret Access Key"
+            hint={storage?.configured ? "留空 = 沿用已保存的密钥；界面上永远不回显" : "只写进服务端配置文件（0600）"}
+          >
+            <input
+              id="storage-sk"
+              type="password"
+              value={secretKey}
+              onChange={(event) => setSecretKey(event.target.value)}
+              placeholder={storage?.configured ? "••••••（已保存）" : ""}
+              autoComplete="new-password"
+              className={inputClass}
+            />
+          </Field>
+          <Field label="寻址方式" hint="MinIO / 自建网关只认 path-style">
+            <select
+              id="storage-path-style"
+              value={pathStyle ? "path" : "virtual"}
+              onChange={(event) => setPathStyle(event.target.value === "path")}
+              className={selectClass}
+            >
+              <option value="path">path-style（host/bucket/key）</option>
+              <option value="virtual">virtual-hosted（bucket.host/key）</option>
+            </select>
+          </Field>
+          <div className="flex items-center gap-2 sm:col-span-2">
+            <button
+              type="button"
+              onClick={() => void save()}
+              disabled={readOnly || busy}
+              className="rounded-token border border-line px-2.5 py-1 text-[10px] text-text transition-colors duration-[var(--dur)] hover:border-line-2 disabled:opacity-40"
+            >
+              {busy ? "保存中…" : "保存对象存储"}
+            </button>
+            <span className="text-[9px] leading-4 text-muted-2">
+              Endpoint 与桶名会在保存后校验；密钥不通过浏览器回传。
+            </span>
+          </div>
+        </div>
+      )}
 
       {notice && <p className="mt-2 text-[9.5px] leading-[1.7] text-muted">{notice}</p>}
       {error && <p className="mt-2 text-[9.5px] leading-[1.7] text-pick">{error}</p>}

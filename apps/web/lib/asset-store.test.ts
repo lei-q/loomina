@@ -10,7 +10,7 @@ import {
   storedAssetRef,
   storedAssetUri,
 } from "./asset-uri";
-import { assetStoreDir, localAssetStore, readAssetBytes, sha256Of } from "./asset-store";
+import { assetStoreDir, localAssetStore, localPathOf, readAssetBytes, sha256Of } from "./asset-store";
 
 const bytesOf = (text: string) => new TextEncoder().encode(text);
 
@@ -135,5 +135,18 @@ describe("本机资产库", () => {
     expect(fromStore!.mime).toBe("audio/mpeg");
 
     expect(await readAssetBytes("https://example.com/a.png")).toBeNull();
+  });
+});
+
+describe("地址解析：s3:// 与两种库共存（H3 / ADR-0129 §3）", () => {
+  it("readAssetBytes 认 s3://（配置齐全时读对象存储）", async () => {
+    // 没配置对象存储：s3:// 读不回来，但不能抛错
+    const result = await readAssetBytes("s3://loomina/assets/ab/abcd.png");
+    expect(result).toBeNull();
+  });
+
+  it("localPathOf 只认本机资产库，不把 s3:// 当成盘上文件", () => {
+    expect(localPathOf("s3://loomina/assets/ab/abcd.png")).toBeNull();
+    expect(localPathOf(`loomina://assets/${"a".repeat(64)}.png`)).not.toBeNull();
   });
 });

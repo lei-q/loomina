@@ -23,7 +23,13 @@ import {
   type RenderQuality,
 } from "./render-manifest";
 import type { LoudnessReport } from "./render-audio";
-import { isStoredAssetUri, mimeForExtension, storedAssetRef } from "./asset-uri";
+import {
+  S3_PREFIX,
+  isRemoteAssetUri,
+  isStoredAssetUri,
+  mimeForExtension,
+  storedAssetRef,
+} from "./asset-uri";
 
 export type RenderBuild = {
   manifest: RenderManifest;
@@ -66,6 +72,14 @@ function visualOf(clip: EditClip): Visual {
     if (!uri) continue;
     if (/^https?:\/\//i.test(uri)) {
       return { remote: uri, mediaKind: kind };
+    }
+    // 对象存储（H3）：清单里带 s3:// 原样走，服务端先拉到本地缓存再喂 ffmpeg
+    if (isRemoteAssetUri(uri)) {
+      const extension = uri.trim().slice(S3_PREFIX.length).split(".").pop() ?? "";
+      const mime = mimeForExtension(extension);
+      if (kind === "video" && isVideoMime(mime)) return { media: uri, mediaKind: "video" };
+      if (kind === "image" && isImageMime(mime)) return { media: uri, mediaKind: "image" };
+      continue;
     }
     // 资产库地址（H3）：清单里带 loomina:// 原样走，服务端直接读盘
     if (isStoredAssetUri(uri)) {
@@ -234,6 +248,12 @@ export function buildRenderManifest(
         audio.push({ remote: line.audioUri, startMs: line.startMs, durationMs: line.durationMs });
         continue;
       }
+      if (isRemoteAssetUri(line.audioUri)) {
+        const mime = mimeForExtension(line.audioUri.trim().slice(S3_PREFIX.length).split(".").pop() ?? "");
+        if (!isAudioMime(mime)) continue;
+        audio.push({ audio: line.audioUri, startMs: line.startMs, durationMs: line.durationMs });
+        continue;
+      }
       if (isStoredAssetUri(line.audioUri)) {
         const mime = mimeForExtension(storedAssetRef(line.audioUri)!.extension);
         if (!isAudioMime(mime)) continue;
@@ -261,6 +281,12 @@ export function buildRenderManifest(
     };
     if (/^https?:\/\//i.test(cue.uri)) {
       music.push({ remote: cue.uri, ...common });
+      continue;
+    }
+    if (isRemoteAssetUri(cue.uri)) {
+      const mime = mimeForExtension(cue.uri.trim().slice(S3_PREFIX.length).split(".").pop() ?? "");
+      if (!isAudioMime(mime)) continue;
+      music.push({ audio: cue.uri, ...common });
       continue;
     }
     if (isStoredAssetUri(cue.uri)) {

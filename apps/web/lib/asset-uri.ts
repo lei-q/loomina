@@ -10,6 +10,8 @@
  */
 
 export const ASSET_STORE_PREFIX = "loomina://assets/";
+/** 对象存储地址（H3）：`s3://<bucket>/<key>` */
+export const S3_PREFIX = "s3://";
 
 /** 单文件上限：视频 take 的合理上限（ADR-0128）。超过直接拒绝，不写半个文件 */
 export const MAX_ASSET_BYTES = 200 * 1024 * 1024;
@@ -74,12 +76,19 @@ export function isStoredAssetUri(uri: string): boolean {
   return storedAssetRef(uri) !== null;
 }
 
+/** 对象存储地址（`s3://桶/路径`）。形状校验在 `s3-store.ts` 里做，这里只认前缀 */
+export function isRemoteAssetUri(uri: string): boolean {
+  return uri.trim().startsWith(S3_PREFIX);
+}
+
 export function storedAssetUri(hash: string, extension: string): string {
   return `${ASSET_STORE_PREFIX}${hash}.${extension}`;
 }
 
 /**
- * 浏览器要用的地址：资产库地址换成 `/api/asset/<hash>.<ext>`，其余原样返回。
+ * 浏览器要用的地址：资产库地址换成 `/api/asset/<hash>.<ext>`，
+ * 对象存储地址换成 `/api/storage?uri=…`（服务端签一条短期 GET），
+ * 其余原样返回。
  *
  * 组件里所有 `<img>` / `<video>` / `<audio>` 的 src 都要过这一层，
  * 否则迁移过的素材在界面上就是一张裂图。
@@ -87,5 +96,7 @@ export function storedAssetUri(hash: string, extension: string): string {
 export function assetHref(uri?: string): string | undefined {
   if (!uri) return undefined;
   const ref = storedAssetRef(uri);
-  return ref ? `/api/asset/${ref.hash}.${ref.extension}` : uri;
+  if (ref) return `/api/asset/${ref.hash}.${ref.extension}`;
+  if (uri.startsWith(S3_PREFIX)) return `/api/storage?uri=${encodeURIComponent(uri)}`;
+  return uri;
 }

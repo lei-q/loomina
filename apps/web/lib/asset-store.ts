@@ -135,17 +135,27 @@ function nameToUri(name: string): string | null {
   return match ? storedAssetUri(match[1]!, match[2]!) : null;
 }
 
-/** 按 `LOOMINA_ASSET_STORE` 选实现；现在只有 local，s3 要等签名方案确认 */
+/**
+ * 本机资产库的读写入口。
+ *
+ * **只返回本机实现**：设置页的「本机资产库」区讲的就是这一份，对象存储
+ * 另有 `storage-runtime.ts`。想「当前实际用哪个」用那边，别在这里做选择——
+ * 混在一起会让「清掉没人引用的文件」删错东西（那一条只该动 `.loomina/assets/`）。
+ */
 export function assetStore(): AssetStore {
   return localAssetStore;
 }
 
-/** 地址 → 字节：`loomina://` 读盘，`data:` 就地解 base64，其余返回 null */
+/** 地址 → 字节：`loomina://` 读盘，`s3://` 走对象存储，`data:` 就地解 base64 */
 export async function readAssetBytes(
   uri: string,
 ): Promise<{ bytes: Uint8Array; mime: string } | null> {
   const trimmed = uri.trim();
   if (storedAssetRef(trimmed)) return localAssetStore.read(trimmed);
+  if (trimmed.startsWith("s3://")) {
+    const { activeStore } = await import("@/lib/storage-runtime");
+    return (await activeStore()).read(trimmed);
+  }
   const match = /^data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$/i.exec(trimmed);
   if (!match) return null;
   return {

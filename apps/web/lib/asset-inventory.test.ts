@@ -157,3 +157,35 @@ describe("素材清点（H3 / ADR-0128）", () => {
     expect(inventory.stored).toBe(2);
   });
 });
+
+describe("对象存储里的素材（H3 / s3://）", () => {
+  it("s3:// 算「对象存储」，不算日志内、也不算本机库", () => {
+    const project = withAssets(base());
+    project.assets.push({
+      id: "a-remote",
+      kind: "image",
+      uri: "s3://loomina-assets/assets/ab/abcd.png",
+      source: "generated",
+      createdAt: "2026-11-11T00:00:00Z",
+    });
+    const inventory = inventoryOf(project);
+    expect(inventory.total).toBe(7);
+    expect(inventory.remote).toBe(1);
+    expect(inventory.stored).toBe(1);
+    expect(inventory.inline).toBe(4);
+    expect(inventory.usage.find((item) => item.id === "a-remote")?.placement).toBe("remote");
+  });
+
+  it("清理白名单也带上对象存储地址（两个库都要知道谁在用）", () => {
+    const project = withAssets(base());
+    project.shots[0]!.keyframes.firstAssetId = "a-remote";
+    project.assets.push({
+      id: "a-remote",
+      kind: "image",
+      uri: "s3://loomina-assets/assets/ab/abcd.png",
+      source: "generated",
+      createdAt: "2026-11-11T00:00:00Z",
+    });
+    expect(referencedUris(project)).toContain("s3://loomina-assets/assets/ab/abcd.png");
+  });
+});

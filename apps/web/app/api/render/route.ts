@@ -30,6 +30,7 @@ import {
   type PersistedRenderJob,
 } from "@/lib/render-job-store";
 import { localPathOf } from "@/lib/asset-store";
+import { materializeAsset } from "@/lib/storage-runtime";
 
 /**
  * 成片渲染任务队列（E6 / H2）。
@@ -220,8 +221,18 @@ async function writeAsset(dir: string, uri: string, name: string): Promise<strin
     }
     return stored;
   }
+  // 对象存储（H3 / ADR-0129）：先拉到本地缓存，ffmpeg 只吃路径
+  const remote = await materializeAsset(uri);
+  if (remote) {
+    const info = await stat(remote).catch(() => null);
+    if (!info?.isFile()) throw new Error("素材没能从对象存储拉下来");
+    if (info.size > RENDER_MAX_ASSET_BYTES) {
+      throw new Error(`素材超过 ${RENDER_MAX_ASSET_BYTES / 1024 / 1024} MB：先换小一点的素材`);
+    }
+    return remote;
+  }
   const parts = parseDataUri(uri);
-  if (!parts) throw new Error("素材既不是 data URI，也不在本机资产库里");
+  if (!parts) throw new Error("素材既不是 data URI，也不在本机资产库或对象存储里");
   const file = path.join(/* turbopackIgnore: true */ dir, `${name}.${extensionFor(parts.mime)}`);
   await writeFile(file, Buffer.from(parts.base64, "base64"));
   return file;

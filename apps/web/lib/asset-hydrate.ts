@@ -1,7 +1,13 @@
 "use client";
 
 import type { EditView } from "@/lib/edit";
-import { isStoredAssetUri, storedAssetRef, mimeForExtension } from "@/lib/asset-uri";
+import {
+  S3_PREFIX,
+  isRemoteAssetUri,
+  isStoredAssetUri,
+  mimeForExtension,
+  storedAssetRef,
+} from "@/lib/asset-uri";
 
 /**
  * 把资产库地址换回内嵌字节（H3 / ADR-0128）。
@@ -17,9 +23,17 @@ export type Hydrated = { view: EditView; failed: number };
 
 async function bytesToDataUri(uri: string): Promise<string | null> {
   const ref = storedAssetRef(uri);
-  if (!ref) return null;
+  // 对象存储（H3）：浏览器不能直连桶（预签名地址会过期、也不该进导出包），
+  // 走服务端 `/api/storage?uri=` 读回字节，与资产库同一个出口
+  const remote = isRemoteAssetUri(uri);
+  if (!ref && !remote) return null;
+  const mime = ref
+    ? mimeForExtension(ref.extension)
+    : mimeForExtension(uri.trim().slice(S3_PREFIX.length).split(".").pop() ?? "");
   try {
-    const response = await fetch(`/api/asset/${ref.hash}.${ref.extension}`);
+    const response = await fetch(
+      ref ? `/api/asset/${ref.hash}.${ref.extension}` : `/api/storage?uri=${encodeURIComponent(uri)}`,
+    );
     if (!response.ok) return null;
     const buffer = new Uint8Array(await response.arrayBuffer());
     if (buffer.byteLength === 0) return null;
@@ -29,7 +43,7 @@ async function bytesToDataUri(uri: string): Promise<string | null> {
     for (let at = 0; at < buffer.length; at += chunk) {
       binary += String.fromCharCode(...buffer.subarray(at, at + chunk));
     }
-    return `data:${mimeForExtension(ref.extension)};base64,${btoa(binary)}`;
+    return `data:${mime};base64,${btoa(binary)}`;
   } catch {
     return null;
   }
@@ -41,7 +55,7 @@ export async function hydrateView(view: EditView): Promise<Hydrated> {
   const failedUris = new Set<string>();
 
   const swap = async (uri?: string): Promise<string | undefined> => {
-    if (!uri || !isStoredAssetUri(uri)) return uri;
+    if (!uri || (!isStoredAssetUri(uri) && !isRemoteAssetUri(uri))) return uri;
     if (!cache.has(uri)) cache.set(uri, await bytesToDataUri(uri));
     const inline = cache.get(uri);
     if (!inline) {

@@ -23,18 +23,26 @@ export async function persistAsset(
 ): Promise<string> {
   if (!uri.startsWith("data:") || isStoredAssetUri(uri)) return uri;
   if (!options.force && uri.length <= INLINE_LIMIT) return uri;
+  // 配了对象存储就进桶（`s3://`），否则进本机资产库（`loomina://`）。
+  // 两条路失败都退回原 data URI：素材还在手上，界面不会因此丢东西。
+  for (const endpoint of ["/api/storage", "/api/asset/store"]) {
+    const stored = await post(endpoint, uri);
+    if (stored) return stored;
+  }
+  return uri;
+}
+
+async function post(endpoint: string, uri: string): Promise<string | null> {
   try {
-    const response = await fetch("/api/asset/store", {
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ uri }),
     });
-    if (!response.ok) return uri;
+    if (!response.ok) return null;
     const payload = (await response.json()) as { uri?: string };
-    return typeof payload.uri === "string" && isStoredAssetUri(payload.uri)
-      ? payload.uri
-      : uri;
+    return typeof payload.uri === "string" ? payload.uri : null;
   } catch {
-    return uri;
+    return null;
   }
 }

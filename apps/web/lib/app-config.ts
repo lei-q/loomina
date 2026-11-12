@@ -14,9 +14,12 @@ import {
   type Modality,
   type ProviderRecord,
   type PublicConfig,
+  type PublicStorage,
+  type StorageRecord,
   type VideoApiName,
 } from "@/lib/config-types";
 import { envPath } from "@/lib/server-env";
+import { publicStorageOf, resolveStorage } from "@/lib/storage-config";
 
 /**
  * 供应商与模型配置（H22 / ADR-0094）。
@@ -286,7 +289,94 @@ export function normalizeConfig(
     defaults[modality] = match.id;
   }
 
-  return { ok: true, config: { version: 1, providers, models, defaults } };
+  // 对象存储（H3）：不传 = 不动；传 null = 清掉；传对象 = 校验后整份替换
+  let storage: StorageRecord | undefined;
+  if (raw.storage === null) {
+    storage = undefined;
+  } else if (raw.storage !== undefined) {
+    const normalized = normalizeStorage(raw.storage, previous.storage);
+    if (!normalized.ok) return normalized;
+    storage = normalized.storage;
+  } else {
+    storage = previous.storage;
+  }
+
+  return {
+    ok: true,
+    config: {
+      version: 1,
+      providers,
+      models,
+      defaults,
+      ...(storage ? { storage } : {}),
+    },
+  };
+}
+
+/**
+ * 对象存储配置校验（H3 / ADR-0128 §7）。
+ *
+ * 密钥与供应商密钥同一套规矩：`secretAccessKey` 缺省表示沿用已保存的，
+ * 空串表示清空（清空之后 `configured` 为 false，界面会回到本机资产库）。
+ * endpoint 只收 http(s)、不带账号与查询串——签名里的 host 必须与它一致。
+ */
+function normalizeStorage(
+  raw: Partial<StorageRecord>,
+  previous: StorageRecord | undefined,
+): { ok: true; storage: StorageRecord } | { ok: false; error: string } {
+  if (!raw || typeof raw !== "object") return bad("对象存储配置不是对象");
+
+  let endpoint = "";
+  try {
+    const url = new URL(typeof raw.endpoint === "string" ? raw.endpoint.trim() : "");
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return bad("对象存储的 Endpoint 必须是 http(s)");
+    }
+    if (url.username || url.password) return bad("Endpoint 里不能带账号密码");
+    if (url.search || url.hash) return bad("Endpoint 里不能带查询串或锚点");
+    endpoint = `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    return bad("对象存储的 Endpoint 不是合法地址");
+  }
+
+  const bucket = typeof raw.bucket === "string" ? raw.bucket.trim() : "";
+  if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(bucket)) {
+    return bad("桶名只能用 3–63 个小写字母、数字、点和连字符，且以字母或数字开头结尾");
+  }
+
+  const region = typeof raw.region === "string" ? raw.region.trim() : "";
+  if (!/^[a-z]{2}(-[a-z]+)+-\d{1,2}$/.test(region)) {
+    return bad("区域写法不对，例如 us-east-1、cn-hangzhou");
+  }
+
+  const accessKeyId = typeof raw.accessKeyId === "string" ? raw.accessKeyId.trim().slice(0, 200) : "";
+  if (!accessKeyId) return bad("对象存储缺少 Access Key");
+
+  const previousSecret = previous?.secretAccessKey ?? "";
+  let secretAccessKey: string;
+  if (raw.secretAccessKey === undefined) secretAccessKey = previousSecret;
+  else if (typeof raw.secretAccessKey === "string") secretAccessKey = raw.secretAccessKey.trim().slice(0, 200);
+  else return bad("Secret Key 不是字符串");
+  if (!secretAccessKey) return bad("对象存储缺少 Secret Key");
+
+  const sessionToken =
+    typeof raw.sessionToken === "string" && raw.sessionToken.trim()
+      ? raw.sessionToken.trim().slice(0, 2000)
+      : undefined;
+
+  return {
+    ok: true,
+    storage: {
+      kind: "s3",
+      endpoint,
+      bucket,
+      region,
+      accessKeyId,
+      secretAccessKey,
+      pathStyle: raw.pathStyle === true,
+      ...(sessionToken ? { sessionToken } : {}),
+    },
+  };
 }
 
 export async function saveConfig(
@@ -305,8 +395,7 @@ export async function saveConfig(
   return { config: normalized.config, path: file };
 }
 
-export function toPublicConfig(loaded: LoadedConfig, env: EnvMap = readEnv()): PublicConfig {
-  const { config, path: file, saved } = loaded;
+export function toPublicConfig(loaded: LoadedConfig, env: EnvMap = readEnv()): PublicConfig {  const { config, path: file, saved } = loaded;
   const providers = config.providers.map((provider) => {
     const { apiKey, ...rest } = provider;
     const fromEnv = !apiKey && provider.id === "env" && Boolean(env.API_KEY);
@@ -329,7 +418,15 @@ export function toPublicConfig(loaded: LoadedConfig, env: EnvMap = readEnv()): P
       }));
   }
 
-  return { providers, models: config.models, defaults: config.defaults, catalog, path: file, saved };
+  return {
+    providers,
+    models: config.models,
+    defaults: config.defaults,
+    catalog,
+    path: file,
+    saved,
+    storage: publicStorageOf(resolveStorage(config.storage, env)),
+  };
 }
 
 export type ResolvedModel = {

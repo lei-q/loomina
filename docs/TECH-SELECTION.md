@@ -72,7 +72,7 @@ loomina/
 >
 > **E7.2 已落地（2026-11-12，ADR-0129 落地节）**：`GET /api/preview/frame` 用服务端 ffmpeg `-ss`（在 `-i` 之前）精确切一帧回 JPEG，浏览器 `<img>` 直接显示；前端 60ms 节流去重，`?probe=1` 能力探测。没有 mp4box.js、没有 WebCodecs。
 >
-> **H3.1 已落地（2026-11-12）**：`apps/web/lib/asset-uri.ts`（纯函数，浏览器与 Node 共用）+ `apps/web/lib/asset-store.ts`（`LocalAssetStore`，`LOOMINA_ASSET_DIR` 可覆盖目录，测试用）。`audio/webm` 落 `.weba`，让扩展名能唯一反推 mime。生成路径按 128 KB 分流，导出前 `hydrateView()` 读回字节。S3 仍未做。
+> **H3.1 已落地（2026-11-12）**：`apps/web/lib/asset-uri.ts`（纯函数，浏览器与 Node 共用）+ `apps/web/lib/asset-store.ts`（`LocalAssetStore`，`LOOMINA_ASSET_DIR` 可覆盖目录，测试用）。`audio/webm` 落 `.weba`，让扩展名能唯一反推 mime。生成路径按 128 KB 分流，导出前 `hydrateView()` 读回字节。**H3.2 对象存储也已落地（2026-11-12，ADR-0129 落地节）**：`lib/s3-sigv4.ts` 自写 SigV4（不引 SDK 也不引 `aws4`，28 条单测其中三条对照 AWS 官方向量逐字一致）、`lib/s3-store.ts` 用预签名 URL 做写 / 读 / 删 / 列桶，`s3://桶/路径` 进 IR；渲染与帧级找点遇到 `s3://` 先拉进 `.loomina/assets/cache/` 再喂 ffmpeg。已用本地 MinIO 端到端验过。
 | 数据库 | Postgres（托管） | JSONB 适合 IR，生态成熟 | — | 高 |
 | 缓存 | Redis（托管） | 限流/会话/缓存 | — | 高 |
 | 日志/追踪 | Pino + OpenTelemetry | 结构化、可观测 | — | 中高 |

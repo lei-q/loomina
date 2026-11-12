@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { stat } from "node:fs/promises";
 import { NextResponse } from "next/server";
 import { localPathOf } from "@/lib/asset-store";
+import { materializeAsset } from "@/lib/storage-runtime";
 import {
   frameArgsOf,
   parseFrameRequest,
@@ -157,7 +158,7 @@ export async function GET(request: Request) {
   }
   const { asset, atMs, width } = parsed.value;
 
-  const src = localPathOf(asset);
+  const src = localPathOf(asset) ?? (await materializeAsset(asset));
   if (!src) {
     return NextResponse.json({ error: "资产地址不认识" }, { status: 400 });
   }

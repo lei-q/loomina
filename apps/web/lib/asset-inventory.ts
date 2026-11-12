@@ -1,5 +1,5 @@
 import type { Project } from "@loomina/ir";
-import { isStoredAssetUri } from "@/lib/asset-uri";
+import { isStoredAssetUri, S3_PREFIX } from "@/lib/asset-uri";
 
 /**
  * 资产清点（H3 / ADR-0128）。
@@ -17,8 +17,8 @@ export type AssetUsage = {
   kind: "image" | "video" | "audio";
   /** 是否已经被引用 */
   referenced: boolean;
-  /** 地址在日志里（data:）还是资产库里（loomina://） */
-  placement: "inline" | "store" | "none";
+  /** 地址在日志里（data:）、本机资产库（loomina://）还是对象存储（s3://） */
+  placement: "inline" | "store" | "remote" | "none";
   /** 日志里那一份的字节数；资产库里的记 0（字节在盘上） */
   inlineBytes: number;
 };
@@ -29,6 +29,8 @@ export type AssetInventory = {
   inline: number;
   /** 已进本机资产库的资产数 */
   stored: number;
+  /** 已在对象存储里的资产数（H3 / s3://） */
+  remote: number;
   /** 日志里 base64 的总字节数（迁移之后这个数不会掉，因为旧事件不动） */
   inlineBytes: number;
   /** 没有任何引用的资产 */
@@ -77,9 +79,11 @@ export function inventoryOf(project: Project): AssetInventory {
       ? "none"
       : isStoredAssetUri(asset.uri)
         ? "store"
-        : asset.uri.startsWith("data:")
-          ? "inline"
-          : "none";
+        : asset.uri.startsWith(S3_PREFIX)
+          ? "remote"
+          : asset.uri.startsWith("data:")
+            ? "inline"
+            : "none";
     return {
       id: asset.id,
       kind: asset.kind,
@@ -94,6 +98,7 @@ export function inventoryOf(project: Project): AssetInventory {
     total: usage.length,
     inline: usage.filter((item) => item.placement === "inline").length,
     stored: usage.filter((item) => item.placement === "store").length,
+    remote: usage.filter((item) => item.placement === "remote").length,
     inlineBytes: usage.reduce((sum, item) => sum + item.inlineBytes, 0),
     unreferenced,
     unreferencedBytes: unreferenced.reduce((sum, item) => sum + item.inlineBytes, 0),
@@ -105,6 +110,11 @@ export function inventoryOf(project: Project): AssetInventory {
 export function referencedUris(project: Project): string[] {
   const referenced = referencedAssetIds(project);
   return project.assets
-    .filter((asset) => referenced.has(asset.id) && asset.uri && isStoredAssetUri(asset.uri))
+    .filter(
+      (asset) =>
+        referenced.has(asset.id) &&
+        asset.uri &&
+        (isStoredAssetUri(asset.uri) || asset.uri.startsWith(S3_PREFIX)),
+    )
     .map((asset) => asset.uri!);
 }

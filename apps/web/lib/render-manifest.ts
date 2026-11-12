@@ -6,7 +6,13 @@
  * 服务端只做校验、拼滤镜与编码，不信任客户端给的尺寸与时长。
  */
 
-import { isStoredAssetUri, mimeForExtension, storedAssetRef } from "./asset-uri";
+import {
+  S3_PREFIX,
+  isRemoteAssetUri,
+  isStoredAssetUri,
+  mimeForExtension,
+  storedAssetRef,
+} from "./asset-uri";
 import { scanText, type RenderCompliance } from "./compliance";
 
 /** 输出档位（H13）：草稿先看节奏，定稿才交付。 */
@@ -186,11 +192,17 @@ export function inspectAsset(uri: string): { mime: string; bytes: number } | nul
   const parts = parseDataUri(uri);
   if (parts) return { mime: parts.mime, bytes: parts.bytes };
   const ref = storedAssetRef(uri);
-  if (!ref) return null;
-  return { mime: mimeForExtension(ref.extension), bytes: 0 };
+  if (ref) return { mime: mimeForExtension(ref.extension), bytes: 0 };
+  // 对象存储（H3）：mime 由 key 的扩展名反推，字节也不在请求里
+  if (isRemoteAssetUri(uri)) {
+    const key = uri.trim().slice(S3_PREFIX.length);
+    const extension = key.split(".").pop() ?? "";
+    return extension ? { mime: mimeForExtension(extension), bytes: 0 } : null;
+  }
+  return null;
 }
 
-/** 地址是不是「渲染路由能读到的素材」：data URI 或本机资产库 */
+/** 地址是不是「渲染路由能读到的素材」：data URI、本机资产库或对象存储 */
 export function isReadableAsset(uri: string): boolean {
   return inspectAsset(uri) !== null;
 }

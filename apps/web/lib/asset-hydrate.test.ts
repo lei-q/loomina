@@ -118,3 +118,36 @@ describe("导出前把资产库素材读回内嵌字节（H3 / ADR-0128）", () 
     expect(remote.failed).toBe(0);
   });
 });
+
+describe("对象存储里的素材也能读回内嵌（H3 / s3://）", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("s3:// 走 /api/storage 读字节，mime 由 key 的扩展名反推", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        calls.push(String(url));
+        return new Response(PNG_BYTES, { status: 200 });
+      }),
+    );
+
+    const uri = "s3://loomina/assets/ab/abcd.png";
+    const result = await hydrateView(view(uri));
+
+    expect(calls).toEqual([`/api/storage?uri=${encodeURIComponent(uri)}`]);
+    expect(result.failed).toBe(0);
+    expect(result.view.clips[0]!.uri).toMatch(/^data:image\/png;base64,/);
+  });
+
+  it("桶里没有这个对象时保留原地址并计数", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 404 })));
+
+    const uri = "s3://loomina/assets/ab/abcd.png";
+    const result = await hydrateView(view(uri));
+    expect(result.failed).toBe(1);
+    expect(result.view.clips[0]!.uri).toBe(uri);
+  });
+});
