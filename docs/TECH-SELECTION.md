@@ -54,7 +54,7 @@ loomina/
 | 客户端状态 | Zustand + TanStack Query | 简单、无模板代码 | Redux Toolkit | 高 |
 | 表单/校验 | React Hook Form + Zod | 与 IR 共用 schema | — | 高 |
 | 时间线画布 | PixiJS v8 | 2D 合成性能好，WebGPU 支持 | Konva / 原生 Canvas | 中高 |
-| 视频预览 | WebCodecs + mp4box.js + Web Audio | 帧级控制、低延迟 | `<video>` 多轨（不精确） | 中高 |
+| 视频预览 | `<video>` + 服务端 ffmpeg 切帧 + Web Audio | 帧级控制、零新依赖（ADR-0129） | 浏览器内 mp4box.js + WebCodecs（不采用） | 中高 |
 | 拖拽 | dnd-kit | 现代、可访问 | react-dnd | 高 |
 | 后端 | Node + Fastify + TS | 轻、快、插件模型清晰 | NestJS（更重结构） | 高 |
 | ORM | Drizzle + Postgres | 类型安全、贴近 SQL、迁移可控 | Prisma（更易用） | 中高 |
@@ -68,7 +68,7 @@ loomina/
 | 图片处理 | sharp | 快、稳定 | ImageMagick | 高 |
 | 对象存储 | S3 兼容（OSS / COS） | 国内合规、CDN 成熟 | MinIO（本地） | 高 |
 
-> **落地口径（H3 / ADR-0128，2026-11-11）**：先定边界再换实现。`AssetStore` 接口 + `LOOMINA_ASSET_STORE=local|s3`；第一刀 `LocalAssetStore` 零依赖（`.loomina/assets/`，内容寻址，单文件 200 MB），立刻把素材从事件日志里拿出来。S3 适配器只做 SigV4 预签名 PUT / GET，**不引 `@aws-sdk/client-s3`**；签名自写（约 100 行）还是用 `aws4`（约 3 KB）需单独确认。
+> **落地口径（H3 / ADR-0128，2026-11-11）**：先定边界再换实现。`AssetStore` 接口 + `LOOMINA_ASSET_STORE=local|s3`；第一刀 `LocalAssetStore` 零依赖（`.loomina/assets/`，内容寻址，单文件 200 MB），立刻把素材从事件日志里拿出来。S3 适配器只做 SigV4 预签名 PUT / GET，**不引 `@aws-sdk/client-s3`**；签名**自写**（ADR-0129：也不引 `aws4`，用 AWS 官方测试向量锁正确性）。
 >
 > **H3.1 已落地（2026-11-12）**：`apps/web/lib/asset-uri.ts`（纯函数，浏览器与 Node 共用）+ `apps/web/lib/asset-store.ts`（`LocalAssetStore`，`LOOMINA_ASSET_DIR` 可覆盖目录，测试用）。`audio/webm` 落 `.weba`，让扩展名能唯一反推 mime。生成路径按 128 KB 分流，导出前 `hydrateView()` 读回字节。S3 仍未做。
 | 数据库 | Postgres（托管） | JSONB 适合 IR，生态成熟 | — | 高 |
@@ -89,9 +89,9 @@ loomina/
 - 重活（渲染、视频生成）本来就在云端，浏览器只做预览与编辑。
 - 风险：WebCodecs/WebGPU 兼容性与大文件处理。用 540p 代理 + 降级到 `<video>` 兜底。
 
-> **落地口径（E7 / ADR-0127，2026-11-11）**：分三级。**E7.1 时间轴预览零依赖**（`<video>` + Canvas，到镜准确、镜内近似）；**E7.2 帧级找点需要 mp4box.js（约 100 KB，MIT，依赖待确认）**，WebCodecs 是平台 API 不算依赖；**E7.3 WebGPU 合成暂不做**——当前时间线只有硬切，Canvas 2D 够用，等 E1 支持转场时再与 B13.3 的 depth 渲染一起选型。上表「WebCodecs + WebGPU」的选型意向仍然成立，只是分阶段落地。
+> **落地口径（E7 / ADR-0127，2026-11-11）**：分三级。**E7.1 时间轴预览零依赖**（`<video>` + Canvas，到镜准确、镜内近似）；**E7.2 帧级找点不引 mp4box.js（ADR-0129）**——改由服务端 ffmpeg `-ss` 精确切帧回 JPEG，浏览器 `<img>` 直接显示，WebCodecs 都不需要；**E7.3 WebGPU 合成暂不做**——当前时间线只有硬切，Canvas 2D 够用，等 E1 支持转场时再与 B13.3 的 depth 渲染一起选型。上表「WebCodecs + WebGPU」的选型意向仍然成立，只是分阶段落地。
 >
-> **落地口径（B13.1 / ADR-0126，2026-11-12）**：俯视走位板**没有引入任何 3D 依赖**——平面图是手写 SVG（`apps/web/components/blocking-board.tsx`，约 330 行），几何运算全是 `Math.hypot` / 叉积级别的纯函数（`packages/ir/src/geometry.ts`），视锥按焦段算水平视角（9:16 竖幅、短边 9.6 mm 估）。Three.js / WebGL 只在 **B13.3 depth / edge 导出**时才需要，仍待确认（R48）；那之前不引入。
+> **落地口径（B13.1 / ADR-0126，2026-11-12）**：俯视走位板**没有引入任何 3D 依赖**——平面图是手写 SVG（`apps/web/components/blocking-board.tsx`，约 330 行），几何运算全是 `Math.hypot` / 叉积级别的纯函数（`packages/ir/src/geometry.ts`），视锥按焦段算水平视角（9:16 竖幅、短边 9.6 mm 估）。**B13.3 结构参考图也不引 Three.js / WebGL**（ADR-0129）：Canvas 2D 透视投影 + 按深度着色就够，输出「结构参考图」而非渲染图。渲染层等 E1 支持转场时与 E7.3 一起评估。
 - 若后期预览性能不够，用 **Tauri** 包一层（复用同一套 Web 代码）；不选 Electron（体积/内存大）。
 
 ### 2. 单体还是微服务？
@@ -136,7 +136,7 @@ loomina/
 
 ## 六、框架清单（按层）
 
-**前端**：Next.js、React、TypeScript、Tailwind、shadcn/ui、Zustand、TanStack Query、Zod、React Hook Form、dnd-kit、PixiJS、mp4box.js、WebCodecs、Web Audio API。
+**前端**：Next.js、React、TypeScript、Tailwind、shadcn/ui、Zustand、TanStack Query、Zod、React Hook Form、dnd-kit、PixiJS、Web Audio API。（mp4box.js / WebCodecs 不引入，见 ADR-0129。）
 
 **后端**：Node、Fastify、Drizzle、pg-boss、Pino、OpenTelemetry、Better Auth、SSE。
 
@@ -146,7 +146,7 @@ loomina/
 
 **基础设施**：Postgres、Redis、OSS/COS、CDN、Docker Compose、Caddy/Nginx、GitHub Actions。
 
-**可选（不是核心）**：Remotion（片头/字幕动效）、pgvector（素材相似度）、Three.js（走位板 3D 化）。
+**可选（不是核心）**：Remotion（片头/字幕动效）、pgvector（素材相似度）。（Three.js 走位板 3D 化不采用，见 ADR-0129。）
 
 ## 七、明确暂不引入
 
