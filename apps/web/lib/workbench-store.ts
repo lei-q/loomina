@@ -317,6 +317,11 @@ type WorkbenchState = {
   unlockCast: (targetType: ApprovalTargetType, targetId: string) => void;
   /** 逐格生成三视图；每落一张写一条 `asset.updated` */
   generateSheet: (characterId: string) => Promise<void>;
+  /**
+   * 四格换回某一版旧图（B1）：写一条 `asset.updated`，不重新生成、不花钱。
+   * 定妆锁定时拒绝；换回来的图仍按它原本的生成时间判过期。
+   */
+  restoreSheetAsset: (assetId: string, version: Asset) => boolean;
   /** 生成场景主镜 */
   generateMaster: (locationId: string) => Promise<void>;
   /** 生成道具参考图 */
@@ -1997,6 +2002,41 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       );
       if (!ok) return; // 一格没成，后面的也多半不成；别继续烧钱
     }
+  },
+
+  restoreSheetAsset: (assetId, version) => {
+    if (get().readOnly) return false;
+    if (lockedStage({ get, set }, "cast")) return false;
+    const { project, events } = get();
+    const character = project.characters.find((item) =>
+      SHEET_ANGLES.some((angle) => item.sheet[angle] === assetId),
+    );
+    if (!character) {
+      set({ castError: "这张图不属于任何角色的三视图。" });
+      return false;
+    }
+    if (isLocked(project, "character", character.id)) {
+      set({ castError: "定妆已锁定：先解锁再换版本。" });
+      return false;
+    }
+    if (!version.uri || version.id !== assetId) {
+      set({ castError: "这一版没有图，换不了。" });
+      return false;
+    }
+    const current = project.assets.find((item) => item.id === assetId);
+    if (current?.uri === version.uri) return false;
+
+    const event: ProjectEvent = {
+      type: "asset.updated",
+      at: stamp(),
+      asset: { ...version, id: assetId },
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
   },
 
   generateMaster: async (locationId) => {

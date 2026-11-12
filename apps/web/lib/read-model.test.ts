@@ -19,7 +19,9 @@ import {
   spendByStage,
   spendOf,
   staleFrames,
+  sheetAssetHistory,
   staleMasters,
+  staleSheetCells,
   toCastView,
   toAnimaticView,
   toKeyframeView,
@@ -1673,5 +1675,153 @@ describe("台词下游同步（A5 / ADR-0107）", () => {
     });
     expect(downstreamGap(project, "s-01").voices).toBe(0);
     expect(toVoiceView(project).lines.find((line) => line.id === "d-01")?.stale).toBeUndefined();
+  });
+});
+
+describe("四格过期与旧版（B1）", () => {
+  const at = (h: number) => `2026-11-10T${String(h).padStart(2, "0")}:00:00+08:00`;
+  const sheetAsset = (
+    id: string,
+    createdAt: string,
+    modelId: string,
+    uri = `data:image/png;base64,${id}`,
+  ) => ({
+    id,
+    kind: "image" as const,
+    source: "generated" as const,
+    uri,
+    createdAt,
+    provenance: { modelId, createdAt, referenceAssetIds: [] },
+  });
+
+  const project = ProjectSchema.parse({
+    ...sampleProject,
+    assets: [
+      ...sampleProject.assets.filter((asset) => !asset.id.startsWith("a-lin-")),
+      sheetAsset("a-lin-front", "2026-11-09T20:10:00+08:00", "model-a"),
+      sheetAsset("a-lin-34", "2026-11-09T20:10:00+08:00", "model-a"),
+      sheetAsset("a-lin-side", "2026-11-09T20:10:00+08:00", "model-a"),
+      sheetAsset("a-lin-back", "2026-11-09T20:10:00+08:00", "model-a"),
+    ],
+  });
+  const base = [{ type: "project.created" as const, at: at(0), project }];
+
+  it("没改过设定：四格都不过期", () => {
+    expect(staleSheetCells(base, project).size).toBe(0);
+  });
+
+  it("改外形 / 名字 / 不许变：只标改动之前出的那几格", () => {
+    const events = [
+      ...base,
+      {
+        type: "character.updated" as const,
+        at: at(9),
+        characterId: "c-lin",
+        patch: { appearance: "剪了短发" },
+      },
+      {
+        type: "character.updated" as const,
+        at: at(10),
+        characterId: "c-lin",
+        patch: { name: "小林", mustNotChange: ["左眼下的痣"] },
+      },
+    ];
+    const stale = staleSheetCells(events, project);
+    expect(stale.get("a-lin-front")).toEqual({
+      at: at(10),
+      reasons: ["外形描述", "名字", "不许变"],
+    });
+    expect(stale.has("a-lin-back")).toBe(true);
+    expect(stale.has("a-zhou-front")).toBe(false);
+  });
+
+  it("改动之后重出的那一格不过期；换模型的那一格标出来", () => {
+    const events = [
+      ...base,
+      {
+        type: "character.updated" as const,
+        at: at(9),
+        characterId: "c-lin",
+        patch: { appearance: "剪了短发" },
+      },
+      {
+        type: "asset.updated" as const,
+        at: at(11),
+        asset: sheetAsset("a-lin-front", at(11), "model-b"),
+      },
+    ];
+    const stale = staleSheetCells(events, rebuild(events));
+    // 正面是改动之后重出的，但换成 model-b，四格不再是一个模型
+    expect(stale.get("a-lin-front")).toEqual({
+      at: at(11),
+      reasons: ["四格生成模型不一致"],
+    });
+    // 其余三格仍是多数派 model-a，只因为改动之前出图而过期
+    expect(stale.get("a-lin-34")?.reasons).toEqual(["外形描述"]);
+  });
+
+  it("toCastView 把过期标记挂到对应的格子上", () => {
+    const events = [
+      ...base,
+      {
+        type: "character.updated" as const,
+        at: at(9),
+        characterId: "c-lin",
+        patch: { appearance: "剪了短发" },
+      },
+    ];
+    const view = toCastView(project, events);
+    const lin = view.characters.find((item) => item.id === "c-lin")!;
+    expect(lin.panels.find((panel) => panel.angle === "front")?.stale).toEqual({
+      at: at(9),
+      reasons: ["外形描述"],
+    });
+    const zhou = view.characters.find((item) => item.id === "c-zhou")!;
+    expect(zhou.panels.every((panel) => panel.stale === undefined)).toBe(true);
+    // 不给日志就不算
+    expect(
+      toCastView(project).characters
+        .find((item) => item.id === "c-lin")!
+        .panels.every((panel) => panel.stale === undefined),
+    ).toBe(true);
+  });
+
+  it("旧版按日志回放：当前版不算，按 uri 去重，新的在前", () => {
+    const events = [
+      ...base,
+      {
+        type: "asset.updated" as const,
+        at: at(9),
+        asset: sheetAsset("a-lin-front", at(9), "model-a", "data:image/png;base64,v2"),
+      },
+      {
+        type: "asset.updated" as const,
+        at: at(10),
+        asset: sheetAsset("a-lin-front", at(10), "model-a", "data:image/png;base64,v3"),
+      },
+    ];
+    const history = sheetAssetHistory(events).get("a-lin-front")!;
+    expect(history.map((item) => item.asset.uri)).toEqual([
+      "data:image/png;base64,v2",
+      "data:image/png;base64,a-lin-front",
+    ]);
+    expect(history[0]?.modelId).toBe("model-a");
+
+    // 换回旧版之后再回放：当前是 v2，旧版只剩 v3 与最初那张
+    const restored = [
+      ...events,
+      {
+        type: "asset.updated" as const,
+        at: at(11),
+        asset: sheetAsset("a-lin-front", "2026-11-09T20:10:00+08:00", "model-a", "data:image/png;base64,a-lin-front"),
+      },
+    ];
+    expect(
+      sheetAssetHistory(restored)
+        .get("a-lin-front")!
+        .map((item) => item.asset.uri),
+    ).toEqual(["data:image/png;base64,v3", "data:image/png;base64,v2"]);
+    // 没有 uri 的格子（示例占位）没有历史
+    expect(sheetAssetHistory(base).get("a-zhou-front")).toBeUndefined();
   });
 });

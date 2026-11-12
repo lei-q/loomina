@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { SHEET_LABELS, type SheetView } from "@loomina/ir";
+import { SHEET_LABELS, type Asset, type SheetView } from "@loomina/ir";
 import {
   describeSceneTemplate,
   SCENE_TEMPLATES,
@@ -17,8 +17,10 @@ import { StageGate } from "@/components/stage-gate";
 import { TopBar } from "@/components/top-bar";
 import {
   castTextHistory,
+  sheetAssetHistory,
   toCastView,
   undoableRemoval,
+  type SheetCellVersion,
   type CastCharacterView,
   type CastLocationView,
   type CastPropView,
@@ -296,6 +298,8 @@ function CharacterRow({
   onRemoveReference,
   history,
   onRestoreText,
+  sheetHistory,
+  onRestoreSheet,
 }: {
   character: CastCharacterView;
   readOnly: boolean;
@@ -321,6 +325,10 @@ function CharacterRow({
   history?: CastTextHistory;
   /** 整版写回：名字与外形一起换回那一版（ADR-0082） */
   onRestoreText: (version: CastTextVersion) => void;
+  /** 四格每一格出过哪些旧版（B1） */
+  sheetHistory?: Map<string, SheetCellVersion[]>;
+  /** 换回某一版旧图：写一条 asset.updated，不花钱 */
+  onRestoreSheet: (assetId: string, version: Asset) => boolean;
 }) {
   const missing = character.panels.filter((panel) => !panel.assetId).length;
   const [editing, setEditing] = useState(false);
@@ -329,6 +337,8 @@ function CharacterRow({
   const [draftAppearance, setDraftAppearance] = useState("");
   const [addingRule, setAddingRule] = useState(false);
   const [draftRule, setDraftRule] = useState("");
+  /** 正在看哪一格的历史；null 表示收起 */
+  const [historyAngle, setHistoryAngle] = useState<SheetView | null>(null);
 
   const beginEdit = () => {
     setDraftName(character.name);
@@ -566,11 +576,87 @@ function CharacterRow({
                     生成中…
                   </span>
                 )}
+                {panel.stale && (
+                  <span
+                    title={`出图之后改过：${panel.stale.reasons.join("、")}；重新生成或换回旧版`}
+                    className="absolute left-1 top-1 h-1.5 w-1.5 rounded-full bg-pick"
+                  />
+                )}
               </div>
               <figcaption className="tnum mt-1.5 text-[9px] text-muted-2">{panel.label}</figcaption>
+              {(() => {
+                const versions = panel.assetId
+                  ? (sheetHistory?.get(panel.assetId) ?? [])
+                  : [];
+                if (versions.length === 0) return null;
+                return (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setHistoryAngle(historyAngle === panel.angle ? null : panel.angle)
+                    }
+                    aria-expanded={historyAngle === panel.angle}
+                    className="tnum mt-0.5 text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
+                  >
+                    历史 {versions.length}
+                  </button>
+                );
+              })()}
             </figure>
             ))}
           </div>
+          {(() => {
+            const panel = character.panels.find((item) => item.angle === historyAngle);
+            const versions = panel?.assetId
+              ? (sheetHistory?.get(panel.assetId) ?? [])
+              : [];
+            if (!panel || !panel.assetId || versions.length === 0) return null;
+            return (
+              <div className="rounded-token border border-line px-2.5 py-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-muted">
+                    {panel.label} · 旧版 {versions.length}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setHistoryAngle(null)}
+                    className="text-[9.5px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
+                  >
+                    收起
+                  </button>
+                </div>
+                <div className="mt-1.5 flex gap-2 overflow-x-auto">
+                  {versions.map((version) => (
+                    <figure key={version.asset.uri} className="w-[52px] shrink-0">
+                      <div className="aspect-[9/16] overflow-hidden rounded-[1px] border border-line bg-[#0f1013]">
+                        <img
+                          src={assetHref(version.asset.uri ?? "")}
+                          alt={`${character.name} · ${panel.label} · 旧版`}
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        disabled={readOnly || character.status === "locked"}
+                        onClick={() => {
+                          if (onRestoreSheet(panel.assetId!, version.asset)) {
+                            setHistoryAngle(null);
+                          }
+                        }}
+                        title="把这一张换回当前版本：写一条 asset.updated，不重新生成、不花钱"
+                        className="mt-0.5 w-full text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text disabled:pointer-events-none disabled:opacity-40"
+                      >
+                        用这版
+                      </button>
+                      <figcaption className="tnum mt-0.5 text-center text-[8px] text-muted-2">
+                        {clock(version.at)}
+                      </figcaption>
+                    </figure>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
           <ReferenceStrip
             references={character.references}
             startAt={1}
@@ -1311,6 +1397,7 @@ export function CastScreen() {
   const lockCast = useWorkbench((state) => state.lockCast);
   const unlockCast = useWorkbench((state) => state.unlockCast);
   const generateSheet = useWorkbench((state) => state.generateSheet);
+  const restoreSheetAsset = useWorkbench((state) => state.restoreSheetAsset);
   const generateMaster = useWorkbench((state) => state.generateMaster);
   const generateProp = useWorkbench((state) => state.generateProp);
   const jobs = useWorkbench((state) => state.jobs);
@@ -1378,6 +1465,7 @@ export function CastScreen() {
 
   const events = useWorkbench((state) => state.events);
   const cast = useMemo(() => toCastView(project, events), [project, events]);
+  const sheetHistory = useMemo(() => sheetAssetHistory(events), [events]);
   const removal = useMemo(() => undoableRemoval(events, project), [events, project]);
   /** 定妆页只管人物 / 道具 / 地点的撤销：场次与镜头在剧本页 */
   const pageRemoval =
@@ -1542,6 +1630,8 @@ export function CastScreen() {
                   onRestoreText={(version) =>
                     editCharacter(character.id, { name: version.name, appearance: version.body })
                   }
+                  sheetHistory={sheetHistory}
+                  onRestoreSheet={restoreSheetAsset}
                 />
               );
             })}

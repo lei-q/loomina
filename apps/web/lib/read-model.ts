@@ -5,6 +5,7 @@ import {
   shotAnchors,
   SHEET_ANGLES,
   SHEET_LABELS,
+  type Asset,
   type CastStatus,
   type Id,
   type LocationSpace,
@@ -1222,6 +1223,130 @@ export function staleMasters(
   return stale;
 }
 
+/**
+ * 四格过期（B1）：人物名字 / 外形 / 「不许变」改了之后，已经出的三视图对不上新设定。
+ *
+ * 与主镜、关键帧同一套判定：只比时间，不比内容。四格之间还比一次生成模型——
+ * 单格重出时换了模型，四张脸会不是一个画风，这里标出来。
+ */
+export function staleSheetCells(
+  events: ProjectEvent[],
+  project: Project,
+): Map<string, StaleMark> {
+  const edits = new Map<string, Array<{ at: string; reason: string }>>();
+  for (const event of events) {
+    if (event.type !== "character.updated") continue;
+    const reasons: string[] = [];
+    if (event.patch.name !== undefined) reasons.push("名字");
+    if (event.patch.appearance !== undefined) reasons.push("外形描述");
+    if (event.patch.mustNotChange !== undefined) reasons.push("不许变");
+    if (reasons.length === 0) continue;
+    const list = edits.get(event.characterId);
+    const next = reasons.map((reason) => ({ at: event.at, reason }));
+    if (list) list.push(...next);
+    else edits.set(event.characterId, next);
+  }
+
+  const stale = new Map<string, StaleMark>();
+  for (const character of project.characters) {
+    const cells = SHEET_ANGLES.flatMap((angle) => {
+      const assetId = character.sheet[angle];
+      if (!assetId) return [];
+      const asset = project.assets.find((item) => item.id === assetId);
+      return asset ? [{ assetId, asset }] : [];
+    });
+    if (cells.length === 0) continue;
+
+    // 四格不是一个模型出的：标出少数派；两种各半时四格都标
+    const byModel = new Map<string, number>();
+    for (const { asset } of cells) {
+      const modelId = asset.provenance?.modelId;
+      if (modelId) byModel.set(modelId, (byModel.get(modelId) ?? 0) + 1);
+    }
+    let majority: string | undefined;
+    let tied = false;
+    if (byModel.size > 1) {
+      const ranked = [...byModel.entries()].sort((a, b) => b[1] - a[1]);
+      majority = ranked[0]![0];
+      tied = ranked[0]![1] === ranked[1]![1];
+    }
+
+    const characterEdits = edits.get(character.id) ?? [];
+    for (const { assetId, asset } of cells) {
+      const after = characterEdits.filter(
+        (edit) => Date.parse(edit.at) > Date.parse(asset.createdAt),
+      );
+      const reasons = [...new Set(after.map((edit) => edit.reason))];
+      const modelId = asset.provenance?.modelId;
+      if (byModel.size > 1 && (tied || modelId !== majority)) {
+        reasons.push("四格生成模型不一致");
+      }
+      if (reasons.length === 0) continue;
+      const at = after.reduce(
+        (latest, edit) => (Date.parse(edit.at) > Date.parse(latest) ? edit.at : latest),
+        asset.createdAt,
+      );
+      stale.set(assetId, { at, reasons });
+    }
+  }
+  return stale;
+}
+
+export type SheetCellVersion = {
+  /** 这一格以前出过的资产（带 uri 才有得看、有得换） */
+  asset: Asset;
+  /** 写进日志的时刻 */
+  at: string;
+  modelId?: string;
+};
+
+/**
+ * 三视图每一格的旧版（B1）：按 `asset.updated` 回放，同一个资产 id 出过哪几张。
+ *
+ * 只留带 uri 的版本，按 uri 去重；当前这一版不算「旧版」。
+ * 换版本不花钱——它只是把某一张旧图重新指成当前资产（`asset.updated`）。
+ */
+export function sheetAssetHistory(
+  events: ProjectEvent[],
+): Map<string, SheetCellVersion[]> {
+  const versions = new Map<string, SheetCellVersion[]>();
+  const push = (asset: Asset, at: string) => {
+    if (!asset.uri) return;
+    const list = versions.get(asset.id);
+    const entry: SheetCellVersion = {
+      asset,
+      at,
+      ...(asset.provenance?.modelId ? { modelId: asset.provenance.modelId } : {}),
+    };
+    if (list) list.push(entry);
+    else versions.set(asset.id, [entry]);
+  };
+
+  for (const event of events) {
+    if (event.type === "project.created") {
+      for (const asset of event.project.assets) push(asset, asset.createdAt);
+    } else if (event.type === "asset.updated") {
+      push(event.asset, event.at);
+    }
+  }
+
+  const out = new Map<string, SheetCellVersion[]>();
+  for (const [assetId, list] of versions) {
+    const current = list.at(-1)?.asset.uri;
+    const seen = new Set<string>([current ?? ""]);
+    const older: SheetCellVersion[] = [];
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      const entry = list[i]!;
+      const uri = entry.asset.uri ?? "";
+      if (seen.has(uri)) continue;
+      seen.add(uri);
+      older.push(entry);
+    }
+    if (older.length > 0) out.set(assetId, older);
+  }
+  return out;
+}
+
 export type KeyframeView = {
   title: string;
   version: number;
@@ -1503,6 +1628,8 @@ export type CastPanel = {
   assetId?: string;
   /** 生成出来的图（data URI）；示例素材为空，界面画剪影 */
   uri?: string;
+  /** 出图之后改过名字 / 外形 / 不许变，或四格不是同一个模型（B1） */
+  stale?: StaleMark;
 };
 
 /** 一张参考图：资产 id 与真图；示例素材没有 uri，界面画剪影（ADR-0079） */
@@ -1578,6 +1705,7 @@ export type CastView = {
 export function toCastView(project: Project, events?: ProjectEvent[]): CastView {
   const readiness = castReadiness(project);
   const staleMaster = events ? staleMasters(events, project) : new Map<string, StaleMark>();
+  const staleSheet = events ? staleSheetCells(events, project) : new Map<string, StaleMark>();
   const characterById = new Map(project.characters.map((item) => [item.id, item]));
   const locationById = new Map(project.locations.map((item) => [item.id, item]));
 
@@ -1593,12 +1721,18 @@ export function toCastView(project: Project, events?: ProjectEvent[]): CastView 
         name: character.name,
         appearance: character.appearance,
         mustNotChange: character.mustNotChange,
-        panels: SHEET_ANGLES.map((angle) => ({
-          angle,
-          label: SHEET_LABELS[angle],
-          assetId: character.sheet[angle],
-          uri: assetById.get(character.sheet[angle] ?? "")?.uri,
-        })),
+        panels: SHEET_ANGLES.map((angle) => {
+          const assetId = character.sheet[angle];
+          return {
+            angle,
+            label: SHEET_LABELS[angle],
+            assetId,
+            uri: assetById.get(assetId ?? "")?.uri,
+            ...(assetId && staleSheet.has(assetId)
+              ? { stale: staleSheet.get(assetId)! }
+              : {}),
+          };
+        }),
         references: character.referenceImages.map((id) => ({
           assetId: id,
           uri: assetById.get(id)?.uri,
