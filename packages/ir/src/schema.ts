@@ -143,6 +143,25 @@ export const StoryHooksSchema = z.object({
 export type StoryHooks = z.infer<typeof StoryHooksSchema>;
 
 /**
+ * 逐字导入的原文槽位（F6 / ADR-0154）。
+ *
+ * 只存作者选中的一章，不复制进 `provenance.prompt`；它是「这一章本来写了什么」
+ * 的只读参考，不是分镜结构。指纹只用来发现本地误改，不防篡改。
+ * `story.updated` 不收这个字段：换章节要写新的 `project.created`。
+ */
+export const SourceDocumentSchema = z.object({
+  title: z.string().min(1),
+  chapterIndex: z.number().int().nonnegative(),
+  chapterCount: z.number().int().positive(),
+  text: z.string().min(1),
+  fileName: z.string().min(1).optional(),
+  sourceChars: z.number().int().nonnegative(),
+  importedAt: z.string().min(1),
+  fingerprint: z.string().regex(/^[0-9a-f]{8}$/),
+});
+export type SourceDocument = z.infer<typeof SourceDocumentSchema>;
+
+/**
  * Story Bible（ADR-0017 / ADR-0088）。
  *
  * 第一刀只收下游真正会引用的字段：logline、人物弧光、关系张力与钩子。
@@ -160,6 +179,8 @@ export const StoryBibleSchema = z.object({
   relationships: z.array(StoryRelationshipSchema).default([]),
   /** 这份故事由哪个文本模型、根据什么输入生成 */
   provenance: ProvenanceSchema.optional(),
+  /** 逐字导入时选中的一章；旧项目没有，改编项目也没有 */
+  sourceDocument: SourceDocumentSchema.optional(),
 });
 export type StoryBible = z.infer<typeof StoryBibleSchema>;
 

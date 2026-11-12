@@ -40,10 +40,12 @@ import {
   type TimelineItem,
   type VoicePerformance,
   type VoiceTake,
+  type SourceDocument,
 } from "@loomina/ir";
 import {
   parseInstruction,
   projectFromStoryDraft,
+  projectFromVerbatimDocument,
   mergeTemplateSpace,
   sceneTemplateById,
   shotMaterial,
@@ -589,6 +591,12 @@ type WorkbenchState = {
       usage?: { units: number; unit: "tokens" | "chars" };
     },
   ) => boolean;
+  /**
+   * 逐字导入开工（F6 / ADR-0154）：一条新的 `project.created`。
+   * 不调模型；把已经核对过指纹的那一章放进 `story.sourceDocument`，
+   * 项目只开一空镜，原文在剧本页对照，不假装已经拆成分镜。
+   */
+  startProjectFromVerbatim: (document: SourceDocument) => boolean;
   /**
    * 改故事层文字（A16）：一条 `story.updated`。
    * 只改传进来的字段；没改的字段与 `provenance` 都不动。
@@ -4423,6 +4431,42 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       asrResult: undefined,
       editError: undefined,
       // 新项目的 id 全换了：上一份项目的手改提示词留着只会错位
+      promptOverrides: {},
+    });
+    return true;
+  },
+
+  startProjectFromVerbatim: (document) => {
+    if (get().readOnly) {
+      set({ castError: "另一个标签页在编辑：这一页只读，开不了新项目。" });
+      return false;
+    }
+    const { project, events } = get();
+    const at = stamp();
+    let next: Project;
+    try {
+      next = projectFromVerbatimDocument(document, {
+        id: `proj-${Date.now().toString(36)}`,
+        at,
+        budgetCny: project.budgetCny,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "逐字原文不合法";
+      set({ castError: `逐字导入没能开工：${detail.slice(0, 240)}` });
+      return false;
+    }
+    const event: ProjectEvent = { type: "project.created", at, project: next };
+    const applied = applyEvent(project, event);
+    set({
+      project: applied,
+      events: [...events, event],
+      currentShotId: firstOpenShotId(applied),
+      jobs: {},
+      batch: undefined,
+      castError: undefined,
+      lastSwap: undefined,
+      asrResult: undefined,
+      editError: undefined,
       promptOverrides: {},
     });
     return true;

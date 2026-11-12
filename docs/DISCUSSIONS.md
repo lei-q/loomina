@@ -4806,3 +4806,28 @@ E7 的「现在就能做」只剩 540p 代理：预演一直播 1080p 原片，�
 **验证**
 - 6 条纯函数用例（地址校验、缓存名、Range、请求解析、ffmpeg 参数）通过。
 - 浏览器：把一段 1080×1920 测试视频贴到一镜并迁进资产库，预演勾「540p 代理」后 `<video>` 播 `/api/preview/proxy?...`，`videoWidth/Height = 540/960`、readyState 4、网络回 206；ffprobe 确认缓存是 h264 540×960 24fps。验证后已用历史「回到这里」恢复示例项目。
+
+## 第一百七十三次 · 2026-11-13 · F6 逐字导入与保真对照
+
+**议题**
+F6 还欠「逐字导入、章节拆分、保真校验、原文对照」。ADR-0089 当年不做逐字，是因为小说直接进 `StoryDraft` 会超出 60–90 秒单集，也会把原文塞进 provenance；但作者明确选一章、明确看过逐字报告之后，这一章本身就是项目事实，不该刷新即丢。
+
+**结论**
+- `/story` 第三个标签独立走逐字路径：章节候选、逐行原文 / 对照稿、字符数 / 行数 / 改动行号 / 8 位指纹，报告通过 + 权利声明才允许开工；不调模型、不发原文、不改 ADR-0089 的历史结论。
+- `StoryBible.sourceDocument` 是可选择的只读参考槽位，存标题 / 章节位置 / 选中的一章 / 文件名 / 全文字数 / 时间 / 指纹；旧项目由 zod 缺省补齐，不升 `LOG_VERSION`，`story.updated` 白名单不收这个字段。
+- 新 store 动作 `startProjectFromVerbatim` 写一条 `project.created`：最小骨架一空镜、零台词，`provenance.modelId = local:verbatim`，不把小说伪装成分镜。
+- `/script` 加「逐字原文」面板：全章原文、指纹复核、当前剧本纯文本对照；复核失败红字说明，不静默修复。
+- 风险 R60 登记「全章原文进本机事件日志」：本机访问控制未做、跨设备同步未做、权利声明不是版权核验。
+
+**产物**
+- `packages/pipeline/src/import-verbatim.ts` 与测试、`packages/pipeline/src/index.ts`
+- `packages/ir/src/schema.ts` 与 IR 事件测试
+- `apps/web/lib/workbench-store.ts`、store 测试、`apps/web/components/story-screen.tsx`、`apps/web/components/script-screen.tsx`
+- `docs/adr/0154-verbatim-import-and-fidelity.md`、`docs/DATA-MODEL.md`、`docs/FEATURES.md`、`docs/ROADMAP.md`、`docs/DISCUSSIONS.md`、`docs/UX.md`、`docs/RISKS.md`
+
+**验证**
+- 全仓 1289 条测试通过（IR 221 / pipeline 105 / gateway 28 / web 942，另有 4 条 S3 e2e 跳过）；`pnpm --filter @loomina/web build` 通过。浏览器实测 `/story` 逐字标签：两章按钮、无生成按钮 / 无模型警告、第一章逐字通过；切第二章显示「门没有关。」；改一行后报告写「改动行：3」并禁用开工；「恢复原文」后开工，确认跳到 `/script`，原文面板、指纹复核与正文都在，整个流程没有 POST。验证后用历史「回到这里」恢复示例项目（第 45 条事件）。
+
+**边界**
+- 一次只带一章；不自动解析人物 / 场次 / 台词，不多章批量建项目，不做字符级 diff、云端同步或字节级 CRLF 保真。
+

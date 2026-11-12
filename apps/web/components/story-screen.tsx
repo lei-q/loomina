@@ -10,6 +10,11 @@ import {
   GENRE_MATRIX,
   genreById,
   importStoryMessages,
+  compareLines,
+  documentFingerprint,
+  splitChapters,
+  verbatimDocument,
+  verbatimExcerpt,
   storyMessages,
   genreReadiness,
   SHOT_ANGLE_CN,
@@ -64,7 +69,7 @@ function storyTokensOf(usage: { promptTokens?: number; completionTokens?: number
   return units >= 1000 ? `${(units / 1000).toFixed(1)}k token` : `${units} token`;
 }
 
-type StoryOrigin = "idea" | "import";
+type StoryOrigin = "idea" | "import" | "verbatim";
 type StoryResult = {
   draft: StoryDraft;
   model: string;
@@ -82,8 +87,13 @@ const MODES: { key: StoryOrigin; label: string; note: string }[] = [
   },
   {
     key: "import",
-    label: "导入剧本 txt",
+    label: "改编剧本 txt",
     note: "选一个 txt 或粘贴原文，模型把它改成一条 60–90 秒单集。会保留人物关系、核心冲突与结局，允许合并次要人物与场次；不是逐字导入。",
+  },
+  {
+    key: "verbatim",
+    label: "逐字导入 / 对照",
+    note: "按章节切开原文，选一段核对逐字报告；通过后可把这一章原样带进项目。不调模型、不发原文；项目只开一空镜，不自动拆成分镜。",
   },
 ];
 
@@ -94,6 +104,7 @@ export function StoryScreen() {
   const storageError = useWorkbench((state) => state.storageError);
   const readOnly = useWorkbench((state) => state.readOnly);
   const startProjectFromStory = useWorkbench((state) => state.startProjectFromStory);
+  const startProjectFromVerbatim = useWorkbench((state) => state.startProjectFromVerbatim);
   const setBudget = useWorkbench((state) => state.setBudget);
   const promptOverrides = useWorkbench((state) => state.promptOverrides);
   const setPromptOverride = useWorkbench((state) => state.setPromptOverride);
@@ -119,6 +130,9 @@ export function StoryScreen() {
   const [error, setError] = useState<string>();
   const [result, setResult] = useState<StoryResult>();
   const [confirming, setConfirming] = useState(false);
+  const [chapterIndex, setChapterIndex] = useState(0);
+  const [verbatimDraft, setVerbatimDraft] = useState<string>();
+  const [verbatimConfirming, setVerbatimConfirming] = useState(false);
 
   useEffect(() => {
     void hydrate();
@@ -134,11 +148,47 @@ export function StoryScreen() {
     })();
   }, [hydrate]);
 
+  const chapters = useMemo(
+    () => (mode === "verbatim" ? splitChapters(source) : []),
+    [mode, source],
+  );
+  const chapter = chapters[Math.min(chapterIndex, Math.max(0, chapters.length - 1))];
+  const originalExcerpt = chapter && source.length > 0 ? verbatimExcerpt(source, chapter) : undefined;
+  const comparison = originalExcerpt
+    ? {
+        title: originalExcerpt.title,
+        excerpt: verbatimDraft ?? originalExcerpt.excerpt,
+        report:
+          verbatimDraft === undefined
+            ? originalExcerpt.report
+            : {
+                ...originalExcerpt.report,
+                excerptChars: verbatimDraft.length,
+                lines: verbatimDraft.split("\n").length,
+                exact: verbatimDraft === originalExcerpt.excerpt,
+                changedLines: compareLines(originalExcerpt.excerpt, verbatimDraft)
+                  .filter((line) => line.changed)
+                  .map((line) => line.line),
+              },
+      }
+    : undefined;
+  const verbatim = comparison;
+  const comparisonLines = originalExcerpt
+    ? compareLines(originalExcerpt.excerpt, comparison?.excerpt ?? "")
+    : [];
+  const sourceFingerprint = comparison ? documentFingerprint(comparison.excerpt) : "";
+
   const inputReady =
     mode === "idea"
       ? idea.trim().length > 0
-      : source.trim().length > 0 && source.length <= SOURCE_MAX_CHARS && rights;
-  const canGenerate = Boolean(info.model) && inputReady && !busy && !reading;
+      : mode === "import"
+        ? source.trim().length > 0 && source.length <= SOURCE_MAX_CHARS && rights
+        : source.trim().length > 0 &&
+          source.length <= SOURCE_MAX_CHARS &&
+          rights &&
+          Boolean(comparison?.report.exact);
+  const canGenerate =
+    mode !== "verbatim" && Boolean(info.model) && inputReady && !busy && !reading;
 
   const stats = useMemo(() => {
     if (!result) return undefined;
@@ -185,6 +235,9 @@ export function StoryScreen() {
   function switchMode(next: StoryOrigin) {
     if (next === mode) return;
     setMode(next);
+    setChapterIndex(0);
+    setVerbatimDraft(undefined);
+    setVerbatimConfirming(false);
     setError(undefined);
     setResult(undefined);
     setConfirming(false);
@@ -210,6 +263,9 @@ export function StoryScreen() {
       }
       setSource(text.replace(/^﻿/, ""));
       setFileName(file.name);
+      setChapterIndex(0);
+      setVerbatimDraft(undefined);
+      setVerbatimConfirming(false);
       setResult(undefined);
       setConfirming(false);
     } catch (caught) {
@@ -258,6 +314,24 @@ export function StoryScreen() {
       setError(caught instanceof Error ? caught.message : "生成失败");
     } finally {
       setBusy(false);
+    }
+  }
+
+  function startVerbatimProject() {
+    if (!chapter || !comparison?.report.exact || !inputReady) return;
+    const document = verbatimDocument({
+      source,
+      chapter,
+      chapterCount: chapters.length,
+      text: comparison.excerpt,
+      ...(fileName ? { fileName } : {}),
+      importedAt: new Date().toISOString(),
+    });
+    if (startProjectFromVerbatim(document)) {
+      router.push("/script");
+    } else {
+      setError(useWorkbench.getState().castError ?? "逐字导入没能开工");
+      setVerbatimConfirming(false);
     }
   }
 
@@ -406,6 +480,9 @@ export function StoryScreen() {
                   onChange={(event) => {
                     setSource(event.target.value);
                     setFileName(undefined);
+                    setChapterIndex(0);
+                    setVerbatimDraft(undefined);
+                    setVerbatimConfirming(false);
                     setResult(undefined);
                     setConfirming(false);
                   }}
@@ -415,7 +492,9 @@ export function StoryScreen() {
                 />
                 <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                   <span className="text-[9.5px] leading-[1.6] text-muted-2">
-                    目标是 60–90 秒单集：会压缩与合并，原文不会原样保存。文字会作为一次模型请求的输入发给文本供应商。
+                    {mode === "verbatim"
+                      ? "原文不发给模型、不落服务端；逐字通过后写进本机项目日志。只把 CRLF 统一成换行，其余字符一个不动。"
+                      : "目标是 60–90 秒单集：会压缩与合并，原文不会原样保存。文字会作为一次模型请求的输入发给文本供应商。"}
                   </span>
                   <span
                     className={
@@ -427,16 +506,18 @@ export function StoryScreen() {
                     {source.length} / {SOURCE_MAX_CHARS}
                   </span>
                 </div>
-                <label className="mt-3 flex cursor-pointer items-center gap-2 border-t border-line pt-3 text-[10px] leading-[1.7] text-muted">
-                  <input
-                    id="story-rights"
-                    type="checkbox"
-                    checked={rights}
-                    onChange={(event) => setRights(event.target.checked)}
-                    className="accent-pick"
-                  />
-                  我确认有权使用这段文字（原创或已获授权）。
-                </label>
+                {(mode === "import" || mode === "verbatim") && (
+                  <label className="mt-3 flex cursor-pointer items-center gap-2 border-t border-line pt-3 text-[10px] leading-[1.7] text-muted">
+                    <input
+                      id="story-rights"
+                      type="checkbox"
+                      checked={rights}
+                      onChange={(event) => setRights(event.target.checked)}
+                      className="accent-pick"
+                    />
+                    我确认有权使用这段文字（原创或已获授权）。
+                  </label>
+                )}
                 {source.length > SOURCE_MAX_CHARS && (
                   <p className="mt-2 text-[10px] text-pick">
                     超过 {SOURCE_MAX_CHARS} 字：先截一段，或拆成几集分别导入。
@@ -445,8 +526,9 @@ export function StoryScreen() {
               </>
             )}
 
-            <div className="mt-4 border-t border-line pt-4">
-              <div className="flex flex-wrap items-center gap-1.5">
+            {mode !== "verbatim" && (
+              <div className="mt-4 border-t border-line pt-4">
+                <div className="flex flex-wrap items-center gap-1.5">
                 <span className="mr-1 text-[10px] text-muted-2">题材</span>
                 {GENRE_MATRIX.map((item) => (
                   <button
@@ -567,23 +649,195 @@ export function StoryScreen() {
 
               <LoglineWorkshop genreId={genre} />
             </div>
+            )}
 
-            <StoryBiblePanel />
+            {mode !== "verbatim" && <StoryBiblePanel />}
 
-            <div className="mt-4 border-t border-line pt-3">
-              <PromptEditor
-                defaultOpen
-                tabs={[
-                  { key: "story:system", label: "系统提示词", prompt: promptMessages.system },
-                  { key: "story:user", label: "用户消息", prompt: promptMessages.user },
-                ]}
-                values={promptOverrides}
-                onChange={setPromptOverride}
-                readOnly={Boolean(readOnly)}
-                note="这次生成真正发出去的两条消息；改过的版本只用于之后这一次生成，不写进项目。"
-              />
-            </div>
+            {mode === "verbatim" && (
+              <section className="mt-4 border-t border-line pt-4" aria-label="逐字对照与保真报告">
+                <h2 className="text-[11px] tracking-[.06em] text-text">章节 · 逐字对照</h2>
+                {chapters.length > 0 ? (
+                  <>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {chapters.map((item) => (
+                        <button
+                          key={item.index}
+                          type="button"
+                          aria-pressed={chapter?.index === item.index}
+                          onClick={() => {
+                            setChapterIndex(item.index);
+                            setVerbatimDraft(undefined);
+                            setVerbatimConfirming(false);
+                          }}
+                          className={
+                            chapter?.index === item.index
+                              ? "rounded-token border border-line-2 bg-line px-2.5 py-1 text-[10.5px] text-text"
+                              : "rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                          }
+                        >
+                          {item.title} <span className="tnum text-[9px] text-muted-2">{item.chars} 字</span>
+                        </button>
+                      ))}
+                    </div>
+                    {comparison && (
+                      <>
+                        <p className="mt-3 text-[10px] leading-[1.7] text-muted">
+                          当前：<span className="text-text">{comparison.title}</span> · 第{" "}
+                          {(chapter?.index ?? 0) + 1} / {chapters.length} 段
+                        </p>
+                        <dl className="tnum mt-2 grid grid-cols-2 gap-2 text-[10px] sm:grid-cols-4">
+                          <div className="rounded-token border border-line px-2.5 py-2">
+                            <dt className="text-muted-2">逐字通过</dt>
+                            <dd className={comparison.report.exact ? "text-text" : "text-pick"}>
+                              {comparison.report.exact ? "是" : "否"}
+                            </dd>
+                          </div>
+                          <div className="rounded-token border border-line px-2.5 py-2">
+                            <dt className="text-muted-2">片段 / 全文字数</dt>
+                            <dd className="text-text">
+                              {comparison.report.excerptChars} / {comparison.report.sourceChars}
+                            </dd>
+                          </div>
+                          <div className="rounded-token border border-line px-2.5 py-2">
+                            <dt className="text-muted-2">行数</dt>
+                            <dd className="text-text">{comparison.report.lines}</dd>
+                          </div>
+                          <div className="rounded-token border border-line px-2.5 py-2">
+                            <dt className="text-muted-2">指纹</dt>
+                            <dd className="text-text">{sourceFingerprint}</dd>
+                          </div>
+                        </dl>
+                        <p className="mt-2 text-[9.5px] leading-[1.7] text-muted-2">
+                          改动行：
+                          {comparison.report.changedLines.length > 0
+                            ? comparison.report.changedLines.join("、")
+                            : "无"}
+                          。CRLF 统一为换行后逐行比较；指纹只用来复核误改，不防篡改。
+                        </p>
+                        <div className="mt-3 overflow-x-auto rounded-token border border-line">
+                          <table className="w-full min-w-[620px] text-left text-[10px] leading-[1.7]">
+                            <thead className="text-muted-2">
+                              <tr className="border-b border-line">
+                                <th className="w-10 px-2 py-1.5 font-normal">行</th>
+                                <th className="w-1/2 px-2 py-1.5 font-normal">原文</th>
+                                <th className="px-2 py-1.5 font-normal">对照稿</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {comparisonLines.map((line) => (
+                                <tr
+                                  key={line.line}
+                                  className={
+                                    line.changed
+                                      ? "border-b border-line bg-pick/5 text-pick last:border-0"
+                                      : "border-b border-line last:border-0"
+                                  }
+                                >
+                                  <td className="tnum px-2 py-1 align-top text-muted-2">{line.line}</td>
+                                  <td className="whitespace-pre-wrap px-2 py-1 align-top text-muted">
+                                    {line.original || " "}
+                                  </td>
+                                  <td className="whitespace-pre-wrap px-2 py-1 align-top text-text">
+                                    {line.draft || " "}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <label htmlFor="verbatim-draft" className="mt-3 block text-[10px] text-muted">
+                          对照稿（可改着试；改动后不能开工）
+                        </label>
+                        <textarea
+                          id="verbatim-draft"
+                          value={comparison.excerpt}
+                          rows={8}
+                          onChange={(event) => setVerbatimDraft(event.target.value)}
+                          className="mt-1.5 w-full resize-y rounded-token border border-line bg-bg px-3 py-2 font-mono text-[10.5px] leading-[1.7] text-text focus:border-line-2 focus:outline-none"
+                        />
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setVerbatimDraft(undefined)}
+                            disabled={verbatimDraft === undefined}
+                            className="rounded-token border border-line px-2.5 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:cursor-not-allowed disabled:text-muted-2"
+                          >
+                            恢复原文
+                          </button>
+                          <span className="text-[9.5px] leading-[1.7] text-muted-2">
+                            开工只带这一章，不调模型；项目先给一空镜，原文在剧本页长期对照。
+                          </span>
+                          {readOnly ? (
+                            <span className="ml-auto text-[10px] text-muted-2">
+                              另一个标签页在编辑：这里只读。
+                            </span>
+                          ) : verbatimConfirming ? (
+                            <div className="ml-auto flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={startVerbatimProject}
+                                className="rounded-token border border-pick px-3 py-1.5 text-[10.5px] text-pick transition-colors duration-[var(--dur)] hover:bg-pick/10"
+                              >
+                                确认开工
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setVerbatimConfirming(false)}
+                                className="rounded-token border border-line px-2.5 py-1.5 text-[10px] text-muted"
+                              >
+                                再想想
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={!inputReady}
+                              onClick={() => setVerbatimConfirming(true)}
+                              title={
+                                !source.trim()
+                                  ? "先粘贴或选择一个 txt"
+                                  : source.length > SOURCE_MAX_CHARS
+                                    ? `超过 ${SOURCE_MAX_CHARS} 字，先截一段`
+                                    : !rights
+                                      ? "先确认你有权使用这段文字"
+                                      : !comparison.report.exact
+                                        ? "对照稿和原文不一样：恢复原文才能逐字开工"
+                                        : "把这一章原样带进项目，不调模型"
+                              }
+                              className="ml-auto rounded-token border border-line-2 px-3 py-1.5 text-[10.5px] text-text transition-colors duration-[var(--dur)] hover:border-text disabled:cursor-not-allowed disabled:border-line disabled:text-muted-2"
+                            >
+                              用它开工
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <p className="mt-2 text-[10px] leading-[1.7] text-muted-2">
+                    先粘贴或选一个 txt：这里会按章节切开，认不出标题就整篇算「全文」。
+                  </p>
+                )}
+              </section>
+            )}
 
+            {mode !== "verbatim" && (
+              <div className="mt-4 border-t border-line pt-3">
+                <PromptEditor
+                  defaultOpen
+                  tabs={[
+                    { key: "story:system", label: "系统提示词", prompt: promptMessages.system },
+                    { key: "story:user", label: "用户消息", prompt: promptMessages.user },
+                  ]}
+                  values={promptOverrides}
+                  onChange={setPromptOverride}
+                  readOnly={Boolean(readOnly)}
+                  note="这次生成真正发出去的两条消息；改过的版本只用于之后这一次生成，不写进项目。"
+                />
+              </div>
+            )}
+
+            {mode !== "verbatim" && (
             <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-4">
               <span className="text-[9.5px] leading-[1.6] text-muted-2">
                 生成会带上所选题材与节拍表；结果仍先在内存里，确认才写项目。
@@ -616,15 +870,16 @@ export function StoryScreen() {
                     : "生成故事"}
               </button>
             </div>
+            )}
 
-            {!info.model && (
+            {mode !== "verbatim" && !info.model && (
               <p className="mt-3 border-t border-line pt-3 text-[10px] leading-[1.7] text-muted-2">
                 {infoError
                   ? infoError
                   : "还没配文本模型：服务端在 secrity.env 里加上 TEXT_MODEL 之后才能生成。断句、场次与时间线仍然可以手改。"}
               </p>
             )}
-            {info.model && busy && (
+            {mode !== "verbatim" && info.model && busy && (
               <p className="mt-3 border-t border-line pt-3 text-[10px] leading-[1.7] text-muted-2">
                 {mode === "import"
                   ? `正在让 ${activeModel} 读剧本、合并场次并拆成分镜，通常要 40–100 秒。不要关页面。`

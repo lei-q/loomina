@@ -3259,3 +3259,38 @@ describe("四格资产位（ADR-0144）", () => {
     ).toThrow(/不能是空串/);
   });
 });
+
+describe("逐字原文槽位（F6 / ADR-0154）", () => {
+  it("旧项目没有 sourceDocument，回放仍然等价", () => {
+    const project = load();
+    expect(rebuild([created(project)])).toEqual(project);
+    expect(project.story.sourceDocument).toBeUndefined();
+  });
+
+  it("project.created 可以携带一份逐字原文，回放后指纹与正文都在", () => {
+    const project = load();
+    const text = "第一章 雨夜\n老楼走廊，声控灯亮了半盏。";
+    project.story.sourceDocument = {
+      title: "第一章 雨夜",
+      chapterIndex: 0,
+      chapterCount: 1,
+      text,
+      sourceChars: text.length,
+      importedAt: AT,
+      fingerprint: "1a2b3c4d",
+    };
+    expect(rebuild([created(project)]).story.sourceDocument?.text).toBe(text);
+  });
+
+  it("story.updated 不收 sourceDocument：白名单外的字段不进事件", () => {
+    const project = load();
+    const event = {
+      type: "story.updated",
+      at: AT,
+      patch: { logline: "改一句", sourceDocument: { title: "偷塞的" } },
+    } as unknown as ProjectEvent;
+    const next = rebuild([created(project), event]);
+    expect(next.story.logline).toBe("改一句");
+    expect(next.story.sourceDocument).toBeUndefined();
+  });
+});

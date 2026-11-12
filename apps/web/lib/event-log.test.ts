@@ -167,3 +167,25 @@ describe("全局回滚事件（F2 / ADR-0109）", () => {
     ).toBeNull();
   });
 });
+
+describe("逐字原文日志（F6 / ADR-0154）", () => {
+  it("旧版本日志带不了 sourceDocument 时由 zod 补齐；携带时也能读回", () => {
+    const source = {
+      title: "全文",
+      chapterIndex: 0,
+      chapterCount: 1,
+      text: "一段原文",
+      sourceChars: 4,
+      importedAt: AT,
+      fingerprint: "deadbeef",
+    };
+    const event: ProjectEvent = {
+      type: "project.created",
+      at: AT,
+      project: { ...sampleProject, story: { ...sampleProject.story, sourceDocument: source } },
+    };
+    expect(parseEvents([event])?.[0]).toMatchObject({ type: "project.created" });
+    expect(migrateLog({ version: LOG_VERSION, events: [event] })).toHaveLength(1);
+    expect(rebuild(parseEvents([event])!).story.sourceDocument?.text).toBe("一段原文");
+  });
+});

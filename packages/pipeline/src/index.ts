@@ -653,3 +653,4 @@ export function buildPropPrompt(
   parts.push("竖屏 9:16，实拍电影质感，柔光棚拍");
   return parts.join("。");
 }
+export * from "./import-verbatim";

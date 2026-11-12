@@ -5137,3 +5137,41 @@ describe("手改提示词（ADR-0148）", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("逐字导入开工（F6 / ADR-0154）", () => {
+  const document = {
+    title: "第二章 天亮",
+    chapterIndex: 1,
+    chapterCount: 2,
+    text: "第二章 天亮\n周把杯子放回桌边。\n门没有关。",
+    fileName: "雨夜.txt",
+    sourceChars: 100,
+    importedAt: "2026-11-13T10:00:00+08:00",
+    fingerprint: "1a2b3c4d",
+  };
+
+  it("写一条新的 project.created，原文进 IR，骨架只有一空镜", () => {
+    state().reset();
+    const before = state().events.length;
+    expect(state().startProjectFromVerbatim(document)).toBe(true);
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "project.created" });
+    expect(state().project.story.sourceDocument).toEqual(document);
+    expect(state().project.story.provenance?.modelId).toBe("local:verbatim");
+    expect(state().project.characters).toHaveLength(0);
+    expect(state().project.dialogue).toHaveLength(0);
+    expect(state().project.scenes).toHaveLength(1);
+    expect(state().project.shots).toHaveLength(1);
+    expect(state().currentShotId).toBe("shot-verbatim-1");
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("只读时不换项目、不写事件", () => {
+    state().reset();
+    state().readOnly = true;
+    const before = state().events.length;
+    expect(state().startProjectFromVerbatim(document)).toBe(false);
+    expect(state().events).toHaveLength(before);
+    state().readOnly = false;
+  });
+});

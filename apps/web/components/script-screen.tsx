@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { documentFingerprint } from "@loomina/pipeline";
 import { StageGate } from "@/components/stage-gate";
 import { TopBar } from "@/components/top-bar";
 import { DoctorPanel } from "@/components/doctor-panel";
@@ -146,6 +147,11 @@ export function ScriptScreen() {
     [view.scenes],
   );
   const doctor = useMemo(() => analyzeScript(project), [project]);
+  const sourceDocument = project.story.sourceDocument;
+  const sourceFingerprint = sourceDocument
+    ? documentFingerprint(sourceDocument.text)
+    : undefined;
+  const fingerprintOk = sourceFingerprint === sourceDocument?.fingerprint;
   const removal = useMemo(() => undoableRemoval(events, project), [events, project]);
   /** 撤销只在剧本页管场次与镜头：人物 / 道具 / 地点的撤销在定妆页 */
   const pageRemoval =
@@ -415,6 +421,42 @@ export function ScriptScreen() {
               </div>
             </dl>
           </header>
+
+          {sourceDocument && (
+            <details className="mt-4 rounded-token border border-line bg-surface px-3 py-2">
+              <summary className="cursor-pointer text-[10.5px] leading-[1.7] text-muted">
+                逐字原文 · {sourceDocument.title}（{sourceDocument.chapterIndex + 1} /{" "}
+                {sourceDocument.chapterCount} 段）
+              </summary>
+              <div className="mt-2 flex flex-wrap items-center gap-3 text-[9.5px] leading-[1.7] text-muted-2">
+                <span className="tnum">
+                  {sourceDocument.text.length} 字 · 全文 {sourceDocument.sourceChars} 字
+                </span>
+                {sourceDocument.fileName && <span>来源：{sourceDocument.fileName}</span>}
+                <span className="tnum">指纹 {sourceDocument.fingerprint}</span>
+                <span className={fingerprintOk ? "text-text" : "text-pick"}>
+                  {fingerprintOk ? "复核通过" : "这份原文和导入时的指纹对不上"}
+                </span>
+              </div>
+              <p className="mt-2 text-[9.5px] leading-[1.7] text-muted-2">
+                原文只读，不参与生成；要换章节回「故事」逐字标签重新开工。下面是当前剧本纯文本，用来对着原文改。
+              </p>
+              <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                <div className="min-w-0">
+                  <h2 className="text-[10px] text-muted">这一章原文</h2>
+                  <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded-token border border-line bg-bg px-2.5 py-2 font-mono text-[10px] leading-[1.7] text-text">
+                    {sourceDocument.text}
+                  </pre>
+                </div>
+                <div className="min-w-0">
+                  <h2 className="text-[10px] text-muted">当前剧本纯文本</h2>
+                  <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded-token border border-line bg-bg px-2.5 py-2 font-mono text-[10px] leading-[1.7] text-muted">
+                    {scriptToText(view)}
+                  </pre>
+                </div>
+              </div>
+            </details>
+          )}
 
           {/* 场号连续性（A21 / ADR-0134）：名字跟着戏走，位置是位置。
               只在两者对不上时说一句，免得作者以为排序坏了。 */}
