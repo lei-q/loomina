@@ -15,6 +15,7 @@ import {
   stepFrame,
   type FrameCapability,
 } from "@/lib/preview-frame";
+import { canProxy, proxyUrlOf } from "@/lib/preview-proxy";
 import { CloseIcon, PauseIcon, PlayIcon } from "@/components/icons";
 
 /**
@@ -54,7 +55,15 @@ export function AnimaticOverlay({
   const segment = view.segments[index];
   const clips = segment?.clips ?? [];
   /** 素材地址先过 assetHref：资产库里的素材走 /api/asset/…（H3 / ADR-0128） */
-  const videoSrc = assetHref(segment?.videoUri);
+  // 540p 代理（E7）：开着且这条片子在资产库里，就播代理——拖动 seek 轻得多；
+  // 代理转不出来（没 ffmpeg 等）就自动回原片，并写明原因。
+  const [proxyMode, setProxyMode] = useState(false);
+  const [proxyFailedUri, setProxyFailedUri] = useState<string | undefined>(undefined);
+  const proxyable = canProxy(segment?.videoUri);
+  const useProxy = proxyMode && proxyable && proxyFailedUri !== segment?.videoUri;
+  const videoSrc = useProxy
+    ? proxyUrlOf(segment?.videoUri!)
+    : assetHref(segment?.videoUri);
   const imageSrc = assetHref(segment?.imageUri);
   const musicSrc = assetHref(music?.uri);
   /** 下一次「跳转」要把片子对到哪一毫秒；只有跳转时才有值 */
@@ -378,7 +387,7 @@ export function AnimaticOverlay({
             />
           ) : videoSrc ? (
             <video
-              key={segment?.id}
+              key={`${segment?.id}-${useProxy ? "proxy" : "raw"}`}
               ref={videoRef}
               src={videoSrc}
               poster={imageSrc}
@@ -387,6 +396,9 @@ export function AnimaticOverlay({
               autoPlay
               loop
               onLoadedMetadata={applyPendingSeek}
+              onError={() => {
+                if (useProxy) setProxyFailedUri(segment?.videoUri);
+              }}
               className="h-full w-full object-cover"
             />
           ) : imageSrc ? (
@@ -482,6 +494,32 @@ export function AnimaticOverlay({
             >
               下一镜
             </button>
+          </div>
+
+          {/* 540p 代理（E7 / ADR-0127 §3）：播代理让拖动轻得多，原片留给导出 */}
+          <div className="rounded-token border border-line px-2 py-1.5">
+            <label className="flex items-start gap-2 text-[10px] leading-[1.6] text-muted">
+              <input
+                type="checkbox"
+                checked={proxyMode}
+                disabled={!proxyable}
+                onChange={(event) => {
+                  setProxyMode(event.target.checked);
+                  setProxyFailedUri(undefined);
+                }}
+                className="mt-0.5 accent-current disabled:opacity-40"
+              />
+              <span className={cn(!proxyable && "text-muted-2")}>
+                540p 代理
+                <span className="block text-[9px] leading-[1.6] text-muted-2">
+                  {!proxyable
+                    ? "这一镜的片子不在资产库里，只能播原片"
+                    : proxyFailedUri === segment?.videoUri
+                      ? "代理转不出来：这一镜先播原片"
+                      : "第一次会转一小会儿，之后拖动比原片轻；导出仍用原片"}
+                </span>
+              </span>
+            </label>
           </div>
 
           {/* 帧级找点（E7.2 / ADR-0129）：把镜内找点交给服务端 ffmpeg */}

@@ -4786,3 +4786,23 @@ B13 的状态还挂着「开发中（B13.1 / B13.2 已完成）」，但行尾�
 
 **边界**
 - 仍开着的 P0：B2 / B3 / B6 / B14 / C1 / C2 / C4 / C9 / D1 / E7 / H1 / H3 / H6 / H22；各有供应商阻塞（TTS / ASR / 视频配额 / 图像参考图）、重型依赖或外部服务，按真实缺口统计。
+
+## 第一百七十二次 · 2026-11-12 · 540p 代理视频
+
+**议题**
+E7 的「现在就能做」只剩 540p 代理：预演一直播 1080p 原片，拖动 seek 卡；E7.2 改走服务端切帧后，代理这条线没有继续做，但帧级能力的原始前置条件仍写着它。
+
+**结论**
+- 新增 `GET /api/preview/proxy`：按 ffmpeg 把资产库片子转 540×960 / 24fps / CRF 30 / ultrafast / 无音轨 / faststart，缓存到 `.loomina/assets/proxies/`，同一地址并发只转一次、临时文件 + rename。
+- 支持 `Range`：浏览器 seek 时只回 206 那一段；不把整段代理反复送给播放器。
+- 只认 `loomina://` 与 `s3://`；`data:` 先迁库，远端受控下载另算。
+- 预演「540p 代理」开关只在当前镜有资产库片子时可勾；转不出来自动回原片并写明。代理不进 IR、不算资产、不参与导出，删目录即失效并按需重建。
+- WebGPU（E7.3）仍按 ADR-0127 暂缓；代理预生成、容量上限等真实项目出现磁盘压力再设计。
+
+**产物**
+- `apps/web/lib/preview-proxy.ts`、`apps/web/lib/preview-proxy.test.ts`、`apps/web/app/api/preview/proxy/route.ts`、`apps/web/components/animatic.tsx`
+- `docs/adr/0153-preview-proxy-video.md`、`docs/FEATURES.md`、`docs/ROADMAP.md`、`docs/DISCUSSIONS.md`
+
+**验证**
+- 6 条纯函数用例（地址校验、缓存名、Range、请求解析、ffmpeg 参数）通过。
+- 浏览器：把一段 1080×1920 测试视频贴到一镜并迁进资产库，预演勾「540p 代理」后 `<video>` 播 `/api/preview/proxy?...`，`videoWidth/Height = 540/960`、readyState 4、网络回 206；ffprobe 确认缓存是 h264 540×960 24fps。验证后已用历史「回到这里」恢复示例项目。
