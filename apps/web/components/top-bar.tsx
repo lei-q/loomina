@@ -270,6 +270,12 @@ export function TopBar({
           {mode === "guided" ? "自由工作台" : "回到阶段式"}
         </button>
         <Link
+          href="/assets"
+          className="text-[10px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
+        >
+          素材库
+        </Link>
+        <Link
           href="/settings"
           className="text-[10px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
         >

@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { rebuild, type Project, type ProjectEvent } from "@loomina/ir";
-import { inventoryOf, inlineBytesOf, referencedAssetIds, referencedUris } from "./asset-inventory";
+import {
+  assetUsageLabels,
+  filterLibrary,
+  inventoryOf,
+  inlineBytesOf,
+  libraryOf,
+  referencedAssetIds,
+  referencedUris,
+} from "./asset-inventory";
 
 const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 const HASH = "d".repeat(64);
@@ -198,5 +206,64 @@ describe("对象存储里的素材（H3 / s3://）", () => {
       createdAt: "2026-11-11T00:00:00Z",
     });
     expect(referencedUris(project)).toContain("s3://loomina-assets/assets/ab/abcd.png");
+  });
+});
+
+describe("资产库视图（F4）", () => {
+  it("每一条资产被谁用着，说清位置", () => {
+    const project = withAssets(base());
+    const labels = assetUsageLabels(project);
+    expect(labels.get("a-sheet")).toEqual(["定妆「林」正面"]);
+    expect(labels.get("a-ref")).toEqual(["参考图「林」"]);
+    expect(labels.get("a-master")).toEqual(["主镜「走廊」"]);
+    expect(labels.get("a-frame")).toEqual(["第 1 镜 首帧"]);
+    expect(labels.get("a-voice")).toEqual(["配音「走」"]);
+    expect(labels.has("a-orphan")).toBe(false);
+  });
+
+  it("画面轨上的 take 标出「在成片里」", () => {
+    const project = withAssets(base());
+    project.takes = [
+      { id: "t1", shotId: "s1", assetId: "a-video", provenance: { modelId: "m", referenceAssetIds: [], createdAt: "2026-11-11T00:00:00Z" }, status: "approved", costCny: 0 },
+    ];
+    project.timeline.items = [
+      { id: "tl1", shotId: "s1", takeId: "t1", startMs: 0, durationMs: 3000 },
+    ];
+    const labels = assetUsageLabels(project);
+    expect(labels.get("a-video")).toEqual(["第 1 镜 take（在成片里）"]);
+  });
+
+  it("汇总：按 kind / 来源分，日志里与库里的字节分开算", () => {
+    const project = withAssets(base());
+    const files = new Map([[`loomina://assets/${HASH}.png`, 2048]]);
+    const library = libraryOf(project, files);
+    expect(library.total).toBe(6);
+    expect(library.used).toBe(5);
+    expect(library.unused).toBe(1);
+    expect(library.inlineBytes).toBe(70 * 4);
+    expect(library.storeBytes).toBe(2048);
+    expect(library.byKind.find((entry) => entry.kind === "image")).toMatchObject({
+      count: 5,
+    });
+    expect(library.bySource).toContainEqual({ source: "upload", count: 1 });
+  });
+
+  it("文件缺失：地址说在库里，但清单里没有它", () => {
+    const project = withAssets(base());
+    const files = new Map<string, number>();
+    const library = libraryOf(project, files);
+    expect(library.missing).toBe(1);
+    expect(library.rows.find((row) => row.assetId === "a-ref")?.fileMissing).toBe(true);
+    // 没给清单时不判缺失：读不到不等于文件没了
+    expect(libraryOf(project).missing).toBe(0);
+  });
+
+  it("按条件筛：在用 / 没人用 / 文件缺失", () => {
+    const project = withAssets(base());
+    const library = libraryOf(project, new Map());
+    expect(filterLibrary(library.rows, "used").map((row) => row.assetId)).not.toContain("a-orphan");
+    expect(filterLibrary(library.rows, "unused").map((row) => row.assetId)).toEqual(["a-orphan"]);
+    expect(filterLibrary(library.rows, "missing").map((row) => row.assetId)).toEqual(["a-ref"]);
+    expect(filterLibrary(library.rows, "all")).toHaveLength(6);
   });
 });

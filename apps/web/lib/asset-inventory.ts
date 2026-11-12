@@ -118,3 +118,197 @@ export function referencedUris(project: Project): string[] {
     )
     .map((asset) => asset.uri!);
 }
+
+// ── 资产库页面（F4）────────────────────────────────────────────
+
+/** 资产库页面按什么筛 */
+export type AssetFilter = "all" | "used" | "unused" | "missing";
+
+/** 页面上一行资产 */
+export type LibraryRow = {
+  assetId: string;
+  kind: "image" | "video" | "audio";
+  /** 生成 / 上传 / 素材库 / 导入 */
+  source: string;
+  /** 在日志里 / 本机库 / 对象存储 / 没地址 */
+  placement: AssetUsage["placement"];
+  /** 被谁用：人话标签，按出现顺序 */
+  usedBy: string[];
+  /** 地址；没地址就是 undefined */
+  uri?: string;
+  /** 日志里那份 base64 的字节数 */
+  inlineBytes: number;
+  /** 资产库里的文件字节数；没读到就是 undefined */
+  storeBytes?: number;
+  /** 文件在不在：本机库 / 对象存储里的地址，但磁盘上找不到 */
+  fileMissing: boolean;
+  costCny?: number;
+  createdAt: string;
+};
+
+export type LibraryView = {
+  rows: LibraryRow[];
+  total: number;
+  used: number;
+  unused: number;
+  missing: number;
+  /** 日志里 base64 的总字节 */
+  inlineBytes: number;
+  /** 资产库里文件的总字节（读得到的部分） */
+  storeBytes: number;
+  /** 按 kind 分：各几个、各多少字节 */
+  byKind: { kind: LibraryRow["kind"]; count: number; bytes: number }[];
+  /** 按来源分 */
+  bySource: { source: string; count: number }[];
+};
+
+/**
+ * 每一条资产被谁用着（F4）。
+ *
+ * 与 `referencedAssetIds` 同一套引用点，但这里要说出**用在哪**——
+ * 「没人引用」和「被第 3 镜的首帧用着」在清理时是完全不同的两件事。
+ */
+export function assetUsageLabels(project: Project): Map<string, string[]> {
+  const labels = new Map<string, string[]>();
+  const add = (assetId: string | undefined, label: string) => {
+    if (!assetId) return;
+    const list = labels.get(assetId);
+    if (list) {
+      if (!list.includes(label)) list.push(label);
+    } else {
+      labels.set(assetId, [label]);
+    }
+  };
+
+  const shotNo = new Map<string, number>();
+  project.shots.forEach((shot, index) => shotNo.set(shot.id, index + 1));
+  const takeById = new Map(project.takes.map((take) => [take.id, take]));
+
+  for (const character of project.characters) {
+    for (const [slot, id] of Object.entries(character.sheet)) {
+      add(id, `定妆「${character.name}」${SHEET_SLOT_CN[slot] ?? slot}`);
+    }
+    for (const id of character.referenceImages) add(id, `参考图「${character.name}」`);
+  }
+  for (const location of project.locations) {
+    if (location.masterShotId) add(location.masterShotId, `主镜「${location.name}」`);
+    for (const id of location.referenceImages) add(id, `参考图「${location.name}」`);
+  }
+  for (const prop of project.props) {
+    for (const id of prop.referenceImages) add(id, `参考图「${prop.name}」`);
+  }
+  for (const shot of project.shots) {
+    const no = shotNo.get(shot.id) ?? 0;
+    if (shot.keyframes.firstAssetId) add(shot.keyframes.firstAssetId, `第 ${no} 镜 首帧`);
+    if (shot.keyframes.lastAssetId) add(shot.keyframes.lastAssetId, `第 ${no} 镜 尾帧`);
+  }
+  for (const take of project.takes) {
+    const no = shotNo.get(take.shotId) ?? 0;
+    add(take.assetId, `第 ${no} 镜 take`);
+  }
+  for (const line of project.dialogue) {
+    add(line.audioAssetId, `配音「${line.text.slice(0, 10)}${line.text.length > 10 ? "…" : ""}」`);
+  }
+  for (const cue of project.timeline.music) add(cue.assetId, `配乐「${cue.title}」`);
+  for (const pack of project.publishPackages) {
+    if (pack.videoAssetId) add(pack.videoAssetId, `发布包「${pack.platform}」`);
+  }
+  // 画面轨上真正被排进成片的 take：单独标出来，比「某镜 take」更准
+  for (const item of project.timeline.items) {
+    const take = takeById.get(item.takeId);
+    if (!take) continue;
+    const list = labels.get(take.assetId);
+    if (!list) continue;
+    const index = list.findIndex((label) => label.includes("take"));
+    if (index >= 0) list[index] = `${list[index]!}（在成片里）`;
+  }
+  return labels;
+}
+
+const SHEET_SLOT_CN: Record<string, string> = {
+  front: "正面",
+  threeQuarter: "四分之三",
+  side: "侧面",
+  back: "背面",
+};
+
+/**
+ * 资产库视图（F4）。
+ *
+ * `storeFiles` 是本机资产库 / 对象存储的清单（地址 → 字节数），由页面去取：
+ * 这里只做纯计算，不读盘、不发请求。给了清单就能算出「文件在不在」。
+ */
+export function libraryOf(
+  project: Project,
+  storeFiles?: Map<string, number>,
+): LibraryView {
+  const labels = assetUsageLabels(project);
+  const rows: LibraryRow[] = project.assets.map((asset) => {
+    const placement = !asset.uri
+      ? "none"
+      : isStoredAssetUri(asset.uri)
+        ? "store"
+        : asset.uri.startsWith(S3_PREFIX)
+          ? "remote"
+          : asset.uri.startsWith("data:")
+            ? "inline"
+            : "none";
+    const usedBy = labels.get(asset.id) ?? [];
+    const storeBytes =
+      storeFiles && asset.uri ? storeFiles.get(asset.uri) : undefined;
+    // 文件缺失：地址说在库里 / 对象存储里，但清单里没有它
+    const fileMissing =
+      Boolean(storeFiles) &&
+      (placement === "store" || placement === "remote") &&
+      storeBytes === undefined;
+    return {
+      assetId: asset.id,
+      kind: asset.kind === "video" || asset.kind === "audio" ? asset.kind : "image",
+      source: asset.source,
+      placement,
+      usedBy,
+      ...(asset.uri ? { uri: asset.uri } : {}),
+      inlineBytes: placement === "inline" ? inlineBytesOf(asset.uri) : 0,
+      ...(storeBytes !== undefined ? { storeBytes } : {}),
+      fileMissing,
+      ...(asset.costCny !== undefined ? { costCny: asset.costCny } : {}),
+      createdAt: asset.createdAt,
+    };
+  });
+
+  const kinds: LibraryRow["kind"][] = ["image", "video", "audio"];
+  return {
+    rows,
+    total: rows.length,
+    used: rows.filter((row) => row.usedBy.length > 0).length,
+    unused: rows.filter((row) => row.usedBy.length === 0).length,
+    missing: rows.filter((row) => row.fileMissing).length,
+    inlineBytes: rows.reduce((sum, row) => sum + row.inlineBytes, 0),
+    storeBytes: rows.reduce((sum, row) => sum + (row.storeBytes ?? 0), 0),
+    byKind: kinds.map((kind) => ({
+      kind,
+      count: rows.filter((row) => row.kind === kind).length,
+      bytes: rows
+        .filter((row) => row.kind === kind)
+        .reduce((sum, row) => sum + row.inlineBytes + (row.storeBytes ?? 0), 0),
+    })),
+    bySource: [...new Set(rows.map((row) => row.source))].map((source) => ({
+      source,
+      count: rows.filter((row) => row.source === source).length,
+    })),
+  };
+}
+
+/** 按筛选条件取行（F4）：筛的是「用没用」「文件在不在」 */
+export function filterLibrary(rows: LibraryRow[], filter: AssetFilter): LibraryRow[] {
+  switch (filter) {
+    case "used":
+      return rows.filter((row) => row.usedBy.length > 0);
+    case "unused":
+      return rows.filter((row) => row.usedBy.length === 0);
+    case "missing":
+      return rows.filter((row) => row.fileMissing);
+    default:
+      return rows;
+  }
+}
