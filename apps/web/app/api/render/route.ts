@@ -408,6 +408,9 @@ function buildCommand(
     `title=${manifest.title}`,
     "-metadata",
     `comment=${manifest.aiLabel.standard}`,
+    // 隐式标识（H5 / ADR-0138）：容器里也写一份指纹，拿到文件的人能核对
+    "-metadata",
+    `description=${manifest.aiLabel.standard} · 内容指纹 ${manifest.aiLabel.contentHash}`,
     outFile,
   );
   return args;

@@ -14,6 +14,7 @@ import {
   storedAssetRef,
 } from "./asset-uri";
 import { scanText, type RenderCompliance } from "./compliance";
+import { aiContentHashOf, materialOfManifest } from "./ai-label";
 
 /** 输出档位（H13）：草稿先看节奏，定稿才交付。 */
 export type RenderQuality = "draft" | "final";
@@ -122,7 +123,17 @@ export type RenderManifest = {
   overlays: RenderOverlay[];
   audio: RenderAudio[];
   music: RenderMusic[];
-  aiLabel: { explicit: true; implicit: true; standard: "AI生成" };
+  /**
+   * AI 标识（H5 / ADR-0138）：显式与隐式必须同时为真，
+   * `contentHash` 是这一版剪辑的指纹，服务端会重算一遍再比对。
+   */
+  aiLabel: {
+    explicit: true;
+    implicit: true;
+    standard: "AI生成";
+    version: 1;
+    contentHash: string;
+  };
   /** 成片页的合规预检证据（G8）；服务端会再扫一遍清单文案 */
   compliance: RenderCompliance;
 };
@@ -457,6 +468,20 @@ export function validateRenderManifest(
   if (!aiLabel || aiLabel.explicit !== true || aiLabel.implicit !== true) {
     return { ok: false, error: "缺少 AI 标注" };
   }
+  if (
+    aiLabel.version !== 1 ||
+    typeof aiLabel.contentHash !== "string" ||
+    !/^[0-9a-f]{8}$/.test(aiLabel.contentHash)
+  ) {
+    return { ok: false, error: "AI 标注缺少内容指纹：回成片页重新导出" };
+  }
+
+  // 隐式标识要和这一份清单真的对得上：指纹按清单重算，改过素材或时长却没
+  // 更新指纹的请求直接拒绝（H5 / ADR-0138）。占位图是服务端画的，不参与取材。
+  const expectedHash = aiContentHashOf(materialOfManifest({ title: raw.title.trim(), totalMs: raw.totalMs, clips: checkedClips }));
+  if (aiLabel.contentHash !== expectedHash) {
+    return { ok: false, error: "AI 标注的内容指纹与清单对不上：回成片页重新导出" };
+  }
 
   // 合规证据：必须来自成片页的预检，不能在清单里塞个空对象蒙混
   const complianceRaw =
@@ -512,6 +537,8 @@ export function validateRenderManifest(
         explicit: true,
         implicit: true,
         standard: "AI生成",
+        version: 1,
+        contentHash: expectedHash,
       },
       compliance: {
         ok: true,

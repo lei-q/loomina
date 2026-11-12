@@ -267,19 +267,29 @@ describe("导出（E6 / D3 / G1）", () => {
     const html = buildPreviewHtml(toEditView(sampleProject), "default");
     expect(html).toContain('<meta name="ai-generated" content="true">');
     expect(html).toContain('<meta name="ai-label-standard" content="AI生成">');
+    expect(html).toContain('<meta name="ai-label-content-hash"');
     expect(html).toContain('aria-label="AI 生成内容标识"');
     expect(html).toContain(">AI 生成</div>");
   });
 
-  it("OTIO 元数据也带 AI 标注（H5）", () => {
+  it("预览的角标按目标平台摆：抖音在左上角，通用在右下角（H5）", () => {
+    const douyin = buildPreviewHtml(toEditView(sampleProject), "default", "douyin");
+    expect(douyin).toContain('<meta name="ai-label-badge" content="tl">');
+    expect(douyin).toContain("top:8%; left:8%");
+    expect(douyin).toContain('data-corner="tl"');
+
+    const generic = buildPreviewHtml(toEditView(sampleProject), "default", "generic");
+    expect(generic).toContain('<meta name="ai-label-badge" content="br">');
+    expect(generic).toContain("bottom:8%; right:8%");
+  });
+
+  it("OTIO 元数据也带 AI 标注与内容指纹（H5）", () => {
     const otio = buildOtio(toEditView(sampleProject)) as {
-      metadata: { loom: { aiLabel: unknown } };
+      metadata: { loom: { aiLabel: { explicit: boolean; implicit: boolean; standard: string; version: number; contentHash: string } } };
     };
-    expect(otio.metadata.loom.aiLabel).toEqual({
-      explicit: true,
-      implicit: true,
-      standard: "AI生成",
-    });
+    const label = otio.metadata.loom.aiLabel;
+    expect(label).toMatchObject({ explicit: true, implicit: true, standard: "AI生成", version: 1 });
+    expect(label.contentHash).toMatch(/^[0-9a-f]{8}$/);
   });
 
   it("发布包带 AI 标注、字幕与未完成项；视频位如实为空", () => {

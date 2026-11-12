@@ -21,6 +21,18 @@ export type PlatformId =
   | "x"
   | "generic";
 
+/** 角标能放的四个角 */
+export type BadgeCorner = "br" | "bl" | "tr" | "tl";
+
+export type BadgePlacement = {
+  corner: BadgeCorner;
+  /** 离边的距离（画面宽 / 高的百分比）：落在安全区之内 */
+  insetPct: number;
+};
+
+/** 平台没给位置时的默认：右下角，与 ADR-0090 最初的写法一致 */
+export const DEFAULT_BADGE: BadgePlacement = { corner: "br", insetPct: 4 };
+
 export type PlatformSpec = {
   id: PlatformId;
   name: string;
@@ -40,6 +52,17 @@ export type PlatformSpec = {
   bitrateMbps?: [number, number];
   subtitleMode: "burn-in" | "sidecar" | "both";
   publishMode: "api" | "share" | "export-only";
+  /**
+   * AI 标识角标摆在哪（H5 / ADR-0138）。
+   *
+   * 显式标识必须看得见，而平台的互动栏会盖住画面的一角：抖音 / 快手的右侧是
+   * 点赞评论栏、底部是文案与音乐，右下角恰恰是最容易被遮住的地方。
+   * 所以按平台把角标挪到相对空的一角，而不是固定写死。
+   *
+   * 这些位置是按各平台常见布局定的，平台改版就会失效，所以每一份规格都把
+   * 「角标位置」列进 `reference`：它只提示，不是硬校验。
+   */
+  badge?: BadgePlacement;
   /** 哪些字段没逐条复核：界面要标出来 */
   reference: string[];
   note: string;
@@ -60,7 +83,8 @@ export const PLATFORM_SPECS: PlatformSpec[] = [
     bitrateMbps: [2, 8],
     subtitleMode: "burn-in",
     publishMode: "api",
-    reference: ["标题字数", "话题数量", "码率", "封面"],
+    badge: { corner: "tl", insetPct: 8 },
+    reference: ["标题字数", "话题数量", "码率", "封面", "AI 角标位置"],
     note: "开放平台发布需企业资质与审核；没有资质时走导出包手动发。",
   },
   {
@@ -77,7 +101,8 @@ export const PLATFORM_SPECS: PlatformSpec[] = [
     bitrateMbps: [2, 8],
     subtitleMode: "burn-in",
     publishMode: "api",
-    reference: ["时长上限", "标题字数", "话题数量", "码率", "封面"],
+    badge: { corner: "tl", insetPct: 8 },
+    reference: ["时长上限", "标题字数", "话题数量", "码率", "封面", "AI 角标位置"],
     note: "开放平台能力与资质要求以快手最新文档为准。",
   },
   {
@@ -93,7 +118,8 @@ export const PLATFORM_SPECS: PlatformSpec[] = [
     hashtagMax: 10,
     subtitleMode: "burn-in",
     publishMode: "share",
-    reference: ["时长", "标题字数", "话题数量", "码率", "封面"],
+    badge: { corner: "tl", insetPct: 8 },
+    reference: ["时长", "标题字数", "话题数量", "码率", "封面", "AI 角标位置"],
     note: "没有公开的发布 API；只做导出包与系统分享，不做逆向。",
   },
   {
@@ -109,7 +135,8 @@ export const PLATFORM_SPECS: PlatformSpec[] = [
     hashtagMax: 10,
     subtitleMode: "burn-in",
     publishMode: "api",
-    reference: ["时长", "标题字数", "话题数量", "码率", "封面"],
+    badge: { corner: "tl", insetPct: 8 },
+    reference: ["时长", "标题字数", "话题数量", "码率", "封面", "AI 角标位置"],
     note: "9:16 竖屏可投；横版需要另出 16:9，本片不自动转画幅。",
   },
   {
@@ -125,7 +152,8 @@ export const PLATFORM_SPECS: PlatformSpec[] = [
     hashtagMax: 10,
     subtitleMode: "burn-in",
     publishMode: "share",
-    reference: ["时长", "标题字数", "话题数量", "码率", "封面"],
+    badge: { corner: "tl", insetPct: 8 },
+    reference: ["时长", "标题字数", "话题数量", "码率", "封面", "AI 角标位置"],
     note: "无公开发布 API：导出后走微信分享。",
   },
   {
@@ -142,7 +170,8 @@ export const PLATFORM_SPECS: PlatformSpec[] = [
     bitrateMbps: [2, 8],
     subtitleMode: "burn-in",
     publishMode: "api",
-    reference: ["时长（按地区）", "标题字数", "话题数量", "码率", "封面"],
+    badge: { corner: "tl", insetPct: 8 },
+    reference: ["时长（按地区）", "标题字数", "话题数量", "码率", "封面", "AI 角标位置"],
     note: "Content Posting API 需审核；时长上限按地区不同，这里不设硬上限。",
   },
   {
@@ -158,7 +187,8 @@ export const PLATFORM_SPECS: PlatformSpec[] = [
     hashtagMax: 15,
     subtitleMode: "burn-in",
     publishMode: "api",
-    reference: ["标题字数", "话题数量", "码率", "封面"],
+    badge: { corner: "tl", insetPct: 8 },
+    reference: ["标题字数", "话题数量", "码率", "封面", "AI 角标位置"],
     note: "Shorts 上限按 3 分钟校验；Data API 配额有限。",
   },
   {
@@ -174,7 +204,8 @@ export const PLATFORM_SPECS: PlatformSpec[] = [
     hashtagMax: 10,
     subtitleMode: "burn-in",
     publishMode: "api",
-    reference: ["时长（账号等级）", "标题字数", "话题数量", "码率", "封面"],
+    badge: { corner: "tr", insetPct: 8 },
+    reference: ["时长（账号等级）", "标题字数", "话题数量", "码率", "封面", "AI 角标位置"],
     note: "普通账号按 2:20 上限校验；付费账号上限更高，不在这里区分。",
   },
   {
@@ -188,6 +219,7 @@ export const PLATFORM_SPECS: PlatformSpec[] = [
     coverRatio: "9:16",
     subtitleMode: "burn-in",
     publishMode: "export-only",
+    badge: { corner: "br", insetPct: 8 },
     reference: ["所有平台字段"],
     note: "只做本机导出与自检，不冒充任何平台的正式规格。",
   },

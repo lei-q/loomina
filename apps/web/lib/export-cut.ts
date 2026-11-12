@@ -1,6 +1,14 @@
 import type { AILabel } from "@loomina/ir";
 import type { RenderCompliance } from "./compliance";
 import {
+  AI_LABEL,
+  aiLabelRecordFor,
+  badgeOffsets,
+  badgePlacementOf,
+  type AiLabelRecord,
+  type BadgePlacement,
+} from "./ai-label";
+import {
   PLATFORM_SPEC_VERSION,
   platformSpecOf,
   validatePlatform,
@@ -14,18 +22,6 @@ import {
   type SubtitleStyle,
   type SubtitleStyleId,
 } from "./edit";
-
-/**
- * AI 标注（ADR-0008）：显式与隐式都要有。
- *
- * 写死在导出这一层，而不是等用户勾选：准则要求发布包里一定有标注，
- * 忘了勾选不该变成「没标」。
- */
-const AI_LABEL: AILabel = {
-  explicit: true,
-  implicit: true,
-  standard: "AI生成",
-};
 
 // 导出（E6 / D2 / D3 / G1，ADR-0086 / ADR-0087）
 //
@@ -232,7 +228,7 @@ export function buildOtio(view: EditView): object {
       loom: {
         version: view.version,
         totalMs: view.totalMs,
-        aiLabel: AI_LABEL,
+        aiLabel: aiLabelRecordFor(view),
         exportedAt: new Date().toISOString(),
       },
     },
@@ -286,8 +282,15 @@ export function previewClips(view: EditView): PreviewClip[] {
 export function buildPreviewHtml(
   view: EditView,
   styleId: SubtitleStyleId | SubtitleStyle = view.subtitleStyle,
+  platform: PlatformId = "generic",
 ): string {
   const style = resolveSubtitleStyle(styleId);
+  const placement = badgePlacementOf(platform);
+  const offsets = badgeOffsets(placement);
+  const badgePosition = Object.entries(offsets)
+    .map(([side, value]) => `${side}:${value}`)
+    .join("; ");
+  const record = aiLabelRecordFor(view);
   const data = {
     title: view.title,
     totalMs: view.totalMs,
@@ -301,6 +304,9 @@ export function buildPreviewHtml(
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="ai-generated" content="true">
 <meta name="ai-label-standard" content="${AI_LABEL.standard}">
+<meta name="ai-label-version" content="${record.version}">
+<meta name="ai-label-content-hash" content="${record.contentHash}">
+<meta name="ai-label-badge" content="${placement.corner}">
 <title>${escapeHtml(view.title)} · 预览</title>
 <style>
 :root { color-scheme: dark; --bg:#0C0C0D; --surface:#131316; --line:#2B2B2F; --text:#F2F2EF; --muted:#7B7C7F; --pick:#E0442E; }
@@ -317,7 +323,7 @@ header span { color:var(--muted); font-size:11px; font-variant-numeric:tabular-n
 .stage .safe { position:absolute; inset:${SAFE_AREA.topPct}% ${SAFE_AREA.sidePct}% ${SAFE_AREA.bottomPct}%; border:1px dashed rgba(242,242,239,.12); display:none; pointer-events:none; }
 .stage.show-safe .safe { display:block; }
 .subtitle { position:absolute; left:${SAFE_AREA.sidePct}%; right:${SAFE_AREA.sidePct}%; bottom:${style.bottomPct}%; text-align:center; font-size:${style.fontSizeCqw}cqw; line-height:1.38; font-weight:600; color:#fff; text-shadow:0 0 ${style.strokeCqw}cqw #000, 0 0 ${style.strokeCqw}cqw #000, 0 ${style.strokeCqw * 0.5}cqw ${style.strokeCqw * 1.2}cqw #000; letter-spacing:.02em; }
-.ai-badge { position:absolute; right:8px; bottom:8px; z-index:3; padding:3px 6px; border:1px solid rgba(255,255,255,.16); background:rgba(0,0,0,.58); color:rgba(255,255,255,.82); font-size:10px; line-height:1.2; letter-spacing:.08em; pointer-events:none; }
+.ai-badge { position:absolute; ${badgePosition}; z-index:3; padding:3px 6px; border:1px solid rgba(255,255,255,.16); background:rgba(0,0,0,.58); color:rgba(255,255,255,.82); font-size:10px; line-height:1.2; letter-spacing:.08em; pointer-events:none; }
 .controls { width:100%; max-width:420px; display:flex; flex-direction:column; gap:10px; }
 .row { display:flex; align-items:center; gap:10px; }
 button { background:var(--surface); color:var(--text); border:1px solid var(--line); font:inherit; font-size:12px; padding:7px 14px; cursor:pointer; }
@@ -339,7 +345,7 @@ input[type=range] { flex:1; accent-color:var(--pick); }
   <div class="placeholder" id="placeholder">这一镜还没有画面</div>
   <div class="safe"></div>
   <div class="subtitle" id="subtitle"></div>
-  <div class="ai-badge" aria-label="AI 生成内容标识">AI 生成</div>
+  <div class="ai-badge" aria-label="AI 生成内容标识" data-corner="${placement.corner}">AI 生成</div>
 </div>
 <div class="controls">
   <div class="row"><span class="time" id="clock">00:00.0</span><input id="seek" type="range" min="0" max="${view.totalMs}" value="0" aria-label="进度"><span class="time" id="total">${seconds(view.totalMs)}s</span></div>
@@ -507,6 +513,10 @@ export type PublishPackage = {
     licenseRef: string;
   }[];
   aiLabel: AILabel;
+  /** 这一版剪辑的内容指纹与角标位置（H5）：标识记录随发布包一起走 */
+  aiLabelRecord?: AiLabelRecord;
+  /** 角标实际摆在哪个角、离边多远；平台改版时这里能看出按哪版摆的 */
+  aiLabelBadge?: BadgePlacement;
   /** 导出前的合规预检指纹与确认状态 */
   compliance?: RenderCompliance;
   subtitleStyle: SubtitleStyleId;
@@ -584,6 +594,8 @@ export function buildPublishPackage(
       licenseRef: cue.licenseRef,
     })),
     aiLabel: AI_LABEL,
+    aiLabelRecord: aiLabelRecordFor(view),
+    aiLabelBadge: badgePlacementOf(platform),
     ...(options.compliance ? { compliance: options.compliance } : {}),
     subtitleStyle: options.style,
     subtitleLayout: {

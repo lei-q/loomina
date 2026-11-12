@@ -1195,6 +1195,15 @@ describe("发布记录（G1 / ADR-0102）", () => {
     expect(state().recordPublish({ platform: "douyin", renderMs: -1 })).toBe(true);
     expect(state().project.publishPackages.at(-1)?.renderMs).toBeUndefined();
   });
+
+  it("内容指纹随发布记录落进 IR（H5）：标识与这一版剪辑绑在一起", () => {
+    expect(state().recordPublish({ platform: "douyin", contentHash: "1a2b3c4d" })).toBe(true);
+    expect(state().project.publishPackages.at(-1)?.aiLabel?.contentHash).toBe("1a2b3c4d");
+    expect(rebuild(state().events).publishPackages.at(-1)?.aiLabel?.contentHash).toBe("1a2b3c4d");
+    // 格式不对就当没给；不写坏数据，也不让整条记录失败
+    expect(state().recordPublish({ platform: "douyin", contentHash: "XYZ" })).toBe(false);
+    expect(state().project.publishPackages.at(-1)?.aiLabel?.contentHash).toBe("1a2b3c4d");
+  });
 });
 
 describe("重置为示例项目（H18）", () => {

@@ -10,6 +10,7 @@
  */
 
 import type { Project } from "@loomina/ir";
+import { badgeCornerLabel, badgePlacementOf } from "./ai-label";
 import { fnv1a } from "./fnv";
 import { platformCheckDetail, platformSpecOf, validatePlatform, type PlatformId } from "./platforms";
 import { reviewSummaryOf } from "./asset-review";
@@ -407,11 +408,12 @@ export function preflightProject(
           : `${COMPLIANCE_RULE_COUNT} 条规则扫过标题、故事、角色、场景、分镜、台词与发布文案，没有命中`,
   };
 
+  const badge = badgePlacementOf(options.platform ?? "douyin");
   const aiLabel: ComplianceCheck = {
     id: "ai-label",
     label: "AI 标识",
     status: "pass",
-    detail: "画面右下角「AI 生成」角标 + HTML / OTIO 元数据 + 发布包 aiLabel",
+    detail: `${badgeCornerLabel(badge.corner)}「AI 生成」角标（离边 ${badge.insetPct}%）+ HTML / OTIO 元数据 + 发布包 aiLabel（含内容指纹）`,
   };
 
   const rights = rightsCheck(project);

@@ -241,6 +241,8 @@ type WorkbenchState = {
     videoAssetId?: string;
     /** 这一次渲染花了多少毫秒（H4）：本机渲染不按文件收费，但机器时间是成本 */
     renderMs?: number;
+    /** 这一版剪辑的内容指纹（H5）：写进发布包的 aiLabel，标识与内容绑在一起 */
+    contentHash?: string;
   }) => boolean;
   /**
    * 确认一个阶段（F8 / F9）：按当前内容算签名，写一条 `gate.confirmed`。
@@ -1193,6 +1195,10 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     if (input.bytes !== undefined && (!Number.isInteger(input.bytes) || input.bytes < 0)) {
       return false;
     }
+    // 指纹不是安全哈希，但格式必须对：写坏了下游读不出来（H5）
+    if (input.contentHash !== undefined && !/^[0-9a-f]{8}$/.test(input.contentHash)) {
+      return false;
+    }
     const { project, events } = get();
     const recordedAt = stamp();
     // id 只要在这一份项目里唯一即可：时间 + 随机后缀，便于日志里认人
@@ -1208,7 +1214,12 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
         ? { renderMs: Math.round(input.renderMs) }
         : {}),
       recordedAt,
-      aiLabel: { explicit: true, implicit: true, standard: "AI生成" },
+      aiLabel: {
+        explicit: true,
+        implicit: true,
+        standard: "AI生成",
+        ...(input.contentHash ? { contentHash: input.contentHash } : {}),
+      },
     };
 
     const event: ProjectEvent = { type: "publish.recorded", at: recordedAt, package: pack };

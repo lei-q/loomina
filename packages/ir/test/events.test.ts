@@ -306,6 +306,29 @@ describe("publish.recorded（G1 / ADR-0102）", () => {
         .publishPackages.at(-1)?.renderMs,
     ).toBeUndefined();
   });
+
+  it("内容指纹随 AI 标识落进 IR（H5），旧记录缺它照样合法", () => {
+    const next = applyEvent(load(), {
+      type: "publish.recorded",
+      at: AT,
+      package: {
+        ...pack,
+        aiLabel: { explicit: true, implicit: true, standard: "AI生成", contentHash: "1a2b3c4d" },
+      },
+    });
+    expect(next.publishPackages.at(-1)?.aiLabel?.contentHash).toBe("1a2b3c4d");
+    // 不是 8 位十六进制的指纹是坏数据
+    expect(() =>
+      applyEvent(load(), {
+        type: "publish.recorded",
+        at: AT,
+        package: {
+          ...pack,
+          aiLabel: { explicit: true, implicit: true, standard: "AI生成", contentHash: "nope" },
+        },
+      }),
+    ).toThrow();
+  });
 });
 
 describe("Provenance 的用量与金额（H4）", () => {

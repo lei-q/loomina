@@ -674,6 +674,17 @@ export const AILabelSchema = z.object({
   explicit: z.boolean(),
   implicit: z.boolean(),
   standard: z.string().optional(),
+  /**
+   * 这一份产物的内容指纹（H5 / ADR-0138）：8 位十六进制。
+   *
+   * 只有一句「AI生成」的话，把它抄到别的视频上也没人发现；指纹把标识与
+   * 具体那一版剪辑绑在一起。它不是安全哈希，也不防篡改——只证明「这份标识
+   * 属于这份产物」。可选：历史发布包没有它，读旧日志不能报错。
+   */
+  contentHash: z
+    .string()
+    .regex(/^[0-9a-f]{8}$/)
+    .optional(),
 });
 export type AILabel = z.infer<typeof AILabelSchema>;
 

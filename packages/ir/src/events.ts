@@ -1655,6 +1655,10 @@ function applyEventCore(
       if (!pack.aiLabel?.explicit || !pack.aiLabel?.implicit) {
         throw new Error(`发布包 ${pack.id} 缺少显式 / 隐式 AI 标识`);
       }
+      // 内容指纹（H5）：可选（旧记录没有），但给了就必须是 8 位十六进制
+      if (pack.aiLabel.contentHash !== undefined && !/^[0-9a-f]{8}$/.test(pack.aiLabel.contentHash)) {
+        throw new Error(`发布包 ${pack.id} 的 AI 内容指纹格式不合法: ${pack.aiLabel.contentHash}`);
+      }
       if (
         pack.bytes !== undefined &&
         (!Number.isInteger(pack.bytes) || pack.bytes < 0)

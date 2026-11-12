@@ -4300,3 +4300,35 @@ H4 的「未做」还剩四条：文本 / 配音单价、本机渲染计价、�
 
 **边界**
 - 自动从供应商拉单价、「生成过但没开工」的草稿记账、本机渲染折价、多设备汇总、按时间 / 按月筛选仍未做。
+
+## 第一百五十二次 · 2026-11-12 · H5 AI 标识补全：角标按平台摆、标识带内容指纹
+
+**参与者**：用户 + Claude
+
+**议题**
+ADR-0090 落地时留了两条跟进：按平台安全区调整角标位置、做强隐式标识。H5 这才算完。
+
+**结论**
+- **角标位置是平台事实，不是用户选项。** `PlatformSpec.badge = { corner, insetPct }`。竖屏信息流平台统一左上、`insetPct: 8`——右侧是点赞 / 评论 / 分享栏，底部是文案与进度条，左上相对最空；8% 与 `SAFE_AREA.topPct` 对齐，不会被状态栏或平台顶栏吃掉。X 右上，通用规格回右下（A 类导出没有平台 UI，保持 ADR-0090 原样）。没写位置的平台退回 `DEFAULT_BADGE`（右下 4%），不抛错。
+- **三处渲染、一张表。** 预览 HTML 的 `.ai-badge`、成片页播放器角标、MP4 canvas 叠加层都读 `badgePlacementOf(platform)`。各写各的迟早漂移成三个位置。顺手修了 `badgePlacementOf` 用 `platformSpecOf` 的坑：后者对未知 id 回退 `PLATFORM_SPECS[0]`（抖音），会把角标静默挪到左上；改成显式 `find` + `DEFAULT_BADGE`。
+- **隐式标识加内容指纹。** `aiLabel` 加 `version: 1` 与 8 位十六进制 `contentHash`。取材只取决定「这份产物长什么样」的字段：标题（按清单落盘的 80 字裁切）、总长、每段时长与素材地址的 FNV-1a 摘要。**用地址摘要而不是长度**：第一版哈希地址长度，换一条 take 摘要不变（`d241f2de` == `d241f2de`），测试当场抓到。换 take / 改时长 / 增删一镜都变；只改字幕文案或配乐不变。
+- **指纹跟着产物走，四处各写一份。** 预览 HTML `<meta name="ai-label-content-hash">`、OTIO `metadata.loom.aiLabel`、发布包 `aiLabelRecord`、MP4 容器 `description=AI生成 · 内容指纹 <hash>`。每份产物的素材地址（内嵌 data URI 与否）不同，指纹因此不同——比对只对「同一份产物重算」成立，写进了代码注释。
+- **服务端重算并拒绝。** `validateRenderManifest` 按同一函数重算、与清单声明比对，不一致回 400「AI 标注的内容指纹与清单对不上：回成片页重新导出」。客户端算、服务端只信声明，等于没检查。
+- **FNV-1a 32 位，不是安全哈希。** 与阶段闸门、导出预检同一套（`fnv.ts` 已写明）。它防的是误配与顺手篡改，不是有资源的对手；防伪要密钥与验签，另一件事。
+- **指纹进 IR 但仍在导出层。** `AILabelSchema.contentHash` 可选，`publish.recorded` 校验格式；旧发布包缺它照样合法，不升 `LOG_VERSION`、不新增事件类型。`recordPublish` 从刚打的发布包带过来，发布记录因此能回答「这条发布对应哪一版剪辑」。
+
+**验证**
+- 新增 `ai-label` 11 条单测；`render-manifest` 加「带指纹且要和清单对得上」、`edit` 加平台角标定位、`workbench-store` 加指纹落 IR、IR `events` 加指纹校验与旧记录兼容；`edit` 里第一版哈希长度的 bug 由「换 take」用例抓出并修正。
+- 全部 **1173** 个测试全过（IR 205 + gateway 28 + pipeline 98 + web 842 + 4 e2e 跳过），`tsc --noEmit` 与 `next build` 干净。
+- 浏览器实测：`/edit` 默认抖音角标在左上（偏移 9px，落在 8% 安全区）；切通用回右下；合规预检写「左上角「AI 生成」角标（离边 8%）…（含内容指纹）」；预览 HTML 三处 meta 齐全。
+- 渲染路由：指纹写成 `deadbeef` 的清单回 400；按同一规则算对的 202 → done，`ffprobe` 读到 `comment=AI生成`、`description=AI生成 · 内容指纹 2b2da29a`。
+
+**产物**
+- `PlatformSpec.badge`、`DEFAULT_BADGE`、`badgeCornerLabel` / `badgePlacementOf` / `badgeOffsets`
+- `lib/ai-label.ts`（指纹与素材摘要）
+- `AILabelSchema.contentHash`、`publish.recorded` 格式校验
+- 预览 HTML / OTIO / 发布包 / MP4 元数据 / 渲染路由重算
+- ADR-0138
+
+**边界**
+- 数字水印、签名与验签、标识分级、按平台逐角实测角标位置仍未做。

@@ -52,6 +52,7 @@ import {
   type PlatformCheck,
   type PlatformId,
 } from "@/lib/platforms";
+import { badgeCornerLabel, badgePlacementOf } from "@/lib/ai-label";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
 
@@ -459,6 +460,8 @@ export function EditScreen() {
   );
   const acknowledged = report.review > 0 && ackSignature === report.signature;
   const gateOpen = report.ok && (report.review === 0 || acknowledged);
+  // 角标位置跟着目标平台走（H5）：预览、播放器与成片三处共用同一张表
+  const badgePlacement = badgePlacementOf(platform);
   const editGate = useMemo(() => stageStateOf(project, "edit"), [project]);
   const finalAllowed = editGate.gate === "confirmed";
   const profile = RENDER_PROFILES[quality];
@@ -655,7 +658,7 @@ export function EditScreen() {
     // 预览必须自包含（P20）：资产库里的素材先读回字节换成 data URI
     setNotice("正在把素材收进预览…");
     const { view: hydrated, failed } = await hydrateView(view);
-    const html = buildPreviewHtml(hydrated, style);
+    const html = buildPreviewHtml(hydrated, style, platform);
     const size = new Blob([html]).size;
     downloadFile(safeFileName(view.title, "预览.html"), html, "text/html");
     setNotice(
@@ -686,7 +689,7 @@ export function EditScreen() {
         renderComplianceOf(report, acknowledged),
         quality,
         setRenderStage,
-        { subtitles: burnSubtitles, onJob: setRenderJobId },
+        { subtitles: burnSubtitles, platform, onJob: setRenderJobId },
       );
       const mb = formatSize(result.bytes);
       const notes: string[] = [];
@@ -797,6 +800,7 @@ export function EditScreen() {
       fileName: lastRender?.fileName,
       bytes: lastRender?.bytes,
       ...(lastRender?.renderMs !== undefined ? { renderMs: lastRender.renderMs } : {}),
+      contentHash: pack.aiLabelRecord?.contentHash,
     });
     const tail = recorded ? "已记进项目的发布记录。" : "项目是只读的，这次没有记进发布记录。";
     setNotice(
@@ -956,17 +960,34 @@ export function EditScreen() {
                     </p>
                   )}
 
-                  <span className="absolute left-2 top-2 rounded-token bg-black/55 px-1.5 py-0.5 text-[8.5px] text-white/80">
+                  <span
+                    className={cn(
+                      "absolute rounded-token bg-black/55 px-1.5 py-0.5 text-[8.5px] text-white/80",
+                      // 镜号与锁定标是编辑用的，不是画面的一部分：角标占了上排就让它们下移
+                      badgePlacement.corner === "tl" ? "bottom-2 left-2" : "left-2 top-2",
+                    )}
+                  >
                     {current ? `${shotLabel(current.shotNo)} · ${current.takeNo} 版` : ""}
                   </span>
                   {current?.locked && (
-                    <span className="absolute right-2 top-2 rounded-token bg-black/55 px-1.5 py-0.5 text-[8.5px] text-white/80">
+                    <span
+                      className={cn(
+                        "absolute rounded-token bg-black/55 px-1.5 py-0.5 text-[8.5px] text-white/80",
+                        badgePlacement.corner === "tr" ? "bottom-2 right-2" : "right-2 top-2",
+                      )}
+                    >
                       已锁定
                     </span>
                   )}
                   <span
                     aria-label="AI 生成内容标识"
-                    className="pointer-events-none absolute bottom-2 right-2 rounded-token border border-white/15 bg-black/55 px-1.5 py-0.5 text-[8.5px] tracking-[.08em] text-white/80"
+                    className={cn(
+                      "pointer-events-none absolute rounded-token border border-white/15 bg-black/55 px-1.5 py-0.5 text-[8.5px] tracking-[.08em] text-white/80",
+                      badgePlacement.corner === "tl" && "left-2 top-2",
+                      badgePlacement.corner === "tr" && "right-2 top-2",
+                      badgePlacement.corner === "bl" && "bottom-2 left-2",
+                      badgePlacement.corner === "br" && "bottom-2 right-2",
+                    )}
                   >
                     AI 生成
                   </span>
@@ -2130,8 +2151,9 @@ export function EditScreen() {
                     远端素材只从白名单域名下载，取不到时用首帧或占位图顶上并计数。
                   </p>
                   <p className="mt-2 text-[9.5px] leading-[1.7] text-muted-2">
-                    AI 标识不是可选项：预览画面右下角的「AI 生成」角标、HTML 元数据、OTIO
-                    元数据与发布包里的 `aiLabel` 都会带上；成片 MP4 里也已经烧进画面。
+                    AI 标识不是可选项：预览画面{badgeCornerLabel(badgePlacement.corner)}的「AI 生成」角标（按目标平台避开点赞 / 评论栏）、
+                    HTML 元数据、OTIO 元数据与发布包里的 `aiLabel` 都会带上；成片 MP4 里也已经烧进画面。
+                    角标位置由平台规格决定，不给单独开关。
                   </p>
                 </section>
               </div>

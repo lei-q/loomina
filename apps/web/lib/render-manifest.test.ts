@@ -8,12 +8,13 @@ import {
   renderFileName,
   validateRenderManifest,
 } from "./render-manifest";
+import { aiContentHashOf, materialOfManifest } from "./ai-label";
 
 // 1×1 透明 PNG：只验清单与字节数，不解码
 const PNG =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
-function manifest(overrides: Record<string, unknown> = {}) {
+function raw(overrides: Record<string, unknown> = {}) {
   return {
     title: "夜班",
     width: RENDER_WIDTH,
@@ -35,6 +36,22 @@ function manifest(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function manifest(overrides: Record<string, unknown> = {}) {
+  const merged: Record<string, unknown> = raw(overrides);
+  // 指纹按合并后的清单重算（H5）：测试里改片段时不用手写哈希
+  const label = merged.aiLabel as Record<string, unknown> | undefined;
+  if (label) {
+    merged.aiLabel = {
+      ...label,
+      version: 1,
+      contentHash: aiContentHashOf(
+        materialOfManifest(merged as Parameters<typeof materialOfManifest>[0]),
+      ),
+    };
+  }
+  return merged;
+}
+
 describe("成片渲染清单（E6）", () => {
   it("data URI 的 MIME 与解码后字节数", () => {
     const parts = parseDataUri(PNG);
@@ -50,6 +67,35 @@ describe("成片渲染清单（E6）", () => {
     expect(ok.manifest.totalMs).toBe(1000);
     expect(ok.manifest.clips).toHaveLength(1);
     expect(ok.manifest.aiLabel.standard).toBe("AI生成");
+  });
+
+  it("AI 标注必须带内容指纹，且指纹要和清单对得上（H5）", () => {
+    const ok = validateRenderManifest(manifest());
+    expect(ok.ok).toBe(true);
+    if (!ok.ok) return;
+    expect(ok.manifest.aiLabel.contentHash).toMatch(/^[0-9a-f]{8}$/);
+
+    // 缺指纹：旧客户端直接拒绝
+    const missing = validateRenderManifest(
+      raw({ aiLabel: { explicit: true, implicit: true, standard: "AI生成" } }),
+    );
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.error).toContain("内容指纹");
+
+    // 指纹对不上：清单被改过（指纹没跟着重算）
+    const stale = validateRenderManifest(
+      raw({
+        aiLabel: {
+          explicit: true,
+          implicit: true,
+          standard: "AI生成",
+          version: 1,
+          contentHash: "deadbeef",
+        },
+      }),
+    );
+    expect(stale.ok).toBe(false);
+    if (!stale.ok) expect(stale.error).toContain("对不上");
   });
 
   it("接受带兜底图的远端片段，但要求 remote 是 http(s) 且必须有兜底图", () => {

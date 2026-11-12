@@ -24,6 +24,7 @@ import {
   type RenderQuality,
 } from "./render-manifest";
 import type { LoudnessReport } from "./render-audio";
+import { aiLabelRecordFor, badgePlacementOf } from "./ai-label";
 import {
   S3_PREFIX,
   isRemoteAssetUri,
@@ -153,8 +154,18 @@ function subtitleOverlays(
   });
 }
 
-/** 显式标识：右下角「AI 生成」，与成片页、预览 HTML 同一位置 */
-function badgeOverlay(totalMs: number, width: number, height: number): RenderOverlay {
+/**
+ * 显式标识：按发布目标摆在平台的空角上（H5 / ADR-0138）。
+ *
+ * 位置与预览 HTML、成片页播放器同一张表（`platforms.ts` 的 `badge`），
+ * 三处才不会各摆各的。右下角是抖音 / 快手的点赞评论栏，所以默认挪到左上角。
+ */
+function badgeOverlay(
+  totalMs: number,
+  width: number,
+  height: number,
+  platform: string,
+): RenderOverlay {
   const el = canvas(width, height);
   const ctx = el.getContext("2d")!;
   const scale = width / RENDER_PROFILES.final.width;
@@ -164,8 +175,12 @@ function badgeOverlay(totalMs: number, width: number, height: number): RenderOve
   ctx.font = `500 ${fontSize}px ${FONT_STACK}`;
   const badgeWidth = ctx.measureText(text).width + 28 * scale;
   const badgeHeight = fontSize + 20 * scale;
-  const x = width - 24 * scale - badgeWidth;
-  const y = height - 24 * scale - badgeHeight;
+  const placement = badgePlacementOf(platform);
+  const inset = (placement.insetPct / 100) * width;
+  const left = placement.corner === "tl" || placement.corner === "bl";
+  const top = placement.corner === "tl" || placement.corner === "tr";
+  const x = left ? inset : width - inset - badgeWidth;
+  const y = top ? inset : height - inset - badgeHeight;
 
   ctx.fillStyle = "rgba(0,0,0,0.58)";
   ctx.strokeStyle = "rgba(255,255,255,0.16)";
@@ -186,6 +201,8 @@ function badgeOverlay(totalMs: number, width: number, height: number): RenderOve
 export type RenderOptions = {
   /** 默认带字幕；关掉只去掉字幕叠加层，AI 角标仍在 */
   subtitles?: boolean;
+  /** 发布目标（G7）：决定角标摆在哪个角；缺省按通用规格 */
+  platform?: string;
   /** 任务提交成功、拿到任务号时回调；界面据此显示「取消渲染」 */
   onJob?: (jobId: string) => void;
 };
@@ -304,7 +321,7 @@ export function buildRenderManifest(
 
   // 角标永远带：AI 生成标识是合规要求，不能跟着字幕一起关
   const overlays = [
-    badgeOverlay(view.totalMs, profile.width, profile.height),
+    badgeOverlay(view.totalMs, profile.width, profile.height, options.platform ?? "generic"),
     ...(options.subtitles === false
       ? []
       : subtitleOverlays(view, styleId, profile.width, profile.height)),
@@ -321,7 +338,13 @@ export function buildRenderManifest(
       overlays,
       audio,
       music,
-      aiLabel: { explicit: true, implicit: true, standard: "AI生成" },
+      aiLabel: {
+        explicit: true,
+        implicit: true,
+        standard: "AI生成",
+        version: 1,
+        contentHash: aiLabelRecordFor(view).contentHash,
+      },
       compliance,
     },
     placeholders,
