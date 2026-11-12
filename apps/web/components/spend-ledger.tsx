@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo } from "react";
 import type { Project, ProjectEvent } from "@loomina/ir";
+import { costDashboard } from "@/lib/cost-dashboard";
 import { shotLedger, spendByStage, spendOf } from "@/lib/read-model";
 import { billCsv, spendReport } from "@/lib/spend-report";
 import { cn } from "@/lib/utils";
@@ -28,6 +29,7 @@ export function SpendLedger({
   const stages = useMemo(() => spendByStage(project), [project]);
   const shots = useMemo(() => shotLedger(project), [project]);
   const report = useMemo(() => spendReport(events), [events]);
+  const board = useMemo(() => costDashboard(project), [project]);
   const stageTotal = stages.reduce((sum, stage) => sum + stage.spent, 0);
   const budget = project.budgetCny;
 
@@ -118,6 +120,101 @@ export function SpendLedger({
               </dd>
             </div>
           </dl>
+
+          <section className="mt-4" aria-label="成本看板">
+            <div className="flex items-baseline justify-between gap-2">
+              <h3 className="text-[10.5px] tracking-[.06em] text-text">成本看板</h3>
+              <span className="tnum text-[9px] text-muted-2">H15</span>
+            </div>
+            <dl className="mt-1.5 grid grid-cols-3 gap-2">
+              <div className="rounded-token border border-line px-2 py-1.5">
+                <dt className="text-[8.5px] text-muted-2">单镜均成本</dt>
+                <dd className="tnum mt-0.5 text-[13px] text-text">
+                  {board.avgCnyPerShot === undefined
+                    ? "—"
+                    : `¥${board.avgCnyPerShot.toFixed(2)}`}
+                </dd>
+                <dd className="tnum text-[8px] text-muted-2">
+                  {board.pricedShots} / {board.shots} 镜有花费
+                </dd>
+              </div>
+              <div className="rounded-token border border-line px-2 py-1.5">
+                <dt className="text-[8.5px] text-muted-2">首次通过率</dt>
+                <dd className="tnum mt-0.5 text-[13px] text-text">
+                  {board.firstPassRate === undefined
+                    ? "—"
+                    : `${Math.round(board.firstPassRate * 100)}%`}
+                </dd>
+                <dd className="tnum text-[8px] text-muted-2">
+                  {board.firstPassShots} / {board.judgedShots} 镜已判定
+                </dd>
+              </div>
+              <div className="rounded-token border border-line px-2 py-1.5">
+                <dt className="text-[8.5px] text-muted-2">重试占比</dt>
+                <dd
+                  className={cn(
+                    "tnum mt-0.5 text-[13px]",
+                    board.retryCny > 0 ? "text-pick" : "text-text",
+                  )}
+                >
+                  {board.retryShare === undefined
+                    ? "—"
+                    : `${Math.round(board.retryShare * 100)}%`}
+                </dd>
+                <dd className="tnum text-[8px] text-muted-2">
+                  {board.rejectedTakes} / {board.takes} 条 take
+                  {board.retryCny > 0 ? ` · ¥${board.retryCny.toFixed(2)}` : ""}
+                </dd>
+              </div>
+            </dl>
+
+            {board.topShots.length > 0 && (
+              <p className="tnum mt-1.5 text-[8.5px] leading-[1.6] text-muted-2">
+                最贵：
+                {board.topShots
+                  .slice(0, 3)
+                  .map((shot) => `${shot.label} ¥${shot.spent.toFixed(2)}`)
+                  .join(" · ")}
+              </p>
+            )}
+
+            {board.anomalies.length > 0 ? (
+              <ul className="mt-2 border-t border-line">
+                {board.anomalies.map((item) => (
+                  <li
+                    key={item.shotId}
+                    className="flex items-start justify-between gap-3 border-b border-line py-1.5"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-baseline gap-x-2">
+                        <span className="tnum text-[9.5px] text-muted">{item.label}</span>
+                        <span className="text-[10px] text-text">{item.scene || "—"}</span>
+                        <span className="text-[8.5px] text-pick">异常突增</span>
+                      </div>
+                      <p className="mt-0.5 text-[8.5px] leading-[1.5] text-muted-2">
+                        {item.reason}
+                      </p>
+                    </div>
+                    <span className="tnum shrink-0 text-[10.5px] text-pick">
+                      ¥{item.spent.toFixed(2)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-1.5 text-[9px] leading-[1.6] text-muted-2">
+                {board.medianCnyPerShot === undefined
+                  ? "还没有花过钱的镜，暂时看不出异常。"
+                  : `没有明显贵出中位数的镜（中位数 ¥${board.medianCnyPerShot.toFixed(2)}）。`}
+              </p>
+            )}
+
+            <p className="mt-2 text-[8.5px] leading-[1.7] text-muted-2">
+              均值 / 中位数只看有花钱的镜，零花费不摊薄；首次通过率只算第一版 take
+              已有采纳 / 淘汰结论的镜，还没判定的不计入；重试占比按淘汰 take
+              条数算。异常突增 = 贵过中位数 3 倍且多花至少 ¥1，有花费的镜少于 4 个不下结论。
+            </p>
+          </section>
 
           <section className="mt-4">
             <div className="flex items-baseline justify-between gap-2">
