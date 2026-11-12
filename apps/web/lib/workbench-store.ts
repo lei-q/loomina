@@ -239,6 +239,8 @@ type WorkbenchState = {
     fileName?: string;
     bytes?: number;
     videoAssetId?: string;
+    /** 这一次渲染花了多少毫秒（H4）：本机渲染不按文件收费，但机器时间是成本 */
+    renderMs?: number;
   }) => boolean;
   /**
    * 确认一个阶段（F8 / F9）：按当前内容算签名，写一条 `gate.confirmed`。
@@ -525,7 +527,13 @@ type WorkbenchState = {
   /** 从故事草稿开一个新项目：写一条新的 `project.created`，旧日志仍在本地（ADR-0088） */
   startProjectFromStory: (
     draft: StoryDraft,
-    meta: { modelId: string; idea: string },
+    meta: {
+      modelId: string;
+      idea: string;
+      /** 生成草稿那一次花的钱与用量（H4）：草稿本身不写 IR，钱得跟着开工一起落账 */
+      costCny?: number;
+      usage?: { units: number; unit: "tokens" | "chars" };
+    },
   ) => boolean;
   /**
    * 改故事层文字（A16）：一条 `story.updated`。
@@ -1196,6 +1204,9 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       ...(input.fileName ? { fileName: input.fileName } : {}),
       ...(input.bytes !== undefined ? { bytes: input.bytes } : {}),
       ...(input.videoAssetId ? { videoAssetId: input.videoAssetId } : {}),
+      ...(input.renderMs !== undefined && Number.isFinite(input.renderMs) && input.renderMs >= 0
+        ? { renderMs: Math.round(input.renderMs) }
+        : {}),
       recordedAt,
       aiLabel: { explicit: true, implicit: true, standard: "AI生成" },
     };
@@ -2345,6 +2356,10 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
         uri?: string;
         mime?: string;
         model?: string;
+        /** 念了多少字（H4）：配音按字计价，用量随调用一起回来 */
+        chars?: number;
+        /** 这一句花了多少（元）；没填单价时缺省 */
+        cny?: number;
         error?: string;
       };
       if (!response.ok || !payload.uri) {
@@ -2370,6 +2385,18 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
         while (base.voiceTakes.some((take) => take.id === takeId)) takeId += "x";
       }
       const mime = /^data:(audio\/[a-z0-9.+-]+)[;,]/i.exec(uri)?.[1];
+      // 配音按字计价（H4）：金额与用量记在溯源里——音轨资产本身没有 costCny 的口径，
+      // 而「这一句念了多少字」只有调用那一刻知道
+      const voiceProvenance = {
+        modelId: payload.model ?? "unknown",
+        prompt: line.text,
+        referenceAssetIds: [],
+        createdAt: at,
+        ...(typeof payload.cny === "number" ? { costCny: payload.cny } : {}),
+        ...(typeof payload.chars === "number" && payload.chars > 0
+          ? { usage: { units: payload.chars, unit: "chars" as const } }
+          : {}),
+      };
       const written: ProjectEvent[] = [
         {
           type: "asset.updated",
@@ -2380,12 +2407,8 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
             source: "generated",
             uri,
             ...(payload.mime || mime ? { mime: payload.mime ?? mime } : {}),
-            provenance: {
-              modelId: payload.model ?? "unknown",
-              prompt: line.text,
-              referenceAssetIds: [],
-              createdAt: at,
-            },
+            ...(typeof payload.cny === "number" ? { costCny: payload.cny } : {}),
+            provenance: voiceProvenance,
             createdAt: at,
           },
         },
@@ -2406,12 +2429,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
                   lineId,
                   assetId,
                   performance,
-                  provenance: {
-                    modelId: payload.model ?? "unknown",
-                    prompt: line.text,
-                    referenceAssetIds: [],
-                    createdAt: at,
-                  },
+                  provenance: voiceProvenance,
                   createdAt: at,
                 },
               },
@@ -4143,6 +4161,8 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
         modelId: meta.modelId,
         idea: meta.idea,
         budgetCny: project.budgetCny,
+        ...(meta.costCny !== undefined ? { costCny: meta.costCny } : {}),
+        ...(meta.usage ? { usage: meta.usage } : {}),
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : "故事结构不合法";

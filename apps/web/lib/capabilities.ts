@@ -32,7 +32,7 @@ export type PriceView =
   | {
       kind: "known";
       cny: number;
-      unit: "per_second" | "per_image";
+      unit: "per_second" | "per_image" | "per_million_tokens" | "per_thousand_chars";
       basis: string;
     }
   | { kind: "unknown"; reason: string };
@@ -255,6 +255,25 @@ function priceOf(model: ModelRecord): PriceView {
       cny: quote.cnyPerImage,
       unit: "per_image",
       basis: quote.model,
+    };
+  }
+
+  if (model.modality === "text" || model.modality === "tts") {
+    // 文本与配音没有公开价目，只能由作者按账单填（H4 / R28 / R39）
+    if (model.unitPriceCny === undefined) {
+      return {
+        kind: "unknown",
+        reason:
+          model.modality === "text"
+            ? "按 token 计价，没有公开单价；在设置页填「元 / 百万 token」之后才算得出钱"
+            : "按字计价，没有公开单价；在设置页填「元 / 千字」之后才算得出钱",
+      };
+    }
+    return {
+      kind: "known",
+      cny: model.unitPriceCny,
+      unit: model.modality === "text" ? "per_million_tokens" : "per_thousand_chars",
+      basis: "作者按账单填写",
     };
   }
 

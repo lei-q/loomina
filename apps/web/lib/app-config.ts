@@ -262,6 +262,14 @@ export function normalizeConfig(
       modality === "tts" && typeof item.voice === "string"
         ? item.voice.trim().slice(0, 40) || undefined
         : undefined;
+    // 按用量计价的单价（H4）：只对文本与配音有意义；填错类型就是没填
+    const unitPriceCny =
+      (modality === "text" || modality === "tts") &&
+      typeof item.unitPriceCny === "number" &&
+      Number.isFinite(item.unitPriceCny) &&
+      item.unitPriceCny >= 0
+        ? item.unitPriceCny
+        : undefined;
     // 商用条款 / 能力备注：自由文本，只在能力矩阵里显示；空串等于没写
     const terms =
       typeof item.terms === "string" ? item.terms.trim().slice(0, 240) || undefined : undefined;
@@ -274,6 +282,7 @@ export function normalizeConfig(
       label,
       ...(resolution ? { resolution } : {}),
       ...(voice ? { voice } : {}),
+      ...(unitPriceCny !== undefined ? { unitPriceCny } : {}),
       ...(terms ? { terms } : {}),
     });
   }

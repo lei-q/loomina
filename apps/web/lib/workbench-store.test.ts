@@ -1184,6 +1184,17 @@ describe("发布记录（G1 / ADR-0102）", () => {
     expect(state().recordPublish({ platform: "douyin", bytes: 1.5 })).toBe(false);
     expect(state().events).toHaveLength(before);
   });
+
+  it("渲染耗时随发布记录落进 IR（H4）：本机渲染不折成钱，但机器时间要留痕", () => {
+    expect(
+      state().recordPublish({ platform: "douyin", quality: "final", renderMs: 42_500 }),
+    ).toBe(true);
+    expect(state().project.publishPackages.at(-1)?.renderMs).toBe(42_500);
+    expect(rebuild(state().events).publishPackages.at(-1)?.renderMs).toBe(42_500);
+    // 负耗时是坏数据：当作没给，不写一个负数
+    expect(state().recordPublish({ platform: "douyin", renderMs: -1 })).toBe(true);
+    expect(state().project.publishPackages.at(-1)?.renderMs).toBeUndefined();
+  });
 });
 
 describe("重置为示例项目（H18）", () => {
@@ -3637,6 +3648,31 @@ describe("故事入口开工（ADR-0088）", () => {
     expect(state().events).toHaveLength(before);
     expect(state().project.title).toBe(title);
     state().readOnly = false;
+  });
+
+  it("生成草稿那一次的钱与用量随开工落进故事溯源（H4）", () => {
+    state().reset();
+    expect(
+      state().startProjectFromStory(draft, {
+        modelId: "claude-sonnet-5-5",
+        idea: "外卖员",
+        costCny: 0.0312,
+        usage: { units: 15_600, unit: "tokens" },
+      }),
+    ).toBe(true);
+    expect(state().project.story.provenance?.costCny).toBe(0.0312);
+    expect(state().project.story.provenance?.usage).toEqual({ units: 15_600, unit: "tokens" });
+    // 回放一遍还在：钱是项目自己的事实，不是内存里的一次性状态
+    expect(rebuild(state().events).story.provenance?.costCny).toBe(0.0312);
+  });
+
+  it("没给金额时溯源里就不写：不知道多少钱不是 0", () => {
+    state().reset();
+    expect(
+      state().startProjectFromStory(draft, { modelId: "m", idea: "x" }),
+    ).toBe(true);
+    expect(state().project.story.provenance?.costCny).toBeUndefined();
+    expect(state().project.story.provenance?.usage).toBeUndefined();
   });
 });
 

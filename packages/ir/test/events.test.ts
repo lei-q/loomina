@@ -292,6 +292,59 @@ describe("publish.recorded（G1 / ADR-0102）", () => {
     expect(next.publishPackages.at(-1)?.fileName).toBeUndefined();
     expect(next.publishPackages.at(-1)?.videoAssetId).toBeUndefined();
   });
+
+  it("渲染耗时随发布记录落进 IR（H4）", () => {
+    const next = applyEvent(load(), {
+      type: "publish.recorded",
+      at: AT,
+      package: { ...pack, renderMs: 42_500 },
+    });
+    expect(next.publishPackages.at(-1)?.renderMs).toBe(42_500);
+    // 没记耗时的旧记录读出来照样合法
+    expect(
+      applyEvent(load(), { type: "publish.recorded", at: AT, package: pack })
+        .publishPackages.at(-1)?.renderMs,
+    ).toBeUndefined();
+  });
+});
+
+describe("Provenance 的用量与金额（H4）", () => {
+  it("故事溯源能带 token 用量与这一笔的钱", () => {
+    const base = load();
+    const next = ProjectSchema.parse({
+      ...base,
+      story: {
+        ...base.story,
+        provenance: {
+          modelId: "deepseek-v4.1-flash-1017",
+          prompt: "一句想法",
+          referenceAssetIds: [],
+          createdAt: AT,
+          costCny: 0.03,
+          usage: { units: 15_000, unit: "tokens" },
+        },
+      },
+    });
+    expect(next.story.provenance?.costCny).toBe(0.03);
+    expect(next.story.provenance?.usage).toEqual({ units: 15_000, unit: "tokens" });
+  });
+
+  it("金额与用量缺省时合法：不知道多少钱不是错误", () => {
+    const base = load();
+    const next = ProjectSchema.parse({
+      ...base,
+      story: {
+        ...base.story,
+        provenance: {
+          modelId: "m",
+          referenceAssetIds: [],
+          createdAt: AT,
+        },
+      },
+    });
+    expect(next.story.provenance?.costCny).toBeUndefined();
+    expect(next.story.provenance?.usage).toBeUndefined();
+  });
 });
 
 describe("Project.maxAttemptsPerShot / onBudgetExceed（H10）", () => {

@@ -8,6 +8,7 @@ import {
   type StoryDraft,
 } from "@loomina/pipeline";
 import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
+import { meteredCostCny } from "@/lib/metered-price";
 
 /**
  * 服务端故事生成（ADR-0088）。
@@ -41,6 +42,15 @@ export async function storyInfo(): Promise<StoryInfo> {
 export type StoryResult = {
   draft: StoryDraft;
   model: string;
+  /**
+   * 这一次调用花了多少（H4）；作者没在设置页填文本单价时为 undefined。
+   *
+   * 金额由「token 用量 × 单价」算出来，用量是供应商给的事实，单价是作者填的估算。
+   * 两者缺一就不写金额——报不出来的价不编（准则 P21）。
+   */
+  cny?: number;
+  /** 供应商报的 token 用量；没报就不写 */
+  usage?: { promptTokens?: number; completionTokens?: number };
 };
 
 const IDEA_MAX = 2000;
@@ -85,8 +95,8 @@ export async function generateStory(
     throw new Error(`不认识的节拍表：${beatSheetId}。可选 60s / 3min / series。`);
   }
 
-  const config = gatewayConfigOf(await resolveModel("text", modelId));
-  const client = new TreecloudClient({ ...config, timeoutMs: 150_000 });
+  const resolved = await resolveModel("text", modelId);
+  const client = new TreecloudClient({ ...gatewayConfigOf(resolved), timeoutMs: 150_000 });
   const adapter = new TreecloudChatAdapter(client);
   const output = await adapter.complete({
     messages: source
@@ -97,8 +107,17 @@ export async function generateStory(
     maxTokens: 16_000,
   });
 
+  // 文本按 token 计价（H4）：用量取供应商报的 prompt + completion，
+  // 单价是设置页里这个模型填的估算；缺一个就不算钱
+  const units =
+    output.usage && (output.usage.promptTokens !== undefined || output.usage.completionTokens !== undefined)
+      ? (output.usage.promptTokens ?? 0) + (output.usage.completionTokens ?? 0)
+      : undefined;
+  const cny = meteredCostCny("text", units, resolved.model.unitPriceCny);
   return {
     draft: parseStoryDraft(output.text),
     model: output.provenance.modelId,
+    ...(cny !== undefined ? { cny } : {}),
+    ...(output.usage ? { usage: output.usage } : {}),
   };
 }

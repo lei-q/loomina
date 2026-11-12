@@ -393,6 +393,14 @@ export interface StoryToProjectOptions {
   modelId: string;
   idea: string;
   budgetCny?: number;
+  /**
+   * 这一次故事生成花了多少（H4）与用了多少 token。
+   *
+   * 草稿本身不写 IR，只有作者点「用它开工」才落成项目——所以这笔钱要从
+   * 生成那一刻带过来，否则它就只存在于浏览器的内存里，一刷新就没了。
+   */
+  costCny?: number;
+  usage?: { units: number; unit: "tokens" | "chars" };
 }
 
 /**
@@ -574,6 +582,8 @@ export function projectFromStoryDraft(
         prompt: options.idea,
         referenceAssetIds: [],
         createdAt: options.at,
+        ...(options.costCny !== undefined ? { costCny: options.costCny } : {}),
+        ...(options.usage ? { usage: options.usage } : {}),
       },
     },
     motifs: [],

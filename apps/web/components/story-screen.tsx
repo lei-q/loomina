@@ -55,8 +55,21 @@ const SPACE_CN: Record<StoryDraft["scenes"][number]["space"], string> = {
   ext: "外景",
 };
 
+/** 「12.4k token」：用量是供应商给的事实，金额要作者填了单价才算得出来（H4） */
+function storyTokensOf(usage: { promptTokens?: number; completionTokens?: number }): string {
+  const units = (usage.promptTokens ?? 0) + (usage.completionTokens ?? 0);
+  return units >= 1000 ? `${(units / 1000).toFixed(1)}k token` : `${units} token`;
+}
+
 type StoryOrigin = "idea" | "import";
-type StoryResult = { draft: StoryDraft; model: string; origin: StoryOrigin };
+type StoryResult = {
+  draft: StoryDraft;
+  model: string;
+  origin: StoryOrigin;
+  /** 这一次生成花的钱与用量（H4）；没填文本单价或供应商没报 token 时缺省 */
+  cny?: number;
+  usage?: { promptTokens?: number; completionTokens?: number };
+};
 
 const MODES: { key: StoryOrigin; label: string; note: string }[] = [
   {
@@ -209,7 +222,13 @@ export function StoryScreen() {
         | null;
       if (!response.ok) throw new Error(payload?.error || "生成失败");
       if (!payload?.draft) throw new Error("服务端没有返回故事草稿");
-      setResult({ draft: payload.draft, model: payload.model, origin: mode });
+      setResult({
+        draft: payload.draft,
+        model: payload.model,
+        origin: mode,
+        ...(typeof payload.cny === "number" ? { cny: payload.cny } : {}),
+        ...(payload.usage ? { usage: payload.usage } : {}),
+      });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "生成失败");
     } finally {
@@ -223,7 +242,22 @@ export function StoryScreen() {
       result.origin === "import"
         ? `导入剧本${fileName ? `（${fileName}）` : ""}（${source.length} 字）：${source.slice(0, 300)}`
         : idea;
-    if (startProjectFromStory(result.draft, { modelId: result.model, idea: prompt })) {
+    if (
+      startProjectFromStory(result.draft, {
+        modelId: result.model,
+        idea: prompt,
+        ...(result.cny !== undefined ? { costCny: result.cny } : {}),
+        ...(result.usage &&
+        (result.usage.promptTokens !== undefined || result.usage.completionTokens !== undefined)
+          ? {
+              usage: {
+                units: (result.usage.promptTokens ?? 0) + (result.usage.completionTokens ?? 0),
+                unit: "tokens" as const,
+              },
+            }
+          : {}),
+      })
+    ) {
       router.push("/script");
     } else {
       setError(useWorkbench.getState().castError ?? "故事没能开工");
@@ -575,6 +609,12 @@ export function StoryScreen() {
                     </h2>
                     <span className="tnum text-[9px] text-muted-2">
                       由 {result.model} {result.origin === "import" ? "改编" : "生成"}
+                      {/* 文本按 token 计价（H4）：填了单价才有金额，没填就只报用量 */}
+                      {result.cny !== undefined
+                        ? ` · ¥${result.cny.toFixed(4)}`
+                        : result.usage
+                          ? ` · ${storyTokensOf(result.usage)}（未定价）`
+                          : ""}
                     </span>
                     {result.origin === "import" && (
                       <span className="rounded-token border border-line px-1.5 py-0.5 text-[9px] text-muted-2">

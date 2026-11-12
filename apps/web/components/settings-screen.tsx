@@ -52,6 +52,8 @@ type ModelDraft = {
   label: string;
   resolution: string;
   voice: string;
+  /** 按用量计价的单价（H4）：文本元 / 百万 token，配音元 / 千字；空表示不知道 */
+  unitPrice: string;
   /** 商用条款 / 能力备注（B12）；空表示未确认 */
   terms: string;
 };
@@ -60,9 +62,14 @@ type Probe = { ok: boolean; message: string };
 
 const EMPTY_VIDEO_API: "" | VideoApiName = "";
 
-const PRICE_UNIT: Record<"per_second" | "per_image", string> = {
+const PRICE_UNIT: Record<
+  "per_second" | "per_image" | "per_million_tokens" | "per_thousand_chars",
+  string
+> = {
   per_second: "秒",
   per_image: "张",
+  per_million_tokens: "百万 token",
+  per_thousand_chars: "千字",
 };
 
 function blankProvider(index: number, used: Set<string>): ProviderDraft {
@@ -106,6 +113,7 @@ function draftsFrom(config: PublicConfig) {
     label: model.label,
     resolution: model.resolution ?? "",
     voice: model.voice ?? "",
+    unitPrice: model.unitPriceCny !== undefined ? String(model.unitPriceCny) : "",
     terms: model.terms ?? "",
   }));
   const defaults: Partial<Record<Modality, string>> = {};
@@ -282,6 +290,7 @@ export function SettingsScreen() {
       label: "",
       resolution: "",
       voice: "",
+      unitPrice: "",
       terms: "",
     };
     // 该模态第一个模型自动成为默认，避免保存时还要回头点一次
@@ -401,6 +410,11 @@ export function SettingsScreen() {
           ? { resolution: model.resolution.trim() }
           : {}),
         ...(model.modality === "tts" && model.voice.trim() ? { voice: model.voice.trim() } : {}),
+        ...((model.modality === "text" || model.modality === "tts") &&
+        Number.isFinite(Number(model.unitPrice)) &&
+        model.unitPrice.trim() !== ""
+          ? { unitPriceCny: Math.max(0, Number(model.unitPrice)) }
+          : {}),
         ...(model.terms.trim() ? { terms: model.terms.trim() } : {}),
       })),
       defaults: Object.fromEntries(
@@ -762,6 +776,23 @@ export function SettingsScreen() {
                                   }
                                   placeholder="默认"
                                   className={inputClass}
+                                />
+                              </Field>
+                            )}
+                            {(modality === "text" || modality === "tts") && (
+                              <Field
+                                label={modality === "text" ? "单价（元/百万 token）" : "单价（元/千字）"}
+                                className="w-[132px]"
+                                hint="按账单填；不填就只记用量、不算钱"
+                              >
+                                <input
+                                  value={model.unitPrice}
+                                  onChange={(event) =>
+                                    updateModel(model.key, { unitPrice: event.target.value })
+                                  }
+                                  inputMode="decimal"
+                                  placeholder="未知"
+                                  className={`${inputClass} tnum`}
                                 />
                               </Field>
                             )}

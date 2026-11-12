@@ -98,6 +98,45 @@ describe("normalizeConfig", () => {
     expect(result.config.models[1]!.terms).toBeUndefined();
   });
 
+  it("按用量计价的单价只收文本与配音，负数与非数字当没填（H4）", () => {
+    const result = normalizeConfig(
+      {
+        ...VALID,
+        models: [
+          { ...VALID.models[0]!, unitPriceCny: 2 }, // 文本：¥2 / 百万 token
+          { ...VALID.models[2]!, unitPriceCny: -1 }, // 视频：这个字段无意义，且为负
+          {
+            ...VALID.models[2]!,
+            id: "relay:wan3.0-video",
+            model: "wan3.0-video",
+            unitPriceCny: 0.6,
+          },
+        ],
+        defaults: { text: "deepseek:deepseek-v4.1-pro", video: "relay:wan3.0-video" },
+      },
+      PREVIOUS,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.models[0]!.unitPriceCny).toBe(2);
+    // 视频模型上没有这个字段：单价只来自价目表
+    expect(result.config.models[1]!.unitPriceCny).toBeUndefined();
+    expect(result.config.models[2]!.unitPriceCny).toBeUndefined();
+  });
+
+  it("单价为 0 是合法的：免费模型照样能算账", () => {
+    const result = normalizeConfig(
+      {
+        ...VALID,
+        models: [{ ...VALID.models[0]!, unitPriceCny: 0 }, ...VALID.models.slice(1)],
+      },
+      PREVIOUS,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.models[0]!.unitPriceCny).toBe(0);
+  });
+
   it("id 必须唯一，模型不能指向不存在的供应商", () => {    const duplicate = normalizeConfig(
       { ...VALID, providers: [VALID.providers[0], VALID.providers[0]] },
       PREVIOUS,

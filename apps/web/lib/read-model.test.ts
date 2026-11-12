@@ -1465,6 +1465,7 @@ describe("按阶段 / 按镜记账（H4）", () => {
     const spend = spendOf(project);
     const stages = spendByStage(project);
     expect(stages.map((stage) => stage.id)).toEqual([
+      "story",
       "cast",
       "storyboard",
       "voice",
@@ -1539,6 +1540,54 @@ describe("按阶段 / 按镜记账（H4）", () => {
     const cast = spendByStage(withUnpriced).find((stage) => stage.id === "cast");
     expect(cast?.unpriced).toBe(1);
     expect(cast?.spent).toBe(0);
+  });
+
+  it("文本生成的钱记在故事阶段，配音的钱单独拆出来（H4）", () => {
+    const withText = ProjectSchema.parse({
+      ...project,
+      story: {
+        ...project.story,
+        provenance: {
+          modelId: "deepseek-v4.1-flash-1017",
+          prompt: "一句想法",
+          referenceAssetIds: [],
+          createdAt: AT,
+          costCny: 0.03,
+          usage: { units: 15_000, unit: "tokens" },
+        },
+      },
+    });
+    const story = spendByStage(withText).find((stage) => stage.id === "story");
+    expect(story?.spent).toBe(0.03);
+    expect(story?.unpricedCalls).toBe(0);
+    expect(story?.detail).toContain("15.0k token");
+
+    // 文本的钱进「已花」，配音的钱同时进「已花」与单独的 voice 一栏
+    expect(spendOf(withText).text).toBe(0.03);
+    expect(spendOf(withText).spent).toBe(Math.round((spendOf(project).spent + 0.03) * 100) / 100);
+    expect(spendOf(withText).voice).toBe(0.05);
+  });
+
+  it("生成过却没单价：按调用次数数，不混进张数", () => {
+    const withUnpricedStory = ProjectSchema.parse({
+      ...project,
+      story: {
+        ...project.story,
+        provenance: {
+          modelId: "deepseek-v4.1-flash-1017",
+          prompt: "一句想法",
+          referenceAssetIds: [],
+          createdAt: AT,
+        },
+      },
+    });
+    const spend = spendOf(withUnpricedStory);
+    // 一个未定价的故事调用：不进已花，只进 unpricedCalls
+    expect(spend.text).toBe(0);
+    expect(spend.unpricedCalls).toBe(1);
+    const story = spendByStage(withUnpricedStory).find((stage) => stage.id === "story");
+    expect(story?.unpricedCalls).toBe(1);
+    expect(story?.spent).toBe(0);
   });
 });
 

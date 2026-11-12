@@ -1,5 +1,6 @@
 import { ConfigError, TreecloudClient, TreecloudSpeechAdapter } from "@loomina/gateway";
 import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
+import { meteredCostCny } from "@/lib/metered-price";
 
 /**
  * 服务端出声（ADR-0085）。
@@ -37,6 +38,13 @@ export type SpokenLine = {
   mime: string;
   model: string;
   voice?: string;
+  /**
+   * 这一句念了多少字（H4）：按去空白后的字数计，供应商按字收费。
+   * 中文一个字算一个，英文按字符算——与「元 / 千字」的口径一致。
+   */
+  chars: number;
+  /** 这一次出声花了多少（元）；作者没在设置页填配音单价时为 undefined */
+  cny?: number;
 };
 
 export async function speakLine(request: {
@@ -48,8 +56,8 @@ export async function speakLine(request: {
   /** 表演说明（C2 / ADR-0124）；供应商忽略时与不传一致 */
   instructions?: string;
 }): Promise<SpokenLine> {
-  const config = gatewayConfigOf(await resolveModel("tts", request.modelId));
-  const client = new TreecloudClient({ ...config, timeoutMs: 60_000 });
+  const resolved = await resolveModel("tts", request.modelId);
+  const client = new TreecloudClient({ ...gatewayConfigOf(resolved), timeoutMs: 60_000 });
   const adapter = new TreecloudSpeechAdapter(client);
 
   const output = await adapter.speak({
@@ -65,10 +73,16 @@ export async function speakLine(request: {
     throw new Error("这一句的音轨太大了（超过 8 MB），没有收下");
   }
 
+  // 配音按字计价（H4）：字数就是发出去的这句，去空白后再数
+  const chars = request.text.replace(/\s+/g, "").length;
+  const cny = meteredCostCny("tts", chars, resolved.model.unitPriceCny);
+
   return {
     uri: `data:${output.mime};base64,${base64}`,
     mime: output.mime,
     model: output.provenance.modelId,
     ...(request.voice ? { voice: request.voice } : {}),
+    chars,
+    ...(cny !== undefined ? { cny } : {}),
   };
 }

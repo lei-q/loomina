@@ -107,6 +107,23 @@ export type Spend = {
   rejected: number;
   /** 生成过、但价目表里没有这个模型，算不进已花的图（ADR-0033） */
   unpriced: number;
+  /**
+   * 其中文本调用（故事生成）的钱（H4）。
+   * 文本按 token 计价，单价由作者在设置页填；没填就不进 `spent`，只进 `unpricedCalls`。
+   */
+  text: number;
+  /**
+   * 其中配音的钱（H4）：按字计价，单价同样由作者填。
+   * 已算在 `assets` 里（音轨是资产），这里单独拆出来是为了让账单说得清。
+   */
+  voice: number;
+  /**
+   * 有多少次生成调用没有单价（H4）：文本 / 配音 / 图 / 视频。
+   *
+   * 与 `unpriced`（张数）分开：一次文本调用生成的不是「一张图」，
+   * 混在一个数里，作者会以为漏算的是几张定妆图。
+   */
+  unpricedCalls: number;
 };
 
 /**
@@ -114,6 +131,10 @@ export type Spend = {
  *
  * 只加"知道单价"的东西：没有价目的资产宁可单独数出来，也不当 0 算进去——
  * 把未知算成免费，预算就成了摆设（准则 P21）。
+ *
+ * 文本（H4）：故事生成的费用记在 `story.provenance.costCny` 上。
+ * 草稿本身不写 IR，只有「用它开工」那一刻才带着这笔钱落成项目，
+ * 所以这里读的是那个溯源，不是某条事件。
  */
 export function spendOf(project: Project): Spend {
   const takes = project.takes.reduce((sum, take) => sum + take.costCny, 0);
@@ -121,31 +142,49 @@ export function spendOf(project: Project): Spend {
     .filter((take) => take.status === "rejected")
     .reduce((sum, take) => sum + take.costCny, 0);
   let assets = 0;
+  let voice = 0;
   let unpriced = 0;
+  let unpricedCalls = 0;
   // take 的视频资产不单独计费：钱记在 take 上，资产再记一次就重复了
   const takeAssetIds = new Set(project.takes.map((take) => take.assetId));
   for (const asset of project.assets) {
     if (takeAssetIds.has(asset.id)) continue;
-    if (asset.costCny !== undefined) assets += asset.costCny;
-    else if (asset.source === "generated" && asset.uri) unpriced += 1;
+    if (asset.costCny !== undefined) {
+      assets += asset.costCny;
+      // 音轨的钱是配音阶段花出去的（H4），单独拆一份给账单用
+      if (asset.kind === "audio" && asset.source === "generated") voice += asset.costCny;
+    } else if (asset.source === "generated" && asset.uri) {
+      unpriced += 1;
+      // 生成过却有地址却没有钱：这一笔就是「未定价的调用」，与张数一起数
+      unpricedCalls += 1;
+    }
   }
+  const text = project.story.provenance?.costCny ?? 0;
+  // 故事生成过但没记账：算一次未定价调用
+  const storyUnpriced =
+    project.story.provenance && project.story.provenance.costCny === undefined ? 1 : 0;
   const round = (value: number) => Math.round(value * 100) / 100;
   return {
-    spent: round(takes + assets),
+    spent: round(takes + assets + text),
     takes: round(takes),
     assets: round(assets),
     rejected: round(rejected),
     unpriced,
+    text: round(text),
+    voice: round(voice),
+    unpricedCalls: unpricedCalls + storyUnpriced,
   };
 }
 
 export type StageSpend = {
-  id: "cast" | "storyboard" | "voice" | "edit";
+  id: "story" | "cast" | "storyboard" | "voice" | "edit";
   label: string;
   /** 这一阶段已经花掉的钱（元） */
   spent: number;
   /** 这一阶段没有价目、算不进已花的生成资产张数 */
   unpriced: number;
+  /** 这一阶段没有单价的生成调用次数（H4）：文本 / 配音没有「张」这个单位 */
+  unpricedCalls: number;
   /** 钱花在哪里：给界面一句人话 */
   detail: string;
 };
@@ -154,14 +193,15 @@ export type StageSpend = {
  * 按阶段拆账（H4）。
  *
  * 分类只按引用关系走，不按资产类型猜：
+ * - 故事生成的文本调用 → 故事（钱记在 `story.provenance.costCny` 上）；
  * - take 的视频资产不单独计费，钱记在 take 上 → 分镜；
  * - 首尾帧资产 → 分镜；
  * - 台词音轨 → 配音；其余音频 → 配音；
  * - 配乐资产 → 成片；
  * - 剩下没人引用的图 / 视频 → 定妆（角色三视图、场景主镜、道具参考）。
  *
- * 文本调用与本机 ffmpeg 渲染目前没有落进 IR 的费用，所以剧本 / 成片这两个阶段
- * 只会在有配乐资产时出现金额；界面要如实写"未计入"，不能把它们当成免费。
+ * 本机 ffmpeg 渲染不按文件收费，但占机器时间：`edit` 阶段显示最近一次渲染耗时
+ * （来自 `publish.recorded.renderMs`），不折成钱——没有单价的时间不是成本。
  */
 export function spendByStage(project: Project): StageSpend[] {
   const takeAssetIds = new Set(project.takes.map((take) => take.assetId));
@@ -176,18 +216,24 @@ export function spendByStage(project: Project): StageSpend[] {
   const musicAssetIds = new Set(project.timeline.music.map((cue) => cue.assetId));
 
   const buckets: Record<
-    StageSpend["id"],
-    { spent: number; unpriced: number; assets: number }
+    Exclude<StageSpend["id"], "story">,
+    { spent: number; unpriced: number; unpricedCalls: number; assets: number }
   > = {
-    cast: { spent: 0, unpriced: 0, assets: 0 },
-    storyboard: { spent: 0, unpriced: 0, assets: 0 },
-    voice: { spent: 0, unpriced: 0, assets: 0 },
-    edit: { spent: 0, unpriced: 0, assets: 0 },
+    cast: { spent: 0, unpriced: 0, unpricedCalls: 0, assets: 0 },
+    storyboard: { spent: 0, unpriced: 0, unpricedCalls: 0, assets: 0 },
+    voice: { spent: 0, unpriced: 0, unpricedCalls: 0, assets: 0 },
+    edit: { spent: 0, unpriced: 0, unpricedCalls: 0, assets: 0 },
   };
-  const add = (id: StageSpend["id"], asset: (typeof project.assets)[number]) => {
+  const add = (
+    id: Exclude<StageSpend["id"], "story">,
+    asset: (typeof project.assets)[number],
+  ) => {
     buckets[id].assets += 1;
     if (asset.costCny !== undefined) buckets[id].spent += asset.costCny;
-    else if (asset.source === "generated" && asset.uri) buckets[id].unpriced += 1;
+    else if (asset.source === "generated" && asset.uri) {
+      buckets[id].unpriced += 1;
+      buckets[id].unpricedCalls += 1;
+    }
   };
 
   for (const asset of project.assets) {
@@ -204,13 +250,39 @@ export function spendByStage(project: Project): StageSpend[] {
   buckets.storyboard.spent += takeCost;
 
   const round = (value: number) => Math.round(value * 100) / 100;
+  const storyCost = project.story.provenance?.costCny;
+  const storyUsage = project.story.provenance?.usage;
+  const storyUnpriced = project.story.provenance && storyCost === undefined ? 1 : 0;
+  const voiceLines = project.dialogue.filter((line) => line.audioAssetId).length;
+  // 最近一次渲染的机器时间（H4）：只说时间，不折成钱
+  const lastRenderMs = project.publishPackages
+    .filter((pack) => pack.renderMs !== undefined)
+    .at(-1)?.renderMs;
 
   return [
+    {
+      id: "story",
+      label: "故事",
+      spent: round(storyCost ?? 0),
+      unpriced: 0,
+      unpricedCalls: storyUnpriced,
+      detail:
+        storyUsage !== undefined
+          ? `文本模型 ${project.story.provenance?.modelId ?? "未知"} · ${
+              storyUsage.unit === "chars"
+                ? `${Math.round(storyUsage.units)} 字`
+                : `${(storyUsage.units / 1000).toFixed(1)}k token`
+            }`
+          : project.story.provenance
+            ? "文本模型没有报用量，算不出钱"
+            : "还没有用文本模型生成过故事",
+    },
     {
       id: "cast",
       label: "定妆",
       spent: round(buckets.cast.spent),
       unpriced: buckets.cast.unpriced,
+      unpricedCalls: buckets.cast.unpricedCalls,
       detail: `${buckets.cast.assets} 个资产 · 角色 / 场景 / 道具参考`,
     },
     {
@@ -218,6 +290,7 @@ export function spendByStage(project: Project): StageSpend[] {
       label: "分镜",
       spent: round(buckets.storyboard.spent),
       unpriced: buckets.storyboard.unpriced,
+      unpricedCalls: buckets.storyboard.unpricedCalls,
       detail: `${project.takes.length} 条 take · ${buckets.storyboard.assets} 个关键帧资产`,
     },
     {
@@ -225,17 +298,24 @@ export function spendByStage(project: Project): StageSpend[] {
       label: "配音",
       spent: round(buckets.voice.spent),
       unpriced: buckets.voice.unpriced,
-      detail: `${project.dialogue.filter((line) => line.audioAssetId).length} 句有声台词 · ${buckets.voice.assets} 段音频`,
+      unpricedCalls: buckets.voice.unpricedCalls,
+      detail: `${voiceLines} 句有声台词 · ${buckets.voice.assets} 段音频`,
     },
     {
       id: "edit",
       label: "成片",
       spent: round(buckets.edit.spent),
       unpriced: buckets.edit.unpriced,
-      detail:
+      unpricedCalls: buckets.edit.unpricedCalls,
+      detail: [
         project.timeline.music.length > 0
-          ? `${project.timeline.music.length} 段配乐 · 本机 ffmpeg 渲染不按文件计费`
-          : "本机 ffmpeg 渲染不按文件计费 · 文本调用未记账",
+          ? `${project.timeline.music.length} 段配乐`
+          : "没有配乐",
+        lastRenderMs !== undefined
+          ? `最近一次渲染 ${(lastRenderMs / 1000).toFixed(1)}s 机器时间`
+          : "还没记过渲染耗时",
+        "本机渲染不按文件计费",
+      ].join(" · "),
     },
   ];
 }

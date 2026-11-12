@@ -401,6 +401,8 @@ export function EditScreen() {
     bytes: number;
     quality: RenderQuality;
     renderedAt: string;
+    /** 这一次渲染花了多少毫秒（H4）：本机渲染不按文件收费，但机器时间是成本 */
+    renderMs?: number;
   }>();
   const [loudness, setLoudness] = useState<LoudnessReport>();
   const [musicFile, setMusicFile] = useState<{
@@ -675,6 +677,8 @@ export function EditScreen() {
     }
     setRendering(true);
     setNotice("");
+    // 本机渲染的机器时间（H4）：不折成钱，但账单里要看得见
+    const renderStartedAt = Date.now();
     try {
       const result = await exportMp4(
         view,
@@ -695,6 +699,7 @@ export function EditScreen() {
         bytes: result.bytes,
         quality,
         renderedAt: new Date().toISOString(),
+        renderMs: Date.now() - renderStartedAt,
       });
       setNotice(
         `${profile.label}成片已导出：${mb} MB · ${profile.width}×${profile.height} / ${profile.fps}fps · ${
@@ -791,6 +796,7 @@ export function EditScreen() {
       quality: lastRender?.quality,
       fileName: lastRender?.fileName,
       bytes: lastRender?.bytes,
+      ...(lastRender?.renderMs !== undefined ? { renderMs: lastRender.renderMs } : {}),
     });
     const tail = recorded ? "已记进项目的发布记录。" : "项目是只读的，这次没有记进发布记录。";
     setNotice(

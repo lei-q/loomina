@@ -57,6 +57,13 @@ export type ModelRecord = {
   resolution?: string;
   /** 配音默认音色 */
   voice?: string;
+  /**
+   * 按用量计价的单价（H4）：文本是元 / 百万 token，配音是元 / 千字。
+   *
+   * 供应商的 `/v1/models` 不给 chat 与 tts 的价格（R28 / R39），
+   * 只能由作者按账单填；不填就是不知道，账上只数次数、不写金额。
+   */
+  unitPriceCny?: number;
   /** 商用条款 / 能力备注：供应商给的事实，代码测不出来，只能人工记（B12） */
   terms?: string;
 };

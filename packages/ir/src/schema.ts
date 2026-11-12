@@ -12,6 +12,26 @@ export const ProvenanceSchema = z.object({
   seed: z.number().int().optional(),
   referenceAssetIds: z.array(Id).default([]),
   createdAt: z.string().min(1),
+  /**
+   * 这一次生成实际花了多少（元，H4）。
+   *
+   * 图像 / 视频有价目表可查，钱记在 `Asset.costCny` 上；文本与配音只能按用量折算
+   * （token / 字数），而用量只有调用那一刻知道，所以记在溯源里。
+   * 缺省表示不知道多少钱——不是 0。
+   */
+  costCny: z.number().nonnegative().optional(),
+  /**
+   * 这次生成消耗了多少（H4）：文本是 token，配音是字。
+   *
+   * 与 `costCny` 一起记：单价是作者填的估算，用量是供应商给的事实。
+   * 只留金额的话，事后想核「这个数怎么来的」就无从查起。
+   */
+  usage: z
+    .object({
+      units: z.number().nonnegative(),
+      unit: z.enum(["tokens", "chars"]),
+    })
+    .optional(),
 });
 export type Provenance = z.infer<typeof ProvenanceSchema>;
 
@@ -669,6 +689,13 @@ export const PublishPackageSchema = z.object({
   bytes: z.number().int().nonnegative().optional(),
   /** 这条发布记录写入 IR 的时间 */
   recordedAt: z.string().optional(),
+  /**
+   * 交付这一包的那次本机渲染花了多少毫秒（H4）。
+   *
+   * 本机 ffmpeg 不按文件收费，但渲染要占机器时间；记下来才能在账单里说清
+   * 「这一版花了多少机器时间」，而不是笼统写「不花钱」。
+   */
+  renderMs: z.number().int().nonnegative().optional(),
   aiLabel: AILabelSchema.optional(),
 });
 export type PublishPackage = z.infer<typeof PublishPackageSchema>;

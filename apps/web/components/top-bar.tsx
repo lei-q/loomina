@@ -583,6 +583,7 @@ export function TopBar({
       )}
       <SpendLedger
         project={project}
+        events={events}
         open={ledgerOpen}
         onClose={() => setLedgerOpen(false)}
       />

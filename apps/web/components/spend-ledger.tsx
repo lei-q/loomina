@@ -1,30 +1,45 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
-import type { Project } from "@loomina/ir";
+import type { Project, ProjectEvent } from "@loomina/ir";
 import { shotLedger, spendByStage, spendOf } from "@/lib/read-model";
+import { billCsv, spendReport } from "@/lib/spend-report";
 import { cn } from "@/lib/utils";
 
 /**
  * 记账抽屉（H4）。
  *
- * 回答两个问题：钱花在哪个阶段、花在哪一镜。
- * 全部从 IR 派生，不写事件、不改预算；没有价目的东西单独数出来，不当 0 算。
+ * 回答三个问题：钱花在哪个阶段、花在哪一镜、这台设备上一共花了多少。
+ * 全部从 IR 与事件日志派生，不写事件、不改预算；没有价目的东西单独数出来，不当 0 算。
  */
 export function SpendLedger({
   project,
+  events,
   open,
   onClose,
 }: {
   project: Project;
+  /** 本地整条事件日志（H4 跨项目汇总）：开过几个项目就有几条 project.created */
+  events: ProjectEvent[];
   open: boolean;
   onClose: () => void;
 }) {
   const spend = useMemo(() => spendOf(project), [project]);
   const stages = useMemo(() => spendByStage(project), [project]);
   const shots = useMemo(() => shotLedger(project), [project]);
+  const report = useMemo(() => spendReport(events), [events]);
   const stageTotal = stages.reduce((sum, stage) => sum + stage.spent, 0);
   const budget = project.budgetCny;
+
+  const exportBill = () => {
+    const blob = new Blob([billCsv(events)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `账单-${new Date().toISOString().slice(0, 10)}.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -55,13 +70,23 @@ export function SpendLedger({
               按阶段 / 按镜 · {project.shots.length} 镜
             </span>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-token border border-line px-2 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
-          >
-            关闭
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={exportBill}
+              title="导出这台设备上所有项目的账单：项目合计、逐镜明细、按阶段三段，CSV 可直接用表格软件打开"
+              className="rounded-token border border-line px-2 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+            >
+              导出账单
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-token border border-line px-2 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+            >
+              关闭
+            </button>
+          </div>
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
@@ -79,10 +104,11 @@ export function SpendLedger({
               <dd
                 className={cn(
                   "tnum mt-0.5 text-[15px]",
-                  spend.unpriced > 0 ? "text-pick" : "text-muted-2",
+                  spend.unpricedCalls > 0 ? "text-pick" : "text-muted-2",
                 )}
               >
-                {spend.unpriced}
+                {spend.unpricedCalls}
+                <span className="ml-0.5 text-[8.5px] text-muted-2">次</span>
               </dd>
             </div>
             <div className="rounded-token border border-line px-2 py-1.5">
@@ -109,9 +135,15 @@ export function SpendLedger({
                   <div className="min-w-0">
                     <div className="flex items-baseline gap-2">
                       <span className="text-[10px] text-text">{stage.label}</span>
+                      {/* 图 / 视频按张数说，文本 / 配音按次数说（H4）：单位不同，不能混成一个数 */}
                       {stage.unpriced > 0 && (
                         <span className="text-[8.5px] text-pick">
                           {stage.unpriced} 张未定价
+                        </span>
+                      )}
+                      {stage.unpricedCalls > stage.unpriced && (
+                        <span className="text-[8.5px] text-pick">
+                          {stage.unpricedCalls - stage.unpriced} 次未定价
                         </span>
                       )}
                     </div>
@@ -172,10 +204,63 @@ export function SpendLedger({
             </ul>
           </section>
 
+          <section className="mt-4">
+            <div className="flex items-baseline justify-between gap-2">
+              <h3 className="text-[10.5px] tracking-[.06em] text-text">这台设备</h3>
+              <span className="tnum text-[9px] text-muted-2">
+                {report.rows.length} 个项目 · 合计 ¥{report.total.toFixed(2)}
+              </span>
+            </div>
+            <ul className="mt-1.5 border-t border-line">
+              {report.rows.map((row) => (
+                <li
+                  key={`${row.id}-${row.fromEvent}`}
+                  className="flex items-start justify-between gap-3 border-b border-line py-1.5"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-baseline gap-x-2">
+                      <span className="truncate text-[10px] text-text">{row.title}</span>
+                      <span className="tnum text-[8.5px] text-muted-2">
+                        v{row.version} · {row.shots} 镜
+                      </span>
+                      {row.id === project.id && (
+                        <span className="text-[8.5px] text-muted">正在看</span>
+                      )}
+                    </div>
+                    <p className="mt-0.5 text-[8.5px] leading-[1.5] text-muted-2">
+                      {row.startedAt.slice(0, 10)} 起 · {row.events} 条事件
+                      {row.spend.text > 0 ? ` · 文本 ¥${row.spend.text.toFixed(2)}` : ""}
+                      {row.spend.voice > 0 ? ` · 配音 ¥${row.spend.voice.toFixed(2)}` : ""}
+                      {row.spend.unpricedCalls > 0
+                        ? ` · ${row.spend.unpricedCalls} 次未定价`
+                        : ""}
+                    </p>
+                  </div>
+                  <span
+                    className={cn(
+                      "tnum shrink-0 text-[10.5px]",
+                      row.spend.spent > 0 ? "text-text" : "text-muted-2",
+                    )}
+                  >
+                    ¥{row.spend.spent.toFixed(2)}
+                  </span>
+                </li>
+              ))}
+              {report.rows.length === 0 && (
+                <li className="py-2 text-[9.5px] text-muted-2">日志里还没有项目。</li>
+              )}
+            </ul>
+            {report.skipped > 0 && (
+              <p className="mt-1.5 text-[9px] leading-[1.6] text-pick">
+                有 {report.skipped} 段日志回放不了，没算进合计：那几段可能是在旧版本里写的。
+              </p>
+            )}
+          </section>
+
           <p className="mt-4 border-t border-line pt-3 text-[9px] leading-[1.7] text-muted-2">
-            只加知道单价的东西：没有价目的生成资产单独数「未定价」，不当 0 算。
-            文本模型调用与本机 ffmpeg 渲染目前没有落进 IR 的费用，因此剧本与成片阶段
-            可能显示 ¥0.00——那表示「未记账」，不是「免费」。
+            只加知道单价的东西：没有价目的生成结果单独数「未定价」，不当 0 算。
+            文本按 token、配音按字计价——单价是你在设置页里给每个模型填的估算，
+            填了才算钱；本机 ffmpeg 渲染不按文件收费，账单里只记机器时间，不折成钱。
           </p>
         </div>
       </aside>
