@@ -212,6 +212,11 @@ export const AssetSchema = z.object({
   costCny: z.number().nonnegative().optional(),
   /** 人工复核结果（H6）；缺省表示还没看 */
   review: AssetReviewSchema.optional(),
+  /**
+   * 只是占位（ADR-0144）：新建人物的四格先占资产位，还没有图。
+   * 有 uri 的真实资产不该带这个标记；写了 uri 的新资产会自动把它清掉。
+   */
+  placeholder: z.boolean().optional(),
   createdAt: z.string().min(1),
 });
 export type Asset = z.infer<typeof AssetSchema>;

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SHEET_ANGLES } from "./cast";
 import { clone } from "./clone";
 import {
   BlockingSchema,
@@ -208,6 +209,11 @@ export type ProjectEvent =
           | "appearance"
           | "mustNotChange"
           | "referenceImages"
+          /**
+           * 四格三视图的资产位（B1 / ADR-0144）：整份替换。
+           * 新建人物与旧项目补格子都靠它——格子只是 id，出图仍是 `asset.updated`。
+           */
+          | "sheet"
           /** 音色（ADR-0085）：空串表示用回默认音色 */
           | "voiceProfileId"
         >
@@ -1136,6 +1142,16 @@ function applyEventCore(
       if (event.patch.referenceImages !== undefined) {
         checkReferenceImages(event.patch.referenceImages, current.assets, "character.updated");
       }
+      if (event.patch.sheet !== undefined) {
+        for (const [angle, assetId] of Object.entries(event.patch.sheet)) {
+          if (!SHEET_ANGLES.includes(angle as (typeof SHEET_ANGLES)[number])) {
+            throw new Error(`character.updated 的 sheet 有未知角度: ${angle}`);
+          }
+          if (typeof assetId === "string" && assetId.trim().length === 0) {
+            throw new Error("character.updated 的 sheet 资产位不能是空串");
+          }
+        }
+      }
       if (
         event.patch.voiceProfileId !== undefined &&
         event.patch.voiceProfileId.trim().length > VOICE_PROFILE_MAX
@@ -1475,9 +1491,15 @@ function applyEventCore(
       if (!current) throw new Error("asset.updated 之前必须有 project.created");
       const exists = current.assets.some((item) => item.id === event.asset.id);
       const assets = exists
-        ? current.assets.map((item) =>
-            item.id === event.asset.id ? { ...item, ...event.asset } : item,
-          )
+        ? current.assets.map((item) => {
+            if (item.id !== event.asset.id) return item;
+            const merged = { ...item, ...event.asset };
+            // 有图的新资产自动摘掉占位标记（ADR-0144）：占位只是给「还没出图」用的
+            if (merged.uri && event.asset.placeholder === undefined) {
+              delete merged.placeholder;
+            }
+            return merged;
+          })
         : [...current.assets, event.asset];
       return { ...current, assets };
     }

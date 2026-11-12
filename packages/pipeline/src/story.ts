@@ -1,6 +1,8 @@
 import { z } from "zod";
 import {
   assertValidProject,
+  sheetSlotAssets,
+  sheetSlotsOf,
   type BeatKind,
   type Character,
   type DialogueLine,
@@ -433,7 +435,8 @@ export function projectFromStoryDraft(
       id: `char-${index + 1}`,
       name: item.name,
       appearance: item.appearance,
-      sheet: {},
+      // 新建人物先把四格占上（ADR-0144）：否则「生成三视图」没有资产位可写
+      sheet: sheetSlotsOf(`char-${index + 1}`),
       referenceImages: [],
       mustNotChange: [],
     };
@@ -595,7 +598,8 @@ export function projectFromStoryDraft(
     dialogue,
     voiceTakes: [],
     takes: [],
-    assets: [],
+    // 四格资产位先占上（ADR-0144），故事人物进来就能直接出三视图
+    assets: characters.flatMap((character) => sheetSlotAssets(character.id, options.at)),
     approvals: [],
     gates: [],
     timeline: { items: [], music: [] },

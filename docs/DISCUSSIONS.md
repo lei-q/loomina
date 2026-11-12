@@ -4477,3 +4477,34 @@ C12 剩下的「分段响度」：整片 loudnorm 只保证全片积分响度到
 
 **边界**
 - 自动二次归一、多声道 / 5.1、音效总线、句内压缩 / 限制未做。
+
+## 第一百五十八次 · 2026-11-12 · B1 四格资产位与占位资产（修「先建四个格子」死路）
+
+**议题**
+在项目里新建人物，点「生成三视图」，界面回一句「这个角色还没有三视图的资产位，先建四个格子」——而界面上没有任何地方能建格子。故事草稿落项目也是 `sheet: {}`，从「一键成片」进来的角色全部卡死；示例项目能用，只是因为种子数据手写了四个资产 id。真实路径一直是断的。
+
+**结论**
+- **四格 id 确定**：`sheetSlotsOf(characterId)` 生成 `a-sheet-<id>-<angle>`，补格子幂等，日志不分裂出两套地址。
+- **新建人物连资产一起建**：`sheetSlotAssets` 给四个 `placeholder: true`、无 `uri` 的资产；`addCharacter` 先写四条 `asset.updated` 再写 `character.added`（IR 的 `REF_ASSET` 要求顺序不能反），共五条事件。
+- **占位不算有图**：新增可选字段 `Asset.placeholder`；`castReadiness` 只数没有这个标记的资产；`asset.updated` 写进 `uri` 时自动摘掉标记。四格过期 / 模型一致性也跳过占位格子。
+- **`character.updated { sheet }` 整份替换**：校验角度合法、id 非空串；删除某一格不需要另造事件。
+- **旧项目点一次自愈**：`generateSheet` 发现缺格子先补占位资产 + 一条 `character.updated`，再逐格出图；作者换过的 id 原样保留。那句死路提示删掉。
+- **故事草稿同构**：`projectFromStoryDraft` 用同一对函数落 `sheet` 与资产。
+
+**验证**
+- IR 新增：确定性 id、占位不计闸门、有图资产计数；事件层 `sheet` 应用与重放、未知角度 / 空串拒绝、写 uri 摘占位。
+- web：`addCharacter` 五条事件；旧角色点生成先补格子再发四次请求；过期读模型跳过占位格子（新增 1 条）。
+- 全量 1224 条测试（IR 212 / gateway 28 / pipeline 98 / web 886）全过；`tsc --noEmit` 与 `next build` 干净。
+- 浏览器：灌一个 `sheet: {}` 的旧角色 → 点「生成三视图」→ 四条占位 + 一条 `character.updated { sheet }` → 四张图逐一入格，四格 `uri` 齐全、占位标记摘掉、状态「可锁定」、无过期点与错误提示。
+
+**产物**
+- `packages/ir/src/cast.ts`：`sheetSlotsOf` / `sheetSlotAssets`，`castReadiness` 过滤占位
+- `packages/ir/src/events.ts`：`character.updated { sheet }`、`asset.updated` 摘占位
+- `packages/ir/src/schema.ts`：`Asset.placeholder`
+- `packages/pipeline/src/story.ts`：故事草稿带四格
+- `apps/web/lib/workbench-store.ts`：新建人物补四格、旧角色自愈
+- `apps/web/lib/read-model.ts`：过期判断跳过占位
+- ADR-0144
+
+**边界**
+- 「删掉某一格」还没有独立入口；占位资产会占资产库位置（回收归 H3）；`sheet` 指向悬空 id 的脏数据不修。

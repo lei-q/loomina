@@ -3077,3 +3077,70 @@ describe("清空表演参数（C2 / ADR-0124）", () => {
     expect(result.dialogue[0]!.performance?.rate).toBe(1.5);
   });
 });
+
+describe("四格资产位（ADR-0144）", () => {
+  it("character.updated 可以整份补上四格，重放后一致", () => {
+    const project = load();
+    const sheet = {
+      front: "a-sheet-c-new-front",
+      threeQuarter: "a-sheet-c-new-threeQuarter",
+      side: "a-sheet-c-new-side",
+      back: "a-sheet-c-new-back",
+    };
+    const event: ProjectEvent = {
+      type: "character.updated",
+      at: AT,
+      characterId: "c-lin",
+      patch: { sheet },
+    };
+    const after = applyEvent(project, event);
+    expect(after.characters.find((item) => item.id === "c-lin")?.sheet).toEqual(sheet);
+    expect(rebuild([created(project), event])).toEqual(after);
+  });
+
+  it("有图的资产写回时自动摘掉占位标记", () => {
+    const project = load();
+    const placeholder = {
+      id: "a-sheet-c-lin-front",
+      kind: "image" as const,
+      source: "generated" as const,
+      placeholder: true,
+      createdAt: AT,
+    };
+    const withSlot = applyEvent(project, {
+      type: "asset.updated",
+      at: AT,
+      asset: placeholder,
+    });
+    const { placeholder: _placeholder, ...real } = placeholder;
+    const filled = applyEvent(withSlot, {
+      type: "asset.updated",
+      at: AT,
+      asset: { ...real, uri: "data:image/png;base64,AA" },
+    });
+    expect(filled.assets.find((item) => item.id === placeholder.id)).not.toHaveProperty(
+      "placeholder",
+    );
+  });
+
+  it("未知角度与空资产位被拒绝", () => {
+    const project = load();
+    expect(() =>
+      applyEvent(project, {
+        type: "character.updated",
+        at: AT,
+        characterId: "c-lin",
+        // @ts-expect-error 故意写一个不存在的角度
+        patch: { sheet: { top: "a-1" } },
+      }),
+    ).toThrow(/未知角度/);
+    expect(() =>
+      applyEvent(project, {
+        type: "character.updated",
+        at: AT,
+        characterId: "c-lin",
+        patch: { sheet: { front: "  " } },
+      }),
+    ).toThrow(/不能是空串/);
+  });
+});

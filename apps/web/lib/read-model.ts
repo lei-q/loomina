@@ -1253,7 +1253,9 @@ export function staleSheetCells(
       const assetId = character.sheet[angle];
       if (!assetId) return [];
       const asset = project.assets.find((item) => item.id === assetId);
-      return asset ? [{ assetId, asset }] : [];
+      // 占位格子还没出图（ADR-0144）：不参与过期 / 模型一致性的比较
+      if (!asset || asset.placeholder === true) return [];
+      return [{ assetId, asset }];
     });
     if (cells.length === 0) continue;
 

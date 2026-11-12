@@ -1,4 +1,4 @@
-import type { Approval, Character, Id, Project, SheetView } from "./schema";
+import type { Approval, Asset, Character, Id, Project, SheetView } from "./schema";
 
 /**
  * 定妆闸门（ADR-0028）。
@@ -58,6 +58,34 @@ export function missingSheetAngles(character: Character): SheetView[] {
   return SHEET_ANGLES.filter((angle) => !character.sheet[angle]);
 }
 
+/**
+ * 四格的资产位（B1 / ADR-0144）：新建人物时先把四个格子占上。
+ *
+ * 格子只是一个稳定的资产 id，没有图也合法（界面画「待生成」）；
+ * 出图时仍由 `asset.updated` 把图写进这个 id。旧项目没有格子时，
+ * 「生成三视图」会先补一条 `character.updated { sheet }` 再出图。
+ */
+export function sheetSlotsOf(characterId: Id): Character["sheet"] {
+  return Object.fromEntries(
+    SHEET_ANGLES.map((angle) => [angle, `a-sheet-${characterId}-${angle}`]),
+  ) as Character["sheet"];
+}
+
+/**
+ * 四个资产位的占位资产：没有 uri，界面画剪影 / 「待生成」。
+ * `Project` 的不变量要求 `sheet` 里的 id 都指向真实资产，所以占格子要连资产一起建。
+ */
+export function sheetSlotAssets(characterId: Id, at: string): Asset[] {
+  const sheet = sheetSlotsOf(characterId);
+  return SHEET_ANGLES.map((angle) => ({
+    id: sheet[angle]!,
+    kind: "image" as const,
+    source: "generated" as const,
+    placeholder: true,
+    createdAt: at,
+  }));
+}
+
 /** 一个目标在锁定时应当锁住的全部资产。 */
 export function targetAssetIds(
   project: Project,
@@ -111,10 +139,17 @@ function statusOf(
 }
 
 export function castReadiness(project: Project): CastReadiness {
+  // 只有盘上真的存在的资产才算数：新建人物会先占四个格子（ADR-0144），
+  // 格子没有图时不能让闸门误以为「已经齐了」。
+  const existingAssetIds = new Set(
+    project.assets.filter((asset) => asset.placeholder !== true).map((asset) => asset.id),
+  );
+  const realAssetIds = (ids: Id[]) => ids.filter((id) => existingAssetIds.has(id));
+
   const characters: CastItem[] = project.characters.map((character) => {
     const required = requiresSheet(project, character.id);
     const missingAngles = missingSheetAngles(character);
-    const assetIds = targetAssetIds(project, "character", character.id);
+    const assetIds = realAssetIds(targetAssetIds(project, "character", character.id));
     const approval = approvalFor(project, "character", character.id);
     return {
       targetType: "character",
@@ -129,7 +164,7 @@ export function castReadiness(project: Project): CastReadiness {
   });
 
   const locations: CastItem[] = project.locations.map((location) => {
-    const assetIds = targetAssetIds(project, "location", location.id);
+    const assetIds = realAssetIds(targetAssetIds(project, "location", location.id));
     const approval = approvalFor(project, "location", location.id);
     return {
       targetType: "location",
@@ -145,7 +180,7 @@ export function castReadiness(project: Project): CastReadiness {
   });
 
   const props: CastItem[] = project.props.map((prop) => {
-    const assetIds = targetAssetIds(project, "prop", prop.id);
+    const assetIds = realAssetIds(targetAssetIds(project, "prop", prop.id));
     const approval = approvalFor(project, "prop", prop.id);
     return {
       targetType: "prop",

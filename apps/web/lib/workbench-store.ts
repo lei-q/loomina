@@ -9,6 +9,8 @@ import {
   placementProblem,
   rebuild,
   REFERENCE_IMAGES_MAX,
+  sheetSlotAssets,
+  sheetSlotsOf,
   SHEET_ANGLES,
   shotAnchors,
   StagingMarkSchema,
@@ -1974,27 +1976,65 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     // 锁定的定妆不能被覆盖：要重做先解锁（准则 P14）
     if (isLocked(project, "character", characterId)) return;
 
-    const angles = SHEET_ANGLES.filter((angle) => character.sheet[angle]);
-    if (angles.length === 0) {
-      set({ castError: "这个角色还没有三视图的资产位，先建四个格子" });
-      return;
+    // 旧项目 / 还没补格子的角色（ADR-0144）：点「生成三视图」先补一条
+    // `character.updated { sheet }` 把四个资产位占上，再一格一格出图。
+    // 已有的格子（可能是作者换过的 id）原样保留。
+    let active = character;
+    if (SHEET_ANGLES.some((angle) => !character.sheet[angle])) {
+      const sheet: Character["sheet"] = sheetSlotsOf(character.id);
+      for (const angle of SHEET_ANGLES) {
+        const assetId = character.sheet[angle];
+        if (assetId) sheet[angle] = assetId;
+      }
+      const at = stamp();
+      // 新占的格子也要有资产记录：不变量要求 sheet 的 id 指得到资产
+      const slotEvents: ProjectEvent[] = SHEET_ANGLES.filter(
+        (angle) => !character.sheet[angle],
+      ).map((angle) => ({
+        type: "asset.updated",
+        at,
+        asset: {
+          id: sheet[angle]!,
+          kind: "image",
+          source: "generated",
+          placeholder: true,
+          createdAt: at,
+        },
+      }));
+      const event: ProjectEvent = {
+        type: "character.updated",
+        at,
+        characterId: character.id,
+        patch: { sheet },
+      };
+      let nextProject = project;
+      for (const item of [...slotEvents, event]) nextProject = applyEvent(nextProject, item);
+      set({
+        project: nextProject,
+        events: [...get().events, ...slotEvents, event],
+        castError: undefined,
+      });
+      active = nextProject.characters.find((item) => item.id === character.id) ?? character;
+    } else {
+      set({ castError: undefined });
     }
 
-    set({ castError: undefined });
-    for (const angle of angles) {
+    for (const angle of SHEET_ANGLES) {
+      const assetId = active.sheet[angle];
+      if (!assetId) continue;
       const ok = await generateOne(
         { get, set },
         {
           key: characterId,
-          label: character.name,
-          assetId: character.sheet[angle]!,
+          label: active.name,
+          assetId,
           job: { kind: "sheet", angle },
           body: {
             kind: "sheet",
             character: {
-              name: character.name,
-              appearance: character.appearance,
-              mustNotChange: character.mustNotChange,
+              name: active.name,
+              appearance: active.appearance,
+              mustNotChange: active.mustNotChange,
             },
             angle,
           },
@@ -3817,18 +3857,29 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       id,
       name: trimmed,
       appearance: trimmedAppearance,
-      sheet: {},
+      // 新建人物先把四格占上（ADR-0144）
+      sheet: sheetSlotsOf(id),
       referenceImages: [],
       mustNotChange: [],
     };
+    // 四格的占位资产必须先于人物存在：不变量要求 sheet 里的 id 都指得到资产
+    const at = stamp();
+    const slotEvents: ProjectEvent[] = sheetSlotAssets(id, at).map((asset) => ({
+      type: "asset.updated",
+      at,
+      asset,
+    }));
     const event: ProjectEvent = {
       type: "character.added",
-      at: stamp(),
+      at,
       character,
     };
+    const nextEvents = [...events, ...slotEvents, event];
+    let nextProject = project;
+    for (const item of [...slotEvents, event]) nextProject = applyEvent(nextProject, item);
     set({
-      project: applyEvent(project, event),
-      events: [...events, event],
+      project: nextProject,
+      events: nextEvents,
       castError: undefined,
     });
     return id;

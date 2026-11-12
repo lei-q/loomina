@@ -1710,6 +1710,24 @@ describe("四格过期与旧版（B1）", () => {
     expect(staleSheetCells(base, project).size).toBe(0);
   });
 
+  it("占位格子还没出图：不参与过期与模型一致性（ADR-0144）", () => {
+    const withPlaceholder = ProjectSchema.parse({
+      ...project,
+      assets: project.assets.map((asset) =>
+        asset.id === "a-lin-front"
+          ? { id: asset.id, kind: asset.kind, source: asset.source, placeholder: true, createdAt: asset.createdAt }
+          : asset,
+      ),
+    });
+    const events = [
+      { type: "project.created" as const, at: at(0), project: withPlaceholder },
+      { type: "character.updated" as const, at: at(9), characterId: "c-lin", patch: { appearance: "剪了短发" } },
+    ];
+    const stale = staleSheetCells(events, withPlaceholder);
+    expect(stale.has("a-lin-front")).toBe(false);
+    expect(stale.get("a-lin-back")?.reasons).toEqual(["外形描述"]);
+  });
+
   it("改外形 / 名字 / 不许变：只标改动之前出的那几格", () => {
     const events = [
       ...base,

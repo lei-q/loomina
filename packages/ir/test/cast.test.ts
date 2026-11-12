@@ -6,6 +6,8 @@ import {
   missingSheetAngles,
   requiresSheet,
   SHEET_ANGLES,
+  sheetSlotAssets,
+  sheetSlotsOf,
   targetAssetIds,
 } from "../src/cast";
 
@@ -180,5 +182,43 @@ describe("道具闸门（ADR-0030）", () => {
     });
     expect(castReadiness(unused).props[0]!.required).toBe(false);
     expect(castReadiness(unused).totalRequired).toBe(2);
+  });
+});
+
+describe("四格资产位（ADR-0144）", () => {
+  it("新建人物的四格 id 是确定的", () => {
+    expect(sheetSlotsOf("char-1")).toEqual({
+      front: "a-sheet-char-1-front",
+      threeQuarter: "a-sheet-char-1-threeQuarter",
+      side: "a-sheet-char-1-side",
+      back: "a-sheet-char-1-back",
+    });
+  });
+
+  it("只占了格子、还没出图时不能算齐", () => {
+    const next = ProjectSchema.parse({
+      ...raw,
+      characters: [...raw.characters!, { id: "c-new", name: "新人", sheet: sheetSlotsOf("c-new") }],
+      assets: [...raw.assets!, ...sheetSlotAssets("c-new", "2026-11-12T10:00:00+08:00")],
+    });
+    const item = castReadiness(next).characters.find((row) => row.targetId === "c-new")!;
+    expect(item.assetIds).toEqual([]);
+    expect(item.status).toBe("incomplete");
+  });
+
+  it("出了图之后占位标记被摘掉，才计入资产", () => {
+    const slots = sheetSlotAssets("c-new", "2026-11-12T10:00:00+08:00");
+    const filled = slots.map((asset, index) => {
+      if (index !== 0) return asset;
+      const { placeholder: _placeholder, ...rest } = asset;
+      return { ...rest, uri: "data:image/png;base64,AA" };
+    });
+    const next = ProjectSchema.parse({
+      ...raw,
+      characters: [...raw.characters!, { id: "c-new", name: "新人", sheet: sheetSlotsOf("c-new") }],
+      assets: [...raw.assets!, ...filled],
+    });
+    const item = castReadiness(next).characters.find((row) => row.targetId === "c-new")!;
+    expect(item.assetIds).toHaveLength(1);
   });
 });

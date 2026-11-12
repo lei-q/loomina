@@ -248,6 +248,65 @@ describe("生成定妆资产（ADR-0031 / ADR-0032）", () => {
     vi.unstubAllGlobals();
   });
 
+  it("旧项目里没有资产位的角色：先补四格再出图（ADR-0144）", async () => {
+    // 模拟旧项目 / 外部导入的人物：sheet 是空的
+    const { project, events } = state();
+    const at = "2026-11-12T10:00:00+08:00";
+    const legacy = {
+      id: "c-legacy",
+      name: "旧人",
+      appearance: "长外套",
+      sheet: {},
+      referenceImages: [],
+      mustNotChange: [],
+    };
+    const added: ProjectEvent = { type: "character.added", at, character: legacy };
+    useWorkbench.setState({ project: applyEvent(project, added), events: [...events, added] });
+
+    const calls = stub(
+      (body) =>
+        new Response(
+          JSON.stringify({
+            uri: `data:image/png;base64,${body.angle}`,
+            model: "gemini-2.5-flash-image",
+            prompt: `定妆 ${body.angle}`,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+
+    await state().generateSheet("c-legacy");
+
+    // 一条 character.updated 补格子，四格各出一条 asset.updated
+    const sheetEvent = state().events.find(
+      (event) => event.type === "character.updated" && event.characterId === "c-legacy",
+    );
+    expect(sheetEvent).toMatchObject({
+      patch: {
+        sheet: {
+          front: "a-sheet-c-legacy-front",
+          threeQuarter: "a-sheet-c-legacy-threeQuarter",
+          side: "a-sheet-c-legacy-side",
+          back: "a-sheet-c-legacy-back",
+        },
+      },
+    });
+    expect(calls.map((call) => call.angle)).toEqual([
+      "front",
+      "threeQuarter",
+      "side",
+      "back",
+    ]);
+    expect(
+      state().project.characters.find((item) => item.id === "c-legacy")?.sheet.front,
+    ).toBe("a-sheet-c-legacy-front");
+    expect(state().project.assets.find((item) => item.id === "a-sheet-c-legacy-front")?.uri).toContain(
+      "front",
+    );
+
+    vi.unstubAllGlobals();
+  });
+
   it("锁定的定妆不重生成，一次请求都不发", async () => {
     state().lockCast("character", "c-lin");
     const calls = stub(() => new Response("{}", { status: 200 }));
@@ -2302,22 +2361,35 @@ describe("人物库：新建与改名（ADR-0071）", () => {
     useWorkbench.setState({ readOnly: false });
   });
 
-  it("新建人物：一条 character.added，名字与外形去掉首尾空白", () => {
+  it("新建人物：四格先占资产位，再写一条 character.added", () => {
     const snapshot = state().events.length;
 
     const id = state().addCharacter(" 阿棠 ", " 齐耳短发，灰毛衣 ");
     expect(id).toBeTruthy();
 
-    expect(state().events).toHaveLength(snapshot + 1);
+    // 四格占位资产 + 一条 character.added（ADR-0144）
+    expect(state().events).toHaveLength(snapshot + 5);
     expect(state().events.at(-1)).toMatchObject({ type: "character.added" });
+    expect(
+      state().events.slice(-5, -1).map((event) => event.type),
+    ).toEqual(["asset.updated", "asset.updated", "asset.updated", "asset.updated"]);
     const character = state().project.characters.find((item) => item.id === id);
     expect(character).toMatchObject({
       name: "阿棠",
       appearance: "齐耳短发，灰毛衣",
-      sheet: {},
+      sheet: {
+        front: `a-sheet-${id}-front`,
+        threeQuarter: `a-sheet-${id}-threeQuarter`,
+        side: `a-sheet-${id}-side`,
+        back: `a-sheet-${id}-back`,
+      },
       referenceImages: [],
       mustNotChange: [],
     });
+    // 占位资产不算「已出图」：闸门仍判不完整
+    expect(
+      state().project.assets.filter((asset) => asset.id.startsWith(`a-sheet-${id}-`)),
+    ).toHaveLength(4);
     expect(rebuild(state().events)).toEqual(state().project);
 
     // 新建的人立刻能出现在剧本页的换人下拉里
