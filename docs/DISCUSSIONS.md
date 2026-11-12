@@ -4880,3 +4880,29 @@ H15 要求「单条成本、首次通过率、重试占比、异常突增」。H
 - 突增是诊断提示，不是硬闸门；预算阻断仍由 H10 负责，失败率告警归 H8。
 - 首次通过率依赖 take 状态及时更新；长期留在 `draft` 的镜不会进入分母。
 
+## 第一百七十六次 · 2026-11-13 · H8 监控告警
+
+**议题**
+H11 的健康检查只有一段 `alarms` 字符串，且只在失败率达到 50% 时才出现；H15 的单镜突增只活在记账抽屉里。H8 要的是「任务失败率 + 成本异常」的统一告警清单：留意与告警分开，成本和失败率都能看见。
+
+**结论**
+- 新增 client-safe 的 `apps/web/lib/alerts.ts`：`HealthAlert { id, level, kind, title, detail, at? }`，`level` 分告警 / 留意，`kind` 分供应商 / 失败率 / 成本。
+- 失败率告警在 `health-events.ts` 的 `failureAlerts` 里生成，沿用 H11 的阈值：少于 3 次不下结论、≥20% 留意、≥50% 告警；每条带失败次数、样本数、最后失败码。
+- 供应商告警由 `health.ts` 生成：`down` 告警、`degraded` 留意；`GET /api/health` 多回结构化 `alerts`，旧 `alarms` 字符串保留。
+- 成本告警在浏览器按本机事件日志现算：某镜贵过中位数 3 倍且多花至少 ¥1 记留意，项目已花超过预算记告警。当前项目由 HealthPanel 直接传进去——日志按 `project.created` 切段时，一次跨项目的「回到这里」会让最后一段的恢复目标落在段外、回放失败，当前项目不该因此漏掉告警（本次实测踩到）。
+- 前端合并、按 id 去重、告警优先、最多 20 条；没有告警时显示「现在没有告警」并列出三条检查线。全只读：不写 IR / 事件、不弹通知、不自动停生成。
+
+**产物**
+- `apps/web/lib/alerts.ts` 与测试、`apps/web/lib/health-events.ts`、`apps/web/lib/health.ts`、`apps/web/components/health-panel.tsx`
+- `docs/adr/0157-alert-list-and-cost-alerts.md`、`docs/FEATURES.md`、`docs/ROADMAP.md`、`docs/DISCUSSIONS.md`
+
+**验证**
+- `lib/alerts.test.ts` 4 条、`lib/health-events.test.ts` 13 条、`lib/health.test.ts` 5 条全过；`tsc --noEmit` 与 `pnpm --filter @loomina/web build` 通过。
+- 浏览器把示例项目预算从 ¥60 改成 ¥10 后打开 `/settings`：健康检查顶部出现「现在有问题 · 2 条」，一条「告警 / 成本 / 夜班 已超预算（已花 ¥19.44 / 预算 ¥10.00）」，一条「告警 / 失败率 / 配音 失败率 100%（3/3 次，404）」；截图 `/tmp/alerts.png`。验证后把预算改回 ¥60。
+- 回归用例覆盖「当前项目直接传入、日志分段回放失败也照样报警」。
+
+**边界**
+- 只在设置页健康检查块出现，没有常驻调度器、桌面 / 邮件通知、告警历史或静音确认。
+- 成本告警只看本机日志，跨设备不汇总；阻断仍归 H10，告警只负责让作者看见。
+- 日志分段回放失败的历史段仍不参与成本告警，账单里的「几段回放不了」照旧如实报数。
+

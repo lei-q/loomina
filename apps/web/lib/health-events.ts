@@ -1,7 +1,8 @@
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { projectRoot } from "./app-config";
-import { MODALITIES, type Modality } from "./config-types";
+import type { HealthAlert } from "./alerts";
+import { MODALITIES, MODALITY_LABEL, type Modality } from "./config-types";
 
 /**
  * 生成调用的小账本（H11）。
@@ -154,4 +155,29 @@ export function summarizeFailures(
       const rank = { alarm: 0, watch: 1, ok: 2 } as const;
       return rank[a.state] - rank[b.state] || b.samples - a.samples;
     });
+}
+
+/**
+ * 把失败率分组翻成告警（H8）。
+ *
+ * 只给「有结论」的组：少于 3 次、或不到 20% 的组不出现。
+ * 阈值与 `summarizeFailures` 同一处，避免界面上写 20% / 50%、实际算另一套。
+ */
+export function failureAlerts(groups: FailureGroup[]): HealthAlert[] {
+  return groups.flatMap((group) => {
+    if (group.state !== "watch" && group.state !== "alarm") return [];
+    const who = `${MODALITY_LABEL[group.modality]}${group.modelId ? ` · ${group.modelId}` : ""}`;
+    return [
+      {
+        id: `failure:${group.modality}:${group.modelId ?? "*"}`,
+        level: group.state,
+        kind: "failure" as const,
+        title: `${who} 失败率 ${Math.round(group.rate * 100)}%`,
+        detail: `最近 24 小时 ${group.failures}/${group.samples} 次失败${
+          group.lastCode ? `，最后一次：${group.lastCode}` : ""
+        }；${group.state === "alarm" ? "达到 50% 告警线" : "达到 20% 留意线"}。`,
+        ...(group.lastAt ? { at: group.lastAt } : {}),
+      },
+    ];
+  });
 }

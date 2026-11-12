@@ -1,8 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ALERT_KIND_LABEL,
+  ALERT_LEVEL_LABEL,
+  costAlerts,
+  mergeAlerts,
+  type HealthAlert,
+} from "@/lib/alerts";
 import { MODALITY_LABEL, type Modality } from "@/lib/config-types";
 import { cn } from "@/lib/utils";
+import { useWorkbench } from "@/lib/workbench-store";
 
 /**
  * 健康检查（H11）。
@@ -50,6 +58,8 @@ type HealthReport = {
     waiting: { kind: string; kindLabel: string; label: string; seconds: number }[];
   };
   alarms: string[];
+  /** 结构化告警（H8）；旧服务端没有这个字段时退回 alarms 文本 */
+  alerts?: HealthAlert[];
 };
 
 const PROVIDER_STATE: Record<ProviderState, { label: string; tone: string }> = {
@@ -106,15 +116,30 @@ export function HealthPanel() {
     return () => clearInterval(timer);
   }, [load]);
 
-  const alarming = Boolean(report && report.alarms.length > 0);
   const leader = report?.failures.find((group) => group.state !== "ok");
+  const events = useWorkbench((state) => state.events);
+  const project = useWorkbench((state) => state.project);
+  const cost = useMemo(() => costAlerts(events, project), [events, project]);
+  const alerts = useMemo<HealthAlert[]>(() => {
+    const server: HealthAlert[] =
+      report?.alerts ??
+      (report?.alarms ?? []).map((text, index) => ({
+        id: `legacy:${index}`,
+        level: "alarm" as const,
+        kind: "failure" as const,
+        title: text,
+        detail: "",
+      }));
+    return mergeAlerts(server, cost);
+  }, [report, cost]);
+  const anyAlarm = alerts.some((alert) => alert.level === "alarm");
 
   return (
     <section className="mt-9 border-t border-line pt-5">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <div className="flex items-baseline gap-2">
           <h2 className="text-[12px] tracking-[.04em]">健康检查</h2>
-          <span className="tnum text-[9px] text-muted-2">H11</span>
+          <span className="tnum text-[9px] text-muted-2">H11 · H8</span>
         </div>
         <div className="flex items-center gap-3">
           <span className="tnum text-[9px] text-muted-2">
@@ -138,27 +163,75 @@ export function HealthPanel() {
 
       <p className="mt-1 max-w-[640px] text-[9.5px] leading-[1.7] text-muted-2">
         供应商这一段只探测连通性和权限，不生成、不花钱；失败率来自这几次真实调用，
-        少于 3 次不下结论。没有常驻定时任务：这一块开着时每分钟刷新一次，
-        服务端 5 分钟内复用上次探测，点「立即检查」才会重新探。
+        少于 3 次不下结论、≥20% 留意、≥50% 告警。成本告警按本机事件日志现算：
+        某镜贵过中位数 3 倍，或项目已花超过自己的预算。没有常驻定时任务：
+        这一块开着时每分钟刷新一次，服务端 5 分钟内复用上次探测，点「立即检查」才会重新探。
       </p>
 
       {error && <p className="mt-2 text-[10px] leading-5 text-pick">{error}</p>}
 
+      {alerts.length > 0 ? (
+        <div
+          className={cn(
+            "mt-3 rounded-token border px-3 py-2",
+            anyAlarm ? "border-pick" : "border-line-2",
+          )}
+        >
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <p
+              className={cn(
+                "text-[9px] tracking-[.06em]",
+                anyAlarm ? "text-pick" : "text-text",
+              )}
+            >
+              {anyAlarm ? "现在有问题" : "现在要注意"}
+            </p>
+            <span className="tnum text-[9px] text-muted-2">
+              {alerts.length} 条 · 告警不写项目日志
+            </span>
+          </div>
+          <ul className="mt-1 space-y-1">
+            {alerts.map((alert) => (
+              <li key={alert.id}>
+                <div className="flex flex-wrap items-baseline gap-1.5">
+                  <span
+                    className={cn(
+                      "rounded-token border px-1.5 py-px text-[8px]",
+                      alert.level === "alarm"
+                        ? "border-pick text-pick"
+                        : "border-line-2 text-text",
+                    )}
+                  >
+                    {ALERT_LEVEL_LABEL[alert.level]}
+                  </span>
+                  <span className="text-[8.5px] text-muted-2">
+                    {ALERT_KIND_LABEL[alert.kind]}
+                  </span>
+                  <span className="text-[10px] text-text">{alert.title}</span>
+                  {alert.at && (
+                    <span className="tnum ml-auto text-[8.5px] text-muted-2">
+                      {clockOf(alert.at)}
+                    </span>
+                  )}
+                </div>
+                {alert.detail && (
+                  <p className="mt-0.5 text-[9px] leading-4 text-muted-2">{alert.detail}</p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        report && (
+          <p className="mt-3 rounded-token border border-line px-3 py-2 text-[9.5px] leading-[1.7] text-muted-2">
+            现在没有告警：供应商能连上，最近 24 小时没有超过 20% 的失败率，
+            本机项目也没有成本突增或超预算。
+          </p>
+        )
+      )}
+
       {report && (
         <>
-          {alarming && (
-            <div className="mt-3 rounded-token border border-pick px-3 py-2">
-              <p className="text-[9px] tracking-[.06em] text-pick">现在有问题</p>
-              <ul className="mt-1 space-y-0.5">
-                {report.alarms.map((alarm, index) => (
-                  <li key={index} className="text-[10px] leading-5 text-text">
-                    {alarm}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
           <div className="mt-3 grid gap-2 lg:grid-cols-2">
             {report.providers.length === 0 && (
               <p className="rounded-token border border-dashed border-line px-3 py-3 text-[10px] text-muted-2">

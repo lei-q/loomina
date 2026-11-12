@@ -1,5 +1,11 @@
 import { loadConfig, probeProvider, type ProbeResult } from "./app-config";
-import { summarizeFailures, loadHealthEvents, type FailureGroup } from "./health-events";
+import type { HealthAlert } from "./alerts";
+import {
+  summarizeFailures,
+  loadHealthEvents,
+  failureAlerts,
+  type FailureGroup,
+} from "./health-events";
 import { loadRenderJobs } from "./render-job-store";
 import { longJobSnapshot, LONG_JOB_LABEL, type LongJobKind } from "./long-job";
 
@@ -41,6 +47,11 @@ export type HealthReport = {
     waiting: { kind: LongJobKind; kindLabel: string; label: string; seconds: number }[];
   };
   alarms: string[];
+  /**
+   * 结构化告警（H8）：供应商、失败率；成本告警由浏览器按本机日志补上。
+   * `alarms` 保留给旧调用方与一句话摘要，内容与这里一致。
+   */
+  alerts: HealthAlert[];
 };
 
 export const PROBE_TTL_MS = 5 * 60 * 1000;
@@ -81,22 +92,20 @@ async function probeAll(
   );
 }
 
-function alarmsOf(providers: ProviderHealth[], failures: FailureGroup[]): string[] {
-  const alarms: string[] = [];
+function alertsOf(providers: ProviderHealth[], failures: FailureGroup[]): HealthAlert[] {
+  const alerts: HealthAlert[] = [];
   for (const provider of providers) {
     if (provider.state === "ok") continue;
-    alarms.push(
-      `供应商「${provider.name}」${provider.state === "down" ? "连不上或权限不对" : "暂时不可用"}：${provider.message}`,
-    );
+    alerts.push({
+      id: `provider:${provider.id}`,
+      level: provider.state === "down" ? "alarm" : "watch",
+      kind: "provider",
+      title: `供应商「${provider.name}」${provider.state === "down" ? "不可用" : "不稳定"}`,
+      detail: `${provider.state === "down" ? "连不上或权限不对" : "暂时不可用"}：${provider.message}`,
+      at: provider.checkedAt,
+    });
   }
-  for (const group of failures) {
-    if (group.state !== "alarm") continue;
-    const who = group.modelId ? `${group.modality} · ${group.modelId}` : group.modality;
-    alarms.push(
-      `最近 24 小时 ${who} 失败 ${group.failures}/${group.samples} 次${group.lastCode ? `（最后一次：${group.lastCode}）` : ""}`,
-    );
-  }
-  return alarms;
+  return [...alerts, ...failureAlerts(failures)];
 }
 
 export async function buildHealthReport(force = false): Promise<HealthReport> {
@@ -117,6 +126,7 @@ export async function buildHealthReport(force = false): Promise<HealthReport> {
   const render = { queued: 0, running: 0, error: 0, done: 0 };
   for (const job of jobs) render[job.status] += 1;
   const long = longJobSnapshot(now);
+  const alerts = alertsOf(probed, failures);
 
   return {
     checkedAt,
@@ -134,6 +144,7 @@ export async function buildHealthReport(force = false): Promise<HealthReport> {
         kindLabel: LONG_JOB_LABEL[entry.kind],
       })),
     },
-    alarms: alarmsOf(probed, failures),
+    alarms: alerts.map((alert) => (alert.detail ? `${alert.title}：${alert.detail}` : alert.title)),
+    alerts,
   };
 }

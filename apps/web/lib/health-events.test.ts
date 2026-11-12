@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   FAILURE_WINDOW_MS,
   MIN_SAMPLES,
+  failureAlerts,
   healthEventsPath,
   loadHealthEvents,
   recordHealthEvent,
@@ -99,6 +100,26 @@ describe("失败率汇总（H11）", () => {
       NOW,
     );
     expect(alarm[0]!.state).toBe("alarm");
+  });
+
+  it("失败率告警只给有结论的组：留意与告警分开", () => {
+    const events = [
+      event({ ok: false }),
+      event({ ok: false }),
+      event({ ok: true }),
+      event({ modality: "image", ok: false }),
+      event({ modality: "image", ok: true }),
+      event({ modality: "image", ok: true }),
+      event({ modality: "tts", ok: false }),
+      event({ modality: "tts", ok: true }),
+    ];
+    const alerts = failureAlerts(summarizeFailures(events, NOW));
+    expect(alerts.map((alert) => [alert.id, alert.level, alert.kind])).toEqual([
+      ["failure:video:*", "alarm", "failure"],
+      ["failure:image:*", "watch", "failure"],
+    ]);
+    expect(alerts[0]?.detail).toContain("50%");
+    expect(alerts[1]?.detail).toContain("20%");
   });
 
   it("只算最近 24 小时，更早的失败不该让今天一直红着", () => {
