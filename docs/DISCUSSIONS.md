@@ -4831,3 +4831,26 @@ F6 还欠「逐字导入、章节拆分、保真校验、原文对照」。ADR-0
 **边界**
 - 一次只带一章；不自动解析人物 / 场次 / 台词，不多章批量建项目，不做字符级 diff、云端同步或字节级 CRLF 保真。
 
+## 第一百七十四次 · 2026-11-13 · A10 覆盖率收口
+
+**议题**
+A10 还欠「按覆盖率模板选镜、独立报告与成本估算」。ADR-0096 当年刻意不做 `CoveragePlan` 实体与模板库，是因为当时连 `Beat` / `Shot.purpose` 的读写闭环都没跑通；现在检查抽屉已有覆盖率、逐拍缺口与当前镜目的下拉，能在这个只读派生层上把三件补齐，不必再开实体与事件。
+
+**结论**
+- 模板按 `docs/STORYBOARD.md` 的六种序列做纯数据：双人对话 / 对峙冲突 / 信息揭示 / 单人情绪 / 动作 / 蒙太奇。每条给景别序列、信息 / 情绪两类目的、预计补几镜；不新增 IR、不自动往项目里插镜头。
+- 面板按「每拍缺信息 / 缺情绪 / 都缺」筛模板，作者选一个后可以看到推荐序列；「把这一镜标成 X」走既有 `setShotPlan` 写一条 `shot.updated`，锁镜 / 只读时禁用。
+- 独立报告是浏览器里现算的纯文本：项目名、覆盖率、逐拍状态、缺口、推荐模板、规则清单；复制 / 下载都用同一个字符串，不引依赖。
+- 补镜成本用 `requoteShot(3000ms)` × 推荐镜数，与 V8 整片重做同一份价目表；模型或首帧没价目时写「报不出价」，不编数字。估的是草稿档补镜，不是真实账单。
+
+**产物**
+- `apps/web/lib/coverage-plan.ts` 与测试、`apps/web/components/storyboard-panel.tsx`
+- `docs/adr/0155-coverage-template-report-and-cost.md`、`docs/FEATURES.md`、`docs/ROADMAP.md`、`docs/DISCUSSIONS.md`
+
+**验证**
+- `apps/web/lib/coverage-plan.test.ts` 4 条纯函数用例通过；`lib/storyboard.test.ts` / `lib/pricing.test.ts` 定向回归 50 条全过，`tsc --noEmit` 与 `pnpm --filter @loomina/web build` 通过。
+- 浏览器 `/` 打开「检查」抽屉：出现「覆盖率收口 · 补镜建议」、缺口数、补镜估价、六种模板按钮；点「双人对话」显示 `master → OTS A → …` 与两个「把这一镜标成 X」；点「复制报告」出现回执。截图 `/tmp/coverage.png`。
+
+**边界**
+- 模板与推荐是派生建议，不进 IR、不自动补镜、不自动生成提示词；景别序列只用于作者看和改当前镜目的。
+- 六种模板来自 STORYBOARD.md，未经 30 条授权样片 A/B 标定；成本按 3 秒草稿镜估，不是供应商回执。
+

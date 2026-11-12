@@ -1,7 +1,14 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { BeatKind, Project, ShotPurpose } from "@loomina/ir";
+import {
+  coverageEstimate,
+  coverageGaps,
+  coverageReportText,
+  coverageTemplatesFor,
+  type CoverageTemplate,
+} from "@/lib/coverage-plan";
 import {
   BEAT_LABEL,
   BEAT_ORDER,
@@ -62,15 +69,71 @@ export function StoryboardPanel({
     [project, quoteAllCny],
   );
   const digest = useMemo(() => digestBeats(report.beats), [report.beats]);
+  const gaps = useMemo(() => coverageGaps(report), [report]);
   const current = report.plans.find((plan) => plan.shotId === currentShotId);
   const planLocked = readOnly || project.shots.find((shot) => shot.id === currentShotId)?.locked === true;
+  const [templateId, setTemplateId] = useState<string>();
+  const [reportNotice, setReportNotice] = useState<string>();
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeGap = gaps.find((gap) => current && gap.shotNos.includes(current.no))?.gap ?? gaps[0]?.gap;
+  const templates = useMemo(() => coverageTemplatesFor(activeGap), [activeGap]);
+  const template = templates.find((item) => item.id === templateId) ?? templates[0];
+  const estimate = useMemo(
+    () => coverageEstimate(report, template ? [template] : []),
+    [report, template],
+  );
+  const reportText = useMemo(
+    () =>
+      coverageReportText({
+        title: project.title,
+        report,
+        estimate,
+        templates: template ? [template] : [],
+      }),
+    [project.title, report, estimate, template],
+  );
+
+  function flash(message: string) {
+    setReportNotice(message);
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setReportNotice(undefined), 2400);
+  }
+
+  function downloadReport() {
+    const blob = new Blob([reportText], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${project.title}-覆盖率报告.txt`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    flash("报告已下载。");
+  }
+
+  async function copyReport() {
+    try {
+      await navigator.clipboard.writeText(reportText);
+      flash("报告已复制。");
+    } catch {
+      flash("这个浏览器不让复制：改用下载 .txt。");
+    }
+  }
+
+  function applyTemplatePurpose(purpose: ShotPurpose) {
+    if (planLocked || !current) return;
+    onPlanChange({ purpose });
+    flash(`已把当前镜标成${PURPOSE_LABEL[purpose]}。`);
+  }
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") onClose();
     }
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    };
   }, [onClose]);
 
   return (
@@ -331,6 +394,112 @@ export function StoryboardPanel({
                 </li>
               )}
             </ul>
+          </section>
+
+          <section className="mt-5" aria-label="覆盖率模板与报告">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="text-[10.5px] tracking-[.06em] text-text">覆盖率收口 · 补镜建议</h3>
+              <span className="tnum text-[9px] text-muted-2">{gaps.length} 拍有缺口</span>
+            </div>
+            <p className="mt-1.5 text-[9px] leading-[1.7] text-muted-2">
+              模板来自 STORYBOARD.md，未经样片标定；只给建议，不自动补镜。估价按 3 秒草稿档与 V8 同一份价目表。
+            </p>
+            <dl className="mt-2 grid grid-cols-2 gap-2">
+              <div className="rounded-token border border-line px-2 py-1.5">
+                <dt className="text-[8.5px] text-muted-2">建议补镜</dt>
+                <dd className="tnum mt-0.5 text-[13px] text-text">{estimate.shots} 镜</dd>
+              </div>
+              <div className="rounded-token border border-line px-2 py-1.5">
+                <dt className="text-[8.5px] text-muted-2">补镜估价</dt>
+                <dd className="tnum mt-0.5 text-[13px] text-text">
+                  {estimate.totalCny === undefined ? "报不出价" : `¥${estimate.totalCny.toFixed(2)}`}
+                </dd>
+              </div>
+            </dl>
+            <p className="mt-1.5 break-words text-[9px] leading-[1.7] text-muted-2">{estimate.basis}</p>
+
+            {gaps.length > 0 && (
+              <>
+                <p className="mt-3 text-[9.5px] text-muted">按当前缺口选模板</p>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {templates.map((item: CoverageTemplate) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      aria-pressed={template?.id === item.id}
+                      onClick={() => setTemplateId(item.id)}
+                      className={
+                        template?.id === item.id
+                          ? "rounded-token border border-line-2 bg-line px-2 py-1 text-[9.5px] text-text"
+                          : "rounded-token border border-line px-2 py-1 text-[9.5px] text-muted hover:border-line-2 hover:text-text"
+                      }
+                    >
+                      {item.name}
+                    </button>
+                  ))}
+                </div>
+                {template && (
+                  <div className="mt-2 rounded-token border border-line bg-surface px-2.5 py-2">
+                    <p className="text-[10px] text-text">
+                      {template.name} · {template.sequence.join(" → ")}
+                    </p>
+                    <p className="mt-1 text-[9px] leading-[1.7] text-muted-2">{template.note}</p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        disabled={planLocked || !current}
+                        onClick={() => applyTemplatePurpose(template.info)}
+                        className="rounded-token border border-line px-2 py-1 text-[9.5px] text-muted hover:border-line-2 hover:text-text disabled:cursor-not-allowed disabled:text-muted-2"
+                      >
+                        把这一镜标成{PURPOSE_LABEL[template.info]}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={planLocked || !current}
+                        onClick={() => applyTemplatePurpose(template.emotion)}
+                        className="rounded-token border border-line px-2 py-1 text-[9.5px] text-muted hover:border-line-2 hover:text-text disabled:cursor-not-allowed disabled:text-muted-2"
+                      >
+                        把这一镜标成{PURPOSE_LABEL[template.emotion]}
+                      </button>
+                    </div>
+                    {(planLocked || !current) && (
+                      <p className="mt-1.5 text-[9px] text-muted-2">
+                        {planLocked ? "当前镜锁定或页面只读：先解锁再改目的。" : "还没有选中镜头。"}
+                      </p>
+                    )}
+                  </div>
+                )}
+                <ul className="mt-2 border-t border-line">
+                  {gaps.map((gap) => (
+                    <li key={gap.beatId} className="border-b border-line py-1.5 text-[9px] leading-[1.7] text-muted-2">
+                      {gap.label} · {gap.sceneLabel} · {gap.gapLabel} · 建议补{PURPOSE_LABEL[gap.suggested]}镜
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {gaps.length === 0 && (
+              <p className="mt-2 text-[9.5px] leading-[1.7] text-muted-2">
+                每一拍都有信息 + 情绪镜头：模板先不推荐，避免为了补而补。
+              </p>
+            )}
+            <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-line pt-2">
+              <button
+                type="button"
+                onClick={() => void copyReport()}
+                className="rounded-token border border-line px-2 py-1 text-[9.5px] text-muted hover:border-line-2 hover:text-text"
+              >
+                复制报告
+              </button>
+              <button
+                type="button"
+                onClick={downloadReport}
+                className="rounded-token border border-line px-2 py-1 text-[9.5px] text-muted hover:border-line-2 hover:text-text"
+              >
+                下载 .txt
+              </button>
+              {reportNotice && <span className="text-[9px] text-pick">{reportNotice}</span>}
+            </div>
           </section>
 
           <p className="mt-4 border-t border-line pt-3 text-[9px] leading-[1.7] text-muted-2">
