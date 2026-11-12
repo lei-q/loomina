@@ -19,9 +19,18 @@ const PAD = 0.9;
 export type BoardActor = { characterId: string; name: string; position: Vec3; facingRad: number };
 export type BoardCamera = { shotId: string; label: string; placement: CameraPlacement; focalMm: number };
 
-/** 焦段 → 水平视角（按 9:16 竖幅、传感器短边 9.6 mm 估） */
+/**
+ * 焦段 → 水平视角。
+ *
+ * 焦段是 35 mm 全画幅**等效**值：竖幅时画面宽对应全画幅短边 24 mm，
+ * 所以 `2·atan(24/2/f)`。35 mm 约 37.8°、24 mm 约 53.1°、50 mm 约 27.0°。
+ *
+ * 第一版写的是 9.6 mm（手机传感器的物理宽度），35 mm 算出 15.6°——
+ * 那是一个长焦视场，俯视图里的扇形窄得不像话。B13.3 落地时发现并改正，
+ * 与结构参考图共用同一个口径。
+ */
 export function fovRad(focalMm: number): number {
-  return 2 * Math.atan(9.6 / 2 / Math.max(8, focalMm));
+  return 2 * Math.atan(24 / 2 / Math.max(8, focalMm));
 }
 
 function clamp(value: number, min: number, max: number): number {

@@ -14,6 +14,7 @@ import {
 } from "@loomina/pipeline";
 import { BlockingBoard, type BoardActor, type BoardCamera } from "@/components/blocking-board";
 import { ElevationBoard, type ElevationActor } from "@/components/elevation-board";
+import { StructureBoard, type StructureActorInput } from "@/components/structure-board";
 import { cn } from "@/lib/utils";
 
 function shotLabel(no: number): string {
@@ -158,6 +159,13 @@ export function BlockingPanel({
     },
   );
   const placements = cameras.length;
+  /** 结构参考图（B13.3）：同一份坐标换成「从机位看过去」的投影 */
+  const structureActors: StructureActorInput[] = elevationActors.map((actor) => ({
+    characterId: actor.characterId,
+    name: actor.name,
+    position: actor.position,
+  }));
+
   const suggestedCameras: BoardCamera[] =
     showSuggestion && currentActors.length === 0
       ? (suggested?.cameras ?? []).map((camera) => ({
@@ -344,6 +352,37 @@ export function BlockingPanel({
                         视线没有穿过比它高的东西。只判这一镜在场的人物与模板锚点，不知道椅背、灯架这类没建模的东西。
                       </p>
                     )}
+                  </>
+                )}
+              </section>
+
+              <section className="mt-4">
+                <div className="flex items-baseline justify-between gap-2">
+                  <h3 className="text-[10.5px] tracking-[.06em] text-text">结构参考图</h3>
+                  <span className="tnum text-[9px] text-muted-2">
+                    {activeShot ? shotLabel(scene!.shots.indexOf(activeShot) + 1) : "先选一镜"}
+                  </span>
+                </div>
+                {!elevation ? (
+                  <p className="mt-1 text-[9.5px] leading-[1.7] text-muted-2">
+                    这一镜还没有机位坐标：有坐标才能把屋里投影到画面上。
+                  </p>
+                ) : (
+                  <>
+                    <div className="mt-2 max-w-[260px]">
+                      <StructureBoard
+                        space={space}
+                        placement={elevationShot!.camera.placement!}
+                        actors={structureActors}
+                        focalMm={elevationShot!.camera.focalMm}
+                      />
+                    </div>
+                    <p className="mt-1.5 text-[9px] leading-[1.6] text-muted-2">
+                      {structureActors.length === 0
+                        ? "这一镜还没写走位：图里只有房间与家具，没有人物。"
+                        : `${structureActors.length} 个人按 ${SHOT_ANGLE_CN[elevation.declaredAngle]} · ${elevationShot!.camera.focalMm}mm 投到画面上。`}
+                      {" "}颜色只表示远近（暖=近、冷=远），不表示材质与光。
+                    </p>
                   </>
                 )}
               </section>

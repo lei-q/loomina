@@ -93,7 +93,7 @@ loomina/
 
 > **落地口径（E7 / ADR-0127，2026-11-11）**：分三级。**E7.1 时间轴预览零依赖**（`<video>` + Canvas，到镜准确、镜内近似）；**E7.2 帧级找点不引 mp4box.js（ADR-0129）**——改由服务端 ffmpeg `-ss` 精确切帧回 JPEG，浏览器 `<img>` 直接显示，WebCodecs 都不需要；**E7.3 WebGPU 合成暂不做**——当前时间线只有硬切，Canvas 2D 够用，等 E1 支持转场时再与 B13.3 的 depth 渲染一起选型。上表「WebCodecs + WebGPU」的选型意向仍然成立，只是分阶段落地。
 >
-> **落地口径（B13.1 / ADR-0126，2026-11-12）**：俯视走位板**没有引入任何 3D 依赖**——平面图是手写 SVG（`apps/web/components/blocking-board.tsx`，约 330 行），几何运算全是 `Math.hypot` / 叉积级别的纯函数（`packages/ir/src/geometry.ts`），视锥按焦段算水平视角（9:16 竖幅、短边 9.6 mm 估）。**B13.3 结构参考图也不引 Three.js / WebGL**（ADR-0129）：Canvas 2D 透视投影 + 按深度着色就够，输出「结构参考图」而非渲染图。渲染层等 E1 支持转场时与 E7.3 一起评估。
+> **落地口径（B13.1 / ADR-0126，2026-11-12）**：俯视走位板**没有引入任何 3D 依赖**——平面图是手写 SVG（`apps/web/components/blocking-board.tsx`，约 330 行），几何运算全是 `Math.hypot` / 叉积级别的纯函数（`packages/ir/src/geometry.ts`），视锥按焦段算水平视角（9:16 竖幅、短边按 35 mm 全画幅等效的 24 mm 估）。**B13.3 结构参考图也不引 Three.js / WebGL**（ADR-0129）：Canvas 2D 透视投影 + 按深度着色就够，输出「结构参考图」而非渲染图。渲染层等 E1 支持转场时与 E7.3 一起评估。**已落地（2026-11-12）**：`packages/pipeline/src/structure.ts` 的 `structureOf` / `drawStructure`，16 条单测；顺手把焦段口径从 9.6 mm 改正为 24 mm（35 mm 全画幅等效）。
 - 若后期预览性能不够，用 **Tauri** 包一层（复用同一套 Web 代码）；不选 Electron（体积/内存大）。
 
 ### 2. 单体还是微服务？

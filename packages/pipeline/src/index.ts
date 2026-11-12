@@ -23,6 +23,7 @@ export * from "./story-kit";
 export * from "./scene-templates";
 export * from "./blocking";
 export * from "./elevation";
+export * from "./structure";
 
 export interface PriceTable {
   imageCny: number;
