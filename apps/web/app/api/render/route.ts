@@ -21,6 +21,7 @@ import {
   loudnessVerdict,
   parseLoudnessJson,
   parsePhaseMeter,
+  segmentGainDb,
   type LoudnessMeasurement,
   type LoudnessReport,
 } from "@/lib/render-audio";
@@ -54,7 +55,7 @@ const JOB_TTL_MS = 30 * 60 * 1000;
 
 type MediaKind = "video" | "image" | "audio";
 type ResolvedClip = { path: string; mediaKind: "video" | "image" };
-type ResolvedAudio = { path: string; startMs: number; durationMs: number };
+type ResolvedAudio = { path: string; startMs: number; durationMs: number; gainDb?: number };
 type ResolvedMusic = {
   path: string;
   startMs: number;
@@ -610,6 +611,19 @@ async function runJob(job: RenderJob): Promise<void> {
 
     let mixPath: string | undefined;
     let measured: LoudnessMeasurement | null = null;
+    let dialogueGains: number[] = [];
+    if (audio.length > 0) {
+      // 分段响度（C12）：一句一句量，把每句拉向同一个目标准位
+      job.stage = "按句测对白响度";
+      job.progress = 0;
+      for (const [index, track] of audio.entries()) {
+        const segment = await measureLoudness(track.path, track.durationMs);
+        const gain = segmentGainDb(segment?.inputI);
+        dialogueGains.push(gain);
+        if (gain !== 0) track.gainDb = gain;
+        job.progress = Math.min(4, Math.floor(((index + 1) / audio.length) * 4));
+      }
+    }
     if (audio.length > 0 || music.length > 0) {
       job.stage = "混音与响度";
       job.progress = 0;
@@ -679,6 +693,7 @@ async function runJob(job: RenderJob): Promise<void> {
       rangeLu: outputLoudness?.inputLra ?? null,
       outOfPhaseMs: phase.outOfPhaseMs,
       monoMs: phase.monoMs,
+      ...(dialogueGains.length > 0 ? { dialogueGainsDb: dialogueGains } : {}),
       checkedAt: new Date().toISOString(),
       verdict: verdict.status,
       detail: verdict.detail,

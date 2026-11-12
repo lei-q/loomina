@@ -18,10 +18,17 @@ export const LOUDNESS_TARGET = {
   toleranceLu: 1,
 } as const;
 
+/** 对白按句归一的目标准位；整片最后还会走一次 loudnorm 到 −14 LUFS */
+export const DIALOGUE_TARGET_LUFS = -18;
+/** 单句最多抬 / 压这么多：超过 12 dB 多半是文件本身坏了，别拿增益硬修 */
+export const DIALOGUE_MAX_GAIN_DB = 12;
+
 export type MixDialogue = {
   path: string;
   startMs: number;
   durationMs: number;
+  /** 按句量出来的增益（dB）；缺省 / 0 表示不动这一句 */
+  gainDb?: number;
 };
 
 export type MixMusic = {
@@ -50,6 +57,8 @@ export type LoudnessReport = {
   outOfPhaseMs: number | null;
   /** 检测到的单声道段总时长；null 表示没量到 */
   monoMs: number | null;
+  /** 分段响度（C12）：每句对白实际用的增益；没有对白或一句都没量到时缺省 */
+  dialogueGainsDb?: number[];
   checkedAt: string;
   verdict: "pass" | "review" | "fail" | "unmeasured";
   detail: string;
@@ -61,6 +70,24 @@ function seconds(ms: number): string {
 
 function dbToLinear(db: number): number {
   return Math.pow(10, db / 20);
+}
+
+/**
+ * 分段响度（C12）：把一句对白拉到目标位需要多少 dB。
+ *
+ * 量不到（null / 非有限值 / 静音段的 −70）就不动：静音不是「很小声的台词」，
+ * 按 −70 去抬 12 dB 只会把底噪推上来。结果按 0.1 dB 取整，增益太小也不写。
+ */
+export function segmentGainDb(
+  inputLufs: number | null | undefined,
+  target = DIALOGUE_TARGET_LUFS,
+  maxDb = DIALOGUE_MAX_GAIN_DB,
+): number {
+  if (inputLufs === null || inputLufs === undefined) return 0;
+  if (!Number.isFinite(inputLufs) || inputLufs <= -70) return 0;
+  const wanted = target - inputLufs;
+  const clamped = Math.max(-maxDb, Math.min(maxDb, wanted));
+  return Math.round(clamped * 10) / 10;
 }
 
 /** 合并重叠的台词窗；两段只隔一口气时不来回抬音乐 */
@@ -137,9 +164,15 @@ export function buildAudioMixCommand(input: {
   const filters: string[] = [];
   const dialogueLabels: string[] = [];
   input.dialogue.forEach((track, index) => {
+    // 分段响度（C12）：每句先拉到自己该在的位置，再进总线
+    const gain =
+      track.gainDb && Math.abs(track.gainDb) >= 0.1
+        ? `volume=${dbToLinear(track.gainDb).toFixed(6)},`
+        : "";
     filters.push(
       `[${index}:a]aresample=48000,` +
         `adelay=${track.startMs}|${track.startMs},` +
+        gain +
         `atrim=duration=${seconds(input.totalMs)},asetpts=PTS-STARTPTS[dlg${index}]`,
     );
     dialogueLabels.push(`[dlg${index}]`);

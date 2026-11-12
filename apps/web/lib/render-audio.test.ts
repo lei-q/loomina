@@ -8,7 +8,43 @@ import {
   mergeIntervals,
   parseLoudnessJson,
   parsePhaseMeter,
+  segmentGainDb,
 } from "./render-audio";
+
+describe("分段响度（C12）", () => {
+  it("每句拉向 −18 LUFS，最多 ±12 dB", () => {
+    expect(segmentGainDb(-18)).toBe(0);
+    expect(segmentGainDb(-22)).toBe(4);
+    expect(segmentGainDb(-14)).toBe(-4);
+    expect(segmentGainDb(-22.34)).toBe(4.3);
+    expect(segmentGainDb(-60)).toBe(12);
+    expect(segmentGainDb(-8)).toBe(-10);
+  });
+
+  it("量不到 / 静音不抬：null、非有限值与 −70 都返回 0", () => {
+    expect(segmentGainDb(null)).toBe(0);
+    expect(segmentGainDb(undefined)).toBe(0);
+    expect(segmentGainDb(Number.NaN)).toBe(0);
+    expect(segmentGainDb(-70)).toBe(0);
+    expect(segmentGainDb(-80)).toBe(0);
+  });
+
+  it("每句的增益写进对白滤镜，0 dB 不加 volume", () => {
+    const args = buildAudioMixCommand({
+      dialogue: [
+        { path: "/tmp/a.m4a", startMs: 0, durationMs: 2000, gainDb: 4 },
+        { path: "/tmp/b.m4a", startMs: 3000, durationMs: 1000, gainDb: 0 },
+      ],
+      music: [],
+      totalMs: 5000,
+      outFile: "/tmp/mix.wav",
+    });
+    const filters = args[args.indexOf("-filter_complex") + 1]!;
+    expect(filters).toContain("[0:a]aresample=48000,adelay=0|0,volume=1.584893,atrim=");
+    expect(filters).toContain("[1:a]aresample=48000,adelay=3000|3000,atrim=");
+    expect(filters).not.toContain("adelay=3000|3000,volume=");
+  });
+});
 
 describe("混音（C12）", () => {
   it("合并重叠与一口气的台词窗，远处的窗保持分开", () => {

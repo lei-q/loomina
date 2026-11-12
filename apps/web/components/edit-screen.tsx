@@ -1826,6 +1826,20 @@ export function EditScreen() {
                           ? `；检出单声道 / 近单声道 ${(loudness.monoMs / 1000).toFixed(1)} 秒`
                           : ""}
                       </p>
+                      {loudness.dialogueGainsDb && loudness.dialogueGainsDb.length > 0 && (
+                        <p className="tnum mt-1 text-[8.5px] leading-[1.6] text-muted-2">
+                          {(() => {
+                            const gains = loudness.dialogueGainsDb!;
+                            const low = Math.min(...gains);
+                            const high = Math.max(...gains);
+                            const zero = gains.every((gain) => gain === 0);
+                            const touch = gains.some((gain) => Math.abs(gain) >= 12);
+                            return zero
+                              ? `对白按句归一：${gains.length} 句，都在目标位附近`
+                              : `对白按句归一：${gains.length} 句，增益 ${low >= 0 ? "+" : ""}${low.toFixed(1)} … ${high >= 0 ? "+" : ""}${high.toFixed(1)} dB${touch ? "（有一句已触 12 dB 上限）" : ""}`;
+                          })()}
+                        </p>
+                      )}
                     </div>
                   )}
                 </section>
