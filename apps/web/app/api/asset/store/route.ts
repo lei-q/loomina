@@ -21,6 +21,9 @@ export async function GET() {
       {
         count: files.length,
         bytes: files.reduce((sum, file) => sum + file.bytes, 0),
+        // 地址与大小一起回：设置页要在浏览器里做跨项目孤儿检查（H3），
+        // 只给数量不够；这里仍然只有本机库的地址，不碰项目内容。
+        files: files.map((file) => ({ uri: file.uri, bytes: file.bytes })),
       },
       { headers: { "Cache-Control": "no-store" } },
     );

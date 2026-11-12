@@ -17,7 +17,12 @@ import { fetchModelConfig, invalidateModelConfig } from "@/lib/model-choice";
 import { useWorkbench } from "@/lib/workbench-store";
 import type { CapabilityResponse, ModelCapabilityView } from "@/lib/capabilities";
 import type { ProbeReportView, ProbeTrend } from "@/lib/probes";
-import { inventoryOf, referencedUris } from "@/lib/asset-inventory";
+import {
+  inventoryOf,
+  orphanAssets,
+  referencedUrisOfProjects,
+} from "@/lib/asset-inventory";
+import { projectSegments } from "@/lib/spend-report";
 import { cn } from "@/lib/utils";
 
 /**
@@ -1303,6 +1308,7 @@ function LocalProjectSection({
  */
 function AssetStoreSection({ readOnly }: { readOnly: boolean }) {
   const project = useWorkbench((state) => state.project);
+  const events = useWorkbench((state) => state.events);
   const migrateAssets = useWorkbench((state) => state.migrateAssets);
   const inventory = useMemo(() => inventoryOf(project), [project]);
   const [busy, setBusy] = useState(false);
@@ -1311,13 +1317,45 @@ function AssetStoreSection({ readOnly }: { readOnly: boolean }) {
   const [cleaning, setCleaning] = useState(false);
   const [wouldRemove, setWouldRemove] = useState<{ count: number; bytes: number }>();
   const [storeCount, setStoreCount] = useState<number>();
+  const [files, setFiles] = useState<{ uri: string; bytes: number }[]>();
+
+  /**
+   * 清理的白名单必须是「所有能回放的项目」的并集（H3）。
+   *
+   * 资产库是这台机器共享的；只看当前项目，会把别的项目还在用的文件删掉。
+   * 有日志段回放不了时，我们不知道它引用了什么——这时只列孤儿，不给删。
+   */
+  const scope = useMemo(() => {
+    const { segments, skipped } = projectSegments(events);
+    const projects = [project, ...segments.map((segment) => segment.project)];
+    return {
+      keep: referencedUrisOfProjects(projects),
+      projects: projects.length,
+      skipped,
+    };
+  }, [project, events]);
+  const orphans = useMemo(
+    () => (files ? orphanAssets(files, scope.keep) : undefined),
+    [files, scope.keep],
+  );
 
   const loadStore = useCallback(async () => {
     try {
       const response = await fetch("/api/asset/store", { cache: "no-store" });
       if (!response.ok) return;
-      const payload = (await response.json()) as { count?: number };
+      const payload = (await response.json()) as {
+        count?: number;
+        files?: { uri: string; bytes: number }[];
+      };
       if (typeof payload.count === "number") setStoreCount(payload.count);
+      if (Array.isArray(payload.files)) {
+        setFiles(
+          payload.files.filter(
+            (file): file is { uri: string; bytes: number } =>
+              typeof file?.uri === "string" && typeof file?.bytes === "number",
+          ),
+        );
+      }
     } catch {
       // 读不到统计不影响这一页：迁移与清理各自会报错
     }
@@ -1352,6 +1390,10 @@ function AssetStoreSection({ readOnly }: { readOnly: boolean }) {
   /** 第一步：先问服务端「会删几个」，把真实数字写进确认句，不靠客户端猜 */
   const askClean = async () => {
     if (busy) return;
+    if (scope.skipped > 0) {
+      setError("有日志段回放不了，没法确认它们引用了什么；这次只列孤儿，不清理。");
+      return;
+    }
     setBusy(true);
     setError(undefined);
     setNotice(undefined);
@@ -1359,7 +1401,7 @@ function AssetStoreSection({ readOnly }: { readOnly: boolean }) {
       const response = await fetch("/api/asset/store", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keep: referencedUris(project), dryRun: true }),
+        body: JSON.stringify({ keep: scope.keep, dryRun: true }),
       });
       const payload = (await response.json()) as {
         wouldRemove?: number;
@@ -1378,13 +1420,17 @@ function AssetStoreSection({ readOnly }: { readOnly: boolean }) {
 
   const clean = async () => {
     setCleaning(false);
+    if (scope.skipped > 0) {
+      setError("有日志段回放不了，没法确认它们引用了什么；这次只列孤儿，不清理。");
+      return;
+    }
     setBusy(true);
     setError(undefined);
     try {
       const response = await fetch("/api/asset/store", {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keep: referencedUris(project) }),
+        body: JSON.stringify({ keep: scope.keep }),
       });
       const payload = (await response.json()) as {
         removed?: number;
@@ -1437,7 +1483,7 @@ function AssetStoreSection({ readOnly }: { readOnly: boolean }) {
           </dd>
         </div>
         <div>
-          <dt className="text-[9px] text-muted-2">没人引用</dt>
+          <dt className="text-[9px] text-muted-2">当前项目没人引用</dt>
           <dd className="tnum text-muted">{inventory.unreferenced.length} 个</dd>
         </div>
         <div>
@@ -1447,6 +1493,52 @@ function AssetStoreSection({ readOnly }: { readOnly: boolean }) {
           </dd>
         </div>
       </dl>
+
+      <div className="mt-3 rounded-token border border-line px-3 py-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 className="text-[10px] text-text">跨项目孤儿检查</h3>
+          <span className="tnum text-[9px] text-muted-2">
+            {scope.projects} 个项目 · 白名单 {scope.keep.length} 个地址
+          </span>
+        </div>
+        {scope.skipped > 0 ? (
+          <p className="mt-1 text-[9.5px] leading-[1.7] text-pick">
+            有 {scope.skipped} 段日志回放不了，不知道它们引用了什么。这次只列孤儿，
+            清理停用——宁可少删，不误删别的项目。
+          </p>
+        ) : (
+          <p className="mt-1 text-[9.5px] leading-[1.7] text-muted-2">
+            白名单来自所有能回放的项目，不只当前项目。下面只列不删：
+            刚生成还没挂载、刚回滚的引用都像没人用，确认清理才走两步确认。
+          </p>
+        )}
+        {orphans ? (
+          <>
+            <p className="mt-1.5 text-[10px] text-text">
+              本机资产库孤儿：{orphans.count} 个 · {fmtBytes(orphans.bytes)}
+            </p>
+            {orphans.count > 0 && (
+              <ul className="mt-1 space-y-0.5">
+                {orphans.orphans.slice(0, 5).map((file) => (
+                  <li
+                    key={file.uri}
+                    className="tnum truncate text-[8.5px] leading-[1.6] text-muted-2"
+                  >
+                    {file.uri.replace(/^loomina:\/\//, "")} · {fmtBytes(file.bytes)}
+                  </li>
+                ))}
+                {orphans.count > 5 && (
+                  <li className="text-[8.5px] text-muted-2">还有 {orphans.count - 5} 个…</li>
+                )}
+              </ul>
+            )}
+          </>
+        ) : (
+          <p className="mt-1.5 text-[9px] text-muted-2">
+            读不到资产库清单；确认本机资产库可用后重开这一页。
+          </p>
+        )}
+      </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <button
@@ -1469,7 +1561,7 @@ function AssetStoreSection({ readOnly }: { readOnly: boolean }) {
           <>
             <span className="text-[10px] leading-[1.6] text-pick">
               {wouldRemove
-                ? `清理会删掉 ${wouldRemove.count} 个「当前项目一个都没引用」的文件（约 ${fmtBytes(
+                ? `清理会删掉 ${wouldRemove.count} 个「所有能回放的项目都没引用」的文件（约 ${fmtBytes(
                     wouldRemove.bytes,
                   )}），撤销找不回来。确定？`
                 : "正在清点资产库…"}
@@ -1496,8 +1588,12 @@ function AssetStoreSection({ readOnly }: { readOnly: boolean }) {
           <button
             type="button"
             onClick={() => void askClean()}
-            disabled={readOnly || busy || (storeCount ?? 0) === 0}
-            title="只删没有任何引用的文件；不自动删"
+            disabled={readOnly || busy || (storeCount ?? 0) === 0 || scope.skipped > 0}
+            title={
+              scope.skipped > 0
+                ? "有日志段回放不了：只列孤儿，不清理"
+                : "只删所有能回放的项目都没引用的文件；不自动删"
+            }
             className="rounded-token border border-line px-2.5 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
           >
             清理没人引用的文件

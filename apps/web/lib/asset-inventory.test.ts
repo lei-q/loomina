@@ -6,8 +6,10 @@ import {
   inventoryOf,
   inlineBytesOf,
   libraryOf,
+  orphanAssets,
   referencedAssetIds,
   referencedUris,
+  referencedUrisOfProjects,
 } from "./asset-inventory";
 
 const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
@@ -266,5 +268,62 @@ describe("资产库视图（F4）", () => {
     expect(filterLibrary(library.rows, "unused").map((row) => row.assetId)).toEqual(["a-orphan"]);
     expect(filterLibrary(library.rows, "missing").map((row) => row.assetId)).toEqual(["a-ref"]);
     expect(filterLibrary(library.rows, "all")).toHaveLength(6);
+  });
+});
+
+describe("跨项目孤儿检查（H3 / ADR-0158）", () => {
+  const OTHER = `loomina://assets/${"e".repeat(64)}.png`;
+  const FILE_ORPHAN = `loomina://assets/${"f".repeat(64)}.png`;
+
+  function second(): Project {
+    return {
+      ...base(),
+      id: "p2",
+      characters: [],
+      locations: [
+        {
+          id: "l2",
+          name: "门口",
+          description: "",
+          referenceImages: [],
+          masterShotId: "a-b",
+        },
+      ],
+      shots: [],
+      dialogue: [],
+      assets: [
+        {
+          id: "a-b",
+          kind: "image",
+          uri: OTHER,
+          source: "generated",
+          createdAt: "2026-11-13T00:00:00Z",
+        },
+      ],
+    };
+  }
+
+  it("白名单取所有项目的并集：别的项目还在用的地址不算孤儿", () => {
+    const keep = referencedUrisOfProjects([withAssets(base()), second()]);
+    expect(keep).toContain(`loomina://assets/${HASH}.png`);
+    expect(keep).toContain(OTHER);
+
+    const report = orphanAssets(
+      [
+        { uri: `loomina://assets/${HASH}.png`, bytes: 2048 },
+        { uri: OTHER, bytes: 100 },
+        { uri: FILE_ORPHAN, bytes: 50 },
+      ],
+      keep,
+    );
+    expect(report.count).toBe(1);
+    expect(report.bytes).toBe(50);
+    expect(report.orphans.map((file) => file.uri)).toEqual([FILE_ORPHAN]);
+  });
+
+  it("没有白名单时全部算孤儿：只列不删由界面决定", () => {
+    const report = orphanAssets([{ uri: OTHER, bytes: 100 }], []);
+    expect(report.count).toBe(1);
+    expect(report.bytes).toBe(100);
   });
 });

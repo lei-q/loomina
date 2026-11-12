@@ -119,6 +119,42 @@ export function referencedUris(project: Project): string[] {
     .map((asset) => asset.uri!);
 }
 
+/**
+ * 多个项目的地址并集（H3 安全版孤儿检查）。
+ *
+ * 资产库是这台机器共享的：只拿当前项目的引用当白名单，会把别的项目
+ * 还在用的文件当成孤儿删掉。清理前必须把所有能回放的项目都算进来。
+ */
+export function referencedUrisOfProjects(projects: Project[]): string[] {
+  return [...new Set(projects.flatMap((project) => referencedUris(project)))];
+}
+
+export type OrphanFile = { uri: string; bytes: number };
+
+export type OrphanReport = {
+  orphans: OrphanFile[];
+  count: number;
+  bytes: number;
+};
+
+/**
+ * 纯函数版孤儿检查：地址不在白名单里的文件才算孤儿。
+ *
+ * 只用来列，不负责删；界面在没有把握（日志有段回放不了）时宁可整块禁用清理。
+ */
+export function orphanAssets(
+  files: { uri: string; bytes: number }[],
+  keep: Iterable<string>,
+): OrphanReport {
+  const white = new Set(keep);
+  const orphans = files.filter((file) => !white.has(file.uri));
+  return {
+    orphans,
+    count: orphans.length,
+    bytes: orphans.reduce((sum, file) => sum + file.bytes, 0),
+  };
+}
+
 // ── 资产库页面（F4）────────────────────────────────────────────
 
 /** 资产库页面按什么筛 */
