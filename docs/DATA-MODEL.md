@@ -445,6 +445,8 @@ type ProjectUpdatedEvent = {
 };
 ```
 
+> **项目固定模型（ADR-0150，2026-11-12）**：`Project.models` 是 `{ text?, image?, video?, tts?, asr? }`，值为本机配置的模型 id，缺省 `{}`。`project.updated` 新增可选 `models?: Partial<Record<Modality, string | null>>`：非空字符串固定、`null` 取消、不传的模态不动；空串与不认识的模态在 `applyEvent` 里抛错。取值优先级是「项目固定 > 本机选择 > 服务端默认」，生成、报价与故事入口共用 `modelIdFor(modality, project.models)`。
+
 阶段确认同样走事件（ADR-0100）。确认与回退各一条，只追加、不删历史：
 
 ```ts

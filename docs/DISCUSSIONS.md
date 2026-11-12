@@ -4687,3 +4687,25 @@ A13 / A18 / B12 / C10 / C12 / D3 / E1 的状态一直挂着「开发中」，但
 **验证**
 - `probeTrends` 4 条单测：排序、方向、取价、无模型报告跳过；web 全量测试通过。
 - 浏览器打开 `/settings`，S1 区块显示 `minimax-h3`（1 次）与 `seedance-2.0`（2 次）两张走势卡，实测价显示「还没真花过钱」，与本地 3 份报告一致。
+
+## 第一百六十七次 · 2026-11-12 · 模型固定到项目
+
+**议题**
+模型选择只存浏览器 localStorage：换设备、清缓存，同一个项目就换模型；事件日志里只看得到每次调用各自的 `provenance.modelId`，看不到「这个项目本来用哪个模型」。
+
+**结论**
+- `Project.models` 进 IR（H22）：`{ text?, image?, video?, tts?, asr? }`，值为本机配置的模型 id，缺省 `{}`。
+- 固定走 `project.updated { models }`：非空字符串固定、`null` 取消、不传不动；空串与不认识的模态在 `applyEvent` 拒绝。取消固定只删那一个模态。
+- 取值顺序：项目固定 > 本机 localStorage > 服务端默认，统一由 `modelIdFor(modality, project.models)` 回答；生成、`/api/price`、故事入口都改走它。
+- 模型下拉旁加「钉住 / 已钉住」：钉住时改下拉就是改项目；选回「默认」取消钉住。只读标签页禁用。
+- 价目缓存跟着固定变化重拉：三个用价目的页面把 `project.models` 放进 effect 依赖。
+- IR 不校验固定 id 在当前配置里是否存在：配置是设备本地的，项目讲的是意图；删掉的模型由网关在生成时明确报错。
+
+**产物**
+- `packages/ir/src/schema.ts`、`packages/ir/src/events.ts`、`packages/ir/test/events.test.ts`
+- `apps/web/lib/model-choice.ts`、`apps/web/lib/workbench-store.ts`、`apps/web/lib/image-price.ts`、`apps/web/components/model-picker.tsx`、`apps/web/components/story-screen.tsx`、三个价目页的 effect
+- `docs/adr/0150-project-model-pins.md`、`docs/DATA-MODEL.md`、`docs/FEATURES.md`、`docs/ROADMAP.md`、`docs/DISCUSSIONS.md`
+
+**验证**
+- IR 216 条、pipeline 98 条、gateway 28 条、web 928 条（含 4 条跳过）测试通过；新增用例覆盖固定 / 取消 / 重放、重复值不写、只读不改、请求体带固定 id、取消后不带。
+- 浏览器 `/keyframes`：选一个模型后点「钉住」，按钮变「已钉住」并显示为选中色；IndexedDB 最后一条事件为 `project.updated { models: { image: "env:gpt-image-2-c" } }`。

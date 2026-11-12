@@ -100,9 +100,12 @@ export function StoryScreen() {
 
   const [info, setInfo] = useState<{ model?: string }>({});
   const [textModelId] = useModelChoice("text");
+  const textModelPin = useWorkbench((state) => state.project.models.text);
+  const effectiveTextModelId = textModelPin ?? textModelId;
   const catalog = useModelCatalog();
   const activeModel =
-    catalog?.catalog.text.find((option) => option.id === textModelId)?.model ?? info.model;
+    catalog?.catalog.text.find((option) => option.id === effectiveTextModelId)?.model ??
+    info.model;
   const [infoError, setInfoError] = useState<string>();
   const [mode, setMode] = useState<StoryOrigin>("idea");
   const [idea, setIdea] = useState("");
@@ -232,7 +235,7 @@ export function StoryScreen() {
           {
             ...(mode === "import" ? { source, genre } : { idea, genre }),
             beatSheet: beatSheetId,
-            ...(textModelId ? { modelId: textModelId } : {}),
+            ...(effectiveTextModelId ? { modelId: effectiveTextModelId } : {}),
             ...(system || user
               ? { prompt: { ...(system ? { system } : {}), ...(user ? { user } : {}) } }
               : {}),

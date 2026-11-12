@@ -565,6 +565,7 @@ export function projectFromStoryDraft(
     id: options.id,
     title: draft.title,
     version: 1,
+    models: {},
     budgetCny: options.budgetCny ?? 60,
     maxAttemptsPerShot: 3,
     onBudgetExceed: "block",

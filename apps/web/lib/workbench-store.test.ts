@@ -4901,6 +4901,67 @@ describe("删掉没人引用的资产（F4 / ADR-0136）", () => {
   });
 });
 
+describe("按项目固定模型（H22）", () => {
+  beforeEach(() => {
+    useWorkbench.setState({ readOnly: false });
+    state().reset();
+    state().setImagePrice({ model: "gpt-image-2-c", cny: 0.12 });
+  });
+
+  const stub = () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return new Response(
+          JSON.stringify({ uri: "data:image/png;base64,RkFLRQ==", model: "gpt-image-2-c", cny: 0.12 }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+    return bodies;
+  };
+
+  it("固定与取消各写一条 project.updated，重放日志得到同一份", () => {
+    state().setModelPin("video", "m-video");
+    expect(state().project.models.video).toBe("m-video");
+    expect(state().events.at(-1)).toMatchObject({
+      type: "project.updated",
+      models: { video: "m-video" },
+    });
+    expect(rebuild(state().events).models.video).toBe("m-video");
+
+    state().setModelPin("video", null);
+    expect(state().project.models.video).toBeUndefined();
+    expect(rebuild(state().events).models.video).toBeUndefined();
+  });
+
+  it("同一个值不重复写；只读标签页改不了", () => {
+    state().setModelPin("image", "m-image");
+    const count = state().events.length;
+    state().setModelPin("image", "m-image");
+    expect(state().events).toHaveLength(count);
+
+    useWorkbench.setState({ readOnly: true });
+    state().setModelPin("image", "m-other");
+    expect(state().project.models.image).toBe("m-image");
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("固定后生成请求带固定的 modelId；取消后不再带", async () => {
+    const bodies = stub();
+    state().setModelPin("image", "m-image-pinned");
+    await state().generateKeyframe("s-03");
+    expect(bodies.at(-1)?.modelId).toBe("m-image-pinned");
+
+    state().setModelPin("image", null);
+    await state().generateKeyframe("s-03");
+    expect(bodies.at(-1)?.modelId).toBeUndefined();
+    vi.unstubAllGlobals();
+  });
+});
+
 describe("手改提示词（ADR-0148）", () => {
   beforeEach(() => {
     // 前面的用例可能把 store 留成只读（另一个标签页在编辑）：先复位

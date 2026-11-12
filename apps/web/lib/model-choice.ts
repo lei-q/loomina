@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import type { ModelPins } from "@loomina/ir";
 import type { Modality, PublicConfig } from "./config-types";
 
 /**
@@ -23,6 +24,19 @@ export function getModelChoice(modality: Modality): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * 这次请求该用哪个模型：项目固定优先，没固定才看本机选择。
+ *
+ * 固定值写进 IR（H22），换浏览器、刷新、重放日志都还在；
+ * 本机选择只影响没固定的模态。
+ */
+export function modelIdFor(
+  modality: Modality,
+  pinned?: ModelPins,
+): string | undefined {
+  return pinned?.[modality] ?? getModelChoice(modality);
 }
 
 export function setModelChoice(modality: Modality, id?: string): void {

@@ -81,7 +81,8 @@ import {
   type AssetInventory,
 } from "@/lib/asset-inventory";
 import { isRemoteAssetUri, isStoredAssetUri } from "@/lib/asset-uri";
-import { getModelChoice } from "@/lib/model-choice";
+import { modelIdFor } from "@/lib/model-choice";
+import type { Modality } from "@/lib/config-types";
 import { sampleProject } from "@/lib/sample-project";
 import { stageMetaOf, stageSignature } from "@/lib/stage-flow";
 import {
@@ -255,6 +256,8 @@ type WorkbenchState = {
   setRetryLimit: (attempts: number) => void;
   /** 改超预算后的处置（H10）：block 阻断，keep 保留现有结果不再调用生成 */
   setOnBudgetExceed: (mode: "block" | "keep") => void;
+  /** 固定 / 取消固定本项目某个模态的模型（H22）：写一条 `project.updated`；null 取消 */
+  setModelPin: (modality: Modality, id: string | null) => void;
   /**
    * 记一条发布记录（G1）：把平台、档位与成片文件信息追加进 `publishPackages`。
    * 只记元数据，不存视频二进制。
@@ -850,7 +853,7 @@ async function generateOne(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         ...input.body,
-        modelId: getModelChoice("image"),
+        modelId: modelIdFor("image", get().project.models),
       }),
     });
     const payload = (await response.json()) as {
@@ -1190,6 +1193,18 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       type: "project.updated",
       at: stamp(),
       budgetCny,
+    };
+    set({ project: applyEvent(project, event), events: [...events, event] });
+  },
+
+  setModelPin: (modality, id) => {
+    if (get().readOnly) return;
+    const { project, events } = get();
+    if ((project.models[modality] ?? null) === id) return;
+    const event: ProjectEvent = {
+      type: "project.updated",
+      at: stamp(),
+      models: { [modality]: id },
     };
     set({ project: applyEvent(project, event), events: [...events, event] });
   },
@@ -2263,7 +2278,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
             shot: shotMaterial(project, shot),
             firstFrame: firstFrame.uri,
             durationMs: shot.durationMs,
-            modelId: getModelChoice("video"),
+            modelId: modelIdFor("video", get().project.models),
             ...withPromptOverride(get, `video:${shotId}`),
           }),
         });
@@ -2504,7 +2519,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
         body: JSON.stringify({
           text: line.text,
           ...(character?.voiceProfileId ? { voice: character.voiceProfileId } : {}),
-          modelId: getModelChoice("tts"),
+          modelId: modelIdFor("tts", get().project.models),
           ...(performance.rate !== 1 ? { speed: performance.rate } : {}),
           ...(instructions ? { instructions } : {}),
         }),
@@ -2859,7 +2874,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       const response = await fetch("/api/transcribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ uri: asset.uri, modelId: getModelChoice("asr") }),
+        body: JSON.stringify({ uri: asset.uri, modelId: modelIdFor("asr", get().project.models) }),
       });
       const payload = (await response.json()) as {
         text?: string;

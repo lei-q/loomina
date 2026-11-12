@@ -216,6 +216,38 @@ describe("project.updated", () => {
     }
   });
 
+  it("固定模型跟着项目走，取消固定只删那一个模态（H22）", () => {
+    const project = load();
+    const pinned = applyEvent(project, {
+      type: "project.updated",
+      at: AT,
+      models: { video: "m-video", image: "m-image" },
+    });
+    expect(pinned.models).toEqual({ video: "m-video", image: "m-image" });
+    expect(pinned.shots).toEqual(project.shots);
+
+    const cleared = applyEvent(pinned, {
+      type: "project.updated",
+      at: AT,
+      models: { video: null },
+    });
+    expect(cleared.models).toEqual({ image: "m-image" });
+    expect(pinned.models).toEqual({ video: "m-video", image: "m-image" });
+  });
+
+  it("空的模型 id 与不认识的模态都拒绝", () => {
+    expect(() =>
+      applyEvent(load(), { type: "project.updated", at: AT, models: { video: "" } }),
+    ).toThrow();
+    expect(() =>
+      applyEvent(load(), {
+        type: "project.updated",
+        at: AT,
+        models: { still: "m" } as never,
+      }),
+    ).toThrow();
+  });
+
   it("超预算处置只接受 block / keep", () => {
     expect(() =>
       applyEvent(load(), {

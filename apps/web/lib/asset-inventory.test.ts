@@ -18,6 +18,7 @@ function base(): Project {
     id: "p1",
     title: "测试",
     version: 0,
+    models: {},
     budgetCny: 60,
     maxAttemptsPerShot: 3,
     onBudgetExceed: "block",

@@ -5,6 +5,7 @@ import {
   BlockingSchema,
   CameraSchema,
   LocationSpaceSchema,
+  MODALITY_KEYS,
   MusicCueSchema,
   PerformanceSpecSchema,
   StagingMarkSchema,
@@ -87,6 +88,11 @@ export type ProjectEvent =
       budgetCny?: number;
       maxAttemptsPerShot?: number;
       onBudgetExceed?: "block" | "keep";
+      /**
+       * 固定 / 取消固定某个模态的模型（H22）。`null` 表示取消，
+       * 不传某个模态就保持原样。
+       */
+      models?: Partial<Record<(typeof MODALITY_KEYS)[number], string | null>>;
     }
   | {
       /**
@@ -735,6 +741,30 @@ function applyEventCore(
         }
         next.onBudgetExceed = event.onBudgetExceed;
         touched += 1;
+      }
+      if (event.models !== undefined) {
+        const models: Project["models"] = { ...current.models };
+        let changed = 0;
+        for (const [key, value] of Object.entries(event.models)) {
+          if (!(MODALITY_KEYS as readonly string[]).includes(key)) {
+            throw new Error(`不认识的模态：${key}`);
+          }
+          const modality = key as (typeof MODALITY_KEYS)[number];
+          if (value === null) {
+            delete models[modality];
+            changed += 1;
+            continue;
+          }
+          if (typeof value !== "string" || !value.trim()) {
+            throw new Error(`模型 id 不能为空：${modality}`);
+          }
+          models[modality] = value;
+          changed += 1;
+        }
+        if (changed > 0) {
+          next.models = models;
+          touched += 1;
+        }
       }
       if (touched === 0) throw new Error("project.updated 没有要改的字段");
       return next;

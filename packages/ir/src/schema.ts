@@ -732,10 +732,35 @@ export const PublishPackageSchema = z.object({
 });
 export type PublishPackage = z.infer<typeof PublishPackageSchema>;
 
+/**
+ * 项目固定的模型（H22）。
+ *
+ * 值是本机配置里的模型 id（`ModelRecord.id`），IR 不校验它在不在当前配置里：
+ * 同一个项目换一台机器、换一份配置打开时，讲的是「这个项目想用哪个模型」，
+ * 能不能用由生成前的网关解析回答。
+ */
+export const ModelPinsSchema = z.object({
+  text: z.string().min(1).optional(),
+  image: z.string().min(1).optional(),
+  video: z.string().min(1).optional(),
+  tts: z.string().min(1).optional(),
+  asr: z.string().min(1).optional(),
+});
+export type ModelPins = z.infer<typeof ModelPinsSchema>;
+
+export const MODALITY_KEYS = ["text", "image", "video", "tts", "asr"] as const;
+
 export const ProjectSchema = z.object({
   id: Id,
   title: z.string().min(1),
   version: z.number().int().nonnegative(),
+  /**
+   * 这个项目固定下来的模型（H22）：留空表示没固定，跟着本机当前选择走。
+   *
+   * 写进 IR 而不是 localStorage：模型是项目约束的一部分，
+   * 换浏览器、刷新、重放事件日志之后还得是同一个模型。
+   */
+  models: ModelPinsSchema.default({}),
   /**
    * 这条片子的预算上限（元）。写进项目而不是写进界面：预算是项目自己的约束，
    * 换设备、刷新、重放事件日志之后还得是同一个数（准则 P14 / H10）。

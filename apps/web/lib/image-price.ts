@@ -2,7 +2,8 @@
 
 import type { ImagePrice } from "@/lib/generate-image";
 import type { VideoPriceInfo } from "@/lib/generate-video";
-import { getModelChoice } from "@/lib/model-choice";
+import { modelIdFor } from "@/lib/model-choice";
+import { useWorkbench } from "@/lib/workbench-store";
 
 export type PriceInfo = ImagePrice & {
   /** 出视频的价目（ADR-0083）；服务端没给这一层就当作不知道 */
@@ -18,8 +19,10 @@ export type PriceInfo = ImagePrice & {
 const pending = new Map<string, Promise<PriceInfo | null>>();
 
 export function fetchPrice(): Promise<PriceInfo | null> {
-  const imageModelId = getModelChoice("image") ?? "";
-  const videoModelId = getModelChoice("video") ?? "";
+  // 项目固定了模型就用固定的（H22）；没固定才看这台浏览器的选择
+  const pins = useWorkbench.getState().project.models;
+  const imageModelId = modelIdFor("image", pins) ?? "";
+  const videoModelId = modelIdFor("video", pins) ?? "";
   const key = `${imageModelId}|${videoModelId}`;
   let request = pending.get(key);
   if (!request) {
