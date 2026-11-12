@@ -42,6 +42,9 @@ export function Workbench() {
   const approveAndLock = useWorkbench((state) => state.approveAndLock);
   const jobs = useWorkbench((state) => state.jobs);
   const castError = useWorkbench((state) => state.castError);
+  const instructionNotice = useWorkbench((state) => state.instructionNotice);
+  const instructionBusy = useWorkbench((state) => state.instructionBusy);
+  const instructWithModel = useWorkbench((state) => state.instructWithModel);
   const imageCny = useWorkbench((state) => state.imageCny);
   const setImagePrice = useWorkbench((state) => state.setImagePrice);
   const videoCnyPerSecond = useWorkbench((state) => state.videoCnyPerSecond);
@@ -184,6 +187,11 @@ export function Workbench() {
       {castError && (
         <p className="shrink-0 px-6 pb-1 text-[10.5px] leading-[1.6] text-pick">{castError}</p>
       )}
+      {!castError && instructionNotice && (
+        <p className="shrink-0 px-6 pb-1 text-[10.5px] leading-[1.6] text-muted">
+          {instructionNotice}
+        </p>
+      )}
       {view.shots.length === 0 ? (
         // 删光了也不崩：留一句去哪继续（ADR-0067）
         <main className="flex min-h-0 flex-1 items-center justify-center px-6 text-[11px] leading-[1.8] text-muted-2">
@@ -225,6 +233,8 @@ export function Workbench() {
             onSelect={select}
             onDecide={decide}
             onInstruct={instruct}
+            onInstructWithModel={instructWithModel}
+            instructBusy={instructionBusy}
             onSetLock={(locked) => setShotLock(view.shots[view.current]!.id, locked)}
             onApproveAndLock={() => approveAndLock(view.shots[view.current]!.id)}
             onRedo={() => void generateVideo(view.shots[view.current]!.id)}

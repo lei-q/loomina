@@ -52,6 +52,7 @@ import {
 import { create } from "zustand";
 import { diffEvents, getEventLog, migrateLog } from "@/lib/event-log";
 import { estimateDialogueMs } from "@/lib/dialogue";
+import { askInstructionAi, describeAiPatch, shotSnapshotOf } from "@/lib/instruction-ai";
 import { autoCut, timelineEquals } from "@/lib/edit";
 import { planMusicFill } from "@/lib/music-curve";
 import { instructionsOf, performanceOf } from "@/lib/voice-performance";
@@ -167,6 +168,10 @@ type WorkbenchState = {
   /** 正在生成哪一张：人物 / 场景 / 道具的 id → 任务。出图是分钟级，界面要如实显示进度 */
   jobs: Record<string, GenerateJob | undefined>;
   castError?: string;
+  /** 模型读懂了哪句（H19）：成功才写，不是错误 */
+  instructionNotice?: string;
+  /** 正在等模型回话：按钮转圈，防重复点 */
+  instructionBusy?: boolean;
   /** 历史抽屉的一句话：刚撤销了什么 / 回滚到了哪一步（F2 / ADR-0109） */
   historyNotice?: string;
   /** 阶段式 / 自由工作台（F8）：存在 localStorage，跨页面生效 */
@@ -425,6 +430,11 @@ type WorkbenchState = {
   stopBatch: () => void;
   /** 一句话指令：查表翻成镜头补丁，写一条 shot.updated；没听懂返回 false（ADR-0039） */
   instruct: (text: string) => boolean;
+  /**
+   * 规则表没听懂时，显式让文本模型再读一遍（H19 / ADR-0141）。
+   * 只回一个补丁、只写一条事件；模型也读不出来就返回 false，不动 IR。
+   */
+  instructWithModel: (text: string) => Promise<boolean>;
   /**
    * 改写一条台词：写一条 `dialogue.updated`，时长按字数重估；
    * 所属镜头跟着挪，保持"镜头时长 ≈ 台词 + 余量"（ADR-0044）
@@ -4868,6 +4878,66 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     set({
       project: applyEvent(project, event),
       events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  instructWithModel: async (text) => {
+    if (get().readOnly) return false;
+    if (get().instructionBusy) return false;
+    const trimmed = text.trim();
+    if (!trimmed) return false;
+
+    const { project, currentShotId } = get();
+    const shot = project.shots.find((item) => item.id === currentShotId);
+    if (!shot) return false;
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定：要改先解锁。" });
+      return false;
+    }
+
+    const shotNo = project.shots.findIndex((item) => item.id === shot.id) + 1;
+    set({ instructionBusy: true, castError: undefined, instructionNotice: undefined });
+
+    const result = await askInstructionAi(trimmed, shotSnapshotOf(shot, shotNo));
+
+    // 等模型这段时间里，作者可能切了镜头 / 锁了镜头 / 换了标签页：都别把补丁写到别的镜头
+    const latest = get();
+    const target = latest.project.shots.find((item) => item.id === shot.id);
+    if (!target || target.locked || latest.readOnly) {
+      set({ instructionBusy: false });
+      return false;
+    }
+
+    if (!result.ok) {
+      set({ instructionBusy: false, castError: result.error });
+      return false;
+    }
+
+    const patch: Partial<Shot> = {};
+    if (result.patch.shotSize) patch.shotSize = result.patch.shotSize;
+    if (result.patch.camera) patch.camera = result.patch.camera;
+    if (result.patch.durationMs) patch.durationMs = result.patch.durationMs;
+    if (result.patch.note && !target.promptNotes.includes(result.patch.note)) {
+      patch.promptNotes = [...target.promptNotes, result.patch.note];
+    }
+    if (Object.keys(patch).length === 0) {
+      set({ instructionBusy: false, castError: "模型读到的和现在一样：这次没有改动。" });
+      return false;
+    }
+
+    const event: ProjectEvent = {
+      type: "shot.updated",
+      at: stamp(),
+      shotId: target.id,
+      patch,
+    };
+    set({
+      project: applyEvent(latest.project, event),
+      events: [...latest.events, event],
+      instructionBusy: false,
+      instructionNotice: describeAiPatch(result.patch, result.reason),
       castError: undefined,
     });
     return true;

@@ -77,6 +77,13 @@ export type ReelBarProps = {
   onDecide: (status: Decision) => void;
   /** 一句话指令：成功返回 true，输入框据此清空（ADR-0039） */
   onInstruct: (text: string) => boolean;
+  /**
+   * 规则表没听懂时，显式让文本模型再读一遍（H19 / ADR-0141）。
+   * 成功返回 true，输入框据此清空。
+   */
+  onInstructWithModel: (text: string) => Promise<boolean>;
+  /** 模型正在读：按钮转圈，防重复点 */
+  instructBusy?: boolean;
   /** 锁 / 解锁这一镜（ADR-0041） */
   onSetLock: (locked: boolean) => void;
   /** 一步留用并锁定：还没留用时，锁定按钮换个说法（ADR-0041 附记） */
@@ -92,6 +99,8 @@ export function ReelBar({
   onSelect,
   onDecide,
   onInstruct,
+  onInstructWithModel,
+  instructBusy,
   onSetLock,
   onApproveAndLock,
   onRedo,
@@ -153,6 +162,24 @@ export function ReelBar({
             <kbd className="tnum shrink-0 text-[9px] text-muted-2">⏎</kbd>
           </label>
         </form>
+
+        {/* 规则表没听懂时，作者自己决定要不要花一次模型调用（H19 / ADR-0141） */}
+        {!current.locked && draft.trim().length > 0 && (
+          <button
+            type="button"
+            disabled={instructBusy}
+            onClick={async () => {
+              if (await onInstructWithModel(draft)) setDraft("");
+            }}
+            title="把这句和当前镜头交给文本模型再读一遍：一次请求只回一个补丁，读不出就不写"
+            className={cn(
+              "flex shrink-0 items-center gap-1.5 rounded-token border border-line px-3 py-2 text-[12px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text",
+              "disabled:pointer-events-none disabled:opacity-50",
+            )}
+          >
+            {instructBusy ? "模型在读…" : "让模型读一遍"}
+          </button>
+        )}
 
         {current.locked ? (
           <>
