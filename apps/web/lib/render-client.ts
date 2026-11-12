@@ -245,25 +245,26 @@ export function buildRenderManifest(
   for (const clip of ordered) {
     for (const line of clip.lines) {
       if (!line.audioUri) continue;
+      // 配音按作者挪过的位置落（E1 / ADR-0131）：`audioStartMs` 已经夹在成片之内
       if (/^https?:\/\//i.test(line.audioUri)) {
-        audio.push({ remote: line.audioUri, startMs: line.startMs, durationMs: line.durationMs });
+        audio.push({ remote: line.audioUri, startMs: line.audioStartMs, durationMs: line.durationMs });
         continue;
       }
       if (isRemoteAssetUri(line.audioUri)) {
         const mime = mimeForExtension(line.audioUri.trim().slice(S3_PREFIX.length).split(".").pop() ?? "");
         if (!isAudioMime(mime)) continue;
-        audio.push({ audio: line.audioUri, startMs: line.startMs, durationMs: line.durationMs });
+        audio.push({ audio: line.audioUri, startMs: line.audioStartMs, durationMs: line.durationMs });
         continue;
       }
       if (isStoredAssetUri(line.audioUri)) {
         const mime = mimeForExtension(storedAssetRef(line.audioUri)!.extension);
         if (!isAudioMime(mime)) continue;
-        audio.push({ audio: line.audioUri, startMs: line.startMs, durationMs: line.durationMs });
+        audio.push({ audio: line.audioUri, startMs: line.audioStartMs, durationMs: line.durationMs });
         continue;
       }
       const parts = parseDataUri(line.audioUri);
       if (!parts || !isAudioMime(parts.mime)) continue;
-      audio.push({ audio: line.audioUri, startMs: line.startMs, durationMs: line.durationMs });
+      audio.push({ audio: line.audioUri, startMs: line.audioStartMs, durationMs: line.durationMs });
     }
   }
 

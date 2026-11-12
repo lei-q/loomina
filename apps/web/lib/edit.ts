@@ -199,9 +199,17 @@ export type EditLine = {
   text: string;
   characterId: string;
   characterName: string;
-  /** 绝对时间：从整条片子的 0 点算起 */
+  /** 台词本该开始的位置：从整条片子的 0 点算起，画面轨排出来的 */
   startMs: number;
   durationMs: number;
+  /** 配音实际开始的位置：`startMs + voiceOffsetMs`，已夹在成片范围内（E1） */
+  audioStartMs: number;
+  /** 字幕实际开始的位置：`startMs + subtitleOffsetMs`，已夹在成片范围内（E1） */
+  cueStartMs: number;
+  /** 作者把配音往后挪了多少毫秒（E1）；0 表示贴着台词走 */
+  voiceOffsetMs: number;
+  /** 作者把字幕往后挪了多少毫秒（E1）；0 表示贴着台词走 */
+  subtitleOffsetMs: number;
   /** 这一句的音轨（data URI 或 http(s)） */
   audioUri?: string;
   /** 断句后的显示单元；时间加起来等于整句 */
@@ -308,6 +316,22 @@ function fitCues(
 }
 
 /**
+ * 把叠加层的起点挪 `offsetMs`，再夹回成片之内（E1 / ADR-0131）。
+ *
+ * 起点不能早于 0，也不能晚到整条片段都掉出成片之外——否则渲染清单会拒收
+ * （叠加层起点必须落在成片里），界面却还显示得好好的。
+ */
+function shiftWithin(
+  startMs: number,
+  offsetMs: number,
+  durationMs: number,
+  totalMs: number,
+): number {
+  const latest = Math.max(0, totalMs - Math.max(1, durationMs));
+  return Math.max(0, Math.min(latest, startMs + offsetMs));
+}
+
+/**
  * 时间线 → 成片读模型。
  *
  * 时间线是事实，台词与音轨按片段起点换算成绝对时间；画面先看这一 take 的视频，
@@ -334,6 +358,12 @@ export function toEditView(
     project.subtitleOverrides.map((override) => [override.lineId, override]),
   );
 
+  // 全长先算出来：配音与字幕的挪动要夹在成片之内，渲染清单也按这个校验
+  const spanMs = project.timeline.items.reduce(
+    (end, item) => Math.max(end, item.startMs + item.durationMs),
+    0,
+  );
+
   const clips: EditClip[] = [...project.timeline.items]
     .sort((a, b) => a.startMs - b.startMs)
     .flatMap((item) => {
@@ -355,6 +385,12 @@ export function toEditView(
         if (!line) return [];
         const startMs = cursor;
         cursor += line.durationMs;
+        // 叠加层可以自由挪（E1 / ADR-0131）：画面轨必须首尾相接，配音与字幕不必。
+        // 挪出成片之外的部分夹回来——渲染清单只收落在成片里的叠加层。
+        const voiceOffsetMs = line.voiceOffsetMs ?? 0;
+        const subtitleOffsetMs = line.subtitleOffsetMs ?? 0;
+        const audioStartMs = shiftWithin(startMs, voiceOffsetMs, line.durationMs, spanMs);
+        const cueStartMs = shiftWithin(startMs, subtitleOffsetMs, line.durationMs, spanMs);
         const voice = line.audioAssetId
           ? assetById.get(line.audioAssetId)
           : undefined;
@@ -369,7 +405,7 @@ export function toEditView(
               shotId: item.shotId,
               characterName,
               text: cue.text.trim(),
-              startMs: startMs + spans[index]!.startMs,
+              startMs: cueStartMs + spans[index]!.startMs,
               durationMs: spans[index]!.durationMs,
               manual: true,
             }))
@@ -384,7 +420,7 @@ export function toEditView(
                     shotId: item.shotId,
                     characterName,
                     text,
-                    startMs: startMs + cue.startMs,
+                    startMs: cueStartMs + cue.startMs,
                     durationMs: cue.durationMs,
                   },
                 ];
@@ -398,6 +434,10 @@ export function toEditView(
             characterName,
             startMs,
             durationMs: line.durationMs,
+            audioStartMs,
+            cueStartMs,
+            voiceOffsetMs,
+            subtitleOffsetMs,
             audioUri: voice?.uri,
             cues,
             ...(override ? { manual: true } : {}),

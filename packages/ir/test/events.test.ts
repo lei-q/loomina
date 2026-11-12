@@ -2214,6 +2214,80 @@ describe("手改断句（D2）", () => {
   });
 });
 
+describe("音轨与字幕轨偏移（E1 / ADR-0131）", () => {
+  it("默认没有这两个字段；旧日志读出来按 0 处理", () => {
+    const project = load();
+    const line = project.dialogue[0]!;
+    expect(line.voiceOffsetMs).toBeUndefined();
+    expect(line.subtitleOffsetMs).toBeUndefined();
+  });
+
+  it("配音与字幕各写各的，互不覆盖", () => {
+    const project = load();
+    const lineId = project.dialogue[0]!.id;
+    const after = rebuild([
+      created(project),
+      { type: "dialogue.updated", at: AT, lineId, patch: { voiceOffsetMs: 300 } },
+      { type: "dialogue.updated", at: AT, lineId, patch: { subtitleOffsetMs: -200 } },
+    ]);
+    const line = after.dialogue.find((item) => item.id === lineId)!;
+    expect(line.voiceOffsetMs).toBe(300);
+    expect(line.subtitleOffsetMs).toBe(-200);
+  });
+
+  it("null 归零；归零后字段还在但值为 0", () => {
+    const project = load();
+    const lineId = project.dialogue[0]!.id;
+    const after = rebuild([
+      created(project),
+      { type: "dialogue.updated", at: AT, lineId, patch: { voiceOffsetMs: 500 } },
+      { type: "dialogue.updated", at: AT, lineId, patch: { voiceOffsetMs: null } },
+    ]);
+    expect(after.dialogue.find((item) => item.id === lineId)!.voiceOffsetMs).toBe(0);
+  });
+
+  it("超过 ±30 秒被拒", () => {
+    const project = load();
+    const lineId = project.dialogue[0]!.id;
+    expect(() =>
+      rebuild([
+        created(project),
+        { type: "dialogue.updated", at: AT, lineId, patch: { voiceOffsetMs: 30_001 } },
+      ]),
+    ).toThrow(/voiceOffsetMs/);
+    expect(() =>
+      rebuild([
+        created(project),
+        { type: "dialogue.updated", at: AT, lineId, patch: { subtitleOffsetMs: -30_001 } },
+      ]),
+    ).toThrow(/subtitleOffsetMs/);
+  });
+
+  it("非整数毫秒被拒", () => {
+    const project = load();
+    const lineId = project.dialogue[0]!.id;
+    expect(() =>
+      rebuild([
+        created(project),
+        { type: "dialogue.updated", at: AT, lineId, patch: { voiceOffsetMs: 12.5 } },
+      ]),
+    ).toThrow(/整数毫秒/);
+  });
+
+  it("改文本不会把偏移冲掉", () => {
+    const project = load();
+    const lineId = project.dialogue[0]!.id;
+    const after = rebuild([
+      created(project),
+      { type: "dialogue.updated", at: AT, lineId, patch: { subtitleOffsetMs: 400 } },
+      { type: "dialogue.updated", at: AT, lineId, patch: { text: "改过的台词。" } },
+    ]);
+    const line = after.dialogue.find((item) => item.id === lineId)!;
+    expect(line.text).toBe("改过的台词。");
+    expect(line.subtitleOffsetMs).toBe(400);
+  });
+});
+
 describe("字幕版式（D3）", () => {
   it("默认是默认档，三项都没写", () => {
     const project = load();

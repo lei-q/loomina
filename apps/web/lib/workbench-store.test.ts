@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 import { setEventLog, type EventLog } from "./event-log";
 import { claimWriter, releaseWriter } from "./writer-lock";
 import { toScriptView, toStageView } from "./read-model";
+import { toEditView } from "./edit";
 import { stageStateOf } from "./stage-flow";
 import { resetPersistenceForTests, useWorkbench } from "./workbench-store";
 
@@ -1506,6 +1507,102 @@ describe("字幕版式（D3）", () => {
     expect(state().setSubtitleLayout({ bottomPct: 24 })).toBe(false);
     expect(state().events).toHaveLength(snapshot);
     useWorkbench.setState({ readOnly: false });
+  });
+});
+
+describe("音轨与字幕轨（E1 / ADR-0131）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("配音后挪 300ms：写一条 dialogue.updated，读模型把音轨挪过去", () => {
+    expect(state().shiftLineTrack("d-01", "voice", 300)).toBe(true);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "dialogue.updated",
+      lineId: "d-01",
+      patch: { voiceOffsetMs: 300 },
+    });
+    const line = toEditView(state().project).clips[0]!.lines[0]!;
+    expect(line.voiceOffsetMs).toBe(300);
+    expect(line.audioStartMs).toBe(line.startMs + 300);
+    // 字幕没跟着动
+    expect(line.subtitleOffsetMs).toBe(0);
+    expect(line.cueStartMs).toBe(line.startMs);
+  });
+
+  it("两条轨互不影响：只挪字幕时配音还在原处", () => {
+    expect(state().shiftLineTrack("d-01", "subtitle", 200)).toBe(true);
+    const line = toEditView(state().project).clips[0]!.lines[0]!;
+    expect(line.subtitleOffsetMs).toBe(200);
+    expect(line.cueStartMs).toBe(line.startMs + 200);
+    expect(line.audioStartMs).toBe(line.startMs);
+  });
+
+  it("往前挪到 0 之前会被夹回 0，不会出现负的起点", () => {
+    // 第一句从 0 开始：前挪 200ms 只能停在 0
+    state().shiftLineTrack("d-01", "subtitle", -200);
+    const line = toEditView(state().project).clips[0]!.lines[0]!;
+    expect(line.cueStartMs).toBe(0);
+    expect(line.subtitleOffsetMs).toBe(-200);
+  });
+
+  it("归零写 null，字段真的消失（不是留着 0）", () => {
+    state().shiftLineTrack("d-01", "voice", 400);
+    expect(state().shiftLineTrack("d-01", "voice", null)).toBe(true);
+    expect(state().events.at(-1)).toMatchObject({
+      patch: { voiceOffsetMs: null },
+    });
+    expect(state().project.dialogue.find((l) => l.id === "d-01")!.voiceOffsetMs).toBe(0);
+  });
+
+  it("收的是增量：连点两次就挪两步", () => {
+    // 界面上连点时 React 闭包里还是旧值；store 必须自己读当前值再累加
+    expect(state().shiftLineTrack("d-01", "voice", 100)).toBe(true);
+    expect(state().shiftLineTrack("d-01", "voice", 100)).toBe(true);
+    expect(state().project.dialogue.find((l) => l.id === "d-01")!.voiceOffsetMs).toBe(200);
+    expect(state().events.at(-1)).toMatchObject({ patch: { voiceOffsetMs: 200 } });
+  });
+
+  it("增量把值推过 ±30 秒也会被拒，不会静默夹到边界", () => {
+    state().shiftLineTrack("d-01", "voice", 29_900);
+    const snapshot = state().events.length;
+    expect(state().shiftLineTrack("d-01", "voice", 300)).toBe(false);
+    expect(state().editError).toContain("voiceOffsetMs");
+    expect(state().events).toHaveLength(snapshot);
+    expect(state().project.dialogue.find((l) => l.id === "d-01")!.voiceOffsetMs).toBe(29_900);
+  });
+
+  it("同一个值不写事件", () => {
+    const snapshot = state().events.length;
+    expect(state().shiftLineTrack("d-01", "voice", 0)).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+  });
+
+  it("超过 ±30 秒被拒，原因写进 editError", () => {
+    const snapshot = state().events.length;
+    expect(state().shiftLineTrack("d-01", "voice", 30_001)).toBe(false);
+    expect(state().editError).toContain("voiceOffsetMs");
+    expect(state().events).toHaveLength(snapshot);
+  });
+
+  it("只读模式不写事件", () => {
+    const snapshot = state().events.length;
+    useWorkbench.setState({ readOnly: true });
+    expect(state().shiftLineTrack("d-01", "voice", 200)).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("挪出成片之外时读模型夹回来：渲染清单只收成片里的叠加层", () => {
+    // 第一句往后挪 30 秒：远超 5.5 秒的成片
+    state().shiftLineTrack("d-01", "subtitle", 30_000);
+    const view = toEditView(state().project);
+    const line = view.clips[0]!.lines[0]!;
+    expect(line.cueStartMs).toBeGreaterThanOrEqual(0);
+    expect(line.cueStartMs + line.durationMs).toBeLessThanOrEqual(view.totalMs + 1);
+    // 原始记录仍留着作者填的数，只在读模型里夹
+    expect(line.subtitleOffsetMs).toBe(30_000);
   });
 });
 

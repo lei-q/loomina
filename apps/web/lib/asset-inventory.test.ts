@@ -76,7 +76,17 @@ function withAssets(project: Project): Project {
         locked: false,
       },
     ],
-    dialogue: [{ id: "d1", characterId: "c1", text: "走", durationMs: 1000, audioAssetId: "a-voice" }],
+    dialogue: [
+      {
+        id: "d1",
+        characterId: "c1",
+        text: "走",
+        durationMs: 1000,
+        audioAssetId: "a-voice",
+        voiceOffsetMs: 0,
+        subtitleOffsetMs: 0,
+      },
+    ],
     assets: [
       { id: "a-sheet", kind: "image", uri: PNG, source: "generated", createdAt: "2026-11-11T00:00:00Z" },
       { id: "a-ref", kind: "image", uri: `loomina://assets/${HASH}.png`, source: "upload", createdAt: "2026-11-11T00:00:00Z" },

@@ -50,6 +50,14 @@ export const VOICE_PROFILE_MAX = 40;
 export const GATE_NOTE_MAX = 240;
 
 /**
+ * 配音 / 字幕相对台词的挪动上限（E1 / ADR-0131）：正负 30 秒。
+ *
+ * 再大就不该叫「挪一点」了——那是改剧本或换镜头的事。上限也给
+ * 渲染清单留了余地：叠加层起点必须落在成片之内。
+ */
+export const TRACK_OFFSET_MAX_MS = 30_000;
+
+/**
  * 事件日志（ADR-0011）。
  *
  * 第一版只做“可回放”：
@@ -241,13 +249,22 @@ export type ProjectEvent =
       type: "dialogue.updated";
       at: string;
       lineId: Id;
-      patch: Omit<Partial<Omit<DialogueLine, "id" | "characterId">>, "performance"> & {
+      patch: Omit<
+        Partial<Omit<DialogueLine, "id" | "characterId">>,
+        "performance" | "voiceOffsetMs" | "subtitleOffsetMs"
+      > & {
         /**
          * 表演参数（C2 / ADR-0124）。
          * `undefined` 表示不改；**`null` 表示清回默认值**——`undefined` 过不了 JSON，
          * 清空必须有一个能存下来的值。
          */
         performance?: VoicePerformance | null;
+        /**
+         * 配音 / 字幕挪动（E1 / ADR-0131）：毫秒，正负 30 秒。
+         * `undefined` 不改，数字覆盖；**`null` 表示归零**。
+         */
+        voiceOffsetMs?: number | null;
+        subtitleOffsetMs?: number | null;
       };
     }
   | {
@@ -1236,10 +1253,31 @@ function applyEventCore(
       } else if (event.patch.text !== undefined && line.performance) {
         nextPerformance = clipPerformance(line.performance, nextText);
       }
-      const { performance: _patchPerformance, ...restPatch } = event.patch;
+      // 配音 / 字幕挪动（E1 / ADR-0131）：越界拒绝，null 归零
+      const offsets: { voiceOffsetMs?: number; subtitleOffsetMs?: number } = {};
+      for (const key of ["voiceOffsetMs", "subtitleOffsetMs"] as const) {
+        const value = event.patch[key];
+        if (value === undefined) continue;
+        if (value === null) {
+          offsets[key] = 0;
+          continue;
+        }
+        if (!Number.isInteger(value) || Math.abs(value) > TRACK_OFFSET_MAX_MS) {
+          throw new Error(
+            `${key} 必须是 ±${TRACK_OFFSET_MAX_MS / 1000} 秒内的整数毫秒：${value}`,
+          );
+        }
+        offsets[key] = value;
+      }
+      const {
+        performance: _patchPerformance,
+        voiceOffsetMs: _patchVoice,
+        subtitleOffsetMs: _patchSubtitle,
+        ...restPatch
+      } = event.patch;
       const dialogue = current.dialogue.map((item) => {
         if (item.id !== event.lineId) return item;
-        const next: DialogueLine = { ...item, ...restPatch };
+        const next: DialogueLine = { ...item, ...restPatch, ...offsets };
         if (nextPerformance === undefined) {
           delete (next as { performance?: VoicePerformance }).performance;
         } else {

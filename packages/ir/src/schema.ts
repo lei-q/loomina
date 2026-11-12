@@ -280,6 +280,16 @@ export const DialogueLineSchema = z.object({
   audioAssetId: Id.optional(),
   /** 逐句表演参数（C2 / ADR-0124）；没写按默认值处理 */
   performance: VoicePerformanceSchema.optional(),
+  /**
+   * 这一句的配音相对它「本该开始」的位置挪了多少毫秒（E1 / ADR-0131）。
+   *
+   * 画面轨必须首尾相接（渲染清单要求），所以能自由挪的只有叠加层；
+   * 配音与字幕各存一个偏移，互不影响：字幕挪了不该带着声音一起走。
+   * 缺省（或 0）就是贴着台词走；旧日志没有这个字段，读出来按 0 处理。
+   */
+  voiceOffsetMs: z.number().int().optional(),
+  /** 这一句的字幕相对本该开始的位置挪了多少毫秒（E1 / ADR-0131） */
+  subtitleOffsetMs: z.number().int().optional(),
 });
 export type DialogueLine = z.infer<typeof DialogueLineSchema>;
 

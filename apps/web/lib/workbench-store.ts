@@ -437,6 +437,17 @@ type WorkbenchState = {
     bottomPct?: number | null;
     strokeCqw?: number | null;
   }) => boolean;
+  /**
+   * 挪一句的配音或字幕（E1 / ADR-0131）：写一条 `dialogue.updated`。
+   *
+   * 画面轨不能自由拖（渲染清单要求首尾相接），能自由挪的只有这两个叠加层。
+   * 传 `null` 归零；越界（±30 秒）由 `applyEvent` 拒。
+   */
+  shiftLineTrack: (
+    lineId: string,
+    track: "voice" | "subtitle",
+    deltaMs: number | null,
+  ) => boolean;
   /** 调整台词顺序：写一条 `shot.updated` 换 dialogueIds 的顺序（ADR-0047） */
   moveDialogue: (lineId: string, direction: "up" | "down") => boolean;
   /** 改这一镜的动作：写一条 `shot.updated { description }`，时长与台词不动（ADR-0049） */
@@ -3185,6 +3196,40 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       events: [...events, event],
       castError: undefined,
     });
+    return true;
+  },
+
+  shiftLineTrack: (lineId, track, deltaMs) => {
+    if (get().readOnly) {
+      set({ editError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    const { project, events } = get();
+    const line = project.dialogue.find((item) => item.id === lineId);
+    if (!line) return false;
+    const key = track === "voice" ? "voiceOffsetMs" : "subtitleOffsetMs";
+    // 收的是**增量**不是目标值：连点时 React 闭包里的旧值会让第二次点击算成
+    // 「还是 0 → 100」，于是被下面的同值短路吃掉。读 store 里的当前值才连得上。
+    const current = line[key] ?? 0;
+    const next = deltaMs === null ? 0 : current + Math.round(deltaMs);
+    if (next === current) return false;
+    const at = stamp();
+    const event: ProjectEvent = {
+      type: "dialogue.updated",
+      at,
+      lineId,
+      patch: { [key]: next === 0 ? null : next },
+    };
+    try {
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        editError: undefined,
+      });
+    } catch (error) {
+      set({ editError: error instanceof Error ? error.message : "挪不动这条轨道。" });
+      return false;
+    }
     return true;
   },
 

@@ -276,7 +276,7 @@ export function previewClips(view: EditView): PreviewClip[] {
     ),
     audio: clip.lines.flatMap((line) =>
       line.audioUri
-        ? [{ startMs: line.startMs - clip.startMs, uri: line.audioUri, text: line.text }]
+        ? [{ startMs: line.audioStartMs - clip.startMs, uri: line.audioUri, text: line.text }]
         : [],
     ),
   }));

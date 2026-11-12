@@ -181,6 +181,68 @@ function CheckRow({ check }: { check: ComplianceCheck }) {
   );
 }
 
+/** `+1.2s` / `−0.5s`：挪动量的短写 */
+function signedMs(ms: number): string {
+  const sign = ms > 0 ? "+" : "−";
+  return `${sign}${(Math.abs(ms) / 1000).toFixed(1)}s`;
+}
+
+/**
+ * 一句台词的一条叠加层微调（E1 / ADR-0131）。
+ *
+ * 用按钮而不是拖动条：叠加层的意义是「对一下口型 / 让开画面」，
+ * 几十毫秒的精度用键盘与按钮反而更好点；Shift 一下走 5 格。
+ */
+function TrackNudge({
+  label,
+  offsetMs,
+  readOnly,
+  onShift,
+  onReset,
+}: {
+  label: string;
+  offsetMs: number;
+  readOnly: boolean;
+  onShift: (delta: number, big: boolean) => void;
+  onReset: () => void;
+}) {
+  const step = (delta: number) => (event: React.MouseEvent) => {
+    if (readOnly) return;
+    onShift(delta, event.shiftKey);
+  };
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      <button
+        type="button"
+        onClick={step(-100)}
+        disabled={readOnly}
+        title={`${label}前挪 100ms（按住 Shift 挪 500ms）`}
+        className="rounded-token border border-line px-1 py-0.5 text-[9px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:opacity-40"
+      >
+        ‹
+      </button>
+      <button
+        type="button"
+        onClick={step(100)}
+        disabled={readOnly}
+        title={`${label}后挪 100ms（按住 Shift 挪 500ms）`}
+        className="rounded-token border border-line px-1 py-0.5 text-[9px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:opacity-40"
+      >
+        ›
+      </button>
+      <button
+        type="button"
+        onClick={onReset}
+        disabled={readOnly || offsetMs === 0}
+        title={`${label}归位`}
+        className="rounded-token border border-line px-1 py-0.5 text-[9px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:opacity-40"
+      >
+        ↺
+      </button>
+    </span>
+  );
+}
+
 /**
  * 成片页（ADR-0086）：时间线、初剪与导出。
  *
@@ -199,6 +261,7 @@ export function EditScreen() {
   const moveTimelineItem = useWorkbench((state) => state.moveTimelineItem);
   const editSubtitles = useWorkbench((state) => state.editSubtitles);
   const setSubtitleLayout = useWorkbench((state) => state.setSubtitleLayout);
+  const shiftLineTrack = useWorkbench((state) => state.shiftLineTrack);
   const addMusic = useWorkbench((state) => state.addMusic);
   const updateMusic = useWorkbench((state) => state.updateMusic);
   const removeMusic = useWorkbench((state) => state.removeMusic);
@@ -364,7 +427,8 @@ export function EditScreen() {
     for (const clip of view.clips) {
       for (const line of clip.lines) {
         if (!line.audioUri) continue;
-        if (elapsed < line.startMs || elapsed >= line.startMs + line.durationMs) continue;
+        // 按配音实际落点播（E1 / ADR-0131）：挪过的句子不该在原处响
+        if (elapsed < line.audioStartMs || elapsed >= line.audioStartMs + line.durationMs) continue;
         if (fired.current.has(line.id)) continue;
         fired.current.add(line.id);
         element.src = assetHref(line.audioUri)!;
@@ -919,7 +983,8 @@ export function EditScreen() {
                       </select>
                     </label>
                   </div>
-                  <div className="mt-2 flex h-[26px] w-full overflow-hidden rounded-token border border-line bg-surface">
+                  {/* 按绝对时间定位：字幕被挪过时，条上能看见它离开原来的位置（E1） */}
+                  <div className="relative mt-2 h-[26px] w-full overflow-hidden rounded-token border border-line bg-surface">
                     {view.cues.map((cue) => (
                       <button
                         key={cue.id}
@@ -930,11 +995,11 @@ export function EditScreen() {
                         }}
                         title={`${timecode(cue.startMs)} · ${cue.characterName}：${cue.text}${cue.manual ? "（手改过）" : ""} · 点开改断句`}
                         style={{
+                          left: `${(cue.startMs / Math.max(1, view.totalMs)) * 100}%`,
                           width: `${(cue.durationMs / Math.max(1, view.totalMs)) * 100}%`,
-                          minWidth: cue.text.length > 0 ? 2 : 0,
                         }}
                         className={cn(
-                          "flex min-w-[2px] items-center justify-center overflow-hidden border-r border-bg px-0.5 text-[8px] transition-colors duration-[var(--dur)] last:border-r-0",
+                          "absolute top-0 flex h-full min-w-[2px] items-center justify-center overflow-hidden border-r border-bg px-0.5 text-[8px] transition-colors duration-[var(--dur)]",
                           elapsed >= cue.startMs &&
                             elapsed < cue.startMs + cue.durationMs
                             ? "bg-text/20 text-text"
@@ -948,7 +1013,7 @@ export function EditScreen() {
                       </button>
                     ))}
                     {view.cues.length === 0 && (
-                      <span className="flex flex-1 items-center px-2 text-[9px] text-muted-2">
+                      <span className="flex h-full items-center px-2 text-[9px] text-muted-2">
                         时间线里还没有台词
                       </span>
                     )}
@@ -1211,6 +1276,76 @@ export function EditScreen() {
                     )}
                   </section>
                 )}
+
+                <section aria-label="音轨与字幕轨" className="mt-5 border-t border-line pt-4">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <h2 className="text-[11px] tracking-[.06em] text-text">音轨与字幕轨</h2>
+                    <span className="text-[8.5px] tracking-[.06em] text-muted-2">E1</span>
+                  </div>
+                  <p className="mt-1 text-[9px] leading-[1.7] text-muted-2">
+                    画面轨必须首尾相接（渲染清单要求），所以能单独挪的只有配音与字幕：
+                    点一下挪 100ms，按住 <kbd className="rounded border border-line px-1">Shift</kbd>{" "}
+                    挪 500ms。两句都挪过时，「归位」只归这一条轨。
+                  </p>
+                  {view.clips.some((clip) => clip.lines.length > 0) ? (
+                    <ul className="mt-2 border-t border-line">
+                      {view.clips.flatMap((clip) =>
+                        clip.lines.map((line) => {
+                          const shifted = line.voiceOffsetMs !== 0 || line.subtitleOffsetMs !== 0;
+                          return (
+                            <li
+                              key={line.id}
+                              className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line py-1.5 text-[10px]"
+                            >
+                              <span className="tnum w-[46px] shrink-0 text-muted-2">
+                                {timecode(line.startMs)}
+                              </span>
+                              <span className="w-[42px] shrink-0 text-muted">
+                                {line.characterName}
+                              </span>
+                              <span className="min-w-0 flex-1 truncate text-text">
+                                {line.text}
+                              </span>
+                              <div className="flex shrink-0 items-center gap-1">
+                                <span className="text-[8.5px] text-muted-2">配音</span>
+                                <TrackNudge
+                                  label="配音"
+                                  offsetMs={line.voiceOffsetMs}
+                                  readOnly={Boolean(readOnly)}
+                                  onShift={(delta, big) =>
+                                    shiftLineTrack(line.id, "voice", big ? delta * 5 : delta)
+                                  }
+                                  onReset={() => shiftLineTrack(line.id, "voice", null)}
+                                />
+                              </div>
+                              <div className="flex shrink-0 items-center gap-1">
+                                <span className="text-[8.5px] text-muted-2">字幕</span>
+                                <TrackNudge
+                                  label="字幕"
+                                  offsetMs={line.subtitleOffsetMs}
+                                  readOnly={Boolean(readOnly)}
+                                  onShift={(delta, big) =>
+                                    shiftLineTrack(line.id, "subtitle", big ? delta * 5 : delta)
+                                  }
+                                  onReset={() => shiftLineTrack(line.id, "subtitle", null)}
+                                />
+                              </div>
+                              {shifted && (
+                                <span className="shrink-0 text-[8.5px] text-muted">
+                                  {line.voiceOffsetMs !== 0 && `配音 ${signedMs(line.voiceOffsetMs)}`}
+                                  {line.voiceOffsetMs !== 0 && line.subtitleOffsetMs !== 0 && " · "}
+                                  {line.subtitleOffsetMs !== 0 && `字幕 ${signedMs(line.subtitleOffsetMs)}`}
+                                </span>
+                              )}
+                            </li>
+                          );
+                        }),
+                      )}
+                    </ul>
+                  ) : (
+                    <p className="mt-2 text-[9.5px] text-muted-2">时间线里还没有台词。</p>
+                  )}
+                </section>
 
                 <section aria-label="配乐" className="mt-5 border-t border-line pt-4">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">

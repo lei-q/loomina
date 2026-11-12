@@ -990,11 +990,18 @@ describe("被删的台词（ADR-0055）", () => {
     characterId: "c-zhou",
     text: "你早就知道，对吧。",
     durationMs: 2600,
+    voiceOffsetMs: 0,
+    subtitleOffsetMs: 0,
   };
   const events = [
     { type: "project.created" as const, at: at(0), project: sampleProject },
     { type: "dialogue.removed" as const, at: at(9), lineId: "d-01" },
-    { type: "dialogue.added" as const, at: at(10), shotId: "s-05", line: { ...line, id: "d-new", text: "新加的" } },
+    {
+      type: "dialogue.added" as const,
+      at: at(10),
+      shotId: "s-05",
+      line: { ...line, id: "d-new", text: "新加的" },
+    },
     { type: "shot.updated" as const, at: at(11), shotId: "s-06", patch: { dialogueIds: ["d-new"] } },
     { type: "dialogue.removed" as const, at: at(12), lineId: "d-new" },
   ];

@@ -171,8 +171,34 @@ export function describeEvent(before: Project, event: ProjectEvent): string {
       }
       return `改故事：${parts.join(" / ") || "无变化"}`;
     }
-    case "dialogue.updated":
+    case "dialogue.updated": {
+      // 只挪了叠加层（E1 / ADR-0131）：说清哪一句、往哪边挪了多少
+      const shifted = event.patch.voiceOffsetMs !== undefined;
+      const subbed = event.patch.subtitleOffsetMs !== undefined;
+      if (shifted || subbed) {
+        const line = before.dialogue.find((item) => item.id === event.lineId);
+        const preview = line ? `「${line.text.slice(0, 12)}」` : "一句台词";
+        const moved: string[] = [];
+        if (shifted) {
+          const value = event.patch.voiceOffsetMs;
+          moved.push(
+            value === null || value === 0
+              ? "配音归位"
+              : `配音${value! > 0 ? "后挪" : "前挪"} ${Math.abs(value!)}ms`,
+          );
+        }
+        if (subbed) {
+          const value = event.patch.subtitleOffsetMs;
+          moved.push(
+            value === null || value === 0
+              ? "字幕归位"
+              : `字幕${value! > 0 ? "后挪" : "前挪"} ${Math.abs(value!)}ms`,
+          );
+        }
+        return `${moved.join("、")}：${preview}`;
+      }
       return `改一句台词：${fieldsCn(DIALOGUE_FIELD_CN, event.patch)}`;
+    }
     case "dialogue.speaker.updated":
       return `换说话人 → ${before.characters.find((item) => item.id === event.characterId)?.name ?? event.characterId}`;
     case "dialogue.added":

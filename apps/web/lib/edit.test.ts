@@ -14,6 +14,16 @@ import { PLATFORM_SPEC_VERSION } from "./platforms";
 
 const AT = "2026-11-11T10:00:00+08:00";
 
+/** ASS 的时间码格式：时:分:秒.厘秒（两位小数） */
+function assTime(ms: number): string {
+  const safe = Math.max(0, Math.round(ms));
+  const h = Math.floor(safe / 3_600_000);
+  const m = String(Math.floor((safe % 3_600_000) / 60_000)).padStart(2, "0");
+  const s = String(Math.floor((safe % 60_000) / 1000)).padStart(2, "0");
+  const c = String(Math.floor((safe % 1000) / 10)).padStart(2, "0");
+  return `${h}:${m}:${s}.${c}`;
+}
+
 describe("自动初剪（ADR-0086）", () => {
   it("按剧本顺序排列，优先留用 take", () => {
     const cut = autoCut(sampleProject);
@@ -441,5 +451,73 @@ describe("字幕版式（D3）：作者调过的项进 IR，导出三处共用",
     expect(buildAss(view, "large")).toContain("Style: Default,PingFang SC,111,");
     expect(buildPreviewHtml(view, "large")).toContain("font-size:5.8cqw");
     expect(buildPreviewHtml(view, "large")).toContain("bottom:18%");
+  });
+});
+
+describe("音轨与字幕轨（E1 / ADR-0131）", () => {
+  const shifted = ProjectSchema.parse({
+    ...sampleProject,
+    dialogue: sampleProject.dialogue.map((line) =>
+      line.id === "d-01" ? { ...line, voiceOffsetMs: 300, subtitleOffsetMs: 150 } : line,
+    ),
+  });
+
+  it("配音与字幕各按自己的偏移落点，互不影响", () => {
+    const line = toEditView(shifted).clips[0]!.lines[0]!;
+    expect(line.startMs).toBe(0);
+    expect(line.audioStartMs).toBe(300);
+    expect(line.cueStartMs).toBe(150);
+    expect(line.cues[0]!.startMs).toBe(150);
+  });
+
+  it("没有偏移时两个起点都等于台词起点", () => {
+    const line = toEditView(sampleProject).clips[0]!.lines[0]!;
+    expect(line.voiceOffsetMs).toBe(0);
+    expect(line.subtitleOffsetMs).toBe(0);
+    expect(line.audioStartMs).toBe(line.startMs);
+    expect(line.cueStartMs).toBe(line.startMs);
+  });
+
+  it("挪出成片之外时夹回来：起点不早于 0、不晚到整句掉出成片", () => {
+    const view = toEditView(sampleProject);
+    const late = ProjectSchema.parse({
+      ...sampleProject,
+      dialogue: sampleProject.dialogue.map((line) =>
+        line.id === "d-01" ? { ...line, subtitleOffsetMs: 30_000 } : line,
+      ),
+    });
+    const line = toEditView(late).clips[0]!.lines[0]!;
+    expect(line.cueStartMs).toBeGreaterThanOrEqual(0);
+    expect(line.cueStartMs + line.durationMs).toBeLessThanOrEqual(view.totalMs);
+  });
+
+  it("SRT 用字幕挪过的起点，不是台词起点", () => {
+    const srt = buildSrt(toEditView(shifted));
+    // 第一句从 0 起、字幕 +150ms：第一条字幕的时间码应是 00:00:00,150
+    expect(srt).toContain("00:00:00,150 -->");
+    expect(srt).not.toContain("00:00:00,000 -->");
+  });
+
+  it("ASS 与 SRT 同一份时间：字幕挪动只写一遍，两处一致", () => {
+    const view = toEditView(shifted);
+    const ass = buildAss(view);
+    const line = view.clips[0]!.lines[0]!;
+    const first = line.cues[0]!;
+    // 读模型里这条 cue 的绝对起点就是它是这一句的第一条：起点等于 cueStartMs
+    expect(first.startMs).toBe(line.cueStartMs);
+    expect(ass).toContain(
+      `Dialogue: 0,${assTime(first.startMs)},${assTime(first.startMs + first.durationMs)},`,
+    );
+    // ASS 里的起点与 SRT 一致，不是台词起点 0
+    expect(first.startMs).toBe(150);
+  });
+
+  it("OTIO 音轨用配音的实际起点", () => {
+    const otio = buildOtio(toEditView(shifted)) as {
+      tracks: { children: { kind: string; children: { source_range: { start_time: { value: number; rate: number } } }[] }[] };
+    };
+    const audio = otio.tracks.children.find((track) => track.kind === "Audio");
+    // 这一份 fixture 没有音轨资产，只有 cue；至少不该抛错
+    expect(audio).toBeDefined();
   });
 });
