@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import type { Frame } from "@loomina/pipeline";
+import { PromptEditor } from "@/components/prompt-editor";
 import { Scene } from "@/components/scene";
 import { shotLabel, type StageShot, type StageView } from "@/lib/read-model";
+import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
 import { assetHref } from "@/lib/asset-uri";
 
@@ -86,6 +88,8 @@ function Current({
   /** 删一拍 take（B5） */
   onRemoveTake: (takeId: string) => void;
 }) {
+  const promptOverrides = useWorkbench((state) => state.promptOverrides);
+  const setPromptOverride = useWorkbench((state) => state.setPromptOverride);
   // 出场的人按点名顺序排在前面：顺序就是提示词里的顺序（ADR-0077）
   const ordered = [
     ...shot.characterIds.flatMap((id) => characters.filter((character) => character.id === id)),
@@ -491,17 +495,18 @@ function Current({
         )}
       </div>
 
-      {/* 真正送出的提示词：说了什么、改了什么，在这里对得上（ADR-0040） */}
-      <details className="max-w-[340px] text-[9.5px] text-muted-2">
-        <summary className="cursor-pointer select-none hover:text-muted">这一镜会送出的提示词</summary>
-        <p className="mt-1 max-h-[8.5rem] overflow-y-auto whitespace-pre-wrap text-[10px] leading-[1.7] text-muted-2">
-          {videoShown
-            ? shot.prompts.video
-            : shown === "first"
-              ? shot.prompts.first
-              : shot.prompts.last}
-        </p>
-      </details>
+      {/* 真正送出的提示词：说了什么、改了什么，在这里对得上（ADR-0040 / ADR-0148） */}
+      <PromptEditor
+        className="w-full max-w-[340px]"
+        tabs={[
+          { key: `keyframe:${shot.id}:first`, label: "首帧", prompt: shot.prompts.first },
+          { key: `keyframe:${shot.id}:last`, label: "尾帧", prompt: shot.prompts.last },
+          { key: `video:${shot.id}`, label: "视频", prompt: shot.prompts.video },
+        ]}
+        values={promptOverrides}
+        onChange={setPromptOverride}
+        readOnly={readOnly}
+      />
 
       {/* 单镜金额上限（H10）：这一镜最多花多少，和项目预算同时生效 */}
       <div className="tnum flex items-center gap-1.5 text-[9.5px] text-muted-2">

@@ -170,6 +170,7 @@
 | I9 | 规则评测集与 A/B | P1 | 待设计 | 30 个片段 + 正反例，持续校准规则 |
 | I10 | 规则候选流水线 | P2 | 待设计 | 自动发现 → 候选 → 评测 → A/B → 晋升（RULE-EVOLUTION.md，ADR-0018） |
 | I11 | 表演语法库 | P1 | 待设计 | 意图 → 可生成微动作 → 避免项；情绪越强动作越小（PERFORMANCE.md） |
+| I12 | 提示词可见与手改 | P1 | 已完成 | 五个调模型的阶段（故事 / 定妆 / 分镜 / 关键帧 / 声音）在生成按钮旁展开「提示词 · 可改」（ADR-0148）。默认提示词在浏览器里用 `buildSheetPrompt` / `buildMasterPrompt` / `buildPropPrompt` / `buildKeyframePrompt` / `buildVideoPrompt` / `storyMessages` / `importStoryMessages` 现算，界面显示与请求同源；定妆四格按角度、关键帧首 / 尾帧、分镜首 / 尾 / 视频、故事系统 / 用户消息、声音念白各一个页签。手改按目标存 `promptOverrides`（`sheet:<id>:<angle>`、`master:<id>`、`prop:<id>`、`keyframe:<id>:<frame>`、`video:<id>`、`voice:<lineId>`、`story:system|user`），**不写事件、不进 IR**，刷新 / 新项目 / 重来一遍清空；恢复默认即删键。生成时请求体带 `prompt`（声音为 `instructions`），服务端整段替换默认提示词，H6 审核改在最终文本上、超长直接 400（4000 字；故事单条 8000；配音 300）。溯源记实际发出的提示词。**未做**：提示词模板库、变量插值、版本历史、跨项目复用、与项目设定的一致性检查。 |
 
 ## 统计
 

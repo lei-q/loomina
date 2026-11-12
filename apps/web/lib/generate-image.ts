@@ -89,6 +89,8 @@ export async function imagePrice(modelId?: string): Promise<ImagePrice> {
 export async function generateCastImage(
   request: CastImageRequest,
   modelId?: string,
+  /** 作者手改过的提示词（ADR-0148）：给了就用它，不再拼默认那段 */
+  promptOverride?: string,
 ): Promise<GeneratedImage> {
   const config = gatewayConfigOf(await resolveModel("image", modelId));
   // 路由的 maxDuration 是 180 秒：客户端超时留在它之内，别让上游把路由先掐掉。
@@ -96,12 +98,13 @@ export async function generateCastImage(
   const client = new TreecloudClient({ ...config, timeoutMs: 170_000 });
   const adapter = new TreecloudImageAdapter(client);
 
-  const { prompt, label } = plan(request);
+  const built = plan(request);
+  const prompt = promptOverride ?? built.prompt;
   // H6：硬阻断的提示词在这里就停，供应商一次请求都不发
   const moderation = assertPromptAllowed(prompt, "image");
   const output = await adapter.generate({
     // 定妆资产还不属于某一镜，用语义 id 占位，保证溯源能对上是什么东西
-    shotId: label as Id,
+    shotId: built.label as Id,
     prompt,
     size: "1024x1536",
   });

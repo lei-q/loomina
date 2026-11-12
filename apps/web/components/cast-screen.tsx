@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { SHEET_LABELS, type Asset, type SheetView } from "@loomina/ir";
 import {
+  buildMasterPrompt,
+  buildPropPrompt,
+  buildSheetPrompt,
   describeSceneTemplate,
   SCENE_TEMPLATES,
   sceneTemplateById,
@@ -12,6 +15,7 @@ import { fetchImagePrice } from "@/lib/image-price";
 import { BlockingBoard } from "@/components/blocking-board";
 import { Bust } from "@/components/bust";
 import { PropObject } from "@/components/prop-object";
+import { PromptEditor } from "@/components/prompt-editor";
 import { Scene } from "@/components/scene";
 import { StageGate } from "@/components/stage-gate";
 import { TopBar } from "@/components/top-bar";
@@ -330,6 +334,8 @@ function CharacterRow({
   /** 换回某一版旧图：写一条 asset.updated，不花钱 */
   onRestoreSheet: (assetId: string, version: Asset) => boolean;
 }) {
+  const promptOverrides = useWorkbench((state) => state.promptOverrides);
+  const setPromptOverride = useWorkbench((state) => state.setPromptOverride);
   const missing = character.panels.filter((panel) => !panel.assetId).length;
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -665,6 +671,25 @@ function CharacterRow({
             onAdd={onAddReference}
             onRemove={onRemoveReference}
           />
+          {/* 四格各自会送出的提示词（ADR-0148）：标一个角度改一段 */}
+          <PromptEditor
+            className="mt-1"
+            tabs={character.panels.map((panel) => ({
+              key: `sheet:${character.id}:${panel.angle}`,
+              label: panel.label,
+              prompt: buildSheetPrompt(
+                {
+                  name: character.name,
+                  appearance: character.appearance,
+                  mustNotChange: character.mustNotChange,
+                },
+                panel.angle,
+              ),
+            }))}
+            values={promptOverrides}
+            onChange={setPromptOverride}
+            readOnly={readOnly}
+          />
         </div>
 
         <div className="ml-auto flex w-[120px] shrink-0 flex-col items-end gap-2">
@@ -756,6 +781,8 @@ function LocationRow({
   /** 整版写回：名字与描述一起换回那一版（ADR-0082） */
   onRestoreText: (version: CastTextVersion) => void;
 }) {
+  const promptOverrides = useWorkbench((state) => state.promptOverrides);
+  const setPromptOverride = useWorkbench((state) => state.setPromptOverride);
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [moveTarget, setMoveTarget] = useState(otherLocations[0]?.id ?? "");
@@ -1105,6 +1132,25 @@ function LocationRow({
           )}
         </div>
       </div>
+      {/* 主镜这一版会送出的提示词（ADR-0148） */}
+      <div className="mt-3 max-w-[560px]">
+        <PromptEditor
+          tabs={[
+            {
+              key: `master:${location.id}`,
+              label: "主镜",
+              prompt: buildMasterPrompt({
+                name: location.name,
+                description: location.description,
+              }),
+            },
+          ]}
+          values={promptOverrides}
+          onChange={setPromptOverride}
+          readOnly={readOnly}
+        />
+      </div>
+
       {showSpace && location.space && (
         <div className="mt-4 flex flex-wrap items-start gap-4">
           <BlockingBoard
@@ -1170,6 +1216,8 @@ function PropRow({
   /** 整版写回：名字与描述一起换回那一版（ADR-0082） */
   onRestoreText: (version: CastTextVersion) => void;
 }) {
+  const promptOverrides = useWorkbench((state) => state.promptOverrides);
+  const setPromptOverride = useWorkbench((state) => state.setPromptOverride);
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [draftName, setDraftName] = useState("");
@@ -1387,6 +1435,22 @@ function PropRow({
             </>
           )}
         </div>
+      </div>
+
+      {/* 参考图这一版会送出的提示词（ADR-0148） */}
+      <div className="mt-3 max-w-[560px]">
+        <PromptEditor
+          tabs={[
+            {
+              key: `prop:${prop.id}`,
+              label: "参考图",
+              prompt: buildPropPrompt({ name: prop.name, description: prop.description }),
+            },
+          ]}
+          values={promptOverrides}
+          onChange={setPromptOverride}
+          readOnly={readOnly}
+        />
       </div>
     </section>
   );

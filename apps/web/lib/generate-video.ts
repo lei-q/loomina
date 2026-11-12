@@ -55,6 +55,8 @@ export type ShotVideoRequest = {
   /** 首帧的地址（data URI 或 http(s)） */
   firstFrame: string;
   durationMs: number;
+  /** 作者手改过的提示词（ADR-0148）：给了就用它，不再拼默认那段 */
+  prompt?: string;
 };
 
 /** 轮询节奏与路由的 maxDuration 对齐：240 秒等不到就如实失败。 */
@@ -104,7 +106,7 @@ export async function generateShotVideo(
     pollTimeoutMs: POLL_TIMEOUT_MS,
   });
   const adapter = new TreecloudVideoAdapter(client);
-  const prompt = buildVideoPrompt(request.shot);
+  const prompt = request.prompt ?? buildVideoPrompt(request.shot);
   // H6：硬阻断在提交前就停，任务不会建立，也就不会计费
   const moderation = assertPromptAllowed(prompt, "video");
 

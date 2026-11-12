@@ -1110,6 +1110,8 @@ export type KeyframeCell = {
   /** 出图之后这一镜的画面输入改过（ADR-0057）：时间是最后一次改动，另带改过哪几项 */
   staleFirst?: StaleMark;
   staleLast?: StaleMark;
+  /** 首尾帧与出片这一版会送出的提示词（ADR-0148）：界面上可以就地改 */
+  prompts: { first: string; last: string; video: string };
 };
 
 /** 影响画面的镜头字段：改了这些，已经出的帧就不算数了（ADR-0057） */
@@ -1431,6 +1433,7 @@ export function toKeyframeView(
     hasVideo: shot.hasVideo,
     staleFirst: stale.get(shot.id)?.first,
     staleLast: stale.get(shot.id)?.last,
+    prompts: { first: shot.prompts.first, last: shot.prompts.last, video: shot.prompts.video },
   }));
 
   let keyframeSpend = 0;

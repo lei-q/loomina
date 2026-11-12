@@ -62,6 +62,11 @@ export type StoryRequest = {
   genre?: string;
   /** 节拍表 id：60s / 3min / series（A17） */
   beatSheet?: string;
+  /**
+   * 作者手改过的提示词（ADR-0148）：系统 / 用户两条消息各自可改。
+   * 没给的沿用代码拼出来的那条；空串按「没改」处理。
+   */
+  prompt?: { system?: string; user?: string };
 };
 
 export async function generateStory(
@@ -98,10 +103,17 @@ export async function generateStory(
   const resolved = await resolveModel("text", modelId);
   const client = new TreecloudClient({ ...gatewayConfigOf(resolved), timeoutMs: 150_000 });
   const adapter = new TreecloudChatAdapter(client);
+  const built = source
+    ? importStoryMessages(source, genre, beatSheet)
+    : storyMessages(idea, genre, beatSheet);
+  // 手改的提示词逐条替换（ADR-0148）：两条消息可以只改一条
+  const messages = built.map((message) => {
+    const override =
+      message.role === "system" ? request.prompt?.system : request.prompt?.user;
+    return override ? { ...message, content: override } : message;
+  });
   const output = await adapter.complete({
-    messages: source
-      ? importStoryMessages(source, genre, beatSheet)
-      : storyMessages(idea, genre, beatSheet),
+    messages,
     // 实测 claude-sonnet-5-5 生成一份完整草稿约 1 万 completion tokens，
     // 其中一半是推理；8000 会在 JSON 中途截断（ADR-0088）。
     maxTokens: 16_000,

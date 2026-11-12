@@ -4900,3 +4900,104 @@ describe("删掉没人引用的资产（F4 / ADR-0136）", () => {
     expect(state().events).toHaveLength(snapshot);
   });
 });
+
+describe("手改提示词（ADR-0148）", () => {
+  beforeEach(() => {
+    // 前面的用例可能把 store 留成只读（另一个标签页在编辑）：先复位
+    useWorkbench.setState({ readOnly: false });
+    state().reset();
+    state().setImagePrice({ model: "gpt-image-2-c", cny: 0.12 });
+  });
+
+  /** 按 URL 收请求体：图片 / 视频 / 配音各回一份最小可用结果 */
+  const stub = () => {
+    const bodies: { url: string; body: Record<string, unknown> }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        bodies.push({ url: String(url), body: JSON.parse(String(init?.body)) as Record<string, unknown> });
+        if (String(url).includes("/api/video")) {
+          return new Response(
+            JSON.stringify({
+              uri: "data:video/mp4;base64,QUJD",
+              model: "seedance",
+              prompt: "自定义视频提示词",
+              durationMs: 3000,
+              cny: 1.8,
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (String(url).includes("/api/voice")) {
+          return new Response(
+            JSON.stringify({ uri: "data:audio/mpeg;base64,SUQz", mime: "audio/mpeg", model: "tts-x" }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({ uri: "data:image/png;base64,RkFLRQ==", model: "gpt-image-2-c", cny: 0.12 }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+    return bodies;
+  };
+
+  it("四视图手改的那一格单独送出改后的提示词，其他格照旧", async () => {
+    const bodies = stub();
+    state().setPromptOverride("sheet:c-lin:front", "正面：雨夜巷口，冷白路灯");
+    await state().generateSheet("c-lin");
+
+    const sheetBodies = bodies.filter((item) => item.body.kind === "sheet");
+    expect(sheetBodies.length).toBeGreaterThan(0);
+    const front = sheetBodies.find((item) => item.body.angle === "front");
+    const side = sheetBodies.find((item) => item.body.angle !== "front");
+    expect(front?.body.prompt).toBe("正面：雨夜巷口，冷白路灯");
+    expect(side?.body).not.toHaveProperty("prompt");
+    vi.unstubAllGlobals();
+  });
+
+  it("关键帧带上手改的提示词；恢复默认后不再带", async () => {
+    const bodies = stub();
+    state().setPromptOverride("keyframe:s-03:first", "雨夜，林晚站在巷口，冷白路灯");
+    await state().generateKeyframe("s-03");
+    expect(bodies.at(-1)?.body.prompt).toBe("雨夜，林晚站在巷口，冷白路灯");
+
+    state().setPromptOverride("keyframe:s-03:first", null);
+    await state().generateKeyframe("s-03");
+    expect(bodies.at(-1)?.body).not.toHaveProperty("prompt");
+    vi.unstubAllGlobals();
+  });
+
+  it("出视频带的是视频提示词，不是首帧那一段", async () => {
+    const bodies = stub();
+    await state().generateKeyframe("s-03");
+    state().setPromptOverride("keyframe:s-03:first", "首帧：只用来起势");
+    state().setPromptOverride("video:s-03", "镜头缓慢推近，林晚抬眼");
+    await state().generateVideo("s-03");
+
+    const video = bodies.find((item) => item.url.includes("/api/video"));
+    expect(video?.body.prompt).toBe("镜头缓慢推近，林晚抬眼");
+    vi.unstubAllGlobals();
+  });
+
+  it("配音的手改提示词替代表演参数拼出的 instructions", async () => {
+    const bodies = stub();
+    state().updatePerformance("d-01", {
+      rate: 1,
+      pitch: 0,
+      volume: 0,
+      breathiness: 0,
+      emphasis: [],
+      pauses: [],
+      emotion: "克制",
+      ending: "flat",
+    });
+    state().setPromptOverride("voice:d-01", "压低声音，像怕被人听见");
+    await state().generateVoice("d-01");
+
+    const voice = bodies.find((item) => item.url.includes("/api/voice"));
+    expect(voice?.body.instructions).toBe("压低声音，像怕被人听见");
+    vi.unstubAllGlobals();
+  });
+});

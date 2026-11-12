@@ -9,6 +9,8 @@ import {
   formatSeconds,
   GENRE_MATRIX,
   genreById,
+  importStoryMessages,
+  storyMessages,
   genreReadiness,
   SHOT_ANGLE_CN,
   SHOT_MIN_MS,
@@ -20,6 +22,7 @@ import {
 import { TopBar } from "@/components/top-bar";
 import { StageGate } from "@/components/stage-gate";
 import { ModelPicker } from "@/components/model-picker";
+import { PromptEditor } from "@/components/prompt-editor";
 import { LoglineScoreCard, LoglineWorkshop } from "@/components/logline-score";
 import { StoryBiblePanel } from "@/components/story-bible-panel";
 import { estimateDialogueMs } from "@/lib/dialogue";
@@ -92,6 +95,8 @@ export function StoryScreen() {
   const readOnly = useWorkbench((state) => state.readOnly);
   const startProjectFromStory = useWorkbench((state) => state.startProjectFromStory);
   const setBudget = useWorkbench((state) => state.setBudget);
+  const promptOverrides = useWorkbench((state) => state.promptOverrides);
+  const setPromptOverride = useWorkbench((state) => state.setPromptOverride);
 
   const [info, setInfo] = useState<{ model?: string }>({});
   const [textModelId] = useModelChoice("text");
@@ -162,6 +167,18 @@ export function StoryScreen() {
   const beatSheet = beatSheetById(beatSheetId) ?? BEAT_SHEETS[0]!;
   const beatOverlay = beatWindows(beatSheet, stats ? stats.seconds * 1000 : undefined);
 
+  // 这一页真正会发出去的两条消息（ADR-0148）：默认按当前输入拼出来，改了就用改的
+  const promptMessages = useMemo(() => {
+    const built =
+      mode === "import"
+        ? importStoryMessages(source, genre, beatSheet)
+        : storyMessages(idea, genre, beatSheet);
+    return {
+      system: built.find((message) => message.role === "system")?.content ?? "",
+      user: built.find((message) => message.role === "user")?.content ?? "",
+    };
+  }, [mode, source, idea, genre, beatSheet]);
+
   function switchMode(next: StoryOrigin) {
     if (next === mode) return;
     setMode(next);
@@ -206,6 +223,8 @@ export function StoryScreen() {
     setResult(undefined);
     setConfirming(false);
     try {
+      const system = promptOverrides["story:system"]?.trim();
+      const user = promptOverrides["story:user"]?.trim();
       const response = await fetch("/api/story", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -214,6 +233,9 @@ export function StoryScreen() {
             ...(mode === "import" ? { source, genre } : { idea, genre }),
             beatSheet: beatSheetId,
             ...(textModelId ? { modelId: textModelId } : {}),
+            ...(system || user
+              ? { prompt: { ...(system ? { system } : {}), ...(user ? { user } : {}) } }
+              : {}),
           },
         ),
       });
@@ -544,6 +566,20 @@ export function StoryScreen() {
             </div>
 
             <StoryBiblePanel />
+
+            <div className="mt-4 border-t border-line pt-3">
+              <PromptEditor
+                defaultOpen
+                tabs={[
+                  { key: "story:system", label: "系统提示词", prompt: promptMessages.system },
+                  { key: "story:user", label: "用户消息", prompt: promptMessages.user },
+                ]}
+                values={promptOverrides}
+                onChange={setPromptOverride}
+                readOnly={Boolean(readOnly)}
+                note="这次生成真正发出去的两条消息；改过的版本只用于之后这一次生成，不写进项目。"
+              />
+            </div>
 
             <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-4">
               <span className="text-[9.5px] leading-[1.6] text-muted-2">

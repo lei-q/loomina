@@ -3,9 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { StageGate } from "@/components/stage-gate";
 import { TopBar } from "@/components/top-bar";
+import { PromptEditor } from "@/components/prompt-editor";
 import { VoicePerformancePanel } from "@/components/voice-performance-panel";
 import { shotLabel, toVoiceView, type VoiceLine, type VoiceRole } from "@/lib/read-model";
-import { summarizePerformance } from "@/lib/voice-performance";
+import {
+  DEFAULT_PERFORMANCE,
+  instructionsOf,
+  summarizePerformance,
+} from "@/lib/voice-performance";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
 import { assetHref } from "@/lib/asset-uri";
@@ -150,6 +155,8 @@ export function VoiceScreen() {
   const fitLineToAudio = useWorkbench((state) => state.fitLineToAudio);
   const setCharacterVoice = useWorkbench((state) => state.setCharacterVoice);
   const setBudget = useWorkbench((state) => state.setBudget);
+  const promptOverrides = useWorkbench((state) => state.promptOverrides);
+  const setPromptOverride = useWorkbench((state) => state.setPromptOverride);
 
   useEffect(() => {
     void hydrate();
@@ -321,6 +328,23 @@ export function VoiceScreen() {
                         </div>
 
                         <p className="mt-1 text-[11.5px] leading-[1.7] text-text">{line.text}</p>
+
+                        {/* 这一句念的时候会带上的提示词（ADR-0148）：表演参数拼出来的 instructions */}
+                        <PromptEditor
+                          className="mt-1.5"
+                          tabs={[
+                            {
+                              key: `voice:${line.id}`,
+                              label: "念白",
+                              prompt: instructionsOf(line.performance ?? DEFAULT_PERFORMANCE) ?? "",
+                            },
+                          ]}
+                          values={promptOverrides}
+                          onChange={setPromptOverride}
+                          readOnly={Boolean(readOnly)}
+                          maxChars={300}
+                          note="随台词一起发给配音模型：只写怎么念，不改字。没写就只把台词原样送出去。"
+                        />
 
                         {line.audioUri && (
                           <LineAudio

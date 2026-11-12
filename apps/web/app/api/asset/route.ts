@@ -5,6 +5,7 @@ import { generateCastImage, type CastImageRequest } from "@/lib/generate-image";
 import { recordHealthEvent } from "@/lib/health-events";
 import { PromptBlockedError } from "@/lib/moderation";
 import { withLongJobSlot } from "@/lib/long-job";
+import { readPromptOverride } from "@/lib/prompt-override";
 import { name, parseShotMaterial, text } from "@/lib/request-shape";
 
 /** 出图是 20–45 秒的事，别让它跑在 edge 的短超时里。 */
@@ -16,6 +17,8 @@ type Body = {
   character?: { name?: unknown; appearance?: unknown; mustNotChange?: unknown };
   angle?: unknown;
   frame?: unknown;
+  /** 作者手改过的提示词（ADR-0148）：给了就用它，不再拼默认那段 */
+  prompt?: unknown;
   /** 主镜请求：`description` 是场景描述，会整句进提示词（ADR-0063） */
   location?: { name?: unknown; description?: unknown };
   prop?: { name?: unknown; description?: unknown };
@@ -100,11 +103,13 @@ export async function POST(request: Request) {
   if (typeof parsed === "string") return bad(parsed);
 
   const modelId = typeof body?.modelId === "string" ? body.modelId : undefined;
+  const override = readPromptOverride(body?.prompt);
+  if (override.error) return bad(override.error);
   try {
     // 出图也排进同一条长任务队列（H2 / ADR-0135）：渲染正在跑时等它跑完，
     // 别让 ffmpeg 与出图同时抢 CPU。队列只影响排队，失败语义不变。
     const result = await withLongJobSlot("image", labelOf(parsed), () =>
-      generateCastImage(parsed, modelId),
+      generateCastImage(parsed, modelId, override.prompt),
     );
     void recordHealthEvent({
       at: new Date().toISOString(),

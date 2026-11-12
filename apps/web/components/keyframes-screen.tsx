@@ -7,6 +7,7 @@ import { StageGate } from "@/components/stage-gate";
 import { TopBar } from "@/components/top-bar";
 import { fetchPrice } from "@/lib/image-price";
 import { shotLabel, toKeyframeView, filterKeyframeCells, keyframeTally, type KeyframeCell, type KeyframeFilter } from "@/lib/read-model";
+import { PromptEditor } from "@/components/prompt-editor";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
 import { assetHref } from "@/lib/asset-uri";
@@ -53,6 +54,8 @@ function Cell({
   onGenerate: (frame: "first" | "last") => void;
   onGenerateVideo: () => void;
 }) {
+  const promptOverrides = useWorkbench((state) => state.promptOverrides);
+  const setPromptOverride = useWorkbench((state) => state.setPromptOverride);
   // 两帧都有时，点画面切换看哪一帧；生成动作始终在下面两个按钮上
   const [shown, setShown] = useState<"first" | "last">("first");
   const both = cell.hasFirst && cell.hasLast;
@@ -148,6 +151,19 @@ function Cell({
           );
         })}
       </div>
+
+      {/* 首尾两帧各自会送出的提示词（ADR-0148） */}
+      <PromptEditor
+        tabs={[
+          { key: `keyframe:${cell.id}:first`, label: "首帧", prompt: cell.prompts.first },
+          { key: `keyframe:${cell.id}:last`, label: "尾帧", prompt: cell.prompts.last },
+          { key: `video:${cell.id}`, label: "视频", prompt: cell.prompts.video },
+        ]}
+        values={promptOverrides}
+        onChange={setPromptOverride}
+        readOnly={readOnly}
+        note="改过的提示词只用于之后生成的那一帧，不写进项目。"
+      />
 
       {/* 首帧在，就能让它动起来：出一拍视频，不覆盖旧的（ADR-0083） */}
       <button

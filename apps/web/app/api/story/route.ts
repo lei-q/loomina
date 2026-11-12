@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { ConfigError, TreecloudError } from "@loomina/gateway";
 import { StoryDraftError } from "@loomina/pipeline";
 import { recordHealthEvent } from "@/lib/health-events";
+import { STORY_PROMPT_OVERRIDE_MAX, readPromptOverride } from "@/lib/prompt-override";
 import { generateStory, storyInfo } from "@/lib/story";
 
 /**
@@ -31,6 +32,8 @@ export async function POST(request: Request) {
     genre?: unknown;
     beatSheet?: unknown;
     modelId?: unknown;
+    /** 手改的系统 / 用户提示词（ADR-0148） */
+    prompt?: { system?: unknown; user?: unknown } | unknown;
   } | null;
   if (!body) {
     return NextResponse.json({ error: "请求体不是 JSON" }, { status: 400 });
@@ -42,8 +45,24 @@ export async function POST(request: Request) {
   const beatSheet = typeof body.beatSheet === "string" ? body.beatSheet : undefined;
   const modelId = typeof body.modelId === "string" ? body.modelId : undefined;
 
+  const rawPrompt =
+    typeof body.prompt === "object" && body.prompt !== null
+      ? (body.prompt as { system?: unknown; user?: unknown })
+      : undefined;
+  const system = readPromptOverride(rawPrompt?.system, STORY_PROMPT_OVERRIDE_MAX);
+  const user = readPromptOverride(rawPrompt?.user, STORY_PROMPT_OVERRIDE_MAX);
+  if (system.error) return NextResponse.json({ error: system.error }, { status: 400 });
+  if (user.error) return NextResponse.json({ error: user.error }, { status: 400 });
+  const prompt =
+    system.prompt || user.prompt
+      ? { ...(system.prompt ? { system: system.prompt } : {}), ...(user.prompt ? { user: user.prompt } : {}) }
+      : undefined;
+
   try {
-    const result = await generateStory({ idea, source, genre, beatSheet }, modelId);
+    const result = await generateStory(
+      { idea, source, genre, beatSheet, ...(prompt ? { prompt } : {}) },
+      modelId,
+    );
     void recordHealthEvent({
       at: new Date().toISOString(),
       modality: "text",

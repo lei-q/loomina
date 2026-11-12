@@ -128,6 +128,15 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** 手改过的提示词（ADR-0148）：没有就什么都不加，让服务端按默认那段生成 */
+function withPromptOverride(
+  get: () => WorkbenchState,
+  key: string,
+): { prompt?: string } {
+  const prompt = get().promptOverrides[key]?.trim();
+  return prompt ? { prompt } : {};
+}
+
 function clipReason(reason: string): string {
   return reason.length > 240 ? `${reason.slice(0, 240)}…` : reason;
 }
@@ -198,6 +207,15 @@ type WorkbenchState = {
     /** 这次换人顺手改过说话人的台词（仍以 toId 说话才撤得回） */
     lineIds: string[];
   };
+  /**
+   * 手改过的模型提示词（ADR-0148）：`阶段:对象[:格]` → 文本。
+   *
+   * 只影响之后这一次生成，不写事件、不进 IR：它是「这一次想怎么说」，
+   * 不是项目事实；刷新就回到代码拼出来的默认提示词。
+   */
+  promptOverrides: Record<string, string>;
+  /** 改 / 清（null）一份提示词：清掉就是恢复默认 */
+  setPromptOverride: (key: string, value: string | null) => void;
   /** 当前出图模型的单价（元 / 张）。由服务端价目接口给，不知道就不拦（ADR-0035） */
   imageCny?: number;
   /** 当前出视频模型的单价（元 / 秒）。同上：不知道就不拦（ADR-0083） */
@@ -1118,6 +1136,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
   currentShotId: initialShotId,
   jobs: {},
   mode: storedMode(),
+  promptOverrides: {},
 
   hydrate: async () => {
     if (hydrated) return;
@@ -2059,6 +2078,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
               mustNotChange: active.mustNotChange,
             },
             angle,
+            ...withPromptOverride(get, `sheet:${characterId}:${angle}`),
           },
         },
       );
@@ -2124,6 +2144,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
         body: {
           kind: "master",
           location: { name: location.name, description: location.description },
+          ...withPromptOverride(get, `master:${locationId}`),
         },
       },
     );
@@ -2156,6 +2177,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
           kind: "keyframe",
           frame,
           shot: shotMaterial(project, shot, { frame }),
+          ...withPromptOverride(get, `keyframe:${shotId}:${frame}`),
         },
         referenceAssetIds: shotAnchors(project, shot).refs.map((ref) => ref.assetId),
         after: (id, at) => ({
@@ -2242,6 +2264,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
             firstFrame: firstFrame.uri,
             durationMs: shot.durationMs,
             modelId: getModelChoice("video"),
+            ...withPromptOverride(get, `video:${shotId}`),
           }),
         });
       } catch (error) {
@@ -2431,6 +2454,13 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     return true;
   },
 
+  setPromptOverride: (key, value) => {
+    const next = { ...get().promptOverrides };
+    if (value === null || !value.trim()) delete next[key];
+    else next[key] = value;
+    set({ promptOverrides: next });
+  },
+
   setVoiceInfo: (info) => {
     set({ voiceInfo: info });
   },
@@ -2465,7 +2495,9 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     try {
       // 表演参数（C2 / ADR-0124）：只影响这一次出声，不改 `durationMs`
       const performance = performanceOf(line);
-      const instructions = instructionsOf(performance);
+      // 手改过的念白提示词优先（ADR-0148）：它替代由表演参数拼出来的 instructions
+      const instructed = instructionsOf(performance);
+      const instructions = get().promptOverrides[`voice:${lineId}`]?.trim() || instructed;
       const response = await fetch("/api/voice", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -4337,6 +4369,8 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       lastSwap: undefined,
       asrResult: undefined,
       editError: undefined,
+      // 新项目的 id 全换了：上一份项目的手改提示词留着只会错位
+      promptOverrides: {},
     });
     return true;
   },
@@ -5119,6 +5153,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
         body: {
           kind: "prop",
           prop: { name: prop.name, description: prop.description },
+          ...withPromptOverride(get, `prop:${propId}`),
         },
         after: (id, at) => ({
           type: "prop.updated",
@@ -5200,6 +5235,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       asrResult: undefined,
       editError: undefined,
       lockedNotice: undefined,
+      promptOverrides: {},
     });
   },
   });
