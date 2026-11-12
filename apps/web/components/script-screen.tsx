@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { StageGate } from "@/components/stage-gate";
 import { TopBar } from "@/components/top-bar";
 import { DoctorPanel } from "@/components/doctor-panel";
 import { analyzeScript } from "@/lib/script-doctor";
+import { sceneNumberingOf } from "@/lib/scene-numbering";
 import {
   actionHistory,
   dialogueHistory,
@@ -76,6 +77,13 @@ export function ScriptScreen() {
   /** 场次拖动（ADR-0080）：从哪一场拖起、落在哪一场上（高亮用） */
   const [draggingScene, setDraggingScene] = useState<string | null>(null);
   const [dropScene, setDropScene] = useState<string | null>(null);
+  /**
+   * 触屏 / 手写笔拖动（A21 / ADR-0134）：HTML5 的 `draggable` 在触屏上
+   * 根本不触发，所以触摸时走指针事件。鼠标仍然用原生拖拽——它有现成的
+   * ghost 与跨元素落点，自绘反而要重新处理一遍。
+   * 这里存「怎么收尾」：拖动中页面被切走时要能摘掉挂在 document 上的监听。
+   */
+  const pointerDrag = useRef<(() => void) | null>(null);
   const [movingScene, setMovingScene] = useState<string | null>(null);
   const [deletingScene, setDeletingScene] = useState<string | null>(null);
   const [deletingShot, setDeletingShot] = useState<string | null>(null);
@@ -124,6 +132,18 @@ export function ScriptScreen() {
   }, [editingCode]);
 
   const view = useMemo(() => toScriptView(project), [project]);
+  const numbering = useMemo(
+    () =>
+      sceneNumberingOf(
+        view.scenes.map((scene) => ({
+          id: scene.id,
+          code: scene.code,
+          label: scene.label,
+          no: scene.no,
+        })),
+      ),
+    [view.scenes],
+  );
   const doctor = useMemo(() => analyzeScript(project), [project]);
   const removal = useMemo(() => undoableRemoval(events, project), [events, project]);
   /** 撤销只在剧本页管场次与镜头：人物 / 道具 / 地点的撤销在定妆页 */
@@ -148,16 +168,66 @@ export function ScriptScreen() {
   };
 
   /** 松手落到某一场上：挪到它的位置（拖到自己身上什么都不做）。 */
-  const dropSceneOn = (targetId: string) => {
-    const from = view.scenes.findIndex((item) => item.id === draggingScene);
+  const dropSceneOn = (targetId: string, sourceId: string | null = draggingScene) => {
+    const from = view.scenes.findIndex((item) => item.id === sourceId);
     const to = view.scenes.findIndex((item) => item.id === targetId);
     setDraggingScene(null);
     setDropScene(null);
-    if (draggingScene && draggingScene !== targetId && from !== -1 && to !== -1) {
-      if (!moveSceneTo(draggingScene, to)) setNote(useWorkbench.getState().castError);
+    if (sourceId && sourceId !== targetId && from !== -1 && to !== -1) {
+      if (!moveSceneTo(sourceId, to)) setNote(useWorkbench.getState().castError);
       else setNote(undefined);
     }
   };
+
+  /**
+   * 触屏 / 手写笔拖动（A21 / ADR-0134）。鼠标不走这里：原生 HTML5 拖拽
+   * 有现成的 ghost 与落点，自绘只会多一份要维护的命中测试。
+   *
+   * 落点用 `elementFromPoint` 找 `[data-scene-id]`：手指比鼠标粗，直接读
+   * 指针底下的元素比算每场矩形更准，也自动跟着滚动走。
+   */
+  const startPointerDrag = (event: React.PointerEvent, sceneId: string) => {
+    if (event.pointerType === "mouse") return;
+    event.preventDefault();
+    setDraggingScene(sceneId);
+    const targetAt = (x: number, y: number) => {
+      const element = document.elementFromPoint(x, y);
+      const section = element?.closest<HTMLElement>("[data-scene-id]");
+      return section?.dataset.sceneId;
+    };
+    const move = (moveEvent: PointerEvent) => {
+      const id = targetAt(moveEvent.clientX, moveEvent.clientY);
+      setDropScene(id && id !== sceneId ? id : null);
+    };
+    const finish = (upEvent: PointerEvent) => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", finish);
+      document.removeEventListener("pointercancel", finish);
+      pointerDrag.current = null;
+      const id = targetAt(upEvent.clientX, upEvent.clientY);
+      if (id && id !== sceneId) dropSceneOn(id, sceneId);
+      else {
+        setDraggingScene(null);
+        setDropScene(null);
+      }
+    };
+    // 页面切走时把挂着的监听摘掉，免得在别的页面上继续算落点
+    pointerDrag.current = () => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", finish);
+      document.removeEventListener("pointercancel", finish);
+    };
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", finish);
+    document.addEventListener("pointercancel", finish);
+  };
+
+  useEffect(
+    () => () => {
+      pointerDrag.current?.();
+    },
+    [],
+  );
 
   const startEdit = (lineId: string, text: string) => {
     setEditing(lineId);
@@ -345,6 +415,14 @@ export function ScriptScreen() {
             </dl>
           </header>
 
+          {/* 场号连续性（A21 / ADR-0134）：名字跟着戏走，位置是位置。
+              只在两者对不上时说一句，免得作者以为排序坏了。 */}
+          {numbering.hint && (
+            <p className="mt-3 rounded-token border border-line px-3 py-2 text-[9.5px] leading-[1.8] text-muted-2">
+              {numbering.hint}
+            </p>
+          )}
+
           {!readOnly && pageRemoval && (
             <p className="mt-3 flex flex-wrap items-center gap-2 text-[10.5px] text-muted">
               <span className="text-muted-2">
@@ -372,6 +450,7 @@ export function ScriptScreen() {
               return (
               <section
                 key={scene.id}
+                data-scene-id={scene.id}
                 onDragOver={(event) => {
                   if (!draggingScene || draggingScene === scene.id) return;
                   event.preventDefault();
@@ -396,7 +475,8 @@ export function ScriptScreen() {
                 }
               >
                 <div className="flex items-baseline gap-3 border-b border-line pb-2">
-                  {/* 拖动换位（ADR-0080）：按住手柄拖到别的一场上 */}
+                  {/* 拖动换位（ADR-0080 / A21）：鼠标按住拖到别的一场上；
+                      触屏没有原生拖拽，改走指针事件（ADR-0134） */}
                   {!readOnly && view.scenes.length > 1 && (
                     <span
                       draggable
@@ -409,9 +489,10 @@ export function ScriptScreen() {
                         setDraggingScene(null);
                         setDropScene(null);
                       }}
-                      title="按住拖动：把这一场挪到别的位置"
+                      onPointerDown={(event) => startPointerDrag(event, scene.id)}
+                      title="按住拖动：把这一场挪到别的位置（触屏同样可用）"
                       aria-label="拖动这一场换位"
-                      className="shrink-0 cursor-grab select-none text-[10px] leading-none text-muted-2 active:cursor-grabbing"
+                      className="shrink-0 cursor-grab touch-none select-none text-[10px] leading-none text-muted-2 active:cursor-grabbing"
                     >
                       ⠿
                     </span>
