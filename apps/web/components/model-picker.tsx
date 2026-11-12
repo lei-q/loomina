@@ -27,7 +27,7 @@ export function ModelPicker({
 }) {
   const config = useModelCatalog();
   const [localChoice, chooseLocal] = useModelChoice(modality);
-  const pin = useWorkbench((state) => state.project.models[modality]);
+  const pin = useWorkbench((state) => state.project.models?.[modality]);
   const setModelPin = useWorkbench((state) => state.setModelPin);
   const readOnly = useWorkbench((state) => state.readOnly);
   const choice = pin ?? localChoice;

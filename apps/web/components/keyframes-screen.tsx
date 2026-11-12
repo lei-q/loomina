@@ -229,7 +229,7 @@ export function KeyframesScreen() {
       setImagePrice(price);
       if (price.video) setVideoPrice(price.video);
     });
-  }, [hydrate, setImagePrice, setVideoPrice, project.models.image, project.models.video]);
+  }, [hydrate, setImagePrice, setVideoPrice, project.models?.image, project.models?.video]);
 
   const view = useMemo(() => toKeyframeView(project, { events }), [project, events]);
   const staleCount = view.cells.reduce(

@@ -1543,7 +1543,7 @@ export function CastScreen() {
     void fetchImagePrice().then((price) => {
       if (price) setImagePrice(price);
     });
-  }, [hydrate, setImagePrice, project.models.image]);
+  }, [hydrate, setImagePrice, project.models?.image]);
 
   const events = useWorkbench((state) => state.events);
   const cast = useMemo(() => toCastView(project, events), [project, events]);

@@ -62,7 +62,7 @@ export function Workbench() {
       setImagePrice(price);
       if (price.video) setVideoPrice(price.video);
     });
-  }, [hydrate, setImagePrice, setVideoPrice, project.models.image, project.models.video]);
+  }, [hydrate, setImagePrice, setVideoPrice, project.models?.image, project.models?.video]);
 
   const events = useWorkbench((state) => state.events);
   const view = useMemo(

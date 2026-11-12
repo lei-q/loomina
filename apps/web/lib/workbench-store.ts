@@ -1221,7 +1221,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
   setModelPin: (modality, id) => {
     if (get().readOnly) return;
     const { project, events } = get();
-    if ((project.models[modality] ?? null) === id) return;
+    if ((project.models?.[modality] ?? null) === id) return;
     const event: ProjectEvent = {
       type: "project.updated",
       at: stamp(),

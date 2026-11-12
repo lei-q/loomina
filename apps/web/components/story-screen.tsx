@@ -112,7 +112,7 @@ export function StoryScreen() {
 
   const [info, setInfo] = useState<{ model?: string }>({});
   const [textModelId] = useModelChoice("text");
-  const textModelPin = useWorkbench((state) => state.project.models.text);
+  const textModelPin = useWorkbench((state) => state.project.models?.text);
   const effectiveTextModelId = textModelPin ?? textModelId;
   const catalog = useModelCatalog();
   const activeModel =
