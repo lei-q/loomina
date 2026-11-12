@@ -371,6 +371,15 @@ type WorkbenchState = {
    */
   generateVoice: (lineId: string, options?: { keepTake?: boolean }) => Promise<boolean>;
   /**
+   * 批量补缺配音（C1）：按台词顺序把还没音轨的句子一句一句念出来。
+   * 跳过锁定镜头与空台词；失败即停，已配好的保留。
+   */
+  generateMissingVoice: () => Promise<{
+    attempted: number;
+    done: number;
+    failedLineId?: string;
+  }>;
+  /**
    * 改一句的表演参数（C2 / ADR-0124）：一条 `dialogue.updated { performance }`。
    * 传 `undefined` 表示清回默认值。不影响 `durationMs`。
    */
@@ -2625,6 +2634,31 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       });
       return false;
     }
+  },
+
+  generateMissingVoice: async () => {
+    if (get().readOnly) return { attempted: 0, done: 0 };
+    const lockedShots = new Set(
+      get().project.shots.filter((shot) => shot.locked).map((shot) => shot.id),
+    );
+    const shotOfLine = (lineId: string) =>
+      get().project.shots.find((shot) => shot.dialogueIds.includes(lineId));
+    const targets = get().project.dialogue.filter(
+      (line) =>
+        !line.audioAssetId &&
+        line.text.trim().length > 0 &&
+        !lockedShots.has(shotOfLine(line.id)?.id ?? ""),
+    );
+    let done = 0;
+    for (const line of targets) {
+      // 顺序执行期间作者可能刚补了这一句：跳过，不重复花钱
+      const current = get().project.dialogue.find((item) => item.id === line.id);
+      if (!current || current.audioAssetId) continue;
+      const ok = await get().generateVoice(line.id);
+      if (!ok) return { attempted: targets.length, done, failedLineId: line.id };
+      done += 1;
+    }
+    return { attempted: targets.length, done };
   },
 
   updatePerformance: (lineId, performance) => {

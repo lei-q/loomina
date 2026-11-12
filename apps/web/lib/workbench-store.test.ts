@@ -4744,6 +4744,51 @@ describe("逐句表演参数与试听台（C2 / C9 / ADR-0124）", () => {
     expect(state().castError).toContain("已锁定");
   });
 
+  it("批量补缺按顺序念，跳过锁定镜头，失败即停（C1）", async () => {
+    const locked = new Set(
+      state().project.shots.filter((shot) => shot.locked).map((shot) => shot.id),
+    );
+    const targets = state().project.dialogue.filter(
+      (line) =>
+        !line.audioAssetId &&
+        line.text.trim() &&
+        !locked.has(
+          state().project.shots.find((shot) => shot.dialogueIds.includes(line.id))?.id ?? "",
+        ),
+    );
+    expect(targets.length).toBeGreaterThan(1);
+
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        if (calls === 2) {
+          return new Response(JSON.stringify({ error: "分组未授权" }), {
+            status: 403,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(
+          JSON.stringify({ uri: "data:audio/mpeg;base64,SUQz", mime: "audio/mpeg", model: "tts-x" }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+
+    const result = await state().generateMissingVoice();
+    expect(result.attempted).toBe(targets.length);
+    expect(result.done).toBe(1);
+    expect(result.failedLineId).toBe(targets[1]!.id);
+    expect(calls).toBe(2);
+    expect(state().project.dialogue.find((line) => line.id === targets[0]!.id)?.audioAssetId).toBe(
+      `a-voice-${targets[0]!.id}`,
+    );
+    expect(state().project.dialogue.find((line) => line.id === targets[2]!.id)?.audioAssetId).toBeUndefined();
+    expect(state().castError).toContain("分组未授权");
+    vi.unstubAllGlobals();
+  });
+
   it("出声时把语速与表演说明一起发出去", async () => {
     state().updatePerformance("d-01", {
       rate: 1.2,

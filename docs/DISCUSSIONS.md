@@ -4729,3 +4729,22 @@ A13 / A18 / B12 / C10 / C12 / D3 / E1 的状态一直挂着「开发中」，但
 **验证**
 - 新增配置校验与能力矩阵用例通过；web 930 条（含 4 条跳过）全量通过。
 - 浏览器 `/settings`：图像模型显示「单价（元 / 张）」、视频显示「单价（元 / 秒）」，占位「用价目表」，现有两项未填。
+
+## 第一百六十九次 · 2026-11-12 · 批量补缺配音
+
+**议题**
+C1 只差「批量补缺」：声音页一句一个按钮，四句就要点四次；作者需要先把缺的句子按顺序补一遍。
+
+**结论**
+- store 新增 `generateMissingVoice()`：按台词顺序挑出「没有音轨、台词非空、不在锁定镜头」的句子，逐句调用现有 `generateVoice`；每成功一句照旧写 `asset.updated` + `dialogue.updated`（存一版时还有 `voice.take.added`）。
+- 失败即停，返回 `{ attempted, done, failedLineId }`；执行中作者已补上的句子跳过，不重复花钱。
+- 界面在「一句一句配」标题旁加「补缺 N 句」，运行中显示「一句一句念…」，结束显示已补数量；只读、没配配音模型、没有缺句时禁用。
+- 不做并行、暂停队列或按角色筛选：顺序执行能让失败原因与第几句对得上。
+
+**产物**
+- `apps/web/lib/workbench-store.ts`、`apps/web/lib/workbench-store.test.ts`、`apps/web/components/voice-screen.tsx`
+- `docs/FEATURES.md`、`docs/ROADMAP.md`、`docs/DISCUSSIONS.md`
+
+**验证**
+- 新增用例：按顺序补、跳过锁定镜头、第二句失败即停、后续句子不动、错误写进 `castError`。
+- 浏览器 `/voice`：按钮显示「补缺 2 句」，点击后第一句就失败（TTS 模型分组 404），页面显示「补了 0 句，后面一句失败就停了」与供应商原因，按钮回到可点状态。

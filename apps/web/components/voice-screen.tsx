@@ -148,6 +148,7 @@ export function VoiceScreen() {
   const applyAsrText = useWorkbench((state) => state.applyAsrText);
   const dismissAsrResult = useWorkbench((state) => state.dismissAsrResult);
   const generateVoice = useWorkbench((state) => state.generateVoice);
+  const generateMissingVoice = useWorkbench((state) => state.generateMissingVoice);
   const updatePerformance = useWorkbench((state) => state.updatePerformance);
   const adoptVoiceTake = useWorkbench((state) => state.adoptVoiceTake);
   const removeVoiceTake = useWorkbench((state) => state.removeVoiceTake);
@@ -157,6 +158,7 @@ export function VoiceScreen() {
   const setBudget = useWorkbench((state) => state.setBudget);
   const promptOverrides = useWorkbench((state) => state.promptOverrides);
   const setPromptOverride = useWorkbench((state) => state.setPromptOverride);
+  const [batch, setBatch] = useState<{ running: boolean; note?: string }>({ running: false });
 
   useEffect(() => {
     void hydrate();
@@ -185,6 +187,9 @@ export function VoiceScreen() {
   }, [hydrate, setVoiceInfo, setAsrInfo]);
 
   const view = useMemo(() => toVoiceView(project), [project]);
+  const missingLines = view.lines.filter(
+    (line) => line.state !== "voiced" && line.text.trim().length > 0,
+  ).length;
   const canSpeak = Boolean(voiceInfo?.model);
   /** 哪一句展开了「表演」折叠：一次只开一个，避免整页拉得很长 */
   const [openPerformance, setOpenPerformance] = useState<string>();
@@ -264,12 +269,41 @@ export function VoiceScreen() {
           <section aria-label="台词与音轨" className="mt-6">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h2 className="text-[11px] tracking-[.06em] text-text">一句一句配</h2>
-              <p className="text-[9.5px] text-muted-2">
-                {canTranscribe
-                  ? `用 ${asrInfo?.model} 识别：结果先看一眼，再决定要不要替换台词`
-                  : "还没配识别模型：服务端加上 ASR_MODEL 后才能识别音轨"}
-              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={Boolean(readOnly) || !canSpeak || batch.running || missingLines === 0}
+                  onClick={() => {
+                    setBatch({ running: true });
+                    void generateMissingVoice().then((result) => {
+                      setBatch({
+                        running: false,
+                        note:
+                          result.attempted === 0
+                            ? "没有要补的句子。"
+                            : result.failedLineId
+                              ? `补了 ${result.done} 句，后面一句失败就停了：先看上面的原因。`
+                              : `补完 ${result.done} 句。`,
+                      });
+                    });
+                  }}
+                  title={
+                    !canSpeak
+                      ? "还没配配音模型：加上 TTS_MODEL 之后才能批量出声"
+                      : "按台词顺序补还没音轨的句子；跳过锁定镜头，失败即停"
+                  }
+                  className="rounded-token border border-line px-2 py-0.5 text-[9.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+                >
+                  {batch.running ? "一句一句念…" : `补缺 ${missingLines} 句`}
+                </button>
+                <p className="text-[9.5px] text-muted-2">
+                  {canTranscribe
+                    ? `用 ${asrInfo?.model} 识别：结果先看一眼，再决定要不要替换台词`
+                    : "还没配识别模型：服务端加上 ASR_MODEL 后才能识别音轨"}
+                </p>
+              </div>
             </div>
+            {batch.note && <p className="mt-1 text-[9.5px] text-muted-2">{batch.note}</p>}
             <ul className="mt-2 border-t border-line">
               {view.lines.map((line) => {
                 const busy = jobs[`${line.id}:voice`]?.kind === "voice";
