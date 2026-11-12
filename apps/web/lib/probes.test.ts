@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readProbeReports, summarizeProbe } from "./probes";
+import { probeTrends, readProbeReports, summarizeProbe } from "./probes";
 
 const RAW = {
   startedAt: "2026-11-09T14:06:39.503Z",
@@ -133,5 +133,59 @@ describe("readProbeReports", () => {
     await expect(readProbeReports(path.join(tmpdir(), "loomina-no-such-dir"))).resolves.toEqual(
       [],
     );
+  });
+});
+
+describe("测绘走势（H16）", () => {
+  const report = (patch: Partial<{
+    startedAt: string;
+    videoModel: string;
+    passRate: number;
+    attempts: number;
+    passed: number;
+    avgCnyPerShot: number;
+  }>) => ({
+    file: `probe-${patch.startedAt ?? "x"}.json`,
+    startedAt: "2026-11-09T14:06:39.503Z",
+    attempts: 2,
+    passed: 1,
+    passRate: 0.5,
+    totalCny: 2,
+    failureCodes: {},
+    ...patch,
+  });
+
+  it("同一模型按旧 → 新排通过率，方向看最近两次", () => {
+    const trends = probeTrends([
+      report({ startedAt: "2026-11-09T15:00:00.000Z", videoModel: "seedance", passRate: 0.9 }),
+      report({ startedAt: "2026-11-09T14:00:00.000Z", videoModel: "seedance", passRate: 0.4 }),
+    ]);
+    expect(trends).toHaveLength(1);
+    expect(trends[0]).toMatchObject({
+      model: "seedance",
+      passRates: [0.4, 0.9],
+      direction: "up",
+    });
+  });
+
+  it("不同模型不混在一起；只跑过一次方向算平", () => {
+    const trends = probeTrends([
+      report({ startedAt: "2026-11-09T15:00:00.000Z", videoModel: "a", passRate: 0.1 }),
+      report({ startedAt: "2026-11-09T14:00:00.000Z", videoModel: "b", passRate: 0.9 }),
+    ]);
+    expect(trends.map((item) => item.model)).toEqual(["a", "b"]);
+    expect(trends.every((item) => item.direction === "flat")).toBe(true);
+  });
+
+  it("实测单价取最近一次真花过钱的报告", () => {
+    const trends = probeTrends([
+      report({ startedAt: "2026-11-09T15:00:00.000Z", videoModel: "a", passRate: 0.9 }),
+      report({ startedAt: "2026-11-09T14:00:00.000Z", videoModel: "a", passRate: 0.4, avgCnyPerShot: 1.25 }),
+    ]);
+    expect(trends[0]?.cnyPerShot).toBe(1.25);
+  });
+
+  it("没有视频模型的报告不进走势", () => {
+    expect(probeTrends([report({ videoModel: undefined as unknown as string })])).toEqual([]);
   });
 });

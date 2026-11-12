@@ -4667,3 +4667,23 @@ A13 / A18 / B12 / C10 / C12 / D3 / E1 的状态一直挂着「开发中」，但
 
 **边界**
 - 剩下的 P0（B6 / B13 / B14 / C4 / E7 / H1 / H3 / H6 / H16 / H22）仍按真实缺口统计。
+
+## 第一百六十六次 · 2026-11-12 · S1 测绘按模型看走势
+
+**议题**
+能力矩阵里每个模型已经能看到最近一份 S1 测绘的通过数与花费，但看不出「同一个模型这次比上次好还是坏」，也看不到实测的每镜花费。
+
+**结论**
+- `probeTrends(reports)` 按 `videoModel` 分组，按 `startedAt` 旧 → 新串起通过率；最近两次差超过 0.1 判升 / 降，否则算平；模型名排序稳定。
+- 实测单价取该模型最近一份 `avgCnyPerShot` 有值的报告（只算真花过钱的测绘），没有就写「还没真花过钱」。
+- `buildCapabilityResponse` 把 `trends` 一并返回；设置页 S1 区块每模型一张小卡：最近 12 次通过率画成柱，末次高亮，箭头 + 百分比，下面一行实测 ¥/镜。
+- 只读展示，**不回写配置**：`avgCnyPerShot` 是一镜「图 + 视频」的总花费，和价目表的视频秒价不是同一口径，写回去会污染报价与预算拦截。
+- 自动告警归 H8，成本看板的首次通过率 / 重试占比归 H15，按通过率决定重试归 B6。
+
+**产物**
+- `apps/web/lib/probes.ts`、`apps/web/lib/probes.test.ts`、`apps/web/lib/capabilities.ts`、`apps/web/components/settings-screen.tsx`
+- `docs/FEATURES.md`、`docs/ROADMAP.md`、`docs/DISCUSSIONS.md`
+
+**验证**
+- `probeTrends` 4 条单测：排序、方向、取价、无模型报告跳过；web 全量测试通过。
+- 浏览器打开 `/settings`，S1 区块显示 `minimax-h3`（1 次）与 `seedance-2.0`（2 次）两张走势卡，实测价显示「还没真花过钱」，与本地 3 份报告一致。

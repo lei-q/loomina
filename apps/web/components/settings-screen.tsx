@@ -16,7 +16,7 @@ import {
 import { fetchModelConfig, invalidateModelConfig } from "@/lib/model-choice";
 import { useWorkbench } from "@/lib/workbench-store";
 import type { CapabilityResponse, ModelCapabilityView } from "@/lib/capabilities";
-import type { ProbeReportView } from "@/lib/probes";
+import type { ProbeReportView, ProbeTrend } from "@/lib/probes";
 import { inventoryOf, referencedUris } from "@/lib/asset-inventory";
 import { cn } from "@/lib/utils";
 
@@ -920,7 +920,10 @@ export function SettingsScreen() {
                 ))}
               </div>
 
-              <ProbeReports probes={capability.probes} />
+              <ProbeReports
+                probes={capability.probes}
+                trends={capability.trends}
+              />
             </>
           )}
         </section>
@@ -1036,13 +1039,67 @@ function CapabilityCard({ model }: { model: ModelCapabilityView }) {
   );
 }
 
-function ProbeReports({ probes }: { probes: ProbeReportView[] }) {
+function ProbeReports({
+  probes,
+  trends,
+}: {
+  probes: ProbeReportView[];
+  trends: ProbeTrend[];
+}) {
   return (
     <div className="mt-6">
       <div className="flex items-baseline justify-between gap-2 border-b border-line pb-1">
         <h3 className="text-[10.5px] text-text">S1 测绘报告</h3>
         <span className="tnum text-[9px] text-muted-2">最近 {probes.length} 次</span>
       </div>
+      {trends.length > 0 && (
+        <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
+          {trends.map((trend) => (
+            <li
+              key={trend.model}
+              className="rounded-token border border-line bg-surface p-2"
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <span
+                  className="min-w-0 truncate text-[9.5px] text-text"
+                  title={trend.model}
+                >
+                  {trend.model}
+                </span>
+                <span className="tnum shrink-0 text-[9px] text-muted-2">
+                  {trend.passRates.length} 次测绘
+                </span>
+              </div>
+              <div className="mt-1.5 flex items-end gap-1.5">
+                <ProbeSparkline rates={trend.passRates} />
+                <span
+                  className={cn(
+                    "tnum shrink-0 text-[10px]",
+                    trend.direction === "up"
+                      ? "text-pick"
+                      : trend.direction === "down"
+                        ? "text-reject"
+                        : "text-muted-2",
+                  )}
+                  title={`最近一次通过率 ${Math.round((trend.passRates.at(-1) ?? 0) * 100)}%`}
+                >
+                  {trend.direction === "up"
+                    ? "↑"
+                    : trend.direction === "down"
+                      ? "↓"
+                      : "→"}{" "}
+                  {Math.round((trend.passRates.at(-1) ?? 0) * 100)}%
+                </span>
+              </div>
+              <p className="tnum mt-1 text-[9px] text-muted-2">
+                {trend.cnyPerShot === undefined
+                  ? "镜单价：还没真花过钱"
+                  : `实测 ¥${trend.cnyPerShot.toFixed(2)}/镜（最近一次花钱的测绘）`}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
       {probes.length === 0 ? (
         <p className="mt-1.5 text-[9.5px] leading-[1.7] text-muted-2">
           还没有测绘报告。运行 <span className="tnum">pnpm probe:s1</span>，成功后刷新这一块。
@@ -1075,9 +1132,32 @@ function ProbeReports({ probes }: { probes: ProbeReportView[] }) {
       )}
       <p className="mt-1.5 text-[9px] leading-[1.7] text-muted-2">
         只读本地 artifacts/s1 的汇总字段：不读密钥、不读 Base URL、不展示逐镜报错。
-        失败码是供应商返回的分类，不是质量评分。
+        失败码是供应商返回的分类，不是质量评分。走势只看同一模型前后两次通过率，
+        实测单价取最近一次真花过钱的测绘，不回写配置。
       </p>
     </div>
+  );
+}
+
+function ProbeSparkline({ rates }: { rates: number[] }) {
+  const shown = rates.slice(-12);
+  return (
+    <span
+      className="flex h-[18px] min-w-0 flex-1 items-end gap-[2px]"
+      aria-label={`通过率走势：${shown.map((rate) => `${Math.round(rate * 100)}%`).join(" → ")}`}
+    >
+      {shown.map((rate, index) => (
+        <span
+          key={index}
+          className={cn(
+            "w-1 rounded-[1px]",
+            index === shown.length - 1 ? "bg-pick" : "bg-pick/40",
+          )}
+          style={{ height: `${Math.max(2, Math.round(rate * 18))}px` }}
+          title={`${Math.round(rate * 100)}%`}
+        />
+      ))}
+    </span>
   );
 }
 

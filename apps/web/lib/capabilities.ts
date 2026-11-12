@@ -5,7 +5,7 @@ import {
   type Modality,
   type ModelRecord,
 } from "./config-types";
-import type { ProbeReportView } from "./probes";
+import { probeTrends, type ProbeReportView, type ProbeTrend } from "./probes";
 
 /**
  * 模型能力矩阵（B12 / H16 第一版）。
@@ -81,6 +81,8 @@ export type CapabilityResponse = CapabilityMatrix & {
   generatedAt: string;
   /** 最近几次 S1 测绘，按时间倒序 */
   probes: ProbeReportView[];
+  /** 按模型的走势与实测单价（H16） */
+  trends: ProbeTrend[];
 };
 
 /** 能力矩阵只需要这两列，绝不把含密钥的 ProviderRecord 传进来。 */
@@ -101,6 +103,7 @@ export function buildCapabilityResponse(
   input: CapabilityConfig,
   probes: ProbeReportView[],
   now: Date = new Date(),
+  trends: ProbeTrend[] = probeTrends(probes),
 ): CapabilityResponse {
   return {
     ...buildCapabilityMatrix(input, probes),
@@ -108,6 +111,7 @@ export function buildCapabilityResponse(
     configPath: input.path,
     generatedAt: now.toISOString(),
     probes,
+    trends,
   };
 }
 

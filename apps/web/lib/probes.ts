@@ -29,6 +29,52 @@ export type ProbeReportView = {
   failureCodes: Record<string, number>;
 };
 
+/** 一个模型最近几次测绘的走势（H16）：旧 → 新 */
+export type ProbeTrend = {
+  model: string;
+  /** 每次测绘通过率（0–1），旧的在前 */
+  passRates: number[];
+  /** 最近一次的实测单价（元 / 镜）；只有真花过钱才有，没有就不给 */
+  cnyPerShot?: number;
+  /** 通过率在涨、在掉还是不动；样本不足两次时为 flat */
+  direction: "up" | "down" | "flat";
+};
+
+/**
+ * 按模型看测绘走势。
+ *
+ * 只拿同一个模型名下的报告：换了模型的报告没有可比性。
+ * 方向按「最近一次 − 上一次」判，差不到 0.1 算平；
+ * 单价取最近一次真花过钱的报告（`avgCnyPerShot`），全都没花钱就不给。
+ */
+export function probeTrends(reports: ProbeReportView[]): ProbeTrend[] {
+  const byModel = new Map<string, ProbeReportView[]>();
+  for (const report of reports) {
+    if (!report.videoModel) continue;
+    const list = byModel.get(report.videoModel) ?? [];
+    list.push(report);
+    byModel.set(report.videoModel, list);
+  }
+  const trends: ProbeTrend[] = [];
+  for (const [model, list] of byModel) {
+    // 报告本身按时间倒序进来：反过来就是旧 → 新
+    const ordered = [...list].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+    const passRates = ordered.map((item) => item.passRate);
+    const cny =
+      [...ordered].reverse().find((item) => item.avgCnyPerShot !== undefined)?.avgCnyPerShot;
+    const delta = passRates.length >= 2
+      ? passRates.at(-1)! - passRates.at(-2)!
+      : 0;
+    trends.push({
+      model,
+      passRates,
+      ...(cny !== undefined ? { cnyPerShot: cny } : {}),
+      direction: delta > 0.099 ? "up" : delta < -0.099 ? "down" : "flat",
+    });
+  }
+  return trends.sort((a, b) => a.model.localeCompare(b.model));
+}
+
 const FILE_PATTERN = /^probe-[A-Za-z0-9._-]+\.json$/;
 const MAX_REPORTS = 5;
 
