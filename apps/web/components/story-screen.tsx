@@ -31,6 +31,7 @@ import { PromptEditor } from "@/components/prompt-editor";
 import { LoglineScoreCard, LoglineWorkshop } from "@/components/logline-score";
 import { StoryBiblePanel } from "@/components/story-bible-panel";
 import { estimateDialogueMs } from "@/lib/dialogue";
+import { STORY_TEMPLATES, templateById, templateStoryInput } from "@/lib/story-templates";
 import { useModelCatalog, useModelChoice } from "@/lib/model-choice";
 import { useWorkbench } from "@/lib/workbench-store";
 
@@ -126,6 +127,8 @@ export function StoryScreen() {
   const [reading, setReading] = useState(false);
   const [genre, setGenre] = useState<string>(DEFAULT_GENRE);
   const [beatSheetId, setBeatSheetId] = useState<string>("60s");
+  const [templateId, setTemplateId] = useState<string>();
+  const template = templateById(templateId);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [result, setResult] = useState<StoryResult>();
@@ -241,6 +244,18 @@ export function StoryScreen() {
     setError(undefined);
     setResult(undefined);
     setConfirming(false);
+  }
+
+  /** 模板只填输入，不建项目：想法、题材、节拍表一起落到当前表单（A7） */
+  function useTemplate(id: string) {
+    const picked = templateById(id);
+    if (!picked) return;
+    const input = templateStoryInput(picked);
+    setIdea(input.idea);
+    setGenre(input.genre);
+    setBeatSheetId(input.beatSheetId);
+    setTemplateId(id);
+    setError(undefined);
   }
 
   async function readFile(file: File) {
@@ -442,7 +457,10 @@ export function StoryScreen() {
                       <button
                         key={sample}
                         type="button"
-                        onClick={() => setIdea(sample)}
+                        onClick={() => {
+                          setIdea(sample);
+                          setTemplateId(undefined);
+                        }}
                         className="rounded-token border border-line px-2 py-1 text-left text-[9.5px] leading-[1.5] text-muted-2 transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-muted"
                       >
                         {sample}
@@ -451,6 +469,64 @@ export function StoryScreen() {
                   </div>
                   <span className="tnum text-[9px] text-muted-2">{idea.length} / 2000</span>
                 </div>
+
+                <details className="mt-3 rounded-token border border-line bg-bg px-3 py-2">
+                  <summary className="cursor-pointer text-[10px] leading-[1.7] text-muted">
+                    模板剧本 · 六条能直接改的开头
+                  </summary>
+                  <p className="mt-1.5 text-[9px] leading-[1.6] text-muted-2">
+                    选中只填想法、题材与节拍表，不建项目、不调模型；生成前还能改。
+                    六条都按室内、少人、对话驱动挑，避开放大一致性的群演与动作。
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {STORY_TEMPLATES.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => useTemplate(item.id)}
+                        aria-pressed={templateId === item.id}
+                        className={
+                          templateId === item.id
+                            ? "rounded-token border border-line-2 bg-line px-2.5 py-1 text-[10px] text-text"
+                            : "rounded-token border border-line px-2.5 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                        }
+                      >
+                        {item.name}
+                      </button>
+                    ))}
+                  </div>
+
+                  {template && (
+                    <div className="mt-2.5 border-t border-line pt-2">
+                      <p className="text-[10px] leading-[1.6] text-text">{template.logline}</p>
+                      <p className="mt-1 text-[9px] leading-[1.7] text-muted-2">
+                        {template.synopsis}
+                      </p>
+                      <p className="mt-1 text-[9px] leading-[1.7] text-muted-2">
+                        人物：{template.cast.join(" · ")}
+                      </p>
+                      <p className="mt-1 text-[9px] leading-[1.7] text-muted-2">
+                        钩子：{template.openingHook} → {template.endingHook}
+                      </p>
+                      <ul className="mt-1.5 space-y-0.5">
+                        {template.beats.map((beat, index) => (
+                          <li
+                            key={`${beat.label}-${index}`}
+                            className="text-[9px] leading-[1.6] text-muted-2"
+                          >
+                            <span className="tnum text-muted">
+                              {index + 1}. {beat.label}
+                            </span>{" "}
+                            · {beat.task}
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="mt-1.5 text-[8.5px] leading-[1.6] text-muted-2">
+                        {template.note}
+                      </p>
+                    </div>
+                  )}
+                </details>
               </>
             ) : (
               <>
