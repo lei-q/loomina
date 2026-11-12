@@ -26,6 +26,7 @@ interface Project {
   approvals: Approval[];    // 阶段闸门：定妆 / 道具确认（ADR-0028）
   gates: GateRecord[];      // 阶段确认记录：七阶段各一条，带内容指纹（ADR-0100）
   subtitleOverrides: SubtitleOverride[];  // 手改断句（D2 / ADR-0117），默认 []
+  subtitleLayout: SubtitleLayout;         // 字幕版式（D3 / ADR-0130），默认 { preset: "default" }
   publishPackages: PublishPackage[];
 
   settings: ProjectSettings;
@@ -715,6 +716,14 @@ interface SubtitleOverride {
   cues: { text: string; durationMs: number }[];  // 1–20 条，text 非空
 }
 
+// 字幕版式（D3 / ADR-0130）：只存作者改过的项，缺省跟着 preset 模板
+interface SubtitleLayout {
+  preset: "default" | "large";
+  fontSizeCqw?: number;    // 2–12，相对画面宽度
+  bottomPct?: number;      // 2–45，离底边
+  strokeCqw?: number;      // 0–3，描边粗细
+}
+
 interface TimelineItem {
   id: string;              // 初剪固定 tl-<shotId>
   shotId: string;
@@ -764,6 +773,7 @@ interface MusicCue {
 - 字幕与音轨：同一镜的 `dialogueIds` 从片段起点依次累加 `durationMs`；`audioAssetId` 指向的音频 uri 就是这一句的音轨。
 - 断句（ADR-0087）：每句台词按标点切小句、合并到每行不超过 `maxChars`（12 / 16 / 20，默认 16）个可见字，再按可见字数把 `durationMs` 分给各条 cue（每条至少 600ms，总和严格等于台词时长）。cue 是由读模型现算的，**不落 IR**：改字数档位只重算显示，不写事件。
 - 手改断句（D2 / ADR-0117）：作者改过的那一句以 `subtitleOverrides` 为准，没改过的仍走自动断句。覆盖按**整句**存，不按单条 cue 存——单条 cue 的 id 是「第几段」，改了每行字数就会错位。覆盖里的 `durationMs` 是相对权重，读模型按比例缩放到整句时长，舍入误差落在最后一条，所以时间总和永远等于 `line.durationMs`。改字数档位不影响已覆盖的句子。
+- 版式（D3 / ADR-0130）：`Project.subtitleLayout` 只存作者**改过**的项——`preset`（default / large）、`fontSizeCqw`、`bottomPct`、`strokeCqw`。没写的项跟着 `preset` 那档模板走，所以换模板时调过的字号留着、没调过的位置跟着换。读模型把两者合成 `EditView.subtitleStyle`，预览 HTML、ASS 与成片叠加层都用这同一份；`subtitleCustom` 只用来在界面上显示「已调」与「恢复模板」。越界（字号 2–12、离底边 2–45、描边 0–3）在 `applyEvent` 里拒绝而不夹取：夹取会把「填错了」悄悄改成另一个数。清空某一项写 `null`，不写 `undefined`（后者过 JSON 会消失）。
 - 总数：全长 = 最晚片段终点；`missing` = 没进时间线的镜头数。
 
 > **落地情况（ADR-0102，2026-11-11）**：实际进 IR 的 `PublishPackage` 是精简的发布记录，只回答「什么时候、往哪个平台、发了哪一版成片」：

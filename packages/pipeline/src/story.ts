@@ -590,6 +590,7 @@ export function projectFromStoryDraft(
     gates: [],
     timeline: { items: [], music: [] },
     subtitleOverrides: [],
+    subtitleLayout: { preset: "default" },
     publishPackages: [],
   };
 

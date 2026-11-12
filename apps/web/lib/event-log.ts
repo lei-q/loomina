@@ -21,7 +21,7 @@ import {
  * 本地日志的格式版本。**改动事件或项目结构时把它 +1**，并在 `migrateLog` 里补一段。
  * 没有版本号，一次 schema 改动就会让用户存下的项目整份判废。
  */
-export const LOG_VERSION = 2;
+export const LOG_VERSION = 3;
 
 export type StoredLog = {
   version: number;
@@ -66,6 +66,7 @@ const EVENT_TYPES: Record<ProjectEvent["type"], true> = {
   "dialogue.added": true,
   "dialogue.removed": true,
   "subtitle.updated": true,
+  "subtitle.layout.updated": true,
   "voice.take.added": true,
   "voice.take.removed": true,
   "take.added": true,
@@ -135,12 +136,21 @@ export function migrateLog(stored: StoredLog): ProjectEvent[] | null {
 
   // 迁移链：
   // 1 → 2：Project 增加 `story`（ADR-0088），zod 默认值会补齐，事件本身不用改。
+  // 2 → 3：Project 增加 `subtitleLayout`（D3），同样有默认值，事件不用改形状。
   // 目前没有需要改形状的迁移，链保持空实现。
   if (stored.version < 2) {
     events = v1ToV2(events);
   }
+  if (stored.version < 3) {
+    events = v2ToV3(events);
+  }
 
   return parseEvents(events);
+}
+
+/** v2 → v3 同样只靠 zod 默认值补 `subtitleLayout`（D3），形状不变。 */
+function v2ToV3(events: unknown[]): unknown[] {
+  return events;
 }
 
 /** v1 的日志可以直接按当前 schema 解析：新增字段都有默认值（ADR-0088）。 */

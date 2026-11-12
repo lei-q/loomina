@@ -2214,6 +2214,84 @@ describe("手改断句（D2）", () => {
   });
 });
 
+describe("字幕版式（D3）", () => {
+  it("默认是默认档，三项都没写", () => {
+    const project = load();
+    expect(project.subtitleLayout).toEqual({ preset: "default" });
+  });
+
+  it("调字号与位置各写一条，没调的项仍是模板值", () => {
+    const project = load();
+    const after = rebuild([
+      created(project),
+      { type: "subtitle.layout.updated", at: AT, layout: { fontSizeCqw: 6.4 } },
+      { type: "subtitle.layout.updated", at: AT, layout: { bottomPct: 22 } },
+    ]);
+    expect(after.subtitleLayout).toEqual({
+      preset: "default",
+      fontSizeCqw: 6.4,
+      bottomPct: 22,
+    });
+    expect(after.subtitleLayout.strokeCqw).toBeUndefined();
+  });
+
+  it("null 清掉某一项，回到模板值", () => {
+    const project = load();
+    const after = rebuild([
+      created(project),
+      {
+        type: "subtitle.layout.updated",
+        at: AT,
+        layout: { fontSizeCqw: 7, bottomPct: 20, strokeCqw: 1.2 },
+      },
+      { type: "subtitle.layout.updated", at: AT, layout: { fontSizeCqw: null } },
+    ]);
+    expect(after.subtitleLayout.fontSizeCqw).toBeUndefined();
+    expect(after.subtitleLayout.bottomPct).toBe(20);
+    expect(after.subtitleLayout.strokeCqw).toBe(1.2);
+  });
+
+  it("换模板只改 preset，调过的项留着", () => {
+    const project = load();
+    const after = rebuild([
+      created(project),
+      { type: "subtitle.layout.updated", at: AT, layout: { fontSizeCqw: 6.4 } },
+      { type: "subtitle.layout.updated", at: AT, layout: { preset: "large" } },
+    ]);
+    expect(after.subtitleLayout.preset).toBe("large");
+    expect(after.subtitleLayout.fontSizeCqw).toBe(6.4);
+  });
+
+  it("越界拒绝而不是夹取：填错了要看得见", () => {
+    const project = load();
+    expect(() =>
+      rebuild([
+        created(project),
+        { type: "subtitle.layout.updated", at: AT, layout: { fontSizeCqw: 20 } },
+      ]),
+    ).toThrow(/fontSizeCqw/);
+    expect(() =>
+      rebuild([
+        created(project),
+        { type: "subtitle.layout.updated", at: AT, layout: { bottomPct: 60 } },
+      ]),
+    ).toThrow(/bottomPct/);
+    expect(() =>
+      rebuild([
+        created(project),
+        { type: "subtitle.layout.updated", at: AT, layout: { strokeCqw: -1 } },
+      ]),
+    ).toThrow(/strokeCqw/);
+  });
+
+  it("没有要改的字段被拒", () => {
+    const project = load();
+    expect(() =>
+      rebuild([created(project), { type: "subtitle.layout.updated", at: AT, layout: {} }]),
+    ).toThrow(/没有要改的字段/);
+  });
+});
+
 describe("故事层改写（A16）", () => {
   it("只改传进来的字段，hooks 的另一个钩子不动", () => {
     const project = load();

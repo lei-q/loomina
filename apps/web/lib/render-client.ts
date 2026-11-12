@@ -1,9 +1,10 @@
 "use client";
 
 import {
-  SUBTITLE_STYLES,
+  resolveSubtitleStyle,
   type EditClip,
   type EditView,
+  type SubtitleStyle,
   type SubtitleStyleId,
 } from "./edit";
 import type { RenderCompliance } from "./compliance";
@@ -122,11 +123,11 @@ function drawPlaceholder(clip: EditClip, width: number, height: number): string 
 /** 字幕与角标都画成透明全画幅 PNG：ffmpeg 这台机器没有 drawtext / subtitles */
 function subtitleOverlays(
   view: EditView,
-  styleId: SubtitleStyleId,
+  styleId: SubtitleStyleId | SubtitleStyle,
   width: number,
   height: number,
 ): RenderOverlay[] {
-  const style = SUBTITLE_STYLES[styleId];
+  const style = resolveSubtitleStyle(styleId);
   const el = canvas(width, height);
   const ctx = el.getContext("2d")!;
   const fontSize = (width * style.fontSizeCqw) / 100;
@@ -206,7 +207,7 @@ export async function cancelRender(jobId: string): Promise<boolean> {
 
 export function buildRenderManifest(
   view: EditView,
-  styleId: SubtitleStyleId,
+  styleId: SubtitleStyleId | SubtitleStyle,
   compliance: RenderCompliance,
   quality: RenderQuality = "final",
   options: RenderOptions = {},
@@ -370,7 +371,7 @@ const JOB_TIMEOUT_MS = 11 * 60 * 1000;
 
 export async function exportMp4(
   view: EditView,
-  styleId: SubtitleStyleId,
+  styleId: SubtitleStyleId | SubtitleStyle,
   compliance: RenderCompliance,
   quality: RenderQuality,
   onStage?: (stage: string) => void,

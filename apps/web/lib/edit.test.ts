@@ -1,6 +1,6 @@
 import { ProjectSchema } from "@loomina/ir";
 import { describe, expect, it } from "vitest";
-import { autoCut, timelineEquals, timecode, toEditView } from "./edit";
+import { SUBTITLE_STYLES, autoCut, timelineEquals, timecode, toEditView } from "./edit";
 import {
   buildOtio,
   buildPreviewHtml,
@@ -374,5 +374,72 @@ describe("导出（E6 / D3 / G1）", () => {
   it("文件名去掉路径分隔符与空白", () => {
     expect(safeFileName("夜班 / 第一集", "预览.html")).toBe("夜班-第一集-预览.html");
     expect(safeFileName("   ", "x.json")).toBe("loomina-x.json");
+  });
+});
+
+describe("字幕版式（D3）：作者调过的项进 IR，导出三处共用", () => {
+  const custom = ProjectSchema.parse({
+    ...sampleProject,
+    subtitleLayout: { preset: "large", fontSizeCqw: 6.4, bottomPct: 22 },
+  });
+
+  it("读模型把模板与调过的项合成一份实际样式", () => {
+    const view = toEditView(custom);
+    expect(view.subtitleStyle.fontSizeCqw).toBe(6.4);
+    expect(view.subtitleStyle.bottomPct).toBe(22);
+    // 没调过的项跟着模板走（大字档描边 0.7）
+    expect(view.subtitleStyle.strokeCqw).toBe(0.7);
+    expect(view.subtitleCustom).toBe(true);
+  });
+
+  it("没调过时就是模板原样，界面不显示「已调」", () => {
+    const view = toEditView(sampleProject);
+    expect(view.subtitleStyle).toEqual(SUBTITLE_STYLES.default);
+    expect(view.subtitleCustom).toBe(false);
+  });
+
+  it("换模板时调过的字号不被改回去，没调过的位置跟着换", () => {
+    const onlySize = ProjectSchema.parse({
+      ...sampleProject,
+      subtitleLayout: { preset: "default", fontSizeCqw: 3.2 },
+    });
+    const view = toEditView(onlySize, { style: "large" });
+    expect(view.subtitleStyle.fontSizeCqw).toBe(3.2);
+    expect(view.subtitleStyle.bottomPct).toBe(SUBTITLE_STYLES.large.bottomPct);
+  });
+
+  it("ASS、预览 HTML 与发布包都用调过的值", () => {
+    const view = toEditView(custom);
+    const ass = buildAss(view);
+    // 6.4cqw × 1080 = 69.12 → ASS 以 PlayResY 计，字号取整后是 123
+    expect(ass).toContain("Style: Default,PingFang SC,123,");
+    // 22% × 1920 = 422 的底边距；描边 0.7cqw × 1080 = 8
+    expect(ass).toContain(",1,8,0,2,");
+    expect(ass).toContain(",422,1");
+
+    const html = buildPreviewHtml(view);
+    expect(html).toContain("font-size:6.4cqw");
+    expect(html).toContain("bottom:22%");
+
+    const pack = buildPublishPackage(view, {
+      title: "夜班",
+      description: "",
+      topics: [],
+      style: "large",
+      kind: "draft",
+    });
+    expect(pack.subtitleLayout).toEqual({
+      fontSizeCqw: 6.4,
+      bottomPct: 22,
+      strokeCqw: 0.7,
+    });
+  });
+
+  it("只传档位 id 的旧调用照旧工作", () => {
+    const view = toEditView(sampleProject);
+    // 大字档 5.8cqw × 1080 = 62.64 → 以 PlayResY 计为 111
+    expect(buildAss(view, "large")).toContain("Style: Default,PingFang SC,111,");
+    expect(buildPreviewHtml(view, "large")).toContain("font-size:5.8cqw");
+    expect(buildPreviewHtml(view, "large")).toContain("bottom:18%");
   });
 });

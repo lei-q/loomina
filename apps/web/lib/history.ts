@@ -186,6 +186,29 @@ export function describeEvent(before: Project, event: ProjectEvent): string {
         ? `恢复自动断句：${preview}`
         : `手改断句：${preview}（${event.cues.length} 条）`;
     }
+    case "subtitle.layout.updated": {
+      const touched: string[] = [];
+      const { layout } = event;
+      if (layout.preset !== undefined) {
+        touched.push(`模板「${layout.preset === "large" ? "大字" : "默认"}」`);
+      }
+      if (layout.fontSizeCqw !== undefined) {
+        touched.push(
+          layout.fontSizeCqw === null ? "字号回模板" : `字号 ${layout.fontSizeCqw}`,
+        );
+      }
+      if (layout.bottomPct !== undefined) {
+        touched.push(
+          layout.bottomPct === null ? "位置回模板" : `离底边 ${layout.bottomPct}%`,
+        );
+      }
+      if (layout.strokeCqw !== undefined) {
+        touched.push(
+          layout.strokeCqw === null ? "描边回模板" : `描边 ${layout.strokeCqw}`,
+        );
+      }
+      return `字幕版式：${touched.join("、") || "没有改动"}`;
+    }
     case "voice.take.added": {
       const line = before.dialogue.find((item) => item.id === event.take.lineId);
       return `加一版配音：${line ? `「${line.text.slice(0, 12)}」` : "一句台词"}`;

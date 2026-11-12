@@ -598,6 +598,25 @@ export const SubtitleOverrideSchema = z.object({
 });
 export type SubtitleOverride = z.infer<typeof SubtitleOverrideSchema>;
 
+/**
+ * 字幕版式（D3）：字号、离底边距离与描边。
+ *
+ * 两档模板（默认 / 大字）只是起点。作者改过的项存这里，没改的项跟着模板走——
+ * 所以三个数值都可选，缺省表示「用模板的」。这是创作决定，推不出来，
+ * 因此进 IR 而不是留在界面状态里：换设备、刷新、回放日志之后还是同一个版式。
+ */
+export const SubtitleLayoutSchema = z.object({
+  /** 从哪一档模板改的；换档位时没改过的项跟着换 */
+  preset: z.enum(["default", "large"]).default("default"),
+  /** 字号，相对画面宽度的百分比（cqw） */
+  fontSizeCqw: z.number().min(2).max(12).optional(),
+  /** 离画面底边的距离（%）：避开平台底部操作栏 */
+  bottomPct: z.number().min(2).max(45).optional(),
+  /** 描边粗细（cqw） */
+  strokeCqw: z.number().min(0).max(3).optional(),
+});
+export type SubtitleLayout = z.infer<typeof SubtitleLayoutSchema>;
+
 export const TimelineSchema = z.object({
   items: z.array(TimelineItemSchema).default([]),
   music: z.array(MusicCueSchema).default([]),
@@ -660,6 +679,8 @@ export const ProjectSchema = z.object({
   timeline: TimelineSchema.default({ items: [] }),
   /** 手动断句覆盖（D2）：只有作者改过的句子才在这里，没改的走自动断句 */
   subtitleOverrides: z.array(SubtitleOverrideSchema).default([]),
+  /** 字幕版式（D3）：作者调过的字号 / 位置 / 描边；没调过就用默认档 */
+  subtitleLayout: SubtitleLayoutSchema.default({}),
   publishPackages: z.array(PublishPackageSchema).default([]),
 });
 export type Project = z.infer<typeof ProjectSchema>;

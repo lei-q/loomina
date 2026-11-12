@@ -1,6 +1,6 @@
 import { rebuild, type ProjectEvent } from "@loomina/ir";
 import { describe, expect, it } from "vitest";
-import { buildHistory, historyPosition, nextUndo } from "./history";
+import { buildHistory, describeEvent, historyPosition, nextUndo } from "./history";
 import { sampleProject } from "./sample-project";
 
 const T = (second: number) => `2026-11-11T10:00:${String(second).padStart(2, "0")}Z`;
@@ -143,5 +143,37 @@ describe("历史读法（F2 / ADR-0109）", () => {
 
   it("坏日志不抛错：历史读成空列表，界面不会因为一条事件崩掉", () => {
     expect(buildHistory([{ type: "shot.updated", at: T(1), shotId: "x", patch: {} }])).toEqual([]);
+  });
+});
+
+describe("字幕版式的人话（D3）", () => {
+  it("说清改了哪一项，没写的项不提", () => {
+    const label = describeEvent(rebuild([created()]), {
+      type: "subtitle.layout.updated",
+      at: T(2),
+      layout: { fontSizeCqw: 6.4, bottomPct: 22 },
+    });
+    expect(label).toContain("字号 6.4");
+    expect(label).toContain("离底边 22%");
+    expect(label).not.toContain("描边");
+  });
+
+  it("回模板时说「回模板」，不写一个空数字", () => {
+    const label = describeEvent(rebuild([created()]), {
+      type: "subtitle.layout.updated",
+      at: T(2),
+      layout: { fontSizeCqw: null, strokeCqw: null },
+    });
+    expect(label).toContain("字号回模板");
+    expect(label).toContain("描边回模板");
+  });
+
+  it("换模板说清换成了哪一档", () => {
+    const label = describeEvent(rebuild([created()]), {
+      type: "subtitle.layout.updated",
+      at: T(2),
+      layout: { preset: "large" },
+    });
+    expect(label).toBe("字幕版式：模板「大字」");
   });
 });

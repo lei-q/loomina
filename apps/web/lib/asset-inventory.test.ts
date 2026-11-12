@@ -37,6 +37,7 @@ function base(): Project {
     gates: [],
     timeline: { items: [], music: [] },
     subtitleOverrides: [],
+    subtitleLayout: { preset: "default" },
     publishPackages: [],
   };
   return project;

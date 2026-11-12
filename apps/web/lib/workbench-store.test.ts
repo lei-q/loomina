@@ -1464,6 +1464,51 @@ describe("手改断句（D2）", () => {
   });
 });
 
+describe("字幕版式（D3）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("调字号写一条 subtitle.layout.updated，刷新可回放", () => {
+    expect(state().setSubtitleLayout({ fontSizeCqw: 6.4 })).toBe(true);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "subtitle.layout.updated",
+      layout: { fontSizeCqw: 6.4 },
+    });
+    expect(rebuild(state().events).subtitleLayout.fontSizeCqw).toBe(6.4);
+  });
+
+  it("同一个值不重复写事件：拖滑块不会灌满日志", () => {
+    state().setSubtitleLayout({ bottomPct: 20 });
+    const snapshot = state().events.length;
+    expect(state().setSubtitleLayout({ bottomPct: 20 })).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+  });
+
+  it("null 表示回模板；本来就是模板时不写事件", () => {
+    expect(state().setSubtitleLayout({ fontSizeCqw: null })).toBe(false);
+    state().setSubtitleLayout({ fontSizeCqw: 7 });
+    expect(state().setSubtitleLayout({ fontSizeCqw: null })).toBe(true);
+    expect(state().project.subtitleLayout.fontSizeCqw).toBeUndefined();
+  });
+
+  it("越界被拒并把原因写到 editError，项目不变", () => {
+    const snapshot = state().events.length;
+    expect(state().setSubtitleLayout({ fontSizeCqw: 99 })).toBe(false);
+    expect(state().editError).toContain("fontSizeCqw");
+    expect(state().events).toHaveLength(snapshot);
+  });
+
+  it("只读模式不写事件", () => {
+    const snapshot = state().events.length;
+    useWorkbench.setState({ readOnly: true });
+    expect(state().setSubtitleLayout({ bottomPct: 24 })).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+    useWorkbench.setState({ readOnly: false });
+  });
+});
+
 describe("台词增删（ADR-0045）", () => {
   beforeEach(() => {
     state().reset();

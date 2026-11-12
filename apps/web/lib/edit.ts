@@ -1,4 +1,10 @@
-import type { MusicCue, Project, Take, TimelineItem } from "@loomina/ir";
+import type {
+  MusicCue,
+  Project,
+  SubtitleLayout,
+  Take,
+  TimelineItem,
+} from "@loomina/ir";
 import { toStageView, type SceneKind } from "./read-model";
 import { subtitleCues } from "./subtitle";
 
@@ -42,6 +48,48 @@ export const SAFE_AREA = {
   /** 左右各 6% 留给圆角与手势条 */
   sidePct: 6,
 };
+
+/**
+ * 把项目里的版式与档位合成一份「实际怎么画」的样式（D3）。
+ *
+ * 项目里只存作者**改过**的项；没改的项跟着档位模板走。这样换档位时
+ * 作者调过的字号不会被悄悄改回去，没调过的位置又会跟着新档位一起变。
+ */
+export function subtitleStyleOf(
+  preset: SubtitleStyleId,
+  layout?: SubtitleLayout,
+): SubtitleStyle {
+  const base = SUBTITLE_STYLES[preset] ?? SUBTITLE_STYLES.default;
+  if (!layout) return base;
+  return {
+    ...base,
+    fontSizeCqw: layout.fontSizeCqw ?? base.fontSizeCqw,
+    bottomPct: layout.bottomPct ?? base.bottomPct,
+    strokeCqw: layout.strokeCqw ?? base.strokeCqw,
+  };
+}
+
+/** 作者有没有手动调过版式：界面据此显示「已调」与「恢复模板」 */
+export function isCustomSubtitleLayout(layout?: SubtitleLayout): boolean {
+  if (!layout) return false;
+  return (
+    layout.fontSizeCqw !== undefined ||
+    layout.bottomPct !== undefined ||
+    layout.strokeCqw !== undefined
+  );
+}
+
+/**
+ * 导出函数收两种入参：档位 id（测试与旧调用）或一份已经算好的样式。
+ * 混着收是为了让「调过版式」不必改掉每一个调用点的签名。
+ */
+export function resolveSubtitleStyle(
+  style: SubtitleStyleId | SubtitleStyle | undefined,
+): SubtitleStyle {
+  if (!style) return SUBTITLE_STYLES.default;
+  if (typeof style === "string") return SUBTITLE_STYLES[style] ?? SUBTITLE_STYLES.default;
+  return style;
+}
 
 // ── 自动初剪（E2）───────────────────────────────────────────────
 
@@ -217,6 +265,10 @@ export type EditView = {
   cues: EditCue[];
   /** 断句用的每行字数 */
   maxChars: number;
+  /** 实际怎么画字幕（D3）：档位模板 + 作者调过的项 */
+  subtitleStyle: SubtitleStyle;
+  /** 作者调过版式没有：界面据此给「恢复模板」 */
+  subtitleCustom: boolean;
   totalMs: number;
   totalSec: number;
   /** 时间线里有几镜完全没有画面 */
@@ -263,9 +315,11 @@ function fitCues(
  */
 export function toEditView(
   project: Project,
-  options: { maxChars?: number } = {},
+  options: { maxChars?: number; style?: SubtitleStyleId } = {},
 ): EditView {
   const maxChars = Math.max(6, Math.round(options.maxChars ?? DEFAULT_SUBTITLE_CHARS));
+  const preset = options.style ?? project.subtitleLayout.preset;
+  const subtitleStyle = subtitleStyleOf(preset, project.subtitleLayout);
   const stage = toStageView(project);
   const stageById = new Map(stage.shots.map((shot) => [shot.id, shot]));
   const shotById = new Map(project.shots.map((shot) => [shot.id, shot]));
@@ -417,6 +471,8 @@ export function toEditView(
     music,
     cues,
     maxChars,
+    subtitleStyle,
+    subtitleCustom: isCustomSubtitleLayout(project.subtitleLayout),
     totalMs,
     totalSec: Math.round(totalMs / 100) / 10,
     noPicture: clips.filter((clip) => !clip.hasPicture).length,

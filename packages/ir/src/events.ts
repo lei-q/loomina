@@ -284,6 +284,22 @@ export type ProjectEvent =
     }
   | {
       /**
+       * 改字幕版式（D3）：字号、离底边距离、描边，以及从哪一档模板改的。
+       *
+       * 用 `null` 清掉某一项（回到模板值），不是 `undefined`——后者过 JSON 会消失。
+       * 三项都给 `null` 等于「回到模板默认」，但仍留着 `preset`。
+       */
+      type: "subtitle.layout.updated";
+      at: string;
+      layout: {
+        preset?: "default" | "large";
+        fontSizeCqw?: number | null;
+        bottomPct?: number | null;
+        strokeCqw?: number | null;
+      };
+    }
+  | {
+      /**
        * 加一版配音（C9 / ADR-0124）：进试听台，不自动采用。
        * 采用某一版 = 一条 `dialogue.updated { audioAssetId }`。
        */
@@ -1318,6 +1334,44 @@ function applyEventCore(
         }
       }
       return { ...current, subtitleOverrides: next };
+    }
+
+    case "subtitle.layout.updated": {
+      if (!current) {
+        throw new Error("subtitle.layout.updated 之前必须有 project.created");
+      }
+      const { layout } = event;
+      const next: Project["subtitleLayout"] = { ...current.subtitleLayout };
+      let touched = 0;
+      if (layout.preset !== undefined) {
+        if (layout.preset !== "default" && layout.preset !== "large") {
+          throw new Error(`字幕模板只能是 default 或 large：${layout.preset}`);
+        }
+        next.preset = layout.preset;
+        touched += 1;
+      }
+      // 越界一律拒绝、不夹取：夹取会把「填错了」悄悄改成另一个数
+      const bounds = {
+        fontSizeCqw: [2, 12] as const,
+        bottomPct: [2, 45] as const,
+        strokeCqw: [0, 3] as const,
+      };
+      for (const key of ["fontSizeCqw", "bottomPct", "strokeCqw"] as const) {
+        const value = layout[key];
+        if (value === undefined) continue;
+        touched += 1;
+        if (value === null) {
+          delete next[key];
+          continue;
+        }
+        const [min, max] = bounds[key];
+        if (!Number.isFinite(value) || value < min || value > max) {
+          throw new Error(`${key} 必须在 ${min}–${max} 之间：${value}`);
+        }
+        next[key] = Math.round(value * 100) / 100;
+      }
+      if (touched === 0) throw new Error("subtitle.layout.updated 没有要改的字段");
+      return { ...current, subtitleLayout: next };
     }
 
     case "take.updated": {

@@ -427,6 +427,16 @@ type WorkbenchState = {
    * 按整句覆盖——自动断句是派生的，只改一条会让其余边界漂。
    */
   editSubtitles: (lineId: string, cues: { text: string; durationMs: number }[] | null) => boolean;
+  /**
+   * 调字幕版式（D3）：传 `null` 清掉某一项、回到模板值。
+   * 越界数值被拒（不夹取），界面把错误显示出来。
+   */
+  setSubtitleLayout: (layout: {
+    preset?: "default" | "large";
+    fontSizeCqw?: number | null;
+    bottomPct?: number | null;
+    strokeCqw?: number | null;
+  }) => boolean;
   /** 调整台词顺序：写一条 `shot.updated` 换 dialogueIds 的顺序（ADR-0047） */
   moveDialogue: (lineId: string, direction: "up" | "down") => boolean;
   /** 改这一镜的动作：写一条 `shot.updated { description }`，时长与台词不动（ADR-0049） */
@@ -3175,6 +3185,42 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       events: [...events, event],
       castError: undefined,
     });
+    return true;
+  },
+
+  setSubtitleLayout: (layout) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    // 和当前值一样就不写事件：拖滑块时每一步都记一条，日志会被噪声灌满
+    const current = project.subtitleLayout;
+    const same =
+      (layout.preset === undefined || layout.preset === current.preset) &&
+      (layout.fontSizeCqw === undefined ||
+        (layout.fontSizeCqw === null
+          ? current.fontSizeCqw === undefined
+          : current.fontSizeCqw === layout.fontSizeCqw)) &&
+      (layout.bottomPct === undefined ||
+        (layout.bottomPct === null
+          ? current.bottomPct === undefined
+          : current.bottomPct === layout.bottomPct)) &&
+      (layout.strokeCqw === undefined ||
+        (layout.strokeCqw === null
+          ? current.strokeCqw === undefined
+          : current.strokeCqw === layout.strokeCqw));
+    if (same) return false;
+    const at = stamp();
+    const event: ProjectEvent = { type: "subtitle.layout.updated", at, layout };
+    try {
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        editError: undefined,
+      });
+    } catch (error) {
+      // 越界由 applyEvent 拒；界面要看见原因，不能静默不动
+      set({ editError: error instanceof Error ? error.message : "字幕版式没改成功。" });
+      return false;
+    }
     return true;
   },
 

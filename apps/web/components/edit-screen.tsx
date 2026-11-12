@@ -10,9 +10,12 @@ import {
   SAFE_AREA,
   SUBTITLE_CHARS,
   SUBTITLE_STYLES,
+  isCustomSubtitleLayout,
+  subtitleStyleOf,
   timecode,
   toEditView,
   type SubtitleChars,
+  type SubtitleStyle,
   type SubtitleStyleId,
 } from "@/lib/edit";
 import {
@@ -195,6 +198,7 @@ export function EditScreen() {
   const removeTimelineItem = useWorkbench((state) => state.removeTimelineItem);
   const moveTimelineItem = useWorkbench((state) => state.moveTimelineItem);
   const editSubtitles = useWorkbench((state) => state.editSubtitles);
+  const setSubtitleLayout = useWorkbench((state) => state.setSubtitleLayout);
   const addMusic = useWorkbench((state) => state.addMusic);
   const updateMusic = useWorkbench((state) => state.updateMusic);
   const removeMusic = useWorkbench((state) => state.removeMusic);
@@ -217,7 +221,6 @@ export function EditScreen() {
   /** 正在手改断句的是哪一句台词；undefined 表示没打开（D2） */
   const [cueLineId, setCueLineId] = useState<string>();
   const [cueDraft, setCueDraft] = useState<string[]>([]);
-  const [styleId, setStyleId] = useState<SubtitleStyleId>("default");
   const [maxChars, setMaxChars] = useState<SubtitleChars>(DEFAULT_SUBTITLE_CHARS);
   const [title, setTitle] = useState(project.title);
   const [description, setDescription] = useState("");
@@ -300,7 +303,10 @@ export function EditScreen() {
       ? `有 ${report.review} 处需要人工确认：读完后勾选确认。`
       : "";
 
-  const style = SUBTITLE_STYLES[styleId];
+  // 版式（D3）以项目为准：档位来自 IR，调过的三项也来自 IR，刷新与换设备都跟着走
+  const styleId: SubtitleStyleId = project.subtitleLayout.preset;
+  const style: SubtitleStyle = subtitleStyleOf(styleId, project.subtitleLayout);
+  const styleCustom = isCustomSubtitleLayout(project.subtitleLayout);
   const current =
     view.clips.find(
       (clip) =>
@@ -483,7 +489,7 @@ export function EditScreen() {
     // 预览必须自包含（P20）：资产库里的素材先读回字节换成 data URI
     setNotice("正在把素材收进预览…");
     const { view: hydrated, failed } = await hydrateView(view);
-    const html = buildPreviewHtml(hydrated, styleId);
+    const html = buildPreviewHtml(hydrated, style);
     const size = new Blob([html]).size;
     downloadFile(safeFileName(view.title, "预览.html"), html, "text/html");
     setNotice(
@@ -508,7 +514,7 @@ export function EditScreen() {
     try {
       const result = await exportMp4(
         view,
-        styleId,
+        style,
         renderComplianceOf(report, acknowledged),
         quality,
         setRenderStage,
@@ -586,7 +592,7 @@ export function EditScreen() {
     }
     downloadFile(
       safeFileName(view.title, "字幕.ass"),
-      buildAss(view, styleId),
+      buildAss(view, style),
       "text/plain",
     );
     setNotice(
@@ -1456,11 +1462,14 @@ export function EditScreen() {
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <h2 className="text-[11px] tracking-[.06em] text-text">导出</h2>
                     <label className="flex items-center gap-2 text-[9.5px] text-muted-2">
-                      字幕样式
+                      字幕模板
                       <select
                         value={styleId}
-                        onChange={(event) => setStyleId(event.target.value as SubtitleStyleId)}
-                        className="rounded-token border border-line bg-transparent px-1.5 py-0.5 text-[10px] text-text focus:border-line-2 focus:outline-none"
+                        disabled={readOnly}
+                        onChange={(event) =>
+                          setSubtitleLayout({ preset: event.target.value as SubtitleStyleId })
+                        }
+                        className="rounded-token border border-line bg-transparent px-1.5 py-0.5 text-[10px] text-text focus:border-line-2 focus:outline-none disabled:opacity-40"
                       >
                         {Object.values(SUBTITLE_STYLES).map((item) => (
                           <option key={item.id} value={item.id} className="bg-surface">
@@ -1469,6 +1478,95 @@ export function EditScreen() {
                         ))}
                       </select>
                     </label>
+                  </div>
+
+                  <div className="mt-2 rounded-token border border-line bg-surface/60 p-2.5">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <span className="text-[10px] text-text">
+                        版式微调
+                        {styleCustom && (
+                          <span className="ml-1 text-[9px] text-muted-2">（已调）</span>
+                        )}
+                      </span>
+                      <span className="text-[8.5px] text-muted-2">
+                        预览、ASS 与成片共用这一份
+                      </span>
+                    </div>
+                    <div className="mt-1.5 grid gap-2 sm:grid-cols-3">
+                      <label className="flex items-center gap-2 text-[9.5px] text-muted-2">
+                        字号
+                        <input
+                          type="range"
+                          min={2}
+                          max={12}
+                          step={0.1}
+                          value={style.fontSizeCqw}
+                          disabled={readOnly}
+                          onChange={(event) =>
+                            setSubtitleLayout({ fontSizeCqw: Number(event.target.value) })
+                          }
+                          className="min-w-0 flex-1 accent-[var(--pick)]"
+                        />
+                        <span className="tnum w-[38px] text-right text-[9px] text-muted">
+                          {style.fontSizeCqw.toFixed(1)}
+                        </span>
+                      </label>
+                      <label className="flex items-center gap-2 text-[9.5px] text-muted-2">
+                        离底边
+                        <input
+                          type="range"
+                          min={2}
+                          max={45}
+                          step={0.5}
+                          value={style.bottomPct}
+                          disabled={readOnly}
+                          onChange={(event) =>
+                            setSubtitleLayout({ bottomPct: Number(event.target.value) })
+                          }
+                          className="min-w-0 flex-1 accent-[var(--pick)]"
+                        />
+                        <span className="tnum w-[38px] text-right text-[9px] text-muted">
+                          {style.bottomPct.toFixed(1)}%
+                        </span>
+                      </label>
+                      <label className="flex items-center gap-2 text-[9.5px] text-muted-2">
+                        描边
+                        <input
+                          type="range"
+                          min={0}
+                          max={3}
+                          step={0.05}
+                          value={style.strokeCqw}
+                          disabled={readOnly}
+                          onChange={(event) =>
+                            setSubtitleLayout({ strokeCqw: Number(event.target.value) })
+                          }
+                          className="min-w-0 flex-1 accent-[var(--pick)]"
+                        />
+                        <span className="tnum w-[38px] text-right text-[9px] text-muted">
+                          {style.strokeCqw.toFixed(2)}
+                        </span>
+                      </label>
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSubtitleLayout({
+                            fontSizeCqw: null,
+                            bottomPct: null,
+                            strokeCqw: null,
+                          })
+                        }
+                        disabled={readOnly || !styleCustom}
+                        className="rounded-token border border-line px-2 py-0.5 text-[9px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+                      >
+                        恢复模板
+                      </button>
+                      <span className="text-[8.5px] leading-[1.6] text-muted-2">
+                        字幕压在 8% 底部安全区里会挡住平台操作栏；离底边太近时预览里能看到参考线。
+                      </span>
+                    </div>
                   </div>
 
                   <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(160px,1fr)_auto]">

@@ -9,8 +9,9 @@ import {
 } from "./platforms";
 import {
   SAFE_AREA,
-  SUBTITLE_STYLES,
+  resolveSubtitleStyle,
   type EditView,
+  type SubtitleStyle,
   type SubtitleStyleId,
 } from "./edit";
 
@@ -95,8 +96,11 @@ function assTime(ms: number): string {
  * 样式按成片页的字幕档位换算：字号用画面高度的百分比，
  * ASS 里 PlayResX/Y 设成成片尺寸，两边的比例才对得上。
  */
-export function buildAss(view: EditView, styleId: SubtitleStyleId = "default"): string {
-  const style = SUBTITLE_STYLES[styleId];
+export function buildAss(
+  view: EditView,
+  styleId: SubtitleStyleId | SubtitleStyle = view.subtitleStyle,
+): string {
+  const style = resolveSubtitleStyle(styleId);
   const width = 1080;
   const height = 1920;
   // cqw 是「画面宽度的百分比」；ASS 的 Fontsize 以 PlayResY 为基准，换算到高度上
@@ -281,9 +285,9 @@ export function previewClips(view: EditView): PreviewClip[] {
 /** 把读模型变成一页能直接双击打开的播放页；素材全部内嵌，不依赖服务器 */
 export function buildPreviewHtml(
   view: EditView,
-  styleId: SubtitleStyleId = "default",
+  styleId: SubtitleStyleId | SubtitleStyle = view.subtitleStyle,
 ): string {
-  const style = SUBTITLE_STYLES[styleId];
+  const style = resolveSubtitleStyle(styleId);
   const data = {
     title: view.title,
     totalMs: view.totalMs,
@@ -506,6 +510,8 @@ export type PublishPackage = {
   /** 导出前的合规预检指纹与确认状态 */
   compliance?: RenderCompliance;
   subtitleStyle: SubtitleStyleId;
+  /** 实际画出来的字号 / 底边距离 / 描边（D3）：调过版式时与档位默认值不同 */
+  subtitleLayout: { fontSizeCqw: number; bottomPct: number; strokeCqw: number };
   subtitles: string;
   shots: { shotNo: number; takeNo: number; startMs: number; durationMs: number }[];
   /** 哪些地方还没做完：导入平台前该知道 */
@@ -580,6 +586,11 @@ export function buildPublishPackage(
     aiLabel: AI_LABEL,
     ...(options.compliance ? { compliance: options.compliance } : {}),
     subtitleStyle: options.style,
+    subtitleLayout: {
+      fontSizeCqw: view.subtitleStyle.fontSizeCqw,
+      bottomPct: view.subtitleStyle.bottomPct,
+      strokeCqw: view.subtitleStyle.strokeCqw,
+    },
     subtitles: buildSrt(view),
     shots: view.clips.map((clip) => ({
       shotNo: clip.shotNo,
