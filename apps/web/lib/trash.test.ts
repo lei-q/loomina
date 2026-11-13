@@ -1,4 +1,4 @@
-import type { Project, ProjectEvent } from "@loomina/ir";
+import { VoiceTakeSchema, type Project, type ProjectEvent } from "@loomina/ir";
 import { describe, expect, it } from "vitest";
 import { sampleProject } from "./sample-project";
 import { takeFromLog, trashOf } from "./trash";
@@ -117,6 +117,53 @@ describe("废片库（C14 / ADR-0193）", () => {
     // 历史里存着与当前同一张图（换回后可能出现）：不重复列
     project.assets.find((asset) => asset.id === "a-lin-expr")!.uri = "loomina://assets/current.png";
     expect(trashOf(project, []).filter((item) => item.kind === "keyframe")).toHaveLength(0);
+  });
+
+  it("删掉的配音列出来：哪句台词、原音轨；恢复后或资产 / 台词没了就不列", () => {
+    const project = clone();
+    project.assets.push({
+      id: "a-voice-x",
+      kind: "audio",
+      source: "upload",
+      uri: "loomina://assets/voice.mp3",
+      createdAt: "2026-11-13T10:00:00.000Z",
+    });
+    const take = VoiceTakeSchema.parse({
+      id: "vt-1",
+      lineId: "d-01",
+      assetId: "a-voice-x",
+      performance: {},
+      provenance: { modelId: "tts-x", createdAt: "2026-11-13T10:00:00.000Z" },
+      createdAt: "2026-11-13T10:00:00.000Z",
+    });
+    const events: ProjectEvent[] = [
+      { type: "voice.take.added", at: "2026-11-13T10:00:00.000Z", take },
+      { type: "voice.take.removed", at: "2026-11-13T10:05:00.000Z", takeId: "vt-1" },
+    ];
+
+    const item = trashOf(project, events).find((entry) => entry.key === "voice:vt-1");
+    expect(item).toMatchObject({
+      kind: "voice",
+      state: "removed",
+      at: "2026-11-13T10:05:00.000Z",
+      uri: "loomina://assets/voice.mp3",
+      lineId: "d-01",
+      lineText: "你早就知道，对吧。",
+      modelId: "tts-x",
+    });
+    expect(item!.shotLabel).toContain("第 1 镜");
+
+    // 被取回后（试听台里又有这一版）不再算废片
+    expect(
+      trashOf({ ...project, voiceTakes: [take] }, events).some((entry) => entry.key === "voice:vt-1"),
+    ).toBe(false);
+    // 台词删了：挂不回去，不列
+    expect(
+      trashOf(
+        { ...project, dialogue: project.dialogue.filter((line) => line.id !== "d-01") },
+        events,
+      ).some((entry) => entry.key === "voice:vt-1"),
+    ).toBe(false);
   });
 
   it("新的排前面", () => {

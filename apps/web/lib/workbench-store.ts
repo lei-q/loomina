@@ -104,7 +104,7 @@ import { planMusicFill } from "@/lib/music-curve";
 import { instructionsOf, performanceOf } from "@/lib/voice-performance";
 import { buildHistory, historyPosition, nextUndo } from "@/lib/history";
 import { storyRestorePatch, storyVersionsOf } from "@/lib/story-versions";
-import { takeFromLog } from "@/lib/trash";
+import { takeFromLog, voiceTakeFromLog } from "@/lib/trash";
 import { sharedEntityImport, type SharedEntity } from "@/lib/shared-entities";
 import { claimWriter } from "@/lib/writer-lock";
 import {
@@ -608,6 +608,11 @@ type WorkbenchState = {
   adoptVoiceTake: (takeId: string) => boolean;
   /** 删掉试听台里的一版（C9）：资产不删，可能还挂在台词上 */
   removeVoiceTake: (takeId: string) => boolean;
+  /**
+   * 从废片库取回一版配音（C14 / ADR-0196）：按日志里的原记录重新
+   * `voice.take.added`，只回到试听台，不自动采用、不重新配音、不花钱。
+   */
+  restoreVoiceTake: (takeId: string) => boolean;
   /**
    * 贴一条音轨当这一句的配音（ADR-0085）：收 http(s):// 或 data:audio/。
    * 供应商配额不通、或已经用自己的录音时，都走这条路。
@@ -3937,6 +3942,44 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       });
     } catch (error) {
       set({ castError: error instanceof Error ? error.message : "这一版删不掉" });
+      return false;
+    }
+    return true;
+  },
+
+  restoreVoiceTake: (takeId) => {
+    if (get().readOnly) {
+      set({ castError: "现在是只读：换到能写的窗口再取回。" });
+      return false;
+    }
+    if (lockedStage({ get, set }, "voice")) return false;
+    const { project, events } = get();
+    if (project.voiceTakes.some((take) => take.id === takeId)) {
+      set({ castError: "这一版还在试听台里，不用取回。" });
+      return false;
+    }
+    const take = voiceTakeFromLog(events, takeId);
+    if (!take) {
+      set({ castError: "日志里找不到这一版配音。" });
+      return false;
+    }
+    if (!project.dialogue.some((line) => line.id === take.lineId)) {
+      set({ castError: "这句台词已经删了，配音挂不回去。" });
+      return false;
+    }
+    if (!project.assets.some((asset) => asset.id === take.assetId)) {
+      set({ castError: "这一版的音频资产已经不在项目里了。" });
+      return false;
+    }
+    const event: ProjectEvent = { type: "voice.take.added", at: stamp(), take };
+    try {
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        castError: undefined,
+      });
+    } catch (error) {
+      set({ castError: error instanceof Error ? error.message : "这一版取不回来。" });
       return false;
     }
     return true;

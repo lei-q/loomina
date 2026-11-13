@@ -1,4 +1,4 @@
-import type { Project, ProjectEvent, Take } from "@loomina/ir";
+import type { Project, ProjectEvent, Take, VoiceTake } from "@loomina/ir";
 import type { Frame } from "@loomina/pipeline";
 
 /**
@@ -16,7 +16,7 @@ export type TrashState = "rejected" | "removed" | "old";
 export type TrashItem = {
   /** 稳定 key：`take:t-03` / `keyframe:s-03:first:a-...` */
   key: string;
-  kind: "take" | "keyframe";
+  kind: "take" | "keyframe" | "voice";
   state: TrashState;
   shotId: string;
   /** 「第 2 场 · 第 3 镜」；分镜被删了就写 id */
@@ -31,6 +31,9 @@ export type TrashItem = {
   modelId?: string;
   /** 关键帧才有：它原来是首帧还是尾帧 */
   frame?: Frame;
+  /** 配音才有：哪句台词 */
+  lineId?: string;
+  lineText?: string;
 };
 
 const STATE_CN: Record<TrashState, string> = {
@@ -81,8 +84,22 @@ export function takeFromLog(events: ProjectEvent[], takeId: string): Take | unde
   return found;
 }
 
+/** 从日志里找回一版已经被 `voice.take.removed` 摘掉的配音。 */
+export function voiceTakeFromLog(events: ProjectEvent[], takeId: string): VoiceTake | undefined {
+  let found: VoiceTake | undefined;
+  for (const event of events) {
+    if (event.type === "project.created") {
+      found = event.project.voiceTakes.find((take) => take.id === takeId) ?? found;
+    } else if (event.type === "voice.take.added" && event.take.id === takeId) {
+      found = event.take;
+    }
+  }
+  return found;
+}
+
 /**
- * 汇总废片：淘汰的 take、日志里删掉的 take、关键帧历史里不是当前的那几版。
+ * 汇总废片：淘汰的 take、日志里删掉的 take、日志里删掉的配音、
+ * 关键帧历史里不是当前的那几版。
  * 新的排前面；同一张图在同一镜的同一帧只列一次。
  */
 export function trashOf(project: Project, events: ProjectEvent[]): TrashItem[] {
@@ -145,7 +162,45 @@ export function trashOf(project: Project, events: ProjectEvent[]): TrashItem[] {
     });
   }
 
-  // 3) 关键帧旧版：每镜每帧最多 20 版，只列不是当前这一张的
+  // 3) 日志里已经删掉的配音：voice.take.added 有原始记录
+  const voiceAdded = new Map<string, VoiceTake>();
+  const voiceRemovedAt = new Map<string, string>();
+  for (const event of events) {
+    if (event.type === "project.created") {
+      for (const take of event.project.voiceTakes) voiceAdded.set(take.id, take);
+    } else if (event.type === "voice.take.added") {
+      voiceAdded.set(event.take.id, event.take);
+      voiceRemovedAt.delete(event.take.id);
+    } else if (event.type === "voice.take.removed") {
+      voiceRemovedAt.set(event.takeId, event.at);
+    }
+  }
+  for (const [takeId, at] of voiceRemovedAt) {
+    if (project.voiceTakes.some((take) => take.id === takeId)) continue;
+    const take = voiceAdded.get(takeId);
+    if (!take) continue;
+    const asset = assetById.get(take.assetId);
+    const line = project.dialogue.find((item) => item.id === take.lineId);
+    // 资产或台词都没了就恢复不回来，不列点不动的空卡片
+    if (!asset?.uri || !line) continue;
+    const shot = project.shots.find((item) => item.dialogueIds.includes(line.id));
+    items.push({
+      key: `voice:${takeId}`,
+      kind: "voice",
+      state: "removed",
+      shotId: shot?.id ?? "",
+      shotLabel: shot ? (labels.get(shot.id)?.label ?? shot.id) : "配音",
+      shotDescription: line.text,
+      at,
+      assetId: take.assetId,
+      uri: asset.uri,
+      modelId: take.provenance?.modelId,
+      lineId: line.id,
+      lineText: line.text,
+    });
+  }
+
+  // 4) 关键帧旧版：每镜每帧最多 20 版，只列不是当前这一张的
   for (const shot of project.shots) {
     const shotLabel = labels.get(shot.id);
     for (const frame of ["first", "last"] as const) {

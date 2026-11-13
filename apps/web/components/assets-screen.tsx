@@ -60,6 +60,7 @@ export function AssetsScreen() {
   const events = useWorkbench((state) => state.events);
   const removeAsset = useWorkbench((state) => state.removeAsset);
   const restoreTake = useWorkbench((state) => state.restoreTake);
+  const restoreVoiceTake = useWorkbench((state) => state.restoreVoiceTake);
   const useKeyframeVersion = useWorkbench((state) => state.useKeyframeVersion);
   const [filter, setFilter] = useState<AssetFilter>("all");
   const [files, setFiles] = useState<Map<string, number>>();
@@ -149,6 +150,14 @@ export function AssetsScreen() {
                   : (useWorkbench.getState().castError ?? "这一拍取不回来。"),
               );
             }}
+            onRestoreVoice={(takeId) => {
+              const ok = restoreVoiceTake(takeId);
+              setNote(
+                ok
+                  ? "取回了这一版配音：回到试听台，不会自动采用；要用再去配音页点「用这版」。没有重新配音，也没花钱。"
+                  : (useWorkbench.getState().castError ?? "这一版取不回来。"),
+              );
+            }}
             onRestoreKeyframe={(item) => {
               const ok = useKeyframeVersion(item.shotId, item.frame ?? "first", item.assetId);
               setNote(
@@ -234,11 +243,13 @@ function TrashSection({
   items,
   readOnly,
   onRestoreTake,
+  onRestoreVoice,
   onRestoreKeyframe,
 }: {
   items: TrashItem[];
   readOnly: boolean;
   onRestoreTake: (takeId: string) => void;
+  onRestoreVoice: (takeId: string) => void;
   onRestoreKeyframe: (item: TrashItem) => void;
 }) {
   const counts = {
@@ -289,7 +300,7 @@ function TrashSection({
                     />
                   ) : (
                     <span className="text-[8.5px] text-muted-2">
-                      {item.kind === "take" ? "影" : "图"}
+                      {item.kind === "take" ? "影" : item.kind === "voice" ? "音" : "图"}
                     </span>
                   )}
                 </span>
@@ -314,6 +325,9 @@ function TrashSection({
                         {item.frame === "last" ? "尾帧旧版" : "首帧旧版"}
                       </span>
                     )}
+                    {item.kind === "voice" && (
+                      <span className="shrink-0 text-[8.5px] text-muted-2">配音</span>
+                    )}
                     {item.modelId && (
                       <span className="shrink-0 text-[8.5px] text-muted-2">{item.modelId}</span>
                     )}
@@ -336,6 +350,8 @@ function TrashSection({
                   type="button"
                   onClick={() => {
                     if (item.kind === "take") onRestoreTake(item.key.slice("take:".length));
+                    else if (item.kind === "voice")
+                      onRestoreVoice(item.key.slice("voice:".length));
                     else onRestoreKeyframe(item);
                   }}
                   disabled={readOnly}
@@ -344,11 +360,13 @@ function TrashSection({
                       ? "只读窗口不能取回"
                       : item.kind === "take"
                         ? "放回本镜最后一拍，状态改回待审；不重新生成、不花钱"
-                        : "把这张旧图换回这一帧；现在这一版会进历史，不重新生成"
+                        : item.kind === "voice"
+                          ? "放回试听台，不自动采用；不重新配音、不花钱"
+                          : "把这张旧图换回这一帧；现在这一版会进历史，不重新生成"
                   }
                   className="tnum shrink-0 rounded-token border border-line px-2 py-px text-[9px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-pick enabled:hover:text-pick disabled:pointer-events-none disabled:opacity-40"
                 >
-                  {item.kind === "take" ? "取回" : "换回"}
+                  {item.kind === "keyframe" ? "换回" : "取回"}
                 </button>
               </li>
             );

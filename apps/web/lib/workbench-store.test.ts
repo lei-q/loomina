@@ -6367,3 +6367,60 @@ describe("从别的空间取一版配音（C1 / ADR-0195）", () => {
     expect(state().castError).toContain("锁定");
   });
 });
+
+describe("废片库取回配音（C14 / ADR-0196）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const stub = () =>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ uri: "data:audio/mpeg;base64,SUQz", mime: "audio/mpeg", model: "tts-x" }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+
+  it("删掉的一版回到试听台，不自动采用、不重新配音", async () => {
+    stub();
+    await state().generateVoice("d-01", { keepTake: true });
+    await state().generateVoice("d-01", { keepTake: true });
+    const [first, second] = state().project.voiceTakes;
+    expect(first && second).toBeTruthy();
+    expect(state().adoptVoiceTake(first!.id)).toBe(true);
+    expect(state().removeVoiceTake(second!.id)).toBe(true);
+    expect(state().project.voiceTakes).toHaveLength(1);
+    const before = state().events.length;
+
+    expect(state().restoreVoiceTake(second!.id)).toBe(true);
+    expect(state().project.voiceTakes).toHaveLength(2);
+    expect(state().project.dialogue.find((line) => line.id === "d-01")?.audioAssetId).toBe(
+      first!.assetId,
+    );
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "voice.take.added",
+      take: { id: second!.id, assetId: second!.assetId },
+    });
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("还在试听台、找不到、只读都拒绝，且不写事件", () => {
+    const before = state().events.length;
+    expect(state().restoreVoiceTake("vt-nope")).toBe(false);
+    expect(state().events).toHaveLength(before);
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().restoreVoiceTake("vt-nope")).toBe(false);
+    expect(state().events).toHaveLength(before);
+    useWorkbench.setState({ readOnly: false });
+  });
+});
