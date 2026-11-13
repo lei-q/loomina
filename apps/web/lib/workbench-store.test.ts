@@ -4531,6 +4531,73 @@ describe("故事版本库（C2）", () => {
   });
 });
 
+describe("跨空间取一版故事（C1 / ADR-0198）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  const sourceOf = () => {
+    const project = structuredClone(state().project);
+    return {
+      ...project,
+      story: {
+        ...project.story,
+        logline: "外卖员撞见顶层的秘密",
+        tone: "冷",
+        arcs: [
+          {
+            characterId: "c-lin",
+            want: "拿到监控",
+            need: "",
+            wound: "",
+            flaw: "",
+            secret: "",
+            agency: "",
+            arc: "",
+          },
+        ],
+      },
+    };
+  };
+
+  it("取用写一条 story.updated，文字与弧光一起过来", () => {
+    const snapshot = state().events.length;
+    expect(state().adoptSharedStory(sourceOf(), "夜班")).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "story.updated" });
+    expect(state().project.story.logline).toBe("外卖员撞见顶层的秘密");
+    expect(state().project.story.tone).toBe("冷");
+    expect(state().project.story.arcs).toHaveLength(1);
+    expect(state().storyNotice).toContain("夜班");
+    expect(rebuild(state().events).story.logline).toBe("外卖员撞见顶层的秘密");
+  });
+
+  it("名字对不上的弧光跳过并在提示里说清楚", () => {
+    const source = sourceOf();
+    source.characters = source.characters.map((character) =>
+      character.id === "c-lin" ? { ...character, name: "林小姐" } : character,
+    );
+    expect(state().adoptSharedStory(source, "夜班")).toBe(true);
+    expect(state().project.story.arcs).toHaveLength(0);
+    expect(state().storyNotice).toContain("没有同名角色");
+  });
+
+  it("同一版不写事件；只读时拒绝", () => {
+    expect(state().adoptSharedStory(sourceOf(), "夜班")).toBe(true);
+    const snapshot = state().events.length;
+    expect(state().adoptSharedStory(sourceOf(), "夜班")).toBe(false);
+    expect(state().castError).toContain("就是这一版");
+
+    useWorkbench.setState({ readOnly: true });
+    const source = sourceOf();
+    source.story.tone = "更冷";
+    expect(state().adoptSharedStory(source, "夜班")).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+    useWorkbench.setState({ readOnly: false });
+  });
+});
+
 describe("采用剧本医生的改写（A18 / ADR-0123）", () => {
   beforeEach(() => {
     state().reset();

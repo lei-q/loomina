@@ -103,6 +103,7 @@ import { autoCut, timelineEquals } from "@/lib/edit";
 import { planMusicFill } from "@/lib/music-curve";
 import { instructionsOf, performanceOf } from "@/lib/voice-performance";
 import { buildHistory, historyPosition, nextUndo } from "@/lib/history";
+import { storyImportPatch } from "@/lib/shared-stories";
 import { storyRestorePatch, storyVersionsOf } from "@/lib/story-versions";
 import { takeFromLog, voiceTakeFromLog } from "@/lib/trash";
 import { sharedEntityImport, type SharedEntity } from "@/lib/shared-entities";
@@ -938,6 +939,14 @@ type WorkbenchState = {
    * 与现在完全一样时不写事件。
    */
   useStoryVersion: (eventIndex: number) => boolean;
+  /**
+   * 取用别的空间的一版故事（C1 / ADR-0198）：一条 `story.updated` 整份写回。
+   *
+   * 弧光 / 关系只带本空间有**同名同 id** 角色的那些，其余过滤并计数——
+   * 名字对不上就不算同一个人，不把弧光安到别人身上。不调模型、不花钱。
+   * 与本空间现在一致时不写事件。
+   */
+  adoptSharedStory: (source: Project, fromWorkspaceName: string) => boolean;
   /**
    * 采用剧本医生的一条改写（A18 / ADR-0123）：台词走 `editDialogue`、
    * 动作走 `editAction`、故事层走 `editStory`——同一个决定只用一套写入口。
@@ -6257,6 +6266,34 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       return true;
     } catch (error) {
       set({ castError: error instanceof Error ? error.message : "故事没恢复成。" });
+      return false;
+    }
+  },
+
+  adoptSharedStory: (source, fromWorkspaceName) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const imported = storyImportPatch(project, source);
+    if (!imported) {
+      set({ castError: "现在就是这一版故事，没有要改的。" });
+      return false;
+    }
+    const event: ProjectEvent = { type: "story.updated", at: stamp(), patch: imported.patch };
+    try {
+      const nextProject = applyEvent(project, event);
+      const dropped = imported.droppedArcs + imported.droppedRelationships;
+      set({
+        project: nextProject,
+        events: [...events, event],
+        castError: undefined,
+        storyNotice:
+          dropped > 0
+            ? `已取用「${fromWorkspaceName}」的故事；其中 ${dropped} 条弧光 / 关系因本空间没有同名角色，没有带过来。`
+            : `已取用「${fromWorkspaceName}」的故事。`,
+      });
+      return true;
+    } catch (error) {
+      set({ castError: error instanceof Error ? error.message : "故事没取成。" });
       return false;
     }
   },

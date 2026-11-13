@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { SharedStoryPicker } from "@/components/shared-story-picker";
 import { HOOK_TYPES, scoreHook, type HookPosition } from "@/lib/hooks";
 import { storyVersionsOf } from "@/lib/story-versions";
 import { useWorkbench } from "@/lib/workbench-store";
@@ -570,6 +571,13 @@ export function StoryBiblePanel() {
             })}
         </ol>
       </details>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <SharedStoryPicker />
+        <span className="text-[8.5px] leading-[1.6] text-muted-2">
+          故事、弧光、关系都能从另一个工作空间取；不重新生成、不花钱。
+        </span>
+      </div>
 
       {castError && (
         <p className="mt-2 text-[10px] leading-[1.6] text-pick">{castError}</p>
