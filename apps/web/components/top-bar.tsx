@@ -45,7 +45,8 @@ type StageTool =
   | "consistency"
   | "blocking"
   | "doctor"
-  | "polish";
+  | "polish"
+  | "silent";
 
 const STAGE_TOOLS: Record<StageName, StageTool[]> = {
   故事: [],
@@ -54,7 +55,7 @@ const STAGE_TOOLS: Record<StageName, StageTool[]> = {
   分镜: ["ledger", "budget", "export", "preview", "check", "performance", "consistency", "blocking"],
   关键帧: ["ledger", "budget", "preview"],
   声音: ["ledger", "budget", "preview"],
-  成片: ["ledger", "budget", "export"],
+  成片: ["ledger", "budget", "export", "silent"],
 };
 
 export type TopBarProps = {
@@ -105,6 +106,10 @@ export type TopBarProps = {
   onPolish?: () => void;
   /** 要压的台词句数，显示在按钮右上 */
   polishCount?: number;
+  /** 打开静音可懂度检查（C13 / ADR-0164）；给了才出现「静音」 */
+  onSilent?: () => void;
+  /** 静音时有问题的地方数，显示在按钮右上 */
+  silentCount?: number;
 };
 
 function Money({ value }: { value?: number }) {
@@ -138,6 +143,8 @@ export function TopBar({
   doctorCount,
   onPolish,
   polishCount,
+  onSilent,
+  silentCount,
 }: TopBarProps) {
   const [draftBudget, setDraftBudget] = useState<string>("");
   const [ledgerOpen, setLedgerOpen] = useState(false);
@@ -505,6 +512,19 @@ export function TopBar({
             台词
             {polishCount !== undefined && polishCount > 0 && (
               <span className="tnum text-[9px] text-pick">{polishCount}</span>
+            )}
+          </button>
+        )}
+        {shows("silent") && onSilent && (
+          <button
+            type="button"
+            onClick={onSilent}
+            title="关掉声音看字幕能不能独立讲清剧情：读速、空档、指代与说话人；不花钱"
+            className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            静音
+            {silentCount !== undefined && silentCount > 0 && (
+              <span className="tnum text-[9px] text-pick">{silentCount}</span>
             )}
           </button>
         )}

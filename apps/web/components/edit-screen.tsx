@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { StageGate } from "@/components/stage-gate";
 import { ComplianceCheckpoints } from "@/components/compliance-checkpoints";
 import { MusicCurvePanel } from "@/components/music-curve-panel";
+import { SilentWatchPanel } from "@/components/silent-watch-panel";
 import { TopBar } from "@/components/top-bar";
 import {
   DEFAULT_SUBTITLE_CHARS,
@@ -68,6 +69,7 @@ import {
   type CoverArt,
 } from "@/lib/cover";
 import { canPreviewFrames } from "@/lib/preview-frame";
+import { silentWatchOfEdit } from "@/lib/silent-watch";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
 
@@ -415,6 +417,8 @@ export function EditScreen() {
   const [cueLineId, setCueLineId] = useState<string>();
   const [cueDraft, setCueDraft] = useState<string[]>([]);
   const [maxChars, setMaxChars] = useState<SubtitleChars>(DEFAULT_SUBTITLE_CHARS);
+  // 静音可懂度（C13 / ADR-0164）：只查字幕这一侧，全部从当前时间线派生
+  const [silentOpen, setSilentOpen] = useState(false);
   const [title, setTitle] = useState(project.title);
   const [description, setDescription] = useState("");
   const [topics, setTopics] = useState("短剧,AI创作");
@@ -471,6 +475,14 @@ export function EditScreen() {
   const fired = useRef<Set<string>>(new Set());
 
   const view = useMemo(() => toEditView(project, { maxChars }), [project, maxChars]);
+  // 顶栏徽标只数「静音时会断」的地方，与抽屉里同一份报告
+  const silent = useMemo(() => silentWatchOfEdit(view), [view]);
+  const silentCount =
+    silent.summary.unreadable +
+    silent.summary.flash +
+    silent.summary.gap +
+    silent.summary.pronoun +
+    silent.summary.speaker;
   const stage = useMemo(() => toStageView(project), [project]);
   const spend = useMemo(() => spendOf(project), [project]);
 
@@ -1006,6 +1018,8 @@ export function EditScreen() {
         storageError={storageError}
         readOnly={readOnly}
         onBudgetChange={setBudget}
+        onSilent={view.clips.length > 0 ? () => setSilentOpen(true) : undefined}
+        silentCount={silentCount}
       />
 
       {editError && (
@@ -2541,6 +2555,21 @@ export function EditScreen() {
           )}
         </div>
       </main>
+      {silentOpen && (
+        <SilentWatchPanel
+          view={view}
+          onSeekCue={(cue) => {
+            setSilentOpen(false);
+            seekTo(cue.startMs);
+            openCueEditor(cue.lineId);
+          }}
+          onSeek={(ms) => {
+            setSilentOpen(false);
+            seekTo(ms);
+          }}
+          onClose={() => setSilentOpen(false)}
+        />
+      )}
       <StageGate stage="edit" />
     </div>
   );
