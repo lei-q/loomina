@@ -2,8 +2,16 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { HOOK_TYPES, scoreHook, type HookPosition } from "@/lib/hooks";
+import { storyVersionsOf } from "@/lib/story-versions";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
+
+function clock(at: string): string {
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return at.slice(11, 19);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
 
 /**
  * 故事圣经（A16）：单独编辑弧光与关系张力。
@@ -36,9 +44,13 @@ export function StoryBiblePanel() {
   const editStory = useWorkbench((state) => state.editStory);
   const editArc = useWorkbench((state) => state.editArc);
   const editRelationship = useWorkbench((state) => state.editRelationship);
+  const useStoryVersion = useWorkbench((state) => state.useStoryVersion);
+  const events = useWorkbench((state) => state.events);
   const castError = useWorkbench((state) => state.castError);
+  const storyNotice = useWorkbench((state) => state.storyNotice);
 
   const story = project.story;
+  const versions = useMemo(() => storyVersionsOf(events), [events]);
   const characters = useMemo(
     () =>
       project.characters.map((character) => ({
@@ -507,6 +519,57 @@ export function StoryBiblePanel() {
           if (editRelationship(from, to, tension)) setEditing(undefined);
         }}
       />
+
+      <details className="mt-4 rounded-token border border-line bg-bg px-3 py-2">
+        <summary className="cursor-pointer text-[10px] leading-[1.7] text-muted">
+          故事版本库 · {versions.length} 版
+        </summary>
+        <p className="mt-1 text-[9px] leading-[1.7] text-muted-2">
+          生成与每一次改字都留一版（旧版从事件日志重建，不另存）。「用这版」写一条
+          <code> story.updated</code>，不重新生成、不花钱；指向已删角色的弧光 / 关系带不回来。
+        </p>
+        {storyNotice && (
+          <p className="mt-1 text-[9.5px] leading-[1.6] text-muted">{storyNotice}</p>
+        )}
+        <ol className="mt-2 space-y-1">
+          {versions
+            .slice()
+            .reverse()
+            .map((version, index) => {
+              const current = index === 0;
+              return (
+                <li
+                  key={version.eventIndex}
+                  className="rounded-token border border-line px-2 py-1.5"
+                >
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="tnum text-[9px] text-muted-2">
+                      {clock(version.at)} · {version.changed.join(" · ")}
+                    </span>
+                    {current ? (
+                      <span className="text-[8.5px] text-muted-2">现在这一版</span>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={Boolean(readOnly)}
+                        onClick={() => useStoryVersion(version.eventIndex)}
+                        title="把故事整份写回这一版；不重新生成、不花钱"
+                        className="rounded-token border border-line px-1.5 py-0.5 text-[9px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+                      >
+                        用这版
+                      </button>
+                    )}
+                  </div>
+                  <p className="mt-0.5 line-clamp-2 text-[9.5px] leading-[1.6] text-muted-2">
+                    {version.story.logline.trim() ||
+                      version.story.synopsis.trim() ||
+                      "（这一版还没有字）"}
+                  </p>
+                </li>
+              );
+            })}
+        </ol>
+      </details>
 
       {castError && (
         <p className="mt-2 text-[10px] leading-[1.6] text-pick">{castError}</p>

@@ -85,6 +85,7 @@ import { autoCut, timelineEquals } from "@/lib/edit";
 import { planMusicFill } from "@/lib/music-curve";
 import { instructionsOf, performanceOf } from "@/lib/voice-performance";
 import { buildHistory, historyPosition, nextUndo } from "@/lib/history";
+import { storyRestorePatch, storyVersionsOf } from "@/lib/story-versions";
 import { claimWriter } from "@/lib/writer-lock";
 import {
   latestTake,
@@ -270,6 +271,8 @@ type WorkbenchState = {
   instructionBusy?: boolean;
   /** 历史抽屉的一句话：刚撤销了什么 / 回滚到了哪一步（F2 / ADR-0109） */
   historyNotice?: string;
+  /** 故事版本库的一句话：恢复了哪一版、有几条带不回来（C2） */
+  storyNotice?: string;
   /** 阶段式 / 自由工作台（F8）：存在 localStorage，跨页面生效 */
   mode: WorkbenchMode;
   /** 刚刚被阶段硬锁拦下的那句话（F8）：写一次就弹一次 */
@@ -845,6 +848,14 @@ type WorkbenchState = {
    * 只改传进来的字段；没改的字段与 `provenance` 都不动。
    */
   editStory: (patch: StoryPatch) => boolean;
+  /**
+   * 把故事恢复到某一版（C2 / ADR-0187）：一条 `story.updated` 整份写回。
+   *
+   * `eventIndex` 是这一版落在日志里的位置，来自 `storyVersionsOf`。
+   * 指向已删角色的弧光 / 关系带不回来（如实计数，写进 `storyNotice`）。
+   * 与现在完全一样时不写事件。
+   */
+  useStoryVersion: (eventIndex: number) => boolean;
   /**
    * 采用剧本医生的一条改写（A18 / ADR-0123）：台词走 `editDialogue`、
    * 动作走 `editAction`、故事层走 `editStory`——同一个决定只用一套写入口。
@@ -5720,12 +5731,46 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
         project: applyEvent(project, event),
         events: [...events, event],
         castError: undefined,
+        storyNotice: undefined,
       });
       return true;
     } catch (error) {
       set({
         castError: error instanceof Error ? error.message : "故事没改成。",
       });
+      return false;
+    }
+  },
+
+  useStoryVersion: (eventIndex) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const version = storyVersionsOf(events).find((item) => item.eventIndex === eventIndex);
+    if (!version) {
+      set({ castError: "找不到这一版故事。" });
+      return false;
+    }
+    const restore = storyRestorePatch(project.story, version.story, project.characters);
+    if (!restore) {
+      set({ castError: "现在就是这一版，没有要改的。" });
+      return false;
+    }
+    const event: ProjectEvent = { type: "story.updated", at: stamp(), patch: restore.patch };
+    try {
+      const nextProject = applyEvent(project, event);
+      const dropped = restore.droppedArcs + restore.droppedRelationships;
+      set({
+        project: nextProject,
+        events: [...events, event],
+        castError: undefined,
+        storyNotice:
+          dropped > 0
+            ? `已恢复这一版；其中 ${dropped} 条弧光 / 关系指向已删角色，没有带回来。`
+            : "已恢复这一版。",
+      });
+      return true;
+    } catch (error) {
+      set({ castError: error instanceof Error ? error.message : "故事没恢复成。" });
       return false;
     }
   },
@@ -6642,6 +6687,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       jobs: {},
       batch: undefined,
       castError: undefined,
+      storyNotice: undefined,
       lastSwap: undefined,
       asrResult: undefined,
       editError: undefined,

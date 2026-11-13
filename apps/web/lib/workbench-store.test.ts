@@ -4406,6 +4406,78 @@ describe("故事层单独编辑（A16）", () => {
   });
 });
 
+describe("故事版本库（C2）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("恢复初版写一条 story.updated，文字整份回到初版", () => {
+    const before = state().project.story;
+    expect(state().editStory({ logline: "改过的 logline" })).toBe(true);
+    expect(state().editStory({ synopsis: "改过的梗概" })).toBe(true);
+    const snapshot = state().events.length;
+
+    expect(state().useStoryVersion(0)).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "story.updated" });
+    expect(state().project.story.logline).toBe(before.logline);
+    expect(state().project.story.synopsis).toBe(before.synopsis);
+    expect(state().storyNotice).toContain("已恢复");
+    expect(rebuild(state().events).story.logline).toBe(before.logline);
+  });
+
+  it("恢复旧版能把弧光与关系带回来", () => {
+    const [a, b] = [state().project.characters[0]!.id, state().project.characters[1]!.id];
+    const withStory = state().events.length; // 这一条 story.updated 的下标
+    expect(
+      state().editStory({
+        arcs: [
+          {
+            characterId: a,
+            want: "拿到监控",
+            need: "",
+            wound: "",
+            flaw: "",
+            secret: "",
+            agency: "",
+            arc: "",
+          },
+        ],
+        relationships: [{ fromCharacterId: a, toCharacterId: b, tension: "都想先开口" }],
+      }),
+    ).toBe(true);
+    const seeded = state().project.story;
+    expect(seeded.arcs).toHaveLength(1);
+
+    expect(state().editStory({ arcs: [], relationships: [] })).toBe(true);
+    expect(state().project.story.arcs).toHaveLength(0);
+
+    expect(state().useStoryVersion(withStory)).toBe(true);
+    expect(state().project.story.arcs).toEqual(seeded.arcs);
+    expect(state().project.story.relationships).toEqual(seeded.relationships);
+  });
+
+  it("已经是这一版 / 找不到这一版都不写事件", () => {
+    const snapshot = state().events.length;
+    expect(state().useStoryVersion(0)).toBe(false);
+    expect(state().castError).toContain("就是这一版");
+
+    expect(state().useStoryVersion(999)).toBe(false);
+    expect(state().castError).toContain("找不到这一版");
+    expect(state().events).toHaveLength(snapshot);
+  });
+
+  it("只读时拒绝恢复", () => {
+    expect(state().editStory({ tone: "更冷" })).toBe(true);
+    const snapshot = state().events.length;
+    useWorkbench.setState({ readOnly: true });
+    expect(state().useStoryVersion(0)).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+    useWorkbench.setState({ readOnly: false });
+  });
+});
+
 describe("采用剧本医生的改写（A18 / ADR-0123）", () => {
   beforeEach(() => {
     state().reset();
