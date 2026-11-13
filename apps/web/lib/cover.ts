@@ -11,9 +11,85 @@
 
 import { badgePlacementOf, type BadgePlacement } from "./ai-label";
 import { SAFE_AREA } from "./edit";
+import { platformSpecOf, type PlatformId } from "./platforms";
 
 export const COVER_WIDTH = 1080;
 export const COVER_HEIGHT = 1920;
+
+/**
+ * 封面尺寸按目标平台的封面比例出（G6 / ADR-0183）。
+ *
+ * 抖音 / 快手 / 视频号 / TikTok 是 9:16，小红书是 3:4，B 站与 X 是 16:9。
+ * 短边固定 1080：够清楚，也不会让一张封面大到几十兆。
+ */
+export function coverSizeOf(platform: string): {
+  width: number;
+  height: number;
+  ratio: string;
+} {
+  const spec = platformSpecOf(platform as PlatformId);
+  const ratio = (spec.coverRatio.split("/")[0] ?? "9:16").trim();
+  if (ratio === "16:9") return { width: 1920, height: 1080, ratio };
+  if (ratio === "3:4") return { width: 1080, height: 1440, ratio };
+  return { width: COVER_WIDTH, height: COVER_HEIGHT, ratio: "9:16" };
+}
+
+export type CoverStyle = {
+  id: "classic" | "editorial" | "minimal" | "noir";
+  name: string;
+  blurb: string;
+  /** 标题上方那根色条 / 点缀色 */
+  accent: string;
+  /** 标题对齐：左对齐更像剧照，居中更像海报 */
+  align: "left" | "center";
+  /** 画不画标题上方的小色条 */
+  bar: boolean;
+};
+
+/**
+ * 封面版式（G6）：只做四种，覆盖「剧照」「杂志」「海报」「黑白」。
+ *
+ * 不做拖拽排版：封面的任务是让人在一秒内读完标题，选择太多只会让作者
+ * 在上面花掉比剪片更多的时间。
+ */
+export const COVER_STYLES: CoverStyle[] = [
+  {
+    id: "classic",
+    name: "剧照",
+    blurb: "左侧色条 + 左对齐标题：最像平台上的短剧封面。",
+    accent: "#E0442E",
+    align: "left",
+    bar: true,
+  },
+  {
+    id: "editorial",
+    name: "杂志",
+    blurb: "暖金色条 + 左对齐：标题像刊物封面，适合情感与都市。",
+    accent: "#F2C14E",
+    align: "left",
+    bar: true,
+  },
+  {
+    id: "minimal",
+    name: "极简",
+    blurb: "无装饰、居中标题：画面本身够强时用。",
+    accent: "#FFFFFF",
+    align: "center",
+    bar: false,
+  },
+  {
+    id: "noir",
+    name: "黑白",
+    blurb: "灰色细条 + 居中：悬疑、犯罪与冷调题材。",
+    accent: "#9AA0A6",
+    align: "center",
+    bar: true,
+  },
+];
+
+export function coverStyleById(id: string | undefined): CoverStyle {
+  return COVER_STYLES.find((style) => style.id === id) ?? COVER_STYLES[0]!;
+}
 
 /** 标题最多两行：短视频封面没人读第三行 */
 export const COVER_TITLE_MAX_LINES = 2;
@@ -25,7 +101,6 @@ export const COVER_HOOK_MAX_CHARS = 18;
 /** 角标在封面上与成片同一套写法 */
 export const COVER_BADGE_TEXT = "AI 生成";
 
-const ACCENT = "#E0442E";
 const FONT_STACK =
   '"PingFang SC","Hiragino Sans GB","Noto Sans SC","Microsoft YaHei",system-ui,sans-serif';
 
@@ -102,10 +177,14 @@ export function coverTitleOf(title: string, width = COVER_WIDTH): CoverTitle {
   return { lines, fontPx, lineHeightPx: Math.round(fontPx * 1.18) };
 }
 
-/** 封面画的是一张 PNG：文件名按项目标题来，和成片同一套规则 */
-export function coverFileNameOf(title: string): string {
+/**
+ * 封面画的是一张 PNG：文件名按项目标题来，和成片同一套规则。
+ * 非 9:16 的封面把比例写进文件名，同一部片子的几张封面不会互相覆盖。
+ */
+export function coverFileNameOf(title: string, ratio = "9:16"): string {
   const base = title.replace(/[\\/:*?"<>|\s]+/g, "-").replace(/^-+|-+$/g, "") || "loomina";
-  return `${base}-封面.png`;
+  const suffix = ratio === "9:16" ? "" : `-${ratio.replace(":", "x")}`;
+  return `${base}-封面${suffix}.png`;
 }
 
 /** data URL 的字节数：出图之后显示「多大」，不用再解一遍 base64 */
@@ -127,6 +206,8 @@ export type CoverArt = {
   height: number;
   title: string;
   platform: string;
+  /** 版式（G6）：classic / editorial / minimal / noir */
+  styleId: string;
   generatedAt: string;
 };
 
@@ -136,19 +217,26 @@ export type CoverArtInput = {
   atMs: number;
   bytes: number;
   platform: string;
+  styleId?: string;
+  width?: number;
+  height?: number;
   generatedAt?: string;
 };
 
 export function coverArtOf(input: CoverArtInput): CoverArt {
+  const size = coverSizeOf(input.platform);
+  const width = input.width ?? size.width;
+  const height = input.height ?? size.height;
   return {
-    fileName: coverFileNameOf(input.title),
+    fileName: coverFileNameOf(input.title, size.ratio),
     bytes: Math.max(0, Math.round(input.bytes)),
     shotNo: input.shotNo,
     atMs: Math.max(0, Math.round(input.atMs)),
-    width: COVER_WIDTH,
-    height: COVER_HEIGHT,
+    width,
+    height,
     title: input.title,
     platform: input.platform,
+    styleId: coverStyleById(input.styleId).id,
     generatedAt: input.generatedAt ?? new Date().toISOString(),
   };
 }
@@ -185,6 +273,8 @@ export type CoverDrawOptions = {
   imageHeight?: number;
   /** 标题块离底边多远（%）：默认避开平台底部文案 */
   bottomPct?: number;
+  /** 版式（G6）：缺省用「剧照」 */
+  styleId?: string;
 };
 
 /** 圆角矩形：优先用 roundRect，没有就退到直角（老浏览器的封面也还能出） */
@@ -259,11 +349,12 @@ export function drawCover(
   const hook = options.hook?.trim();
   const side = Math.round((SAFE_AREA.sidePct / 100) * width);
   const bottomPct = options.bottomPct ?? 14;
+  const style = coverStyleById(options.styleId);
   if (title.lines.length > 0) {
     const lastBaseline = Math.round(height * (1 - bottomPct / 100));
     // 标题按最后一行贴底边往上排；空标题只画画面与角标
     const titleTop = lastBaseline - (title.lines.length - 1) * title.lineHeightPx - title.fontPx;
-    drawCoverTitle(ctx, { side, titleTop, title, hook, width });
+    drawCoverTitle(ctx, { side, titleTop, title, hook, width, style });
   }
 
   // 角标：与成片同一张平台表（H5 / ADR-0138），封面也是要发出去的内容
@@ -274,35 +365,47 @@ export function drawCover(
 /** 标题块：色条 + 钩子 + 两行标题，全部落在安全区内 */
 function drawCoverTitle(
   ctx: CanvasRenderingContext2D,
-  input: { side: number; titleTop: number; title: CoverTitle; hook?: string; width: number },
+  input: {
+    side: number;
+    titleTop: number;
+    title: CoverTitle;
+    hook?: string;
+    width: number;
+    style: CoverStyle;
+  },
 ): void {
-  const { side, titleTop, title, hook, width } = input;
-  // 小色条：给标题一个起点，也把品牌色带进封面
-  ctx.fillStyle = ACCENT;
-  ctx.fillRect(
-    side,
-    titleTop - Math.round(title.fontPx * 0.62),
-    Math.round(width * 0.066),
-    Math.max(4, Math.round(width * 0.006)),
-  );
+  const { side, titleTop, title, hook, width, style } = input;
+  const centered = style.align === "center";
+  const textX = centered ? width / 2 : side;
+  ctx.textAlign = centered ? "center" : "left";
+
+  if (style.bar) {
+    // 小色条：给标题一个起点，也把品牌色带进封面
+    const barWidth = Math.round(width * 0.066);
+    ctx.fillStyle = style.accent;
+    ctx.fillRect(
+      centered ? Math.round((width - barWidth) / 2) : side,
+      titleTop - Math.round(title.fontPx * 0.62),
+      barWidth,
+      Math.max(4, Math.round(width * 0.006)),
+    );
+  }
 
   if (hook) {
     const hookFont = Math.max(28, Math.round(title.fontPx * 0.4));
     ctx.font = `500 ${hookFont}px ${FONT_STACK}`;
-    ctx.textAlign = "left";
     ctx.textBaseline = "alphabetic";
     ctx.fillStyle = "rgba(255,255,255,0.78)";
-    ctx.fillText(hook, side, titleTop - Math.round(title.fontPx * 0.36));
+    ctx.fillText(hook, textX, titleTop - Math.round(title.fontPx * 0.36));
   }
 
   ctx.font = `700 ${title.fontPx}px ${FONT_STACK}`;
-  ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
   ctx.fillStyle = "#FFFFFF";
   ctx.shadowColor = "rgba(0,0,0,0.65)";
   ctx.shadowBlur = Math.round(title.fontPx * 0.22);
   title.lines.forEach((line, index) => {
-    ctx.fillText(line, side, titleTop + index * title.lineHeightPx + title.fontPx);
+    ctx.fillText(line, textX, titleTop + index * title.lineHeightPx + title.fontPx);
   });
   ctx.shadowBlur = 0;
   ctx.shadowColor = "transparent";

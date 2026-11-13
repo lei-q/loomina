@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   COVER_BADGE_TEXT,
   COVER_HEIGHT,
+  COVER_STYLES,
   COVER_WIDTH,
   coverArtOf,
   coverFileNameOf,
   coverFontSizeOf,
   coverFrameUrlOf,
   coverHookOf,
+  coverSizeOf,
+  coverStyleById,
   coverTitleLines,
   coverTitleOf,
   dataUrlBytes,
@@ -146,8 +149,28 @@ describe("封面钩子与文件名（G6）", () => {
       height: COVER_HEIGHT,
       title: "夜班走廊",
       platform: "douyin",
+      styleId: "classic",
       generatedAt: "2026-11-12T10:00:00.000Z",
     });
+  });
+
+  it("封面尺寸跟着平台：小红书 3:4，B 站 16:9", () => {
+    expect(coverSizeOf("douyin")).toEqual({ width: 1080, height: 1920, ratio: "9:16" });
+    expect(coverSizeOf("xiaohongshu")).toEqual({ width: 1080, height: 1440, ratio: "3:4" });
+    expect(coverSizeOf("bilibili")).toEqual({ width: 1920, height: 1080, ratio: "16:9" });
+    // 非 9:16 的文件名带上比例，几张封面不会互相覆盖
+    expect(coverFileNameOf("夜班", "3:4")).toBe("夜班-封面-3x4.png");
+    expect(coverFileNameOf("夜班")).toBe("夜班-封面.png");
+  });
+
+  it("四种版式都有自己的名字与配色；认不出的退回剧照", () => {
+    expect(COVER_STYLES).toHaveLength(4);
+    for (const style of COVER_STYLES) {
+      expect(style.name.trim()).not.toBe("");
+      expect(style.accent).toMatch(/^#[0-9A-F]{6}$/i);
+    }
+    expect(coverStyleById("noir").align).toBe("center");
+    expect(coverStyleById(undefined).id).toBe("classic");
   });
 
   it("切帧地址带上素材、时刻与 1080 宽度", () => {

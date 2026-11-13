@@ -354,6 +354,16 @@ type WorkbenchState = {
    */
   importLut: (input: { name: string; base64: string }) => Promise<{ assetId?: string; error?: string }>;
   /**
+   * 把生成好的封面存进资产库（G6 / ADR-0183）：落一条 `asset.updated { kind:"image" }`。
+   * 封面和其它图一样按内容寻址；没人引用时会在资产库页标成「没人用」。
+   */
+  saveCoverAsset: (input: {
+    dataUrl: string;
+    title: string;
+    width: number;
+    height: number;
+  }) => Promise<{ assetId?: string; error?: string }>;
+  /**
    * 改输出画幅与适配方式（E5 / ADR-0170）：整块写一条 `project.updated { frame }`。
    * 只影响导出，不影响提示词——已出的图不用重做。
    */
@@ -1490,6 +1500,37 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       source: "upload",
       uri,
       mime: "application/x-cube",
+      createdAt: at,
+    };
+    const event: ProjectEvent = { type: "asset.updated", at, asset };
+    set({ project: applyEvent(project, event), events: [...events, event], editError: undefined });
+    return { assetId: id };
+  },
+
+  saveCoverAsset: async ({ dataUrl, title, width, height }) => {
+    if (get().readOnly) return { error: "页面只读，先解锁。" };
+    if (!/^data:image\/png;base64,/.test(dataUrl)) return { error: "封面不是 PNG，存不进去。" };
+    const at = stamp();
+    // 与其它生成物一样：先进资产库，事件里只留地址
+    const uri = await persistAsset(dataUrl, { force: true });
+    const { project, events } = get();
+    let id = `a-cover-${Date.now().toString(36)}`;
+    while (project.assets.some((asset) => asset.id === id)) id += "x";
+    const asset: Asset = {
+      id,
+      kind: "image",
+      source: "generated",
+      uri,
+      mime: "image/png",
+      width,
+      height,
+      // 不是模型画的：记一条来源，导出数据里能看出这是本地排版的封面
+      provenance: {
+        modelId: "loomina.cover",
+        prompt: `封面 · ${title} · ${width}×${height}`,
+        referenceAssetIds: [],
+        createdAt: at,
+      },
       createdAt: at,
     };
     const event: ProjectEvent = { type: "asset.updated", at, asset };

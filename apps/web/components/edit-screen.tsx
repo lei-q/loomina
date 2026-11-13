@@ -63,12 +63,12 @@ import {
 } from "@/lib/platforms";
 import { aiLabelRecordFor, badgeCornerLabel, badgePlacementOf } from "@/lib/ai-label";
 import {
-  COVER_HEIGHT,
-  COVER_WIDTH,
+  COVER_STYLES,
   coverArtOf,
   coverFileNameOf,
   coverFrameUrlOf,
   coverHookOf,
+  coverSizeOf,
   dataUrlBytes,
   downloadCover,
   drawCover,
@@ -427,6 +427,7 @@ export function EditScreen() {
   const removeRights = useWorkbench((state) => state.removeRights);
   const setGrade = useWorkbench((state) => state.setGrade);
   const importLut = useWorkbench((state) => state.importLut);
+  const saveCoverAsset = useWorkbench((state) => state.saveCoverAsset);
   const setFrame = useWorkbench((state) => state.setFrame);
   const setShotFocus = useWorkbench((state) => state.setShotFocus);
   const setTimelineTransition = useWorkbench((state) => state.setTimelineTransition);
@@ -493,6 +494,10 @@ export function EditScreen() {
   const [coverPos, setCoverPos] = useState(0.3);
   const [cover, setCover] = useState<{ dataUrl: string; art: CoverArt }>();
   const [coverBusy, setCoverBusy] = useState(false);
+  /** 封面版式（G6）：四种，默认「剧照」 */
+  const [coverStyle, setCoverStyle] = useState("classic");
+  /** 已存进资产库的那一张：同一张不重复存 */
+  const [coverSavedId, setCoverSavedId] = useState("");
   const [musicFile, setMusicFile] = useState<{
     name: string;
     size: number;
@@ -660,9 +665,12 @@ export function EditScreen() {
   const coverCanSeek = Boolean(coverClip?.uri && canPreviewFrames(coverClip.uri));
   const coverAtMs = coverClip && coverCanSeek ? Math.round(coverClip.durationMs * coverPos) : 0;
   const coverTitle = title.trim() || view.title;
-  // 标题或平台改过，封面上的字与角标就跟不上了：提示重新生成，但不偷偷改图
+  const coverSize = coverSizeOf(platform);
+  // 标题、平台或版式改过，封面上的字与尺寸就跟不上了：提示重新生成，但不偷偷改图
   const coverStale = cover
-    ? cover.art.platform !== platform || cover.art.title !== coverTitle
+    ? cover.art.platform !== platform ||
+      cover.art.title !== coverTitle ||
+      cover.art.styleId !== coverStyle
     : false;
   const currentCue = view.cues.find(
     (cue) =>
@@ -1161,24 +1169,30 @@ export function EditScreen() {
       // 视频走服务端精确切帧；静态图直接读；都读不到就出纯标题封面，不拿占位图冒充
       const src =
         coverClip.uri && canPreviewFrames(coverClip.uri)
-          ? coverFrameUrlOf(coverClip.uri, coverAtMs, COVER_WIDTH)
+          ? coverFrameUrlOf(coverClip.uri, coverAtMs, coverSize.width)
           : coverClip.stillUri
             ? assetHref(coverClip.stillUri)
             : undefined;
       const image = src ? await loadCoverImage(src).catch(() => null) : null;
       const canvas = document.createElement("canvas");
-      canvas.width = COVER_WIDTH;
-      canvas.height = COVER_HEIGHT;
+      canvas.width = coverSize.width;
+      canvas.height = coverSize.height;
       const ctx = canvas.getContext("2d");
       if (!ctx) throw new Error("浏览器没有给出画布");
-      drawCover(ctx, {
-        title: coverTitle,
-        hook: coverHookOf(description),
-        platform,
-        image,
-        imageWidth: image?.naturalWidth,
-        imageHeight: image?.naturalHeight,
-      });
+      drawCover(
+        ctx,
+        {
+          title: coverTitle,
+          hook: coverHookOf(description),
+          platform,
+          image,
+          imageWidth: image?.naturalWidth,
+          imageHeight: image?.naturalHeight,
+          styleId: coverStyle,
+        },
+        coverSize.width,
+        coverSize.height,
+      );
       const dataUrl = canvas.toDataURL("image/png");
       const art = coverArtOf({
         title: coverTitle,
@@ -1186,14 +1200,16 @@ export function EditScreen() {
         atMs: coverAtMs,
         bytes: dataUrlBytes(dataUrl),
         platform,
+        styleId: coverStyle,
       });
       setCover({ dataUrl, art });
+      setCoverSavedId("");
       setNotice(
         `封面已生成：${
           image
             ? `第 ${coverClip.shotNo} 镜 ${fmtSec(coverAtMs)} 的画面`
             : "这一镜没有可用的画面，出的是纯标题封面"
-        } · ${COVER_WIDTH}×${COVER_HEIGHT} · ${formatSize(art.bytes)}。`,
+        } · ${coverSize.width}×${coverSize.height} · ${formatSize(art.bytes)}。`,
       );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "封面没出成");
@@ -1204,9 +1220,25 @@ export function EditScreen() {
 
   const saveCover = () => {
     if (!cover) return;
-    const fileName = coverFileNameOf(cover.art.title);
+    const fileName = coverFileNameOf(cover.art.title, coverSize.ratio);
     downloadCover(cover.dataUrl, fileName);
     setNotice(`封面已下载：${fileName}（${formatSize(cover.art.bytes)}）。`);
+  };
+
+  const saveCoverToLibrary = async () => {
+    if (!cover) return;
+    const result = await saveCoverAsset({
+      dataUrl: cover.dataUrl,
+      title: cover.art.title,
+      width: cover.art.width,
+      height: cover.art.height,
+    });
+    if (!result.assetId) {
+      setNotice(result.error ?? "封面没存进资产库。");
+      return;
+    }
+    setCoverSavedId(result.assetId);
+    setNotice(`封面已存进资产库：${result.assetId}（${formatSize(cover.art.bytes)}）。`);
   };
 
   const exportPackage = async () => {
@@ -2927,16 +2959,50 @@ export function EditScreen() {
                       >
                         下载 PNG
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => void saveCoverToLibrary()}
+                        disabled={!cover || Boolean(coverSavedId)}
+                        className="rounded-token border border-line px-2.5 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {coverSavedId ? "已存进资产库" : "存进资产库"}
+                      </button>
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                      <span className="text-[9px] text-muted-2">版式</span>
+                      {COVER_STYLES.map((style) => (
+                        <button
+                          key={style.id}
+                          type="button"
+                          onClick={() => setCoverStyle(style.id)}
+                          aria-pressed={coverStyle === style.id}
+                          title={style.blurb}
+                          className={`rounded-token border px-1.5 py-px text-[9px] transition-colors duration-[var(--dur)] ${
+                            coverStyle === style.id
+                              ? "border-pick text-text"
+                              : "border-line text-muted-2 hover:border-line-2 hover:text-text"
+                          }`}
+                        >
+                          {style.name}
+                        </button>
+                      ))}
+                      <span className="tnum ml-auto text-[8.5px] text-muted-2">
+                        {coverSize.ratio} · {coverSize.width}×{coverSize.height}
+                      </span>
                     </div>
                     {cover && (
                       <div className="mt-2 flex items-start gap-2.5">
                         <img
                           src={cover.dataUrl}
                           alt="封面预览"
-                          className="aspect-[9/16] w-[60px] border border-line object-cover"
+                          className="border border-line object-cover"
+                          style={{
+                            aspectRatio: coverSize.ratio.replace(":", " / "),
+                            width: coverSize.ratio === "16:9" ? 106 : coverSize.ratio === "3:4" ? 72 : 60,
+                          }}
                         />
                         <p className="text-[9.5px] leading-[1.7] text-muted">
-                          {COVER_WIDTH}×{COVER_HEIGHT} · 第 {cover.art.shotNo} 镜{" "}
+                          {cover.art.width}×{cover.art.height} · 第 {cover.art.shotNo} 镜{" "}
                           {fmtSec(cover.art.atMs)} · {formatSize(cover.art.bytes)}
                           {coverStale && (
                             <span className="text-pick"> · 标题或平台改过了，重新生成才会带上新的</span>
@@ -2945,9 +3011,10 @@ export function EditScreen() {
                       </div>
                     )}
                     <p className="mt-1.5 text-[9.5px] leading-[1.7] text-muted-2">
-                      封面 = 抽一帧 + 项目标题 + 简介第一行（钩子）；「AI 生成」角标按目标平台摆在
+                      封面 = 抽一帧 + 项目标题 + 简介第一行（钩子）；版式与尺寸跟着目标平台走
+                      （{coverSize.ratio}），「AI 生成」角标按平台摆在
                       {badgeCornerLabel(badgePlacement.corner)}，和成片同一张表。拖上面那条找回最像封面的一帧；
-                      发布包会记下用的是第几镜、第几毫秒。
+                      「存进资产库」会把这张 PNG 记成项目资产，下一集可以直接拿去用。
                     </p>
                   </div>
 

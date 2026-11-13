@@ -1249,6 +1249,34 @@ describe("预算（ADR-0035）", () => {
     expect(state().events).toHaveLength(before);
   });
 
+  it("封面存进资产库：落一条 image 资产（G6 / ADR-0183）", async () => {
+    const before = state().events.length;
+    const png = "data:image/png;base64,iVBORw0KGgo=";
+    const result = await state().saveCoverAsset({
+      dataUrl: png,
+      title: "夜班",
+      width: 1080,
+      height: 1920,
+    });
+    expect(result.assetId).toBeTruthy();
+    const asset = state().project.assets.find((item) => item.id === result.assetId);
+    expect(asset).toMatchObject({ kind: "image", mime: "image/png", width: 1080, height: 1920 });
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "asset.updated" });
+  });
+
+  it("不是 PNG 的封面不落资产", async () => {
+    const before = state().events.length;
+    const result = await state().saveCoverAsset({
+      dataUrl: "data:image/jpeg;base64,AAAA",
+      title: "夜班",
+      width: 1080,
+      height: 1920,
+    });
+    expect(result.error).toContain("PNG");
+    expect(state().events).toHaveLength(before);
+  });
+
   it("重试上限越界或没变就不写日志", () => {
     const before = state().events.length;
     state().setRetryLimit(0);
