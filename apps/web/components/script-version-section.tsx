@@ -1,8 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { matchQuery, paginate } from "@/lib/library-filters";
+import { textDiff } from "@/lib/text-diff";
 import { useWorkbench } from "@/lib/workbench-store";
-import { scriptVersionsOf, textDiff } from "@/lib/script-versions";
+import { scriptVersionsOf } from "@/lib/script-versions";
 import { cn } from "@/lib/utils";
 
 /**
@@ -11,8 +13,8 @@ import { cn } from "@/lib/utils";
  * 版本从事件日志重建、不另存快照；展开能看那一版的整份剧本纯文本与
  * 和现在的行差异。轻恢复只写回剧本字段，整份回退走 F2 的全局回滚。
  */
-const MAX_VERSIONS = 40;
 const MAX_DIFF_LINES = 6;
+const PAGE_SIZE = 10;
 
 function clock(at: string): string {
   const date = new Date(at);
@@ -29,10 +31,19 @@ export function ScriptVersionSection() {
   const scriptNotice = useWorkbench((state) => state.scriptNotice);
   const [expanded, setExpanded] = useState<number>();
   const [confirming, setConfirming] = useState<number>();
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(0);
 
   const versions = useMemo(() => scriptVersionsOf(events), [events]);
   const currentText = versions.at(-1)?.text ?? "";
-  const shown = [...versions].reverse().slice(0, MAX_VERSIONS);
+  const list = paginate(
+    [...versions].reverse().filter((version) =>
+      matchQuery([version.labels.join(" "), version.text], query),
+    ),
+    page,
+    PAGE_SIZE,
+  );
+  const shown = list.rows;
   // 最后一条版本的 eventIndex 不一定等于「版本数 - 1」：日志里夹着非剧本事件
   const currentIndex = versions.at(-1)?.eventIndex;
 
@@ -58,6 +69,16 @@ export function ScriptVersionSection() {
       {scriptNotice && (
         <p className="mt-1 text-[9.5px] leading-[1.6] text-muted">{scriptNotice}</p>
       )}
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <input
+          value={query}
+          aria-label="搜剧本版本"
+          placeholder="搜改了什么 / 动作 / 台词"
+          onChange={(event) => { setQuery(event.target.value); setPage(0); }}
+          className="min-w-[150px] flex-1 rounded-token border border-line bg-surface px-1.5 py-0.5 text-[9px] text-text placeholder:text-muted-2 focus:border-pick focus:outline-none"
+        />
+        <span className="tnum text-[8.5px] text-muted-2">命中 {list.total}</span>
+      </div>
       <ol className="mt-2 space-y-1">
         {shown.map((version) => {
           const isCurrent = version.eventIndex === currentIndex;
@@ -179,10 +200,15 @@ export function ScriptVersionSection() {
           );
         })}
       </ol>
-      {versions.length > shown.length && (
-        <p className="mt-2 text-[9px] text-muted-2">
-          还有 {versions.length - shown.length} 版没列出：先在历史抽屉里回到更早的位置。
-        </p>
+      {list.rows.length === 0 && (
+        <p className="mt-2 text-[9px] text-muted-2">没有匹配的版本：换一个词再搜。</p>
+      )}
+      {list.pageCount > 1 && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[9px] text-muted-2">
+          <button type="button" disabled={list.page === 0} onClick={() => setPage(list.page - 1)} className="rounded-token border border-line px-1.5 py-0.5 disabled:opacity-40">上一页</button>
+          <span className="tnum">第 {list.page + 1} / {list.pageCount} 页 · 共 {list.total} 版</span>
+          <button type="button" disabled={list.page >= list.pageCount - 1} onClick={() => setPage(list.page + 1)} className="rounded-token border border-line px-1.5 py-0.5 disabled:opacity-40">下一页</button>
+        </div>
       )}
     </details>
   );

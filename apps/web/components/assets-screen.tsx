@@ -11,6 +11,7 @@ import {
   type LibraryView,
 } from "@/lib/asset-inventory";
 import { assetHref } from "@/lib/asset-uri";
+import { matchQuery, paginate } from "@/lib/library-filters";
 import { formatSize } from "@/lib/platforms";
 import { trashOf, trashStateLabel, type TrashItem } from "@/lib/trash";
 import { useWorkbench } from "@/lib/workbench-store";
@@ -51,6 +52,23 @@ const PLACEMENT_CN: Record<LibraryRow["placement"], string> = {
   remote: "对象存储",
   none: "没地址",
 };
+
+const TRASH_KINDS: { key: TrashItem["kind"] | "all"; label: string }[] = [
+  { key: "all", label: "全部" },
+  { key: "take", label: "视频" },
+  { key: "keyframe", label: "关键帧" },
+  { key: "voice", label: "配音" },
+];
+
+const TRASH_STATES: { key: TrashItem["state"] | "all"; label: string }[] = [
+  { key: "all", label: "全部状态" },
+  { key: "rejected", label: "淘汰" },
+  { key: "removed", label: "删掉" },
+  { key: "old", label: "旧版" },
+];
+
+/** 废片库每页条数（C14 / ADR-0205）：取代原来写死的「最多 40 条」 */
+const TRASH_PAGE_SIZE = 20;
 
 /** 废片「作参考」能挂的地方（C2 / ADR-0200）：人物 / 场景 / 道具的参考图 */
 type ReferenceTarget = {
@@ -307,12 +325,26 @@ function TrashSection({
   onRestoreKeyframe: (item: TrashItem) => void;
 }) {
   const [referenceFor, setReferenceFor] = useState<TrashItem>();
+  const [kind, setKind] = useState<TrashItem["kind"] | "all">("all");
+  const [stateFilter, setStateFilter] = useState<TrashItem["state"] | "all">("all");
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(0);
   const counts = {
     rejected: items.filter((item) => item.state === "rejected").length,
     removed: items.filter((item) => item.state === "removed").length,
     old: items.filter((item) => item.state === "old").length,
   };
-  const shown = items.slice(0, 40);
+  const filtered = items.filter(
+    (item) =>
+      (kind === "all" || item.kind === kind) &&
+      (stateFilter === "all" || item.state === stateFilter) &&
+      matchQuery(
+        [item.shotLabel, item.shotDescription, item.modelId ?? "", item.lineText ?? "", item.assetId],
+        query,
+      ),
+  );
+  const list = paginate(filtered, page, TRASH_PAGE_SIZE);
+  const shown = list.rows;
 
   return (
     <section className="mt-6" aria-label="废片库">
@@ -329,9 +361,54 @@ function TrashSection({
         不重新生成、不花钱；删掉的拍子的时间线片段不会自动接回。
       </p>
 
+      {items.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {TRASH_KINDS.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => { setKind(item.key); setPage(0); }}
+              className={cn(
+                "rounded-token border px-1.5 py-0.5 text-[8.5px] transition-colors duration-[var(--dur)]",
+                kind === item.key
+                  ? "border-line-2 text-text"
+                  : "border-line text-muted-2 hover:text-text",
+              )}
+            >
+              {item.label}
+            </button>
+          ))}
+          <select
+            aria-label="废片状态"
+            value={stateFilter}
+            onChange={(event) => {
+              setStateFilter(event.target.value as TrashItem["state"] | "all");
+              setPage(0);
+            }}
+            className="rounded-token border border-line bg-surface px-1 py-0.5 text-[8.5px] text-muted"
+          >
+            {TRASH_STATES.map((item) => (
+              <option key={item.key} value={item.key}>{item.label}</option>
+            ))}
+          </select>
+          <input
+            value={query}
+            aria-label="搜废片"
+            placeholder="搜镜号 / 描述 / 模型 / 台词"
+            onChange={(event) => { setQuery(event.target.value); setPage(0); }}
+            className="min-w-[150px] flex-1 rounded-token border border-line bg-surface px-1.5 py-0.5 text-[9px] text-text placeholder:text-muted-2 focus:border-pick focus:outline-none"
+          />
+          <span className="tnum text-[8.5px] text-muted-2">命中 {list.total}</span>
+        </div>
+      )}
+
       {items.length === 0 ? (
         <p className="mt-3 rounded-token border border-line px-3 py-4 text-center text-[10px] text-muted-2">
           还没有废片。淘汰或删掉一拍、重生成一次关键帧，这里就会有东西。
+        </p>
+      ) : shown.length === 0 ? (
+        <p className="mt-3 rounded-token border border-dashed border-line px-3 py-4 text-center text-[10px] text-muted-2">
+          这一组里没有匹配的废片：换一种筛选或清空搜索。
         </p>
       ) : (
         <ul className="mt-2 border-t border-line">
@@ -503,10 +580,28 @@ function TrashSection({
           </div>
         </div>
       )}
-      {items.length > shown.length && (
-        <p className="mt-2 text-[9px] text-muted-2">
-          还有 {items.length - shown.length} 条没列出：先取回或清理前面的，再显示后面的。
-        </p>
+      {list.pageCount > 1 && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[9px] text-muted-2">
+          <button
+            type="button"
+            disabled={list.page === 0}
+            onClick={() => setPage(list.page - 1)}
+            className="rounded-token border border-line px-1.5 py-0.5 disabled:opacity-40"
+          >
+            上一页
+          </button>
+          <span className="tnum">
+            第 {list.page + 1} / {list.pageCount} 页 · 共 {list.total} 条
+          </span>
+          <button
+            type="button"
+            disabled={list.page >= list.pageCount - 1}
+            onClick={() => setPage(list.page + 1)}
+            className="rounded-token border border-line px-1.5 py-0.5 disabled:opacity-40"
+          >
+            下一页
+          </button>
+        </div>
       )}
     </section>
   );

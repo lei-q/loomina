@@ -9,6 +9,8 @@ import {
 } from "@loomina/ir";
 import { describeEvent } from "@/lib/history";
 import { scriptToText, toScriptView } from "@/lib/read-model";
+// 版本对比共用纯函数，重新导出给现有调用方（ADR-0205）
+export { textDiff } from "@/lib/text-diff";
 
 /**
  * 剧本 / 分镜整份版本快照（C14 第五档 / ADR-0204）。
@@ -155,30 +157,6 @@ export function scriptVersionsOf(events: ProjectEvent[]): ScriptVersion[] {
     });
   }
   return versions;
-}
-
-/** 行差异：按行多重集比，不追求逐行 diff（改一个字会同时出现在多 / 少两栏） */
-export function textDiff(before: string, after: string): { added: string[]; removed: string[] } {
-  const count = (text: string) => {
-    const map = new Map<string, number>();
-    for (const raw of text.split("\n")) {
-      const line = raw.trim();
-      if (!line) continue;
-      map.set(line, (map.get(line) ?? 0) + 1);
-    }
-    return map;
-  };
-  const a = count(before);
-  const b = count(after);
-  const diff = (from: Map<string, number>, to: Map<string, number>) => {
-    const out: string[] = [];
-    for (const [line, n] of from) {
-      const rest = n - (to.get(line) ?? 0);
-      for (let i = 0; i < rest; i += 1) out.push(line);
-    }
-    return out;
-  };
-  return { added: diff(b, a), removed: diff(a, b) };
 }
 
 /** 轻恢复时能从目标版写回的镜头字段（都是剧本字段，不带 id 引用与成片状态） */
