@@ -183,14 +183,17 @@ export function diffEvents(prev: ProjectEvent[], next: ProjectEvent[]): EventSyn
 // ── IndexedDB 实现 ───────────────────────────────────────────────
 
 const DB_NAME = "loomina";
-const DB_VERSION = 2;
+/** 第 3 版加了模板仓（F3 / ADR-0180）；事件与 meta 两仓升上来原样保留 */
+const DB_VERSION = 3;
 const STORE = "events";
 const META = "meta";
+const TEMPLATES = "templates";
 
 type Row = { seq: number; event: ProjectEvent };
 type MetaRow = { key: "log"; version: number };
 
-function openDb(): Promise<IDBDatabase> {
+/** 本地库的连接：事件日志与模板（F3）共用，升级时一起建仓 */
+export function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
@@ -201,6 +204,10 @@ function openDb(): Promise<IDBDatabase> {
       // 第 1 版没有 meta：老的本地库升级上来后，`load` 会把版本当 1 处理
       if (!db.objectStoreNames.contains(META)) {
         db.createObjectStore(META, { keyPath: "key" });
+      }
+      // 第 3 版：项目模板（F3 / ADR-0180），主键是模板自带的 id
+      if (!db.objectStoreNames.contains(TEMPLATES)) {
+        db.createObjectStore(TEMPLATES, { keyPath: "id" });
       }
     };
     request.onsuccess = () => resolve(request.result);

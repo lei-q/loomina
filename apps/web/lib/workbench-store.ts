@@ -103,6 +103,7 @@ import {
   type AssetInventory,
 } from "@/lib/asset-inventory";
 import { isRemoteAssetUri, isStoredAssetUri } from "@/lib/asset-uri";
+import { projectFromTemplate, type ProjectTemplate } from "@/lib/project-template";
 import {
   compactEvents,
   inlinePayloadsOf,
@@ -763,6 +764,13 @@ type WorkbenchState = {
    * 项目只开一空镜，原文在剧本页对照，不假装已经拆成分镜。
    */
   startProjectFromVerbatim: (document: SourceDocument) => boolean;
+  /**
+   * 用项目模板开工（F3 / ADR-0180）：一条新的 `project.created`。
+   *
+   * 班底（人物 / 地点 / 道具与它们的资产记录）与画面风格、画幅、品牌包照搬，
+   * 故事与分镜从零开始。模板本身不进事件日志，存在本地 `templates` 仓。
+   */
+  startProjectFromTemplate: (template: ProjectTemplate, title: string) => boolean;
   /**
    * 改故事层文字（A16）：一条 `story.updated`。
    * 只改传进来的字段；没改的字段与 `provenance` 都不动。
@@ -5072,6 +5080,44 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       asrResult: undefined,
       editError: undefined,
       // 新项目的 id 全换了：上一份项目的手改提示词留着只会错位
+      promptOverrides: {},
+    });
+    return true;
+  },
+
+  startProjectFromTemplate: (template, title) => {
+    if (get().readOnly) {
+      set({ castError: "另一个标签页在编辑：这一页只读，开不了新项目。" });
+      return false;
+    }
+    const { project, events } = get();
+    const at = stamp();
+    let next: Project;
+    try {
+      next = projectFromTemplate(template, {
+        id: `proj-${Date.now().toString(36)}`,
+        at,
+        title,
+        budgetCny: project.budgetCny,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "模板结构不合法";
+      set({ castError: `模板没能开工：${detail.slice(0, 240)}` });
+      return false;
+    }
+    const event: ProjectEvent = { type: "project.created", at, project: next };
+    const applied = applyEvent(project, event);
+    set({
+      project: applied,
+      events: [...events, event],
+      currentShotId: firstOpenShotId(applied),
+      jobs: {},
+      batch: undefined,
+      castError: undefined,
+      lastSwap: undefined,
+      asrResult: undefined,
+      editError: undefined,
+      // 新项目的 id 全换了：上一份项目的手改提示词与模板无关
       promptOverrides: {},
     });
     return true;

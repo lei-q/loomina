@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { HealthPanel } from "@/components/health-panel";
 import { Logomark } from "@/components/icons";
 import {
@@ -25,6 +26,8 @@ import {
 } from "@/lib/asset-inventory";
 import { inlinePayloadsOf } from "@/lib/log-compact";
 import { canProxy } from "@/lib/preview-proxy";
+import { templateNameOf, templateOf, type ProjectTemplate } from "@/lib/project-template";
+import { listTemplates, removeTemplate, saveTemplate } from "@/lib/template-store";
 import { projectSegments } from "@/lib/spend-report";
 import { cn } from "@/lib/utils";
 
@@ -975,6 +978,8 @@ export function SettingsScreen() {
           onReset={reset}
         />
 
+        <TemplateSection readOnly={Boolean(readOnly)} />
+
         <DataSection
           readOnly={Boolean(readOnly)}
           storageConfigured={Boolean(storage?.configured)}
@@ -1308,6 +1313,194 @@ function LocalProjectSection({
           </button>
         )}
       </div>
+    </section>
+  );
+}
+
+/**
+ * 班底模板（F3 / ADR-0180）。
+ *
+ * 模板存的是「可以跨集复用的那一份」：人物、地点、道具与它们的定妆图 / 参考图地址，
+ * 加画面风格、调色、画幅与品牌包。**不含**故事、场景、镜头、台词——那些是这一集自己的。
+ * 存在这台浏览器的 `templates` 仓里，不进事件日志；只存地址，不复制素材。
+ */
+function TemplateSection({ readOnly }: { readOnly: boolean }) {
+  const project = useWorkbench((state) => state.project);
+  const startProjectFromTemplate = useWorkbench((state) => state.startProjectFromTemplate);
+  const router = useRouter();
+  const [templates, setTemplates] = useState<ProjectTemplate[]>();
+  const [name, setName] = useState<string>();
+  const [title, setTitle] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string>();
+  const [error, setError] = useState<string>();
+
+  const suggested = templateNameOf(project.title, new Date().toISOString().slice(0, 10));
+
+  const load = useCallback(async () => {
+    try {
+      setTemplates(await listTemplates());
+    } catch {
+      setTemplates([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const save = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      const at = new Date().toISOString();
+      const template = templateOf(project, {
+        id: `tpl-${Date.now().toString(36)}`,
+        name: (name ?? suggested).trim() || suggested,
+        at,
+      });
+      await saveTemplate(template);
+      setName(undefined);
+      setNotice(
+        `存下了「${template.name}」：${template.cast.length} 人 / ${template.locations.length} 地点 / ${template.props.length} 道具。模板只存地址，不复制素材。`,
+      );
+      await load();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "存不下这个模板");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const open = (template: ProjectTemplate) => {
+    setError(undefined);
+    setNotice(undefined);
+    const nextTitle = title.trim() || template.name;
+    if (!startProjectFromTemplate(template, nextTitle)) {
+      setError(useWorkbench.getState().castError ?? "模板没能开工");
+      return;
+    }
+    router.push("/cast");
+  };
+
+  const drop = async (template: ProjectTemplate) => {
+    setError(undefined);
+    try {
+      await removeTemplate(template.id);
+      setNotice(`删掉了模板「${template.name}」。正在用的项目不受影响。`);
+      await load();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "删不掉这个模板");
+    }
+  };
+
+  return (
+    <section className="mt-9 border-t border-line pt-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-[12px] tracking-[.04em]">班底模板</h2>
+          <span className="tnum text-[9px] text-muted-2">F3</span>
+        </div>
+        <span className="tnum text-[9.5px] text-muted-2">
+          {project.characters.length} 人 / {project.locations.length} 地点 / {project.props.length} 道具
+        </span>
+      </div>
+      <p className="mt-1 max-w-[640px] text-[9.5px] leading-[1.7] text-muted-2">
+        模板带走的是可以跨集复用的那一份：人物、地点、道具与它们的定妆图 / 参考图地址，
+        加画面风格、画幅与品牌包。故事、场景、镜头、台词不带——新的一集从零开始写。
+        模板存这台浏览器，不进事件日志；只存地址，不复制素材。
+      </p>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <input
+          value={name ?? suggested}
+          disabled={readOnly || busy}
+          onChange={(event) => setName(event.target.value)}
+          aria-label="模板名字"
+          className="w-[220px] rounded-token border border-line bg-transparent px-2 py-1 text-[10px] text-text focus:border-line-2 focus:outline-none disabled:opacity-40"
+        />
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={readOnly || busy}
+          title={
+            readOnly
+              ? "另一个标签页在编辑：这一页只读"
+              : "把现在这套人、地点、道具与风格存成模板"
+          }
+          className="rounded-token border border-line px-2.5 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+        >
+          {busy ? "正在存…" : "把现在的班底存成模板"}
+        </button>
+      </div>
+
+      <div className="mt-3 rounded-token border border-line px-3 py-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 className="text-[10px] text-text">存下的模板</h3>
+          <span className="tnum text-[9px] text-muted-2">
+            {templates ? `${templates.length} 份` : "读不到模板仓"}
+          </span>
+        </div>
+        <div className="mt-1.5 flex flex-wrap items-center gap-2">
+          <input
+            value={title}
+            disabled={readOnly}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="新片名（不填就用模板名）"
+            aria-label="新片名"
+            className="w-[200px] rounded-token border border-line bg-transparent px-2 py-1 text-[10px] text-text placeholder:text-muted-2/70 focus:border-line-2 focus:outline-none disabled:opacity-40"
+          />
+          <span className="text-[9px] text-muted-2">
+            开工会在日志末尾写一条新的 project.created，旧项目仍在本地
+          </span>
+        </div>
+        {templates && templates.length === 0 && (
+          <p className="mt-1.5 text-[9px] text-muted-2">
+            还没有模板：先把一集的班底摆好，再回来存一份。
+          </p>
+        )}
+        <ul className="mt-1.5 space-y-1">
+          {(templates ?? []).map((template) => (
+            <li
+              key={template.id}
+              className="flex flex-wrap items-baseline justify-between gap-2 border-t border-line/60 pt-1.5 first:border-t-0 first:pt-0"
+            >
+              <span className="min-w-0">
+                <span className="text-[10px] text-text">{template.name}</span>
+                <span className="tnum ml-2 text-[9px] text-muted-2">
+                  {template.cast.length} 人 / {template.locations.length} 地点 / {template.props.length}{" "}
+                  道具 · 从「{template.from.title}」· {template.createdAt.slice(0, 10)}
+                </span>
+              </span>
+              <span className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => open(template)}
+                  disabled={readOnly}
+                  title="班底照搬，故事与分镜从零开始"
+                  className="rounded-token border border-line px-2 py-0.5 text-[9.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+                >
+                  用这个开工
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void drop(template)}
+                  disabled={readOnly}
+                  title="只删模板，正在用的项目不受影响"
+                  className="rounded-token border border-line px-2 py-0.5 text-[9.5px] text-muted-2 transition-colors duration-[var(--dur)] hover:border-pick/60 hover:text-pick disabled:opacity-40"
+                >
+                  删
+                </button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {notice && <p className="mt-2 text-[9.5px] leading-[1.7] text-muted">{notice}</p>}
+      {error && <p className="mt-2 text-[9.5px] leading-[1.7] text-pick">{error}</p>}
     </section>
   );
 }
