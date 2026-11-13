@@ -5,7 +5,9 @@ import { documentFingerprint } from "@loomina/pipeline";
 import { StageGate } from "@/components/stage-gate";
 import { TopBar } from "@/components/top-bar";
 import { DoctorPanel } from "@/components/doctor-panel";
+import { DialoguePolishPanel } from "@/components/dialogue-polish-panel";
 import { analyzeScript } from "@/lib/script-doctor";
+import { polishDialogue, type PolishLineInput } from "@/lib/dialogue-polish";
 import { sceneNumberingOf } from "@/lib/scene-numbering";
 import {
   actionHistory,
@@ -105,6 +107,7 @@ export function ScriptScreen() {
   const [addText, setAddText] = useState("");
   const [note, setNote] = useState<string | undefined>();
   const [doctorOpen, setDoctorOpen] = useState(false);
+  const [polishOpen, setPolishOpen] = useState(false);
 
   useEffect(() => {
     void hydrate();
@@ -147,6 +150,24 @@ export function ScriptScreen() {
     [view.scenes],
   );
   const doctor = useMemo(() => analyzeScript(project), [project]);
+  // 台词压缩（A20 / ADR-0163）：只数要改几句，抽屉里再算逐句建议
+  const polish = useMemo(() => {
+    const input: PolishLineInput[] = [];
+    for (const scene of view.scenes) {
+      for (const shot of scene.shots) {
+        for (const line of shot.lines) {
+          input.push({
+            lineId: line.id,
+            shotId: shot.id,
+            shotNo: shot.no,
+            speaker: line.character,
+            text: line.text,
+          });
+        }
+      }
+    }
+    return polishDialogue(input);
+  }, [view]);
   const sourceDocument = project.story.sourceDocument;
   const sourceFingerprint = sourceDocument
     ? documentFingerprint(sourceDocument.text)
@@ -390,6 +411,8 @@ export function ScriptScreen() {
         exportLabel="把剧本导出成纯文本（.txt）"
         onDoctor={() => setDoctorOpen(true)}
         doctorCount={doctor.summary.warn}
+        onPolish={() => setPolishOpen(true)}
+        polishCount={polish.problems.length}
       />
 
       <main className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
@@ -1730,6 +1753,29 @@ export function ScriptScreen() {
           onAdopt={(item) => adoptDoctorItem(item)}
           readOnly={Boolean(readOnly)}
           onClose={() => setDoctorOpen(false)}
+        />
+      )}
+      {polishOpen && (
+        <DialoguePolishPanel
+          project={project}
+          onAdopt={(lineId, text) => {
+            if (editDialogue(lineId, text)) {
+              setNote(undefined);
+              return true;
+            }
+            setNote(useWorkbench.getState().castError);
+            return false;
+          }}
+          onSelectShot={(shotId) => {
+            setPolishOpen(false);
+            window.setTimeout(() => {
+              document
+                .getElementById(`shot-${shotId}`)
+                ?.scrollIntoView({ block: "center", behavior: "smooth" });
+            }, 0);
+          }}
+          readOnly={Boolean(readOnly)}
+          onClose={() => setPolishOpen(false)}
         />
       )}
       <StageGate stage="script" />

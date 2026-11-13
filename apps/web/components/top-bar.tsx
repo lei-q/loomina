@@ -44,11 +44,12 @@ type StageTool =
   | "performance"
   | "consistency"
   | "blocking"
-  | "doctor";
+  | "doctor"
+  | "polish";
 
 const STAGE_TOOLS: Record<StageName, StageTool[]> = {
   故事: [],
-  剧本: ["export", "doctor"],
+  剧本: ["export", "doctor", "polish"],
   定妆: ["ledger", "budget"],
   分镜: ["ledger", "budget", "export", "preview", "check", "performance", "consistency", "blocking"],
   关键帧: ["ledger", "budget", "preview"],
@@ -100,6 +101,10 @@ export type TopBarProps = {
   onDoctor?: () => void;
   /** 剧本医生里偏低的项数，显示在按钮右上 */
   doctorCount?: number;
+  /** 打开台词压缩与金句（A20 / ADR-0163）；给了才出现「台词」 */
+  onPolish?: () => void;
+  /** 要压的台词句数，显示在按钮右上 */
+  polishCount?: number;
 };
 
 function Money({ value }: { value?: number }) {
@@ -131,6 +136,8 @@ export function TopBar({
   blockingCount,
   onDoctor,
   doctorCount,
+  onPolish,
+  polishCount,
 }: TopBarProps) {
   const [draftBudget, setDraftBudget] = useState<string>("");
   const [ledgerOpen, setLedgerOpen] = useState(false);
@@ -485,6 +492,19 @@ export function TopBar({
             医生
             {doctorCount !== undefined && doctorCount > 0 && (
               <span className="tnum text-[9px] text-pick">{doctorCount}</span>
+            )}
+          </button>
+        )}
+        {shows("polish") && onPolish && (
+          <button
+            type="button"
+            onClick={onPolish}
+            title="压台词、标金句：单句 ≤15 字，一镜 ≤2 句；不花钱"
+            className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            台词
+            {polishCount !== undefined && polishCount > 0 && (
+              <span className="tnum text-[9px] text-pick">{polishCount}</span>
             )}
           </button>
         )}
