@@ -6761,3 +6761,48 @@ IDB 最后一条 `project.updated` 的 skills 为 `[{ id: sk-mwf1ohmo, name: 不
 - 同名不同内容会出现两条近似技能。
 - 没有导入 / 导出文件，没有跨机器技能库。
 - 一次取一条。
+
+## 第二百二十二次 · 2026-11-14 · 半份 project.created 白屏：回放入口统一过 schema（ADR-0203）
+
+**问题**
+
+定妆页运行时崩溃：`rightsReport` 里 `project.authorizations.filter` 读到 `undefined`
+（`lib/rights.ts:69`）。`ProjectSchema` 给 `authorizations` / `skills` /
+`timeline.sfx` / `timeline.mix` 等都配了默认值，但默认值只在 parse 时生效；
+`applyEvent` 对 `project.created` 只做深拷贝，`parseEvents` 读日志时又只补
+**第一条**引导快照——而逐字导入 / 模板 / 故事草稿开工都会在日志**末尾**再写
+一条 `project.created`（ADR-0088 / 0154 / 0180，旧快照不删）。末尾快照缺字段时，
+半份 Project 原样进读模型，第一个 `.filter` 就崩。
+
+**结论**
+
+1. `applyEvent` 的 `project.created` 分支改用 `ProjectSchema.parse(clone(event.project))`：
+   回放结果永远是完整 Project；`applyEvent` 不改写事件对象，补齐只在内存里发生，磁盘历史行不重写。
+2. `parseEvents` 对**每一条** `project.created` 都过 schema（不只第一条）并写回事件对象，
+   直接读事件数组的函数（`storyVersionsOf` 等）也拿到规范快照；缺必填字段时
+   整份日志照旧判废（宁可回示例项目，不跑坏项目）。
+3. 不在读模型里散补 `?.` / `?? []`：半份 Project 不是合法状态，修复只落在
+   回放与读日志两个入口。
+4. 不升 `LOG_VERSION`：不改事件形状，旧日志读一遍即补齐。
+
+**验证**
+
+新增 `packages/ir/test/project-created-defaults.test.ts` 3 条：缺 default 字段时
+`applyEvent` 补齐且不改写事件对象、末尾 `project.created` 同样完整、缺必填字段
+（title）仍然抛错。`event-log.test.ts` +1 条：末尾半份快照读回后
+`authorizations` / `skills` 为 `[]`。全量：IR 260 / gateway 32 / pipeline 144 /
+web 1267（4 skipped，净增 4 条）；`pnpm -r typecheck` 全过。
+
+浏览器实测：往 IndexedDB 造一个「末尾半份 `project.created`」的复现空间
+（删掉 `authorizations` / `skills` / `timeline.sfx` / `timeline.mix`）→ 打开 `/cast` →
+页面正常渲染：`header` 显示「半份快照 v3」、`main` 显示定妆页、无 Next.js 错误浮层，
+授权入口可读，`rightsReport` 不再崩；日志里那条半份事件原样未动。
+复现空间随后清掉（库里只剩 `w-default` / `w-mwexl5u7`）。清理脚本的事务回调超时，
+但复查 `meta` / `workspaces` 主键确认无残留。
+
+**边界**
+
+- parse 会丢弃 schema 不认识的字段：快照夹带私货的旧日志回放后私货没了
+  （第一条快照本来就是这个口径，现在统一）。
+- 缺**必填**字段的末尾快照 → 整份日志判废回示例项目；导出（H9）是唯一兜底。
+- 回放每条 `project.created` 多一次 schema 校验，量级可忽略。

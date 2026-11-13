@@ -12,6 +12,7 @@ import {
   LocationSpaceSchema,
   LookSchema,
   MODALITY_KEYS,
+  ProjectSchema,
   RightsRecordSchema,
   MusicCueSchema,
   AudioMixSchema,
@@ -903,7 +904,10 @@ function applyEventCore(
 ): Project {
   switch (event.type) {
     case "project.created":
-      return clone(event.project);
+      // 快照按当前 schema 解析（ADR-0203）：日志末尾的引导事件（逐字导入 /
+      // 模板 / 故事草稿开工）缺 zod default 字段时，回放照样补齐而不是把
+      // 半份 Project 送进读模型；日志里的事件对象不改写。
+      return ProjectSchema.parse(clone(event.project));
 
     case "project.updated": {
       if (!current) throw new Error("project.updated 之前必须有 project.created");

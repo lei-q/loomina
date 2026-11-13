@@ -169,6 +169,25 @@ describe("全局回滚事件（F2 / ADR-0109）", () => {
 });
 
 describe("逐字原文日志（F6 / ADR-0154）", () => {
+  it("末尾再写一条半份 project.created：default 字段补齐，rightsReport 不会拿到 undefined（ADR-0203）", () => {
+    const raw = structuredClone(sampleProject) as Partial<typeof sampleProject> & {
+      authorizations?: unknown;
+      skills?: unknown;
+    };
+    delete raw.authorizations;
+    delete raw.skills;
+    const events = parseEvents([
+      created(),
+      { type: "project.updated", at: AT, budgetCny: 120 },
+      { type: "project.created", at: AT, project: raw as typeof sampleProject },
+    ]);
+    const result = rebuild(events!);
+    expect(result.authorizations).toEqual([]);
+    expect(result.skills).toEqual([]);
+    // 末尾的引导事件整份接管项目：前面那条 budget 改动不参与最终状态（既有口径）
+    expect(result.budgetCny).toBe(sampleProject.budgetCny);
+  });
+
   it("旧版本日志带不了 sourceDocument 时由 zod 补齐；携带时也能读回", () => {
     const source = {
       title: "全文",

@@ -116,10 +116,13 @@ export function parseEvents(raw: unknown): ProjectEvent[] | null {
   if (!first || first.type !== "project.created") return null;
 
   try {
-    // 快照按当前 schema 解析：缺省字段补齐，坏字段在这里就暴露
-    first.project = ProjectSchema.parse(first.project);
+    // 快照按当前 schema 解析（ADR-0203）：缺省字段补齐，坏字段在这里就暴露。
+    // 不只第一条——逐字导入 / 模板 / 故事草稿会在日志末尾再写一条 `project.created`，
+    // 那些快照同样可能是早期写出的，直接读事件数组的函数（storyVersionsOf 等）也要拿到规范快照。
     for (const event of events) {
-      if (event.type === "asset.updated") {
+      if (event.type === "project.created") {
+        event.project = ProjectSchema.parse(event.project);
+      } else if (event.type === "asset.updated") {
         event.asset = AssetSchema.parse(event.asset);
       }
     }
