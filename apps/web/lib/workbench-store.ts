@@ -578,7 +578,7 @@ type WorkbenchState = {
    * 贴一条视频地址当 take（ADR-0083）：供应商配额不通时的兜底，
    * 也让已经有片子的人能把 take 流程走完。收 http(s):// 或 data:video/。
    */
-  attachVideo: (shotId: string, uri: string) => boolean;
+  attachVideo: (shotId: string, uri: string, source?: Asset["source"]) => boolean;
   /**
    * 给一句台词出声（ADR-0085）：落一条 `asset.updated` + 一条 `dialogue.updated`。
    * 没配配音模型时服务端会明说；界面还有「贴一条音轨」兜底。
@@ -3568,7 +3568,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     return false;
   },
 
-  attachVideo: (shotId, rawUri) => {
+  attachVideo: (shotId, rawUri, source = "upload") => {
     if (get().readOnly) return false;
     if (lockedStage({ get, set }, "keyframes")) return false;
     const { project, events } = get();
@@ -3615,7 +3615,8 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     const at = stamp();
     const mime = /^data:(video\/[a-z0-9.+-]+)[;,]/i.exec(uri)?.[1];
     const provenance = {
-      modelId: "import",
+      // 从别的空间取来的片子是「拿过来的」，不是这次导入的
+      modelId: source === "library" ? "library" : "import",
       referenceAssetIds: [],
       createdAt: at,
     };
@@ -3626,7 +3627,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
         asset: {
           id: assetId,
           kind: "video",
-          source: "upload",
+          source,
           uri,
           ...(mime ? { mime } : {}),
           durationMs: shot.durationMs,

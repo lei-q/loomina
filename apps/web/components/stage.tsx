@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Frame } from "@loomina/pipeline";
 import { PromptEditor } from "@/components/prompt-editor";
+import { SharedVideoPicker } from "@/components/shared-video-picker";
 import { Scene } from "@/components/scene";
 import { shotLabel, type StageShot, type StageView } from "@/lib/read-model";
 import { useWorkbench } from "@/lib/workbench-store";
@@ -47,6 +48,7 @@ function Current({
   onGenerate,
   onGenerateVideo,
   onAttachVideo,
+  onTakeSharedVideo,
   onRemoveNote,
   onToggleCharacter,
   onToggleProp,
@@ -78,6 +80,8 @@ function Current({
   onGenerateVideo: () => void;
   /** 贴一条视频地址当 take：供应商不通时的兜底（ADR-0083） */
   onAttachVideo: (uri: string) => void;
+  /** 从别的空间拿一条视频当这一拍（C1 / ADR-0194）：只登记地址，不花钱 */
+  onTakeSharedVideo: (uri: string) => boolean;
   onRemoveNote: (note: string) => void;
   onToggleCharacter: (characterId: string) => void;
   onToggleProp: (propId: string) => void;
@@ -474,6 +478,13 @@ function Current({
                   </button>
                 </form>
               </details>
+
+              {!readOnly && (
+                <SharedVideoPicker
+                  usedUris={shot.takes.flatMap((take) => (take.uri ? [take.uri] : []))}
+                  onPick={onTakeSharedVideo}
+                />
+              )}
             </div>
           )
         ) : generating === shown ? (
@@ -758,6 +769,7 @@ export type StageProps = {
   onGenerateKeyframe: (frame: Frame) => void;
   onGenerateVideo: () => void;
   onAttachVideo: (uri: string) => void;
+  onTakeSharedVideo: (uri: string) => boolean;
   onRemoveNote: (note: string) => void;
   onToggleCharacter: (characterId: string) => void;
   onToggleProp: (propId: string) => void;
@@ -779,6 +791,7 @@ export function Stage({
   onGenerateKeyframe,
   onGenerateVideo,
   onAttachVideo,
+  onTakeSharedVideo,
   onRemoveNote,
   onToggleCharacter,
   onToggleProp,
@@ -819,6 +832,7 @@ export function Stage({
           onGenerate={onGenerateKeyframe}
           onGenerateVideo={onGenerateVideo}
           onAttachVideo={onAttachVideo}
+          onTakeSharedVideo={onTakeSharedVideo}
           onRemoveNote={onRemoveNote}
           onToggleCharacter={onToggleCharacter}
           onToggleProp={onToggleProp}

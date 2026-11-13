@@ -6309,3 +6309,33 @@ describe("废片库取回（C14 / ADR-0193）", () => {
     useWorkbench.setState({ readOnly: false });
   });
 });
+
+describe("从别的空间取一拍视频（C1 / ADR-0194）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("只登记地址与一拍 take：资产记 library，不花钱", () => {
+    const uri = `loomina://assets/${"c".repeat(64)}.mp4`;
+    expect(state().attachVideo("s-03", uri, "library")).toBe(true);
+
+    const shot = state().project.shots.find((item) => item.id === "s-03")!;
+    const take = state().project.takes.find((item) => item.id === shot.takeIds.at(-1))!;
+    expect(take.costCny).toBe(0);
+    expect(take.status).toBe("draft");
+    expect(take.provenance.modelId).toBe("library");
+    const asset = state().project.assets.find((item) => item.id === take.assetId)!;
+    expect(asset).toMatchObject({ kind: "video", source: "library", uri });
+    expect(asset.costCny).toBeUndefined();
+    // 导出 / 回放看到的是同一份
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("这一镜已经挂过同一条地址就不重复挂", () => {
+    const uri = `loomina://assets/${"d".repeat(64)}.mp4`;
+    expect(state().attachVideo("s-03", uri, "library")).toBe(true);
+    expect(state().attachVideo("s-03", uri, "library")).toBe(false);
+    expect(state().castError).toContain("贴过");
+  });
+});

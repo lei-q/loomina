@@ -133,3 +133,20 @@ describe("跨空间素材清单（C4）", () => {
     expect(list[0]?.usedBy).toEqual([]);
   });
 });
+
+describe("跨空间取视频（C1 / ADR-0194）", () => {
+  it("按种类筛选：视频清单只出视频，图不混进来", () => {
+    const clip = `loomina://assets/${"c".repeat(64)}.mp4`;
+    const spaces = [
+      space(
+        "w1",
+        "第一集",
+        project("p1", [asset("i1", STORED), asset("v1", clip, "2026-11-12T00:00:00Z", "video")]),
+      ),
+    ];
+    expect(sharedAssetsOf(spaces, ["video"]).map((item) => item.uri)).toEqual([clip]);
+    expect(sharedAssetsOf(spaces, ["video"])[0]?.kind).toBe("video");
+    // 默认仍只出图片：老调用方不受影响
+    expect(sharedAssetsOf(spaces).map((item) => item.uri)).toEqual([STORED]);
+  });
+});

@@ -306,6 +306,9 @@ export function Workbench() {
             onGenerateKeyframe={(frame) => void generateKeyframe(view.shots[view.current]!.id, frame)}
             onGenerateVideo={() => void generateVideo(view.shots[view.current]!.id)}
             onAttachVideo={(uri) => attachVideo(view.shots[view.current]!.id, uri)}
+            onTakeSharedVideo={(uri) =>
+              attachVideo(view.shots[view.current]!.id, uri, "library")
+            }
             onRemoveNote={(note) => removeNote(view.shots[view.current]!.id, note)}
             onToggleCharacter={(characterId) =>
               toggleShotCharacter(view.shots[view.current]!.id, characterId)

@@ -6390,3 +6390,48 @@ IndexedDB 最后一条 `take.updated t-10 { status: "draft" }`。
 - 「作参考」还没有直接动作，仍要去定妆页 / 素材库挑图。
 - 没有筛选 / 搜索 / 分页；超过 40 条只提示。
 - 取回删掉的拍不恢复时间线片段，也不恢复它当时在成片里的位置。
+
+## 第二百一十三次 · 2026-11-13 · 跨空间取一拍视频：最贵的一项先能复用（用户清单 C.1 / 功能 C20）
+
+**问题**
+
+C16 能挑参考图、C17 能整块复用演员 / 场景 / 道具，但视频还没有入口。
+视频是单价最高的一项：同一段走廊、同一个动作在第二集还要用，
+现在只能重新生成，或者手工把地址贴过来（还得先知道地址）。
+
+**做法**
+
+- 复用现成的跨空间清单，只换种类：`sharedAssetsOf(spaces, ["video"])`；
+  默认仍只出图片，老调用方逐字节不变。打开面板时才回放各空间的日志，
+  滤掉当前空间。网格列视频缩略图（静音、只取元数据）、来源空间、
+  在该空间的用处（「第 3 镜 take」）；已挂在这一镜的地址置灰，最多 60 条。
+- `attachVideo(shotId, uri, source?)` 多一个可选 `source`，默认 `upload`；
+  从别的空间取来的传 `library`。只登记资产记录与一拍 take，不复制字节、
+  不重新生成、不花钱；不触发授权检查、不算未定价调用。
+  `provenance.modelId` 写 `library`（贴地址导入仍写 `import`）。
+- 挂上就是这一镜新的一拍：`asset.updated` + `take.added`，
+  `draft`、`costCny: 0`；原拍与首尾帧不受影响。同一镜地址重复、锁定镜头、
+  只读、关键帧阶段闸门都拒绝。
+- 不改 IR：`Asset.source` 本来就有 `library`，take 结构不用动。
+
+**验证**
+
+`workspace-assets.test.ts` 1 条：按种类筛只出视频、默认仍只出图片。
+store 2 条：取来的视频资产记 `library`、take 不花钱、`provenance.modelId` 是
+`library`、回放一致；同一镜重复地址拒绝。
+IR 257 / gateway 32 / pipeline 144 / web 1231 条测试全过（新增 3 条）；
+`pnpm -r typecheck` 全过。
+
+浏览器实测（两个工作空间）：夜班第 3 镜「贴视频地址导入」
+`https://cdn.example.com/shared-take.mp4` → 「这一镜共 2 拍」；
+切到第二集 → 视频格 →「从素材库取一拍」→ 面板列出「夜班 · 取来 · 第 3 镜 take」
+→ 点它后面板关闭、第二集这一镜也变成 2 拍；
+IndexedDB：夜班 `asset source upload / take modelId import`，
+第二集同 uri `asset source library / take cost 0 / modelId library`。
+
+**边界**
+
+- 只拿了视频；故事、剧本、音频（配音 / 配乐）的跨空间取用还没有入口。
+- 取来的只是文件与一拍记录，不跟原 take 的留用状态、时间线位置、提示词过期标记。
+- 面板没有搜索 / 按空间筛选，最多 60 条。
+- 对象存储未配置时，`s3://` 视频缩略图显示不出来，但地址本身仍可挂。
