@@ -558,6 +558,19 @@ export const CompositionSchema = z.object({
 });
 export type Composition = z.infer<typeof CompositionSchema>;
 
+/**
+ * 裁切焦点（E5）：画面里要留住的那一点，按宽高的比例写。
+ *
+ * 只对 `fit: "crop"` 有意义；模糊填充不裁画面，焦点用不上。
+ * 不是「主体追踪」——追踪要认出人脸与人体，这里由作者点一下，
+ * 但点过一次之后换画幅、重渲都跟着走。
+ */
+export const ShotFocusSchema = z.object({
+  x: z.number().min(0).max(1).default(0.5),
+  y: z.number().min(0).max(1).default(0.5),
+});
+export type ShotFocus = z.infer<typeof ShotFocusSchema>;
+
 export const ShotSchema = z.object({
   id: Id,
   sceneId: Id,
@@ -600,6 +613,14 @@ export const ShotSchema = z.object({
    * 单镜上限与项目上限同时生效：先到的那条拦。
    */
   budgetCny: z.number().positive().optional(),
+  /**
+   * 换画幅时留住画面的哪一块（E5 / ADR-0170）：0 是左 / 上，0.5 是居中，1 是右 / 下。
+   *
+   * 竖屏裁成横屏时只留下画面里的一条横带：人站在画面上三分之一，
+   * 居中裁就把头裁掉了。裁哪条由 `focus.y` 决定，`focus.x` 管另一半情况
+   * （横屏素材裁成竖屏）。不写按居中——与没有这个字段时的行为一致。
+   */
+  focus: ShotFocusSchema.optional(),
 });
 export type Shot = z.infer<typeof ShotSchema>;
 
@@ -940,6 +961,40 @@ export type Grade = z.infer<typeof GradeSchema>;
 /** 一项都没改的 grade：渲染时不加任何滤镜，成片与以前逐字节同构 */
 export const DEFAULT_GRADE: Grade = GradeSchema.parse({});
 
+/* ------------------------------------------------------------------ */
+/* 画幅（E5 / ADR-0170）                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 输出画幅。竖屏是短剧的主场，横屏与方形是为了分发到别的平台。
+ *
+ * 与 `Look.aspect` 分工：`look.aspect` 写进**生成提示词**（让模型按竖构图作画），
+ * `Project.frame` 决定**导出时**裁成什么形状。两者可以不同——
+ * 用竖屏生成、再裁成 16:9 发横屏平台，是短剧分发的常态。
+ */
+export const FRAME_ASPECTS = ["9:16", "16:9", "1:1"] as const;
+export type FrameAspect = (typeof FRAME_ASPECTS)[number];
+
+/**
+ * 画幅与适配方式（E5）。
+ *
+ * - `pad`：留边。整幅画面缩到放得下，空出来的地方填底色。这是默认——
+ *   以前导出的成片就是这么做的，改默认会让旧项目重渲一遍就不一样了；
+ * - `crop`：裁切。铺满画幅，多出来的部分切掉，留住哪一块由 `Shot.focus` 决定；
+ * - `blur`：模糊填充。整幅画面缩小放进去，空出来的地方用同一帧的模糊放大填充。
+ *   竖屏素材转横屏时，裁切会切掉一半以上的高度，模糊填充能保住构图。
+ */
+export const FRAME_FITS = ["pad", "crop", "blur"] as const;
+export type FrameFit = (typeof FRAME_FITS)[number];
+
+export const FrameSchema = z.object({
+  aspect: z.enum(FRAME_ASPECTS).default("9:16"),
+  fit: z.enum(FRAME_FITS).default("pad"),
+});
+export type Frame = z.infer<typeof FrameSchema>;
+
+export const DEFAULT_FRAME: Frame = FrameSchema.parse({});
+
 export const ProjectSchema = z.object({
   id: Id,
   title: z.string().min(1),
@@ -959,6 +1014,10 @@ export const ProjectSchema = z.object({
    * 调色（E4 / ADR-0169）：导出时对画面做的色彩调整，只影响渲染，不影响提示词。
    */
   grade: GradeSchema.default({}),
+  /**
+   * 输出画幅（E5 / ADR-0170）：导出时裁成什么形状、裁切不够时怎么补。
+   */
+  frame: FrameSchema.default({}),
   /**
    * 这条片子的预算上限（元）。写进项目而不是写进界面：预算是项目自己的约束，
    * 换设备、刷新、重放事件日志之后还得是同一个数（准则 P14 / H10）。

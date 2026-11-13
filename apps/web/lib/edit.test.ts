@@ -236,6 +236,31 @@ describe("导出（E6 / D3 / G1）", () => {
     expect(buildPreviewHtml({ ...view, title: "<夜班>" })).toContain("&lt;夜班&gt;");
   });
 
+  it("横屏时 ASS 的 PlayRes 与预览舞台都跟着换（E5 / ADR-0170）", () => {
+    const view = toEditView(sampleProject);
+    const wide = { ...view, frame: { aspect: "16:9" as const, fit: "crop" as const } };
+    const ass = buildAss(wide);
+    expect(ass).toContain("PlayResX: 1920");
+    expect(ass).toContain("PlayResY: 1080");
+    // 竖屏那版仍然是 1080×1920
+    expect(buildAss(view)).toContain("PlayResY: 1920");
+
+    const html = buildPreviewHtml(wide);
+    expect(html).toContain("aspect-ratio:16/9");
+    expect(html).toContain("object-fit:cover");
+  });
+
+  it("预览 HTML 的裁切焦点落到 object-position（E5 / ADR-0170）", () => {
+    const view = toEditView(sampleProject);
+    const html = buildPreviewHtml({ ...view, frame: { aspect: "16:9", fit: "crop" } });
+    expect(html).toContain("objectPosition = x");
+    // 模糊填充的底层一直在 DOM 里，按 FIT 决定显不显示
+    expect(buildPreviewHtml({ ...view, frame: { aspect: "16:9", fit: "blur" } })).toContain(
+      'const FIT = "blur"',
+    );
+    expect(html).toContain('const FIT = "crop"');
+  });
+
   it("OTIO 有视频轨与音轨，音轨按台词落片段", () => {
     const project = ProjectSchema.parse({
       ...sampleProject,

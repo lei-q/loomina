@@ -45,6 +45,7 @@ const SHOT_FIELD_CN: Record<string, string> = {
   keyframes: "关键帧",
   locked: "锁定",
   budgetCny: "单镜预算",
+  focus: "裁切焦点",
 };
 
 const SCENE_FIELD_CN: Record<string, string> = {
@@ -120,6 +121,9 @@ export function describeEvent(before: Project, event: ProjectEvent): string {
       }
       if (event.look !== undefined) touched.push("画面风格");
       if (event.grade !== undefined) touched.push("调色");
+      if (event.frame !== undefined) {
+        touched.push(`画幅 ${event.frame.aspect}·${event.frame.fit === "pad" ? "留边" : event.frame.fit === "crop" ? "裁切" : "模糊填充"}`);
+      }
       return `项目设置：${touched.join("、")}`;
     }
     case "shot.updated":

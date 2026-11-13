@@ -10,6 +10,7 @@ import {
 import type { RenderCompliance } from "./compliance";
 import {
   RENDER_PROFILES,
+  frameSize,
   isAudioMime,
   isImageMime,
   isVideoMime,
@@ -24,7 +25,7 @@ import {
   type RenderQuality,
 } from "./render-manifest";
 import type { LoudnessReport } from "./render-audio";
-import { clipFades, isDefaultGrade } from "./render-effects";
+import { clipFades, isDefaultFrame, isDefaultGrade } from "./render-effects";
 import { aiLabelRecordFor, badgePlacementOf } from "./ai-label";
 import {
   S3_PREFIX,
@@ -232,6 +233,8 @@ export function buildRenderManifest(
   options: RenderOptions = {},
 ): RenderBuild {
   const profile = RENDER_PROFILES[quality];
+  // 画幅（E5 / ADR-0170）：成片尺寸由画幅定，短边固定、长边跟着形状走
+  const size = frameSize(quality, view.frame.aspect);
   const ordered = [...view.clips].sort((a, b) => a.startMs - b.startMs);
   let placeholders = 0;
   // 转场（E4 / ADR-0169）：接缝上的淡入淡出，按「后一段的 transitionIn」算两侧。
@@ -255,7 +258,7 @@ export function buildRenderManifest(
         durationMs: clip.durationMs,
         remote: visual.remote,
         mediaKind: visual.mediaKind ?? "video",
-        fallback: drawPlaceholder(clip, profile.width, profile.height),
+        fallback: drawPlaceholder(clip, size.width, size.height),
         label,
         ...fadeFields,
       };
@@ -266,12 +269,13 @@ export function buildRenderManifest(
         media: visual.media,
         mediaKind: visual.mediaKind,
         ...fadeFields,
+        ...(clip.focus ? { focus: clip.focus } : {}),
       };
     }
     placeholders += 1;
     return {
       durationMs: clip.durationMs,
-      media: drawPlaceholder(clip, profile.width, profile.height),
+      media: drawPlaceholder(clip, size.width, size.height),
       mediaKind: "image" as const,
       placeholder: true,
       label,
@@ -342,17 +346,17 @@ export function buildRenderManifest(
 
   // 角标永远带：AI 生成标识是合规要求，不能跟着字幕一起关
   const overlays = [
-    badgeOverlay(view.totalMs, profile.width, profile.height, options.platform ?? "generic"),
+    badgeOverlay(view.totalMs, size.width, size.height, options.platform ?? "generic"),
     ...(options.subtitles === false
       ? []
-      : subtitleOverlays(view, styleId, profile.width, profile.height)),
+      : subtitleOverlays(view, styleId, size.width, size.height)),
   ];
   return {
     manifest: {
       title: view.title,
       quality,
-      width: profile.width,
-      height: profile.height,
+      width: size.width,
+      height: size.height,
       fps: profile.fps,
       totalMs: view.totalMs,
       clips,
@@ -369,6 +373,8 @@ export function buildRenderManifest(
       compliance,
       // 调色（E4）：默认档不传，清单与以前逐字一致
       ...(isDefaultGrade(view.grade) ? {} : { grade: view.grade }),
+      // 画幅（E5）：默认画幅不传，清单与以前逐字一致
+      ...(isDefaultFrame(view.frame) ? {} : { frame: view.frame }),
     },
     placeholders,
   };

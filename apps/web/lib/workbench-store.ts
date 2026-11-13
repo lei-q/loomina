@@ -6,6 +6,7 @@ import {
   BlockingSchema,
   blockingProblem,
   CompositionSchema,
+  FrameSchema,
   GradeSchema,
   LightingSchema,
   LookSchema,
@@ -18,6 +19,7 @@ import {
   sheetSlotsOf,
   SHEET_ANGLES,
   SHEET_LABELS,
+  ShotFocusSchema,
   shotAnchors,
   StagingMarkSchema,
   TransitionSchema,
@@ -27,6 +29,7 @@ import {
   type BeatKind,
   type Character,
   type Composition,
+  type Frame as FrameSetting,
   type GateStage,
   type Grade,
   type Lighting,
@@ -45,6 +48,7 @@ import {
   type Scene,
   type SheetView,
   type Shot,
+  type ShotFocus,
   type ShotPurpose,
   type StagingMark,
   type StoryArc,
@@ -336,6 +340,16 @@ type WorkbenchState = {
    * 只影响导出，不影响提示词——已出的图不用重做。
    */
   setGrade: (grade: Grade) => boolean;
+  /**
+   * 改输出画幅与适配方式（E5 / ADR-0170）：整块写一条 `project.updated { frame }`。
+   * 只影响导出，不影响提示词——已出的图不用重做。
+   */
+  setFrame: (frame: FrameSetting) => boolean;
+  /**
+   * 改这一镜的裁切焦点（E5 / ADR-0170）：一条 `shot.updated { focus }`。
+   * `undefined` 恢复居中。只对裁切有意义，换画幅、重渲都跟着走。
+   */
+  setShotFocus: (shotId: string, focus: ShotFocus | undefined) => boolean;
   /**
    * 新增或改一条授权记录（H7 / ADR-0167）：整条写一条 `rights.updated`，按 id 幂等。
    * 只留档，不拦生成；缺哪一条由合规预检提示。
@@ -1365,6 +1379,53 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       return false;
     }
     const event: ProjectEvent = { type: "project.updated", at: stamp(), grade: next };
+    set({ project: applyEvent(project, event), events: [...events, event], editError: undefined });
+    return true;
+  },
+
+  setFrame: (frame) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const parsed = FrameSchema.safeParse(frame);
+    if (!parsed.success) {
+      set({ editError: `画幅不合法：${parsed.error.issues[0]?.message ?? "未知原因"}` });
+      return false;
+    }
+    const next = parsed.data;
+    const current = project.frame;
+    if (current.aspect === next.aspect && current.fit === next.fit) return false;
+    const event: ProjectEvent = { type: "project.updated", at: stamp(), frame: next };
+    set({ project: applyEvent(project, event), events: [...events, event], editError: undefined });
+    return true;
+  },
+
+  setShotFocus: (shotId, focus) => {
+    if (get().readOnly) {
+      set({ editError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) {
+      set({ editError: "找不到这一镜。" });
+      return false;
+    }
+    let next: ShotFocus | undefined;
+    if (focus) {
+      const parsed = ShotFocusSchema.safeParse(focus);
+      if (!parsed.success) {
+        set({ editError: `裁切焦点不合法：${parsed.error.issues[0]?.message ?? "未知原因"}` });
+        return false;
+      }
+      next = parsed.data;
+    }
+    if (JSON.stringify(shot.focus ?? null) === JSON.stringify(next ?? null)) return false;
+    const event: ProjectEvent = {
+      type: "shot.updated",
+      at: stamp(),
+      shotId: shot.id,
+      patch: { focus: next },
+    };
     set({ project: applyEvent(project, event), events: [...events, event], editError: undefined });
     return true;
   },

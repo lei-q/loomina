@@ -51,6 +51,7 @@ type StageTool =
   | "publish"
   | "rights"
   | "grade"
+  | "frame"
   | "language";
 
 const STAGE_TOOLS: Record<StageName, StageTool[]> = {
@@ -70,7 +71,7 @@ const STAGE_TOOLS: Record<StageName, StageTool[]> = {
   ],
   关键帧: ["ledger", "budget", "preview"],
   声音: ["ledger", "budget", "preview"],
-  成片: ["ledger", "budget", "export", "silent", "publish", "grade", "rights"],
+  成片: ["ledger", "budget", "export", "silent", "publish", "grade", "frame", "rights"],
 };
 
 export type TopBarProps = {
@@ -141,6 +142,10 @@ export type TopBarProps = {
   onGrade?: () => void;
   /** 调色调过没有：调过就在按钮上标一下 */
   gradeCustomized?: boolean;
+  /** 打开画幅与裁切（E5 / ADR-0170）；给了才出现「画幅」 */
+  onFrame?: () => void;
+  /** 画幅调过没有：调过就在按钮上标一下 */
+  frameCustomized?: boolean;
   /** 打开镜头语言库（I1）；给了才出现「语言」 */
   onLanguage?: () => void;
   /** 当前镜有没有对上库里的说法：对上了就不标点 */
@@ -188,6 +193,8 @@ export function TopBar({
   rightsGapCount,
   onGrade,
   gradeCustomized,
+  onFrame,
+  frameCustomized,
   onLanguage,
   languageMatched,
 }: TopBarProps) {
@@ -636,6 +643,17 @@ export function TopBar({
           >
             调色
             {gradeCustomized && <span className="text-[9px] text-pick">·</span>}
+          </button>
+        )}
+        {shows("frame") && onFrame && (
+          <button
+            type="button"
+            onClick={onFrame}
+            title="画幅与裁切：竖屏 / 横屏 / 方形，放不下时留边、裁切或模糊填充；只影响导出，不花钱"
+            className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            画幅
+            {frameCustomized && <span className="text-[9px] text-pick">·</span>}
           </button>
         )}
         {shows("language") && onLanguage && (

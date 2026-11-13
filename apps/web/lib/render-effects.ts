@@ -11,8 +11,13 @@
  */
 
 import {
+  DEFAULT_FRAME,
   DEFAULT_GRADE,
+  type Frame,
+  type FrameAspect,
+  type FrameFit,
   type Grade,
+  type ShotFocus,
   type TimelineItem,
   type Transition,
   type TransitionKind,
@@ -236,4 +241,110 @@ export function gradeCssFilter(grade: Grade | undefined): string {
   if (value.temperature === "warm") bits.push("sepia(0.16)");
   if (value.temperature === "cool") bits.push("hue-rotate(-8deg) saturate(0.96)");
   return bits.join(" ");
+}
+
+/* ------------------------------------------------------------------ */
+/* 画幅（E5 / ADR-0170）                                                */
+/* ------------------------------------------------------------------ */
+
+export const FRAME_ASPECT_LABEL: Record<FrameAspect, string> = {
+  "9:16": "竖屏 9:16",
+  "16:9": "横屏 16:9",
+  "1:1": "方形 1:1",
+};
+
+export const FRAME_FIT_LABEL: Record<FrameFit, string> = {
+  pad: "留边",
+  crop: "裁切",
+  blur: "模糊填充",
+};
+
+export const FRAME_FIT_BLURB: Record<FrameFit, string> = {
+  pad: "整幅画面缩到放得下，空出来的地方填深色。最稳，什么都不切。",
+  crop: "铺满画幅，多出来的部分切掉。主体靠「留住哪一块」定，切得狠但满屏。",
+  blur: "画面缩到放得下，空出来的地方用同一帧放大模糊填满。保住构图又不留黑边。",
+};
+
+/** 留边的底色：与预览播放器的底色一致，换画幅时看不出拼缝 */
+const PAD_COLOR = "0x0C0C0D";
+
+/** 这一份画幅设置是不是默认：界面据此显示「没动过」，渲染时据此走老路径 */
+export function isDefaultFrame(frame: Frame | undefined): boolean {
+  const value = frame ?? DEFAULT_FRAME;
+  return value.aspect === DEFAULT_FRAME.aspect && value.fit === DEFAULT_FRAME.fit;
+}
+
+/** 一句人话：面板、导出提示与历史都用它 */
+export function frameLine(frame: Frame | undefined): string {
+  const value = frame ?? DEFAULT_FRAME;
+  if (isDefaultFrame(value)) return "竖屏 9:16，留边";
+  return `${FRAME_ASPECT_LABEL[value.aspect]}，${FRAME_FIT_LABEL[value.fit]}`;
+}
+
+/** 一句人话说明焦点在哪儿：`focus` 缺省是居中 */
+export function focusLine(focus: ShotFocus | undefined): string {
+  if (!focus) return "居中";
+  const horizontal = focus.x < 0.4 ? "偏左" : focus.x > 0.6 ? "偏右" : "";
+  const vertical = focus.y < 0.4 ? "偏上" : focus.y > 0.6 ? "偏下" : "";
+  if (!horizontal && !vertical) return "居中";
+  return `${vertical}${horizontal}`;
+}
+
+/**
+ * 一段的取景链（E5 / ADR-0170）：把任意尺寸的素材规整成成片画幅。
+ *
+ * 三种适配方式各是一条链，出口统一叫 `frame{i}`：
+ * - `pad`：缩到放得下，留边填深色；
+ * - `crop`：放大到铺满，按 `focus` 决定留住哪一块；
+ * - `blur`：同一帧拆成两路——放大模糊的当底，缩小的放中间。
+ *
+ * 出口统一带 `setsar=1`：像素形状在这里定死，后面的 fps / trim / 淡变不再管它。
+ */
+export function frameChain(
+  frame: Frame | undefined,
+  size: { width: number; height: number },
+  focus: ShotFocus | undefined,
+  index: number,
+): { statements: string[]; out: string } {
+  const value = frame ?? DEFAULT_FRAME;
+  const { width, height } = size;
+  const out = `frame${index}`;
+  const input = `${index}:v`;
+
+  if (value.fit === "crop") {
+    const fx = (focus?.x ?? 0.5).toFixed(3);
+    const fy = (focus?.y ?? 0.5).toFixed(3);
+    return {
+      statements: [
+        `[${input}]scale=${width}:${height}:force_original_aspect_ratio=increase,` +
+          `crop=${width}:${height}:(iw-${width})*${fx}:(ih-${height})*${fy},` +
+          `setsar=1[${out}]`,
+      ],
+      out,
+    };
+  }
+
+  if (value.fit === "blur") {
+    // 模糊半径跟着画幅走：短边越窄，半径越小，否则整个底会糊成一块色
+    const sigma = Math.max(8, Math.round(Math.min(width, height) / 20));
+    return {
+      statements: [
+        `[${input}]split=2[bgIn${index}][fgIn${index}]`,
+        `[bgIn${index}]scale=${width}:${height}:force_original_aspect_ratio=increase,` +
+          `crop=${width}:${height},gblur=sigma=${sigma},setsar=1[bg${index}]`,
+        `[fgIn${index}]scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
+          `setsar=1[fg${index}]`,
+        `[bg${index}][fg${index}]overlay=(W-w)/2:(H-h)/2[${out}]`,
+      ],
+      out,
+    };
+  }
+
+  return {
+    statements: [
+      `[${input}]scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
+        `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=${PAD_COLOR},setsar=1[${out}]`,
+    ],
+    out,
+  };
 }

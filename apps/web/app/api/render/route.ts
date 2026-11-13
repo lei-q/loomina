@@ -29,6 +29,7 @@ import {
 } from "@/lib/render-audio";
 import {
   fadeFilters,
+  frameChain,
   gradeFilters,
 } from "@/lib/render-effects";
 import {
@@ -352,17 +353,23 @@ function buildCommand(
       },
       manifestClip.durationMs,
     );
-    const tail = `fps=${manifest.fps},setsar=1,${
+    const tail = `fps=${manifest.fps},${
       clip.mediaKind === "video"
         ? `tpad=stop_mode=clone:stop_duration=${duration},`
         : ""
     }trim=duration=${duration},setpts=PTS-STARTPTS${
       fades.length ? `,${fades.join(",")}` : ""
     },format=yuv420p[v${index}]`;
-    filters.push(
-      `[${index}:v]scale=${manifest.width}:${manifest.height}:force_original_aspect_ratio=decrease,` +
-        `pad=${manifest.width}:${manifest.height}:(ow-iw)/2:(oh-ih)/2:color=0x0C0C0D,${tail}`,
+    // 取景（E5 / ADR-0170）：留边 / 裁切 / 模糊填充三条链，出口都已经是成片尺寸。
+    // 画幅是默认值（9:16 留边）时与以前的滤镜逐字一致。
+    const chain = frameChain(
+      manifest.frame,
+      { width: manifest.width, height: manifest.height },
+      manifestClip.focus,
+      index,
     );
+    filters.push(...chain.statements);
+    filters.push(`[${chain.out}]${tail}`);
   });
 
   overlays.forEach((overlayPath) => {

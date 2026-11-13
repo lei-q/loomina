@@ -1,7 +1,9 @@
 import type {
+  Frame,
   Grade,
   MusicCue,
   Project,
+  ShotFocus,
   SubtitleLayout,
   Take,
   TimelineItem,
@@ -264,6 +266,8 @@ export type EditClip = {
    * 第一段恒为 `undefined`——它前面没有画面。
    */
   transitionIn?: Transition;
+  /** 换画幅时留住哪一块（E5 / ADR-0170）；`undefined` 是居中 */
+  focus?: ShotFocus;
 };
 
 export type EditMusic = {
@@ -304,6 +308,8 @@ export type EditView = {
   subtitleCustom: boolean;
   /** 调色（E4 / ADR-0169）：导出时对画面做的色彩调整 */
   grade: Grade;
+  /** 画幅与适配（E5 / ADR-0170）：导出时裁成什么形状、多出来的地方怎么补 */
+  frame: Frame;
   totalMs: number;
   totalSec: number;
   /** 时间线里有几镜完全没有画面 */
@@ -504,6 +510,7 @@ export function toEditView(
           sceneCode: scene?.code || `S${(scene?.index ?? 0) + 1}`,
           locked: stageShot.locked,
           ...(item.transitionIn ? { transitionIn: item.transitionIn } : {}),
+          ...(shot.focus ? { focus: shot.focus } : {}),
           takes: stageShot.takes.map((option) => ({
             id: option.id,
             no: option.no,
@@ -557,6 +564,7 @@ export function toEditView(
     subtitleStyle,
     subtitleCustom: isCustomSubtitleLayout(project.subtitleLayout),
     grade: project.grade,
+    frame: project.frame,
     totalMs,
     totalSec: Math.round(totalMs / 100) / 10,
     noPicture: clips.filter((clip) => !clip.hasPicture).length,

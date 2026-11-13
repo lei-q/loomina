@@ -4030,6 +4030,49 @@ describe("成片（ADR-0086）", () => {
     expect(state().editError).toContain("第一段");
   });
 
+  it("改画幅写一条 project.updated，不动调色与画面风格（E5 / ADR-0170）", () => {
+    const lookBefore = state().project.look;
+    const gradeBefore = state().project.grade;
+    const before = state().events.length;
+    expect(state().setFrame({ aspect: "16:9", fit: "crop" })).toBe(true);
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "project.updated" });
+    expect(state().project.frame).toEqual({ aspect: "16:9", fit: "crop" });
+    expect(state().project.look).toEqual(lookBefore);
+    expect(state().project.grade).toEqual(gradeBefore);
+    expect(rebuild(state().events).frame).toEqual(state().project.frame);
+
+    // 没变就不写
+    const count = state().events.length;
+    expect(state().setFrame({ aspect: "16:9", fit: "crop" })).toBe(false);
+    expect(state().events).toHaveLength(count);
+  });
+
+  it("裁切焦点按镜头存，回到居中时把字段清掉（E5 / ADR-0170）", () => {
+    const shot = state().project.shots[0]!;
+    expect(state().setShotFocus(shot.id, { x: 0.2, y: 0.8 })).toBe(true);
+    expect(state().project.shots.find((item) => item.id === shot.id)?.focus).toEqual({ x: 0.2, y: 0.8 });
+    expect(state().events.at(-1)?.type).toBe("shot.updated");
+    expect(rebuild(state().events)).toEqual(state().project);
+
+    // 同一个焦点不写第二遍
+    const count = state().events.length;
+    expect(state().setShotFocus(shot.id, { x: 0.2, y: 0.8 })).toBe(false);
+    expect(state().events).toHaveLength(count);
+
+    // undefined 是「回到居中」，字段消失而不是写 {0.5, 0.5}
+    expect(state().setShotFocus(shot.id, undefined)).toBe(true);
+    expect(state().project.shots.find((item) => item.id === shot.id)?.focus).toBeUndefined();
+  });
+
+  it("裁切焦点越界拒绝，不悄悄夹到边上", () => {
+    const shot = state().project.shots[0]!;
+    expect(state().setShotFocus(shot.id, { x: 1.4, y: 0.5 })).toBe(false);
+    expect(state().editError).toContain("裁切焦点不合法");
+    expect(state().setShotFocus("nope", { x: 0.5, y: 0.5 })).toBe(false);
+    expect(state().editError).toContain("找不到这一镜");
+  });
+
   it("转场可以改回硬切，同一个值不写重复事件", () => {
     state().autoCutTimeline();
     const id = state().project.timeline.items[1]!.id;

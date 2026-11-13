@@ -243,6 +243,64 @@ describe("project.updated", () => {
     ).toThrow(/调色不合法/);
   });
 
+  it("画幅整块替换，缺省项补齐默认值（E5 / ADR-0170）", () => {
+    const project = load();
+    const next = applyEvent(project, {
+      type: "project.updated",
+      at: AT,
+      frame: { aspect: "16:9", fit: "crop" },
+    });
+    expect(next.frame).toEqual({ aspect: "16:9", fit: "crop" });
+    // 画幅不是风格：look 与调色都原样
+    expect(next.look).toEqual(project.look);
+    expect(next.grade).toEqual(project.grade);
+
+    const partial = applyEvent(project, {
+      type: "project.updated",
+      at: AT,
+      // @ts-expect-error 只给形状，适配方式补默认值
+      frame: { aspect: "1:1" },
+    });
+    expect(partial.frame).toEqual({ aspect: "1:1", fit: "pad" });
+
+    expect(() =>
+      applyEvent(load(), {
+        type: "project.updated",
+        at: AT,
+        // @ts-expect-error 画幅只有三种
+        frame: { aspect: "4:3" },
+      }),
+    ).toThrow(/画幅不合法/);
+  });
+
+  it("新项目的画幅默认竖屏留边：旧项目重放出来与以前同构", () => {
+    expect(load().frame).toEqual({ aspect: "9:16", fit: "pad" });
+  });
+
+  it("裁切焦点按镜头存，越界拒绝（E5 / ADR-0170）", () => {
+    const project = load();
+    const shot = project.shots[0]!;
+    const next = applyEvent(project, {
+      type: "shot.updated",
+      at: AT,
+      shotId: shot.id,
+      patch: { focus: { x: 0.2, y: 0.8 } },
+    });
+    expect(next.shots.find((item) => item.id === shot.id)?.focus).toEqual({ x: 0.2, y: 0.8 });
+    // 别的镜头不受影响
+    expect(next.shots.filter((item) => item.id !== shot.id).every((item) => !item.focus)).toBe(true);
+
+    expect(() =>
+      applyEvent(project, {
+        type: "shot.updated",
+        at: AT,
+        shotId: shot.id,
+        // 0–1 是运行时的约束，类型上只是个 number：越界要在落库前拦住
+        patch: { focus: { x: 1.4, y: 0.5 } },
+      }),
+    ).toThrow(/裁切焦点不合法/);
+  });
+
   it("重试上限越界或不是整数就拒绝", () => {
     for (const bad of [0, 6, 2.5]) {
       expect(() =>

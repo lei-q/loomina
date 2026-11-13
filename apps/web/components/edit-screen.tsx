@@ -46,7 +46,7 @@ import { clampedDeltaMs, dragDeltaMs } from "@/lib/track-drag";
 import { cancelRender, exportMp4 } from "@/lib/render-client";
 import { hydrateView } from "@/lib/asset-hydrate";
 import { assetHref } from "@/lib/asset-uri";
-import { RENDER_PROFILES, type RenderQuality } from "@/lib/render-manifest";
+import { RENDER_PROFILES, frameSize, type RenderQuality } from "@/lib/render-manifest";
 import { stageStateOf } from "@/lib/stage-flow";
 import type { LoudnessReport } from "@/lib/render-audio";
 import {
@@ -73,7 +73,14 @@ import {
 } from "@/lib/cover";
 import { canPreviewFrames } from "@/lib/preview-frame";
 import { silentWatchOfEdit } from "@/lib/silent-watch";
-import { clipFades, gradeCssFilter, isDefaultGrade } from "@/lib/render-effects";
+import {
+  clipFades,
+  focusLine,
+  gradeCssFilter,
+  isDefaultFrame,
+  isDefaultGrade,
+} from "@/lib/render-effects";
+import { FramePanel, type FrameShot } from "@/components/frame-panel";
 import { rightsReport } from "@/lib/rights";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
@@ -411,6 +418,8 @@ export function EditScreen() {
   const upsertRights = useWorkbench((state) => state.upsertRights);
   const removeRights = useWorkbench((state) => state.removeRights);
   const setGrade = useWorkbench((state) => state.setGrade);
+  const setFrame = useWorkbench((state) => state.setFrame);
+  const setShotFocus = useWorkbench((state) => state.setShotFocus);
   const setTimelineTransition = useWorkbench((state) => state.setTimelineTransition);
 
   useEffect(() => {
@@ -434,6 +443,8 @@ export function EditScreen() {
   const [rightsOpen, setRightsOpen] = useState(false);
   // 调色与转场（E4 / ADR-0169）：只影响导出，不改时间线与提示词
   const [gradeOpen, setGradeOpen] = useState(false);
+  // 画幅与裁切（E5 / ADR-0170）：同样只影响导出
+  const [frameOpen, setFrameOpen] = useState(false);
   const [title, setTitle] = useState(project.title);
   const [description, setDescription] = useState("");
   const [topics, setTopics] = useState("短剧,AI创作");
@@ -531,9 +542,13 @@ export function EditScreen() {
         topics,
         durationMs: view.totalMs,
         platform,
+        // 按实际画幅预检（E5）：改成横屏后，只收 9:16 的平台要在这里就拦住，
+        // 不能等到导出完才发现规格不符
+        width: frameSize("final", project.frame.aspect).width,
+        height: frameSize("final", project.frame.aspect).height,
         ...(lastRender ? { fileBytes: lastRender.bytes } : {}),
       }),
-    [project, title, description, topics, view.totalMs, platform, lastRender],
+    [project, title, description, topics, view.totalMs, platform, lastRender, project.frame.aspect],
   );
   // 生成结果复核（H6）：会进成片的每一条，逐条给作者看
   const review = useMemo(() => reviewSummaryOf(project), [project]);
@@ -541,8 +556,9 @@ export function EditScreen() {
     () =>
       validatePlatform(platformSpecOf(platform), {
         durationMs: view.totalMs,
-        width: 1080,
-        height: 1920,
+        // 按实际画幅校验（E5）：改成横屏后，只收 9:16 的平台会在这里拦下来
+        width: frameSize("final", project.frame.aspect).width,
+        height: frameSize("final", project.frame.aspect).height,
         fps: 30,
         codec: "H.264",
         title,
@@ -550,7 +566,7 @@ export function EditScreen() {
         // 导出过才有实际体积与码率；没有就是「导出后再核」
         ...(lastRender ? { fileBytes: lastRender.bytes } : {}),
       }),
-    [platform, view.totalMs, title, topics, lastRender],
+    [platform, view.totalMs, title, topics, lastRender, project.frame.aspect],
   );
   const acknowledged = report.review > 0 && ackSignature === report.signature;
   const gateOpen = report.ok && (report.review === 0 || acknowledged);
@@ -629,6 +645,24 @@ export function EditScreen() {
   })();
   /** 调色（E4）在预览里的近似：CSS 滤镜对上三档对比 / 饱和 / 色温 */
   const gradeCss = gradeCssFilter(project.grade);
+  // 画幅（E5）：预览按成片形状摆，适配方式决定画面怎么填进去
+  const frameCssRatio = project.frame.aspect.replace(":", " / ");
+  const frameCrop = project.frame.fit === "crop";
+  const frameBlur = project.frame.fit === "blur";
+  const currentFocus = current?.focus;
+  const frameObjectPosition = `${Math.round((currentFocus?.x ?? 0.5) * 100)}% ${Math.round((currentFocus?.y ?? 0.5) * 100)}%`;
+  // 画幅面板的每一镜：缩略图 + 现在留住哪一块
+  const frameShots: FrameShot[] = useMemo(
+    () =>
+      view.clips.map((clip) => ({
+        shotId: clip.shotId,
+        label: shotLabel(clip.shotNo),
+        startMs: clip.startMs,
+        ...(clip.stillUri ? { still: assetHref(clip.stillUri) } : {}),
+        ...(clip.focus ? { focus: clip.focus } : {}),
+      })),
+    [view.clips],
+  );
 
   useEffect(() => {
     if (view.clips.length === 0) return;
@@ -1091,6 +1125,8 @@ export function EditScreen() {
         unpublishedCount={unpublishedCount}
         onGrade={() => setGradeOpen(true)}
         gradeCustomized={!isDefaultGrade(project.grade)}
+        onFrame={() => setFrameOpen(true)}
+        frameCustomized={!isDefaultFrame(project.frame)}
         onRights={() => setRightsOpen(true)}
         rightsGapCount={rightsGapCount}
       />
@@ -1162,8 +1198,21 @@ export function EditScreen() {
               <section aria-label="成片预览">
                 <div
                   className="relative w-full overflow-hidden border border-line bg-black"
-                  style={{ aspectRatio: "9 / 16", containerType: "inline-size" }}
+                  style={{ aspectRatio: frameCssRatio, containerType: "inline-size" }}
                 >
+                  {/* 模糊填充（E5）：同一帧放大模糊垫在后面，画面本体缩进去 */}
+                  {frameBlur && (current?.uri || current?.stillUri) && (
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none absolute -inset-[6%]"
+                      style={{
+                        backgroundImage: `url(${assetHref(current.uri ?? current.stillUri ?? "")})`,
+                        backgroundSize: "cover",
+                        backgroundPosition: "center",
+                        filter: "blur(18px) brightness(.55)",
+                      }}
+                    />
+                  )}
                   {current?.uri ? (
                     <video
                       key={current.id}
@@ -1180,16 +1229,28 @@ export function EditScreen() {
                           // 解不开的素材没必要拦播放
                         }
                       }}
-                      className="absolute inset-0 h-full w-full object-cover"
-                      style={gradeCss ? { filter: gradeCss } : undefined}
+                      className={cn(
+                        "absolute inset-0 h-full w-full",
+                        frameCrop ? "object-cover" : "object-contain",
+                      )}
+                      style={{
+                        objectPosition: frameObjectPosition,
+                        ...(gradeCss ? { filter: gradeCss } : {}),
+                      }}
                     />
                   ) : current?.stillUri ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={assetHref(current.stillUri)}
                       alt={`${shotLabel(current.shotNo)} 的画面`}
-                      className="absolute inset-0 h-full w-full object-cover"
-                      style={gradeCss ? { filter: gradeCss } : undefined}
+                      className={cn(
+                        "absolute inset-0 h-full w-full",
+                        frameCrop ? "object-cover" : "object-contain",
+                      )}
+                      style={{
+                        objectPosition: frameObjectPosition,
+                        ...(gradeCss ? { filter: gradeCss } : {}),
+                      }}
                     />
                   ) : (
                     <div
@@ -1405,6 +1466,41 @@ export function EditScreen() {
                       ))}
                     </div>
                   )}
+
+                  {/* 画幅（E5）：一行摘要，点开抽屉改形状与每一镜的裁切焦点 */}
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[8.5px]">
+                    <span className="tracking-[.08em] text-muted-2">画幅</span>
+                    <button
+                      type="button"
+                      onClick={() => setFrameOpen(true)}
+                      title="点开改画幅与每一镜的裁切焦点"
+                      className={cn(
+                        "tnum rounded-token border px-1.5 py-px transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text",
+                        isDefaultFrame(project.frame)
+                          ? "border-line text-muted-2"
+                          : "border-pick/60 text-text",
+                      )}
+                    >
+                      {project.frame.aspect} ·{" "}
+                      {project.frame.fit === "pad"
+                        ? "留边"
+                        : project.frame.fit === "crop"
+                          ? "裁切"
+                          : "模糊填充"}
+                    </button>
+                    {project.frame.fit === "crop" && (
+                      <span className="text-muted-2">
+                        {view.clips.filter((clip) => clip.focus).length > 0
+                          ? `${view.clips.filter((clip) => clip.focus).length} 镜设过焦点`
+                          : "全部居中"}
+                      </span>
+                    )}
+                    {current && project.frame.fit === "crop" && (
+                      <span className="text-muted-2">
+                        · 当前 {shotLabel(current.shotNo)} {focusLine(currentFocus)}
+                      </span>
+                    )}
+                  </div>
 
                   <div className="mt-4 flex flex-wrap items-baseline justify-between gap-2">
                     <h2 className="text-[11px] tracking-[.06em] text-text">字幕</h2>
@@ -2480,7 +2576,8 @@ export function EditScreen() {
                           >
                             {option.label}
                             <span className="ml-1.5 text-[9px] text-muted-2">
-                              {option.width}×{option.height} · {option.fps}fps
+                              {frameSize(id, project.frame.aspect).width}×
+                              {frameSize(id, project.frame.aspect).height} · {option.fps}fps
                             </span>
                           </button>
                         );
@@ -2655,7 +2752,7 @@ export function EditScreen() {
                   </p>
 
                   <p className="mt-3 text-[9.5px] leading-[1.7] text-muted-2">
-                    成片 MP4 由本机 ffmpeg 渲染：草稿 540×960 / 24fps 出处快、定稿 1080×1920 / 30fps 画质高；字幕可选烧进画面，「AI 生成」角标始终保留。
+                    成片 MP4 由本机 ffmpeg 渲染：草稿短边 540 / 24fps 出处快、定稿短边 1080 / 30fps 画质高；画幅按「画幅」里的设置；字幕可选烧进画面，「AI 生成」角标始终保留。
                     提交后进入渲染队列，同一时间只跑一条，排队位置与编码进度显示在按钮下方；
                     远端素材只从白名单域名下载，取不到时用首帧或占位图顶上并计数。
                   </p>
@@ -2695,6 +2792,16 @@ export function EditScreen() {
           onSave={(packageId, patch) => recordPublishReceipt(packageId, patch)}
           readOnly={Boolean(readOnly)}
           onClose={() => setPublishOpen(false)}
+        />
+      )}
+      {frameOpen && (
+        <FramePanel
+          frame={project.frame}
+          onSave={(next) => setFrame(next)}
+          shots={frameShots}
+          onFocus={(shotId, focus) => setShotFocus(shotId, focus)}
+          readOnly={Boolean(readOnly)}
+          onClose={() => setFrameOpen(false)}
         />
       )}
       {gradeOpen && (

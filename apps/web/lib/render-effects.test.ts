@@ -8,10 +8,16 @@ import {
   gradeFilters,
   gradeLine,
   gradePresetById,
+  focusLine,
+  frameChain,
+  frameLine,
+  isDefaultFrame,
   isDefaultGrade,
 } from "./render-effects";
 
 const cut = { durationMs: 1000 };
+/** 留边底色：与 render-effects 里的常量同一份，测试不另写一份颜色 */
+const PAD_COLOR = "0x0C0C0D";
 const dip = (kind: "black" | "white", durationMs = 300, clipMs = 1000) => ({
   durationMs: clipMs,
   transitionIn: { kind, durationMs },
@@ -97,5 +103,57 @@ describe("调色（E4 / ADR-0169）", () => {
     expect(gradeLine(undefined)).toBe("原样，不调色");
     const thriller = gradePresetById("thriller")!;
     expect(gradeLine({ presetId: "thriller", ...thriller.value })).toContain("冷峻：");
+  });
+});
+
+describe("画幅（E5 / ADR-0170）", () => {
+  const size = { width: 1080, height: 1920 };
+
+  it("默认画幅不产生任何新滤镜：留边链与以前的 pad 一致", () => {
+    const chain = frameChain(undefined, size, undefined, 0);
+    expect(chain.statements).toEqual([
+      "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease," +
+        "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=" + PAD_COLOR + ",setsar=1[frame0]",
+    ]);
+    expect(chain.out).toBe("frame0");
+  });
+
+  it("裁切：放大铺满，按焦点决定留住哪一块", () => {
+    const chain = frameChain({ aspect: "16:9", fit: "crop" }, { width: 1920, height: 1080 }, { x: 0.25, y: 0.75 }, 2);
+    expect(chain.statements).toHaveLength(1);
+    const line = chain.statements[0]!;
+    expect(line).toContain("scale=1920:1080:force_original_aspect_ratio=increase");
+    expect(line).toContain("crop=1920:1080:(iw-1920)*0.250:(ih-1080)*0.750");
+    expect(line).toContain("[frame2]");
+  });
+
+  it("裁切没设焦点时居中", () => {
+    const line = frameChain({ aspect: "1:1", fit: "crop" }, { width: 1080, height: 1080 }, undefined, 0).statements[0]!;
+    expect(line).toContain("crop=1080:1080:(iw-1080)*0.500:(ih-1080)*0.500");
+  });
+
+  it("模糊填充：同一帧拆两路，模糊的当底、缩小的放中间", () => {
+    const chain = frameChain({ aspect: "16:9", fit: "blur" }, { width: 1920, height: 1080 }, undefined, 3);
+    expect(chain.statements).toHaveLength(4);
+    expect(chain.statements[0]).toBe("[3:v]split=2[bgIn3][fgIn3]");
+    expect(chain.statements[1]).toContain("gblur=sigma=");
+    expect(chain.statements[2]).toContain("force_original_aspect_ratio=decrease");
+    expect(chain.statements[3]).toBe("[bg3][fg3]overlay=(W-w)/2:(H-h)/2[frame3]");
+  });
+
+  it("默认画幅判定与一句人话", () => {
+    expect(isDefaultFrame(undefined)).toBe(true);
+    expect(isDefaultFrame({ aspect: "9:16", fit: "pad" })).toBe(true);
+    expect(isDefaultFrame({ aspect: "9:16", fit: "crop" })).toBe(false);
+    expect(frameLine(undefined)).toBe("竖屏 9:16，留边");
+    expect(frameLine({ aspect: "16:9", fit: "blur" })).toBe("横屏 16:9，模糊填充");
+  });
+
+  it("焦点的人话：偏上偏左分开说，居中不啰嗦", () => {
+    expect(focusLine(undefined)).toBe("居中");
+    expect(focusLine({ x: 0.5, y: 0.5 })).toBe("居中");
+    expect(focusLine({ x: 0.5, y: 0.2 })).toBe("偏上");
+    expect(focusLine({ x: 0.2, y: 0.2 })).toBe("偏上偏左");
+    expect(focusLine({ x: 0.8, y: 0.5 })).toBe("偏右");
   });
 });

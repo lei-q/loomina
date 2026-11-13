@@ -5,6 +5,7 @@ import {
   BlockingSchema,
   CameraSchema,
   CompositionSchema,
+  FrameSchema,
   GradeSchema,
   LightingSchema,
   LocationSpaceSchema,
@@ -14,6 +15,7 @@ import {
   MusicCueSchema,
   PerformanceSpecSchema,
   PublishPackageSchema,
+  ShotFocusSchema,
   StagingMarkSchema,
   TimelineItemSchema,
   TransitionSchema,
@@ -26,6 +28,7 @@ import type {
   RightsRecord,
   Character,
   DialogueLine,
+  Frame,
   GateStage,
   Grade,
   Id,
@@ -114,6 +117,10 @@ export type ProjectEvent =
        * 所以与 `look` 分开写——改调色不该让已出图的溯源失效。
        */
       grade?: Grade;
+      /**
+       * 输出画幅（E5 / ADR-0170）。整块替换：只影响导出，不改提示词。
+       */
+      frame?: Frame;
     }
   | {
       /**
@@ -852,6 +859,16 @@ function applyEventCore(
         next.grade = parsed.data;
         touched += 1;
       }
+      if (event.frame !== undefined) {
+        const parsed = FrameSchema.safeParse(event.frame);
+        if (!parsed.success) {
+          throw new Error(
+            `画幅不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`,
+          );
+        }
+        next.frame = parsed.data;
+        touched += 1;
+      }
       if (touched === 0) throw new Error("project.updated 没有要改的字段");
       return next;
     }
@@ -982,6 +999,14 @@ function applyEventCore(
           throw new Error(`构图模板不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`);
         }
         patch = { ...patch, composition: parsed.data };
+      }
+      // 裁切焦点（E5）：0–1 之外的数会让裁切框整个跑到画面外，不进日志
+      if (event.patch.focus !== undefined) {
+        const parsed = ShotFocusSchema.safeParse(event.patch.focus);
+        if (!parsed.success) {
+          throw new Error(`裁切焦点不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`);
+        }
+        patch = { ...patch, focus: parsed.data };
       }
       // 走位与机位坐标（B13）：越界、不在场、两点重合都不进日志
       if (event.patch.blocking !== undefined) {

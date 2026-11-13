@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   assertValidProject,
+  DEFAULT_FRAME,
   DEFAULT_GRADE,
   DEFAULT_LOOK,
   sheetSlotAssets,
@@ -570,6 +571,7 @@ export function projectFromStoryDraft(
     models: {},
     look: DEFAULT_LOOK,
     grade: DEFAULT_GRADE,
+    frame: DEFAULT_FRAME,
     budgetCny: options.budgetCny ?? 60,
     maxAttemptsPerShot: 3,
     onBudgetExceed: "block",

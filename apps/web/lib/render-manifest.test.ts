@@ -3,6 +3,7 @@ import {
   RENDER_FPS,
   RENDER_HEIGHT,
   RENDER_WIDTH,
+  frameSize,
   noSubtitleFileName,
   parseDataUri,
   renderFileName,
@@ -491,5 +492,78 @@ describe("清单里的转场与调色（E4 / ADR-0169）", () => {
     expect(ok.ok).toBe(false);
     if (ok.ok) return;
     expect(ok.error).toContain("调色");
+  });
+});
+
+describe("清单里的画幅与裁切（E5 / ADR-0170）", () => {
+  it("不传画幅就是 9:16 留边，清单里也不写这个字段", () => {
+    const ok = validateRenderManifest(manifest());
+    expect(ok.ok).toBe(true);
+    if (!ok.ok) return;
+    expect(ok.manifest.frame).toBeUndefined();
+    expect(ok.manifest.width).toBe(1080);
+    expect(ok.manifest.height).toBe(1920);
+  });
+
+  it("横屏与方形各有自己的尺寸，尺寸与画幅对不上就拒收", () => {
+    const wide = validateRenderManifest(
+      manifest({ frame: { aspect: "16:9", fit: "crop" }, width: 1920, height: 1080 }),
+    );
+    expect(wide.ok).toBe(true);
+    if (!wide.ok) return;
+    expect(wide.manifest.frame).toEqual({ aspect: "16:9", fit: "crop" });
+
+    const square = validateRenderManifest(
+      manifest({ frame: { aspect: "1:1", fit: "blur" }, width: 1080, height: 1080 }),
+    );
+    expect(square.ok).toBe(true);
+
+    // 说了横屏却送竖屏尺寸：拒收，而不是按清单里的尺寸默默渲
+    const mismatch = validateRenderManifest(
+      manifest({ frame: { aspect: "16:9", fit: "crop" }, width: 1080, height: 1920 }),
+    );
+    expect(mismatch.ok).toBe(false);
+    if (mismatch.ok) return;
+    expect(mismatch.error).toContain("1920×1080");
+  });
+
+  it("画幅不合法拒收", () => {
+    const ok = validateRenderManifest(manifest({ frame: { aspect: "4:3" } }));
+    expect(ok.ok).toBe(false);
+    if (ok.ok) return;
+    expect(ok.error).toContain("画幅");
+  });
+
+  it("裁切焦点 0–1 之外拒收，缺省不写", () => {
+    const plain = validateRenderManifest(manifest());
+    expect(plain.ok && plain.manifest.clips[0]!.focus).toBeUndefined();
+
+    const focused = validateRenderManifest(
+      manifest({
+        frame: { aspect: "16:9", fit: "crop" },
+        width: 1920,
+        height: 1080,
+        clips: [
+          { durationMs: 1000, media: PNG, mediaKind: "image", focus: { x: 0.2, y: 0.8 } },
+        ],
+      }),
+    );
+    expect(focused.ok).toBe(true);
+    if (!focused.ok) return;
+    expect(focused.manifest.clips[0]!.focus).toEqual({ x: 0.2, y: 0.8 });
+
+    const bad = validateRenderManifest(
+      manifest({ clips: [{ durationMs: 1000, media: PNG, mediaKind: "image", focus: { x: 1.5 } }] }),
+    );
+    expect(bad.ok).toBe(false);
+    if (bad.ok) return;
+    expect(bad.error).toContain("裁切焦点");
+  });
+
+  it("草稿横屏是 960×540：短边固定，形状跟着画幅走", () => {
+    expect(frameSize("draft", "16:9")).toEqual({ width: 960, height: 540 });
+    expect(frameSize("draft", "1:1")).toEqual({ width: 540, height: 540 });
+    expect(frameSize("final", "1:1")).toEqual({ width: 1080, height: 1080 });
+    expect(frameSize("final", "9:16")).toEqual({ width: 1080, height: 1920 });
   });
 });

@@ -18,6 +18,7 @@ import {
 } from "./platforms";
 import { assColorOf } from "./speaker-color";
 import { clipFades } from "./render-effects";
+import { frameSize } from "./render-manifest";
 import {
   SAFE_AREA,
   resolveSubtitleStyle,
@@ -100,8 +101,9 @@ export function buildAss(
   styleId: SubtitleStyleId | SubtitleStyle = view.subtitleStyle,
 ): string {
   const style = resolveSubtitleStyle(styleId);
-  const width = 1080;
-  const height = 1920;
+  // 字幕的百分比按成片画幅换算（E5）：竖屏改成横屏后，同样的 cqw 落在更矮的
+  // 画面上会显得更大，PlayRes 必须跟着画幅走，否则导出与预览对不上。
+  const { width, height } = frameSize("final", view.frame.aspect);
   // cqw 是「画面宽度的百分比」；ASS 的 Fontsize 以 PlayResY 为基准，换算到高度上
   const fontSize = Math.round((style.fontSizeCqw / 100) * width * (height / width));
   const marginV = Math.round((style.bottomPct / 100) * height);
@@ -280,6 +282,7 @@ export function previewClips(view: EditView): PreviewClip[] {
       ...(fade.fadeOutMs > 0
         ? { fadeOut: { durationMs: fade.fadeOutMs, kind: fade.fadeOutKind } }
         : {}),
+      ...(clip.focus ? { focus: clip.focus } : {}),
       subtitles: clip.lines.flatMap((line) =>
         line.cues.map((cue) => ({
           startMs: cue.startMs - clip.startMs,
@@ -310,6 +313,10 @@ export function buildPreviewHtml(
     .map(([side, value]) => `${side}:${value}`)
     .join("; ");
   const record = aiLabelRecordFor(view);
+  // 画幅（E5）：舞台按成片形状摆，适配方式决定画面怎么填进去
+  const ratio = view.frame.aspect.replace(":", "/");
+  // 裁切时画面铺满、多出来的部分由 object-position 让出去；留边与模糊填充都是整幅放进去
+  const fitCss = view.frame.fit === "crop" ? "object-fit:cover;" : "object-fit:contain;";
   const data = {
     title: view.title,
     totalMs: view.totalMs,
@@ -335,9 +342,9 @@ body { min-height:100%; display:flex; flex-direction:column; align-items:center;
 header { width:100%; max-width:420px; display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
 h1 { margin:0; font-size:14px; font-weight:600; letter-spacing:.02em; }
 header span { color:var(--muted); font-size:11px; font-variant-numeric:tabular-nums; }
-.stage { position:relative; width:min(420px,100%); aspect-ratio:9/16; background:#000; border:1px solid var(--line); overflow:hidden; }
-.stage video { width:100%; height:100%; object-fit:cover; display:none; }
-.stage img { width:100%; height:100%; object-fit:cover; display:none; }
+.stage { position:relative; width:min(420px,100%); aspect-ratio:${ratio}; background:#000; border:1px solid var(--line); overflow:hidden; }
+.stage .fill { position:absolute; inset:-6%; width:112%; height:112%; object-fit:cover; filter:blur(18px) brightness(.55); display:none; z-index:0; }
+.stage video, .stage img { position:relative; width:100%; height:100%; ${fitCss} display:none; z-index:1; }
 .placeholder { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:12px; background:repeating-linear-gradient(45deg,#111,#111 12px,#151515 12px,#151515 24px); }
 .dip { position:absolute; inset:0; opacity:0; pointer-events:none; z-index:2; }
 .stage .safe { position:absolute; inset:${SAFE_AREA.topPct}% ${SAFE_AREA.sidePct}% ${SAFE_AREA.bottomPct}%; border:1px dashed rgba(242,242,239,.12); display:none; pointer-events:none; }
@@ -360,6 +367,7 @@ input[type=range] { flex:1; accent-color:var(--pick); }
 <body>
 <header><h1>${escapeHtml(view.title)}</h1><span>${view.clips.length} 镜 · ${seconds(view.totalMs)}s</span></header>
 <div class="stage" id="stage">
+  <div class="fill" id="fill"></div>
   <video id="video" playsinline></video>
   <img id="still" alt="">
   <div class="placeholder" id="placeholder">这一镜还没有画面</div>
@@ -377,6 +385,15 @@ input[type=range] { flex:1; accent-color:var(--pick); }
 const DATA = ${safeJson(data)};
 const video = document.getElementById("video");
 const still = document.getElementById("still");
+const fill = document.getElementById("fill");
+const FIT = ${safeJson(view.frame.fit)};
+function applyFocus(el) {
+  const focus = el && el.focus ? el.focus : null;
+  const x = focus ? Math.round(focus.x * 100) : 50;
+  const y = focus ? Math.round(focus.y * 100) : 50;
+  video.style.objectPosition = x + "% " + y + "%";
+  still.style.objectPosition = x + "% " + y + "%";
+}
 const placeholder = document.getElementById("placeholder");
 const subtitle = document.getElementById("subtitle");
 const playBtn = document.getElementById("play");
@@ -419,13 +436,19 @@ function render() {
     if (clip.video) {
       video.style.display = "block"; still.style.display = "none"; placeholder.style.display = "none";
       if (video.src !== clip.video) video.src = clip.video;
+      applyFocus(clip);
+      fill.style.display = FIT === "blur" ? "block" : "none";
+      fill.src = clip.still || clip.video || "";
       video.currentTime = Math.max(0, Math.min((elapsed - clip.startMs) / 1000, Math.max(0, clip.durationMs / 1000 - 0.05)));
       if (playing) video.play().catch(() => {});
     } else {
       video.pause(); video.style.display = "none";
+      fill.style.display = FIT === "blur" ? "block" : "none";
+      fill.src = clip.still || "";
       if (clip.still) {
         still.style.display = "block"; placeholder.style.display = "none";
         if (still.src !== clip.still) still.src = clip.still;
+        applyFocus(clip);
       } else {
         still.style.display = "none"; placeholder.style.display = "flex";
       }
@@ -565,6 +588,8 @@ export type PublishPackage = {
   /** 导出前的合规预检指纹与确认状态 */
   compliance?: RenderCompliance;
   subtitleStyle: SubtitleStyleId;
+  /** 导出画幅与适配方式（E5）：发布包记下这一版是什么形状 */
+  frame: { aspect: string; fit: string; width: number; height: number };
   /** 实际画出来的字号 / 底边距离 / 描边（D3）：调过版式时与档位默认值不同 */
   subtitleLayout: {
     fontSizeCqw: number;
@@ -601,10 +626,12 @@ export function buildPublishPackage(
   const spec = platformSpecOf(platform);
   const topics = options.topics.map((topic) => topic.trim()).filter(Boolean);
   const title = options.title.trim() || view.title;
+  // 按实际画幅校验（E5）：竖屏改成横屏后，抖音那类只收 9:16 的平台会拦下来
+  const size = frameSize("final", view.frame.aspect);
   const validation = validatePlatform(spec, {
     durationMs: view.totalMs,
-    width: 1080,
-    height: 1920,
+    width: size.width,
+    height: size.height,
     fps: 30,
     codec: "H.264",
     title,
@@ -652,6 +679,7 @@ export function buildPublishPackage(
     aiLabelBadge: badgePlacementOf(platform),
     ...(options.compliance ? { compliance: options.compliance } : {}),
     subtitleStyle: options.style,
+    frame: { aspect: view.frame.aspect, fit: view.frame.fit, width: size.width, height: size.height },
     subtitleLayout: {
       fontSizeCqw: view.subtitleStyle.fontSizeCqw,
       bottomPct: view.subtitleStyle.bottomPct,

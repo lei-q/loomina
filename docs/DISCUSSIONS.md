@@ -5249,3 +5249,38 @@ ADR-0029 定的是「图片接口不收参考图，只记进溯源」。用户�
 - 调色是 `eq` + `colorbalance` + `vignette` 的组合，不是真正的 LUT；「柯达 2383」那种颜色映射做不到（I3）。
 - 预览是近似：CSS 滤镜与 ffmpeg 滤镜不是同一个公式，抽屉与预览都写了「以导出为准」。
 - 服务端对不认识的清单字段保持宽容（旧客户端照样能渲），也就意味着「没带转场」与「转场被忽略」在服务端看来一样。
+
+## 第一百八十九次 · 2026-11-13 · 多比例适配与裁切焦点（E5）
+
+**问题**
+成片只有一个形状：`buildCommand` 把每段素材缩到 `RENDER_PROFILES` 写死的 540×960 / 1080×1920 里，`pad` 居中。同一集要发横屏平台（B 站、YouTube、X）或方形位（小红书、朋友圈）时，只能导完再拿别的软件裁——裁剪位置、字幕位置、角标位置全都要在 Loomina 之外重来一遍。`Project.look.aspect` 帮不上忙：它写进的是**生成提示词**，改它要重出全部图；分发时真正要改的是**导出**这一层。另一件事是裁切本身：竖屏 9:16 裁成横屏 16:9 只剩中间 56% 的高度，人站在画面上三分之一时，居中裁就把头裁掉了——没有「留住哪一块」的表达，裁切这个选项在短剧里没法用。
+
+**决定**
+- `Project.frame = { aspect: "9:16" | "16:9" | "1:1", fit: "pad" | "crop" | "blur" }` 管导出，与 `Look.aspect`（管提示词）分工，跟 E4 的 `grade` / `look` 同一套逻辑：改 `frame` 只重渲一遍，不花钱、不重出图。
+- 默认 `fit: "pad"`：它正是以前写死的 `scale + pad` 那条链，默认档不改变任何滤镜，旧项目重渲与以前逐字节同构。想铺满选 `crop`，想保住构图又不留黑边选 `blur`。
+- 成片尺寸按画幅推、短边固定：草稿 540×960 / 960×540 / 540×540，定稿 1080×1920 / 1920×1080 / 1080×1080。短边固定而不是长边固定——换画幅只换形状、不降清晰度，且平台对短边有 720 下限。
+- `frameChain` 编译三条链，出口统一 `setsar=1`，成为唯一知道「素材怎么变成成片尺寸」的地方：`pad`（缩到放得下、留边填底色）、`crop`（放大铺满、`crop=W:H:(iw-W)*fx:(ih-H)*fy`）、`blur`（`split=2`，底路放大模糊、前景缩小居中 `overlay`）。
+- 裁切焦点是 `Shot.focus?: { x, y }`（0–1 比例，缺省居中），**不做主体追踪**：认人脸要跑模型、还会认错且错得没提示；人物位置是作者最清楚的事，点一下九宫格比等一个可能认错的框更可靠。点一次之后换画幅、重渲都跟着走。走既有 `shot.updated { focus }`。
+- 两头校验：`shot.updated` 按 `ShotFocusSchema` 解析；`validateRenderManifest` 校验 `frame` 与每段 `focus`，画幅与尺寸对不上就拒收。预检与平台规格按**实际画幅**校验——选 16:9 发抖音时，画幅这一项当场变红，而不是导完才发现。
+- 界面：成片页顶栏「画幅」抽屉（三个形状 + 三种适配 + 导出尺寸 + 每一镜一行缩略图 / 焦点标记 / 3×3 九宫格）、时间线下一行摘要（`16:9 · 裁切 · 2 镜设过焦点 · 当前 SH-03 偏上`）。播放器按画幅摆形状，`crop` 用 `object-fit:cover` + `object-position` 近似、`blur` 垫一层同帧模糊；预览 HTML 同一套，非逐像素等价，以导出为准。ASS 的 `PlayRes` 跟着画幅走；发布包记 `frame: { aspect, fit, width, height }`。
+
+**产物**
+- `packages/ir/src/schema.ts`（`FRAME_ASPECTS` / `FRAME_FITS` / `FrameSchema` / `Frame` / `DEFAULT_FRAME`、`ShotFocusSchema` / `ShotFocus` / `DEFAULT_FOCUS`、`Project.frame`、`Shot.focus`）、`packages/ir/src/events.ts`（`project.updated { frame }`、`shot.updated { focus }` 校验）
+- `apps/web/lib/render-manifest.ts`（`FRAME_SIZES` / `frameSize` / `aspectOfSize`、`RenderClip.focus`、`RenderManifest.frame`、`frameOf` / `focusOf` 校验与尺寸一致性检查）、`apps/web/lib/render-effects.ts`（`frameChain`、`FRAME_*_LABEL`、`isDefaultFrame` / `frameLine` / `focusLine`）、`apps/web/app/api/render/route.ts`（每段先走取景链，再 fps / trim / 淡变）、`apps/web/lib/render-client.ts`（按画幅定尺寸、带出 `frame` 与每段 `focus`）
+- `apps/web/lib/edit.ts`（`EditClip.focus`、`EditView.frame`）、`apps/web/lib/export-cut.ts`（预览 HTML 的舞台比例 / `object-position` / 模糊底、ASS `PlayRes` 跟着画幅、发布包记 `frame`）、`apps/web/lib/history.ts`（「项目设置：画幅 …」「改 SH-0x：裁切焦点」）、`apps/web/lib/workbench-store.ts`（`setFrame` / `setShotFocus`）
+- `apps/web/components/frame-panel.tsx`（抽屉）、`top-bar.tsx`（「画幅」工具 + 点）、`edit-screen.tsx`（播放器按画幅、模糊底、时间线摘要、预检与平台校验按实际画幅、档位按钮显示实际尺寸）
+- 测试：`render-effects.test.ts`（+6）、`render-manifest.test.ts`（+5）、`workbench-store.test.ts`（+3）、`edit.test.ts`（+2）、`packages/ir/test/events.test.ts`（+3）
+- `docs/adr/0170-frame-and-focus.md`、`docs/FEATURES.md`、`docs/ROADMAP.md`、`docs/DATA-MODEL.md`
+
+**验证**
+- 全仓测试通过（apps/web 1065、pipeline 134、ir 235），四个 tsconfig 与 `pnpm build` 干净。
+- 真渲染：拿一张 540×960、上绿中红下蓝的三段图，走 `/api/render` 渲了四版——① 16:9 + `crop` + 焦点 `y=0.2`：960×540，采样 y=40/270 是绿、y=500 是红（留住上三分之一）；② 16:9 + `crop` + `y=0.8`：y=40 是红、y=270/500 是蓝（留住下三分之一）；③ 16:9 + `blur`：左右两侧是同一帧的模糊红，中间是缩进去的原图（截图 `/tmp/e5/blur.png`）；④ 不传 `frame`：540×960、居中纯红——与以前的导出一致。四版时长都是 1.208s，画幅不改时长。
+- 浏览器 `/edit`：顶栏「画幅」抽屉打开 → 选横屏 16:9 + 裁切 → 「草稿 960×540 · 定稿 1920×1080」→ 存画幅 → `SH-01` 点「偏上偏左」→ 摘要变 `16:9 · 裁切 · 1 镜设过焦点 · 当前 SH-01 偏上偏左`，播放器舞台变成 16:9，刷新后都还在；切到抖音时画幅项当场变红（`16:9 不在 抖音 接受的 9:16 里`），换到 X 立刻放行；勾掉资产复核确认后点「导出草稿 MP4」，抓到的清单是 `{ w: 960, h: 540, frame: { aspect: "16:9", fit: "crop" } }`。截图 `/tmp/e5-frame-panel.png`、`/tmp/e5-frame-applied.png`。
+- 预览 HTML：`16:9` 舞台、`object-fit:cover`、`object-position: 50% 20%`（截图 `/tmp/e5-preview.png`）。
+
+**边界**
+- 裁切会损失画面：竖屏裁横屏只留 56% 高度，这是几何事实，`blur` 是唯一的补救。
+- 焦点是镜头级，不是逐帧：镜头内主体大幅移动时只能选一个折中位置。
+- 播放器里的焦点是 CSS 近似（`object-position` 与 ffmpeg 的 `crop` 偏移在极端比例下略有差别），以导出为准。
+- 不做：自动主体追踪 / 人脸取景、逐帧焦点动画（E8）、按平台一次出多版（G9，下一步）、自定义比例、横竖两套字幕版式。
+- 模糊填充多一路 `gblur`，草稿档长片会慢一些。

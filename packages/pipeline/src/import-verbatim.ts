@@ -1,4 +1,10 @@
-import { assertValidProject, DEFAULT_GRADE, DEFAULT_LOOK, type Project } from "@loomina/ir";
+import {
+  assertValidProject,
+  DEFAULT_FRAME,
+  DEFAULT_GRADE,
+  DEFAULT_LOOK,
+  type Project,
+} from "@loomina/ir";
 
 /**
  * 逐字导入与章节拆分（F6 / ADR-0154）。
@@ -218,6 +224,7 @@ export function projectFromVerbatimDocument(
     models: {},
     look: DEFAULT_LOOK,
     grade: DEFAULT_GRADE,
+    frame: DEFAULT_FRAME,
     budgetCny: options.budgetCny,
     maxAttemptsPerShot: 3,
     onBudgetExceed: "block",

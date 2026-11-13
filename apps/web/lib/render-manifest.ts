@@ -7,10 +7,16 @@
  */
 
 import {
+  DEFAULT_FRAME,
   DEFAULT_GRADE,
+  FrameSchema,
   GradeSchema,
+  ShotFocusSchema,
   TRANSITION_KINDS,
+  type Frame,
+  type FrameAspect,
   type Grade,
+  type ShotFocus,
   type TransitionKind,
 } from "@loomina/ir";
 import {
@@ -22,6 +28,7 @@ import {
 } from "./asset-uri";
 import { scanText, type RenderCompliance } from "./compliance";
 import { aiContentHashOf, materialOfManifest } from "./ai-label";
+import { isDefaultFrame } from "./render-effects";
 
 /** 输出档位（H13）：草稿先看节奏，定稿才交付。 */
 export type RenderQuality = "draft" | "final";
@@ -58,6 +65,36 @@ export const RENDER_PROFILES: Record<
   },
 };
 
+/**
+ * 各画幅的成片尺寸（E5 / ADR-0170）。
+ *
+ * 短边固定：草稿 540、定稿 1080。横屏把长边摊到宽上，方形两边相等。
+ * 短边固定而不是长边固定，是为了让「换画幅」只改形状、不改清晰度——
+ * 定稿永远短边 1080，各平台对短边有要求（G7 的 720 下限）。
+ */
+export const FRAME_SIZES: Record<
+  RenderQuality,
+  Record<FrameAspect, { width: number; height: number }>
+> = {
+  draft: {
+    "9:16": { width: 540, height: 960 },
+    "16:9": { width: 960, height: 540 },
+    "1:1": { width: 540, height: 540 },
+  },
+  final: {
+    "9:16": { width: 1080, height: 1920 },
+    "16:9": { width: 1920, height: 1080 },
+    "1:1": { width: 1080, height: 1080 },
+  },
+};
+
+export function frameSize(
+  quality: RenderQuality,
+  aspect: FrameAspect,
+): { width: number; height: number } {
+  return FRAME_SIZES[quality][aspect];
+}
+
 /** 定稿尺寸：旧调用方与平台规格仍按 1080×1920 写 */
 export const RENDER_WIDTH = RENDER_PROFILES.final.width;
 export const RENDER_HEIGHT = RENDER_PROFILES.final.height;
@@ -92,6 +129,11 @@ export type RenderClip = {
   fadeIn?: RenderFade;
   /** 接缝上的淡出：到这一段末尾淡出去 */
   fadeOut?: RenderFade;
+  /**
+   * 裁切时留住画面的哪一点（E5 / ADR-0170）。只在 `frame.fit === "crop"` 时有意义；
+   * 不写就是居中。
+   */
+  focus?: ShotFocus;
 };
 
 /** 一次淡入 / 淡出：多久、淡到什么颜色 */
@@ -161,6 +203,11 @@ export type RenderManifest = {
    * 不传就是不调色，成片与以前的渲染逐字节同构。
    */
   grade?: Grade;
+  /**
+   * 画幅与适配（E5 / ADR-0170）：不传就是 9:16 + 留边，
+   * 与以前的渲染逐字节同构。
+   */
+  frame?: Frame;
 };
 
 export type DataUriParts = { mime: string; base64: string; bytes: number };
@@ -248,6 +295,32 @@ function fadeOf(
 }
 
 /**
+ * 画幅（E5）：整块按 `FrameSchema` 解析，不合法就拒收。
+ * 不传就是 9:16 + 留边——旧客户端送来的清单没有这个字段，行为与以前一致。
+ */
+function frameOf(value: unknown): { frame: Frame } | { error: string } {
+  if (value === undefined) return { frame: DEFAULT_FRAME };
+  const parsed = FrameSchema.safeParse(value);
+  if (!parsed.success) {
+    return { error: `画幅不合法：${parsed.error.issues[0]?.message ?? "未知原因"}` };
+  }
+  return { frame: parsed.data };
+}
+
+/**
+ * 裁切焦点（E5）：0–1 之外的值会把裁切框整个推到画面外。
+ * 不传就是居中；`fit` 不是裁切时也照收，换回来时焦点还在。
+ */
+function focusOf(value: unknown, index: number): { focus?: ShotFocus } | { error: string } {
+  if (value === undefined) return {};
+  const parsed = ShotFocusSchema.safeParse(value);
+  if (!parsed.success) {
+    return { error: `第 ${index + 1} 段的裁切焦点不合法` };
+  }
+  return { focus: parsed.data };
+}
+
+/**
  * 调色（E4）：整块按 `GradeSchema` 解析，不合法就拒收。
  * 不传就是不调色——旧客户端送来的清单没有这个字段，行为与以前一致。
  */
@@ -305,10 +378,14 @@ export function validateRenderManifest(
   }
   const quality: RenderQuality = raw.quality === "draft" ? "draft" : "final";
   const profile = RENDER_PROFILES[quality];
-  if (raw.width !== profile.width || raw.height !== profile.height) {
+  const frameResult = frameOf(raw.frame);
+  if ("error" in frameResult) return { ok: false, error: frameResult.error };
+  const frame = frameResult.frame;
+  const size = frameSize(quality, frame.aspect);
+  if (raw.width !== size.width || raw.height !== size.height) {
     return {
       ok: false,
-      error: `${profile.label}只支持 ${profile.width}×${profile.height}`,
+      error: `${profile.label}${frame.aspect}只支持 ${size.width}×${size.height}`,
     };
   }
   if (raw.fps !== profile.fps) {
@@ -383,6 +460,8 @@ export function validateRenderManifest(
     if ("error" in fadeIn) return { ok: false, error: fadeIn.error };
     const fadeOut = fadeOf(clip.fadeOut, "fadeOut", index, clip.durationMs);
     if ("error" in fadeOut) return { ok: false, error: fadeOut.error };
+    const focus = focusOf(clip.focus, index);
+    if ("error" in focus) return { ok: false, error: focus.error };
 
     checkedClips.push({
       durationMs: clip.durationMs,
@@ -394,6 +473,7 @@ export function validateRenderManifest(
       label: typeof clip.label === "string" ? clip.label.slice(0, 60) : undefined,
       ...fadeIn,
       ...fadeOut,
+      ...focus,
     });
     cursor += clip.durationMs;
     if (cursor > raw.totalMs) return { ok: false, error: "片段总时长超过全长" };
@@ -604,8 +684,8 @@ export function validateRenderManifest(
     manifest: {
       title: raw.title.trim().slice(0, 80),
       quality,
-      width: profile.width,
-      height: profile.height,
+      width: size.width,
+      height: size.height,
       fps: profile.fps,
       totalMs: raw.totalMs,
       clips: checkedClips,
@@ -613,6 +693,7 @@ export function validateRenderManifest(
       audio: checkedAudio,
       music: checkedMusic,
       ...(gradeResult.grade ? { grade: gradeResult.grade } : {}),
+      ...(isDefaultFrame(frame) ? {} : { frame }),
       aiLabel: {
         explicit: true,
         implicit: true,
