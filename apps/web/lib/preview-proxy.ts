@@ -15,6 +15,54 @@ export const PROXY_WIDTH = 540;
 /** 生成代理的时限：一条 3 秒的片子本地转码通常 1–3 秒，给到 120 秒只可能是卡死 */
 export const PROXY_TIMEOUT_MS = 120_000;
 
+/**
+ * 代理缓存的上限：2 GB（E7 / ADR-0178）。
+ *
+ * 代理永远重建得出来，留着只是为了下次拖动不卡；超过上限就按最久没用的先删，
+ * 不让一个默认关掉的开关把磁盘吃掉。
+ */
+export const PROXY_CACHE_CAP_BYTES = 2 * 1024 * 1024 * 1024;
+
+/** 缓存里的一份代理 */
+export type ProxyFile = { name: string; bytes: number; mtimeMs: number };
+
+/** 缓存清点：几个、多大、超没超 */
+export function proxyCacheOf(
+  files: ProxyFile[],
+  cap = PROXY_CACHE_CAP_BYTES,
+): { count: number; bytes: number; over: number } {
+  const bytes = files.reduce((sum, file) => sum + file.bytes, 0);
+  return { count: files.length, bytes, over: Math.max(0, bytes - cap) };
+}
+
+/**
+ * 超上限时该删哪些：最久没用的先删，删到不超为止。
+ *
+ * `keep` 是刚写好的那份，绝不删——刚转完就被自己清掉，下一次播放又要转一遍。
+ */
+export function planProxyEviction(
+  files: ProxyFile[],
+  keep?: string,
+  cap = PROXY_CACHE_CAP_BYTES,
+): { evict: string[]; freedBytes: number; bytes: number } {
+  const total = files.reduce((sum, file) => sum + file.bytes, 0);
+  if (total <= cap) return { evict: [], freedBytes: 0, bytes: total };
+  const candidates = files
+    .filter((file) => file.name !== keep)
+    .sort((left, right) => left.mtimeMs - right.mtimeMs);
+  let over = total - cap;
+  let freedBytes = 0;
+  const evict: string[] = [];
+  for (const file of candidates) {
+    if (over <= 0) break;
+    evict.push(file.name);
+    freedBytes += file.bytes;
+    over -= file.bytes;
+  }
+  return { evict, freedBytes, bytes: total - freedBytes };
+}
+
+
 /** 能不能为这条素材生成代理：只认资产库（本机或对象存储） */
 export function canProxy(uri?: string): boolean {
   return Boolean(uri && (isStoredAssetUri(uri) || uri.startsWith("s3://")));

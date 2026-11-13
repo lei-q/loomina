@@ -3,10 +3,13 @@ import {
   PROXY_WIDTH,
   canProxy,
   parseProxyRequest,
+  planProxyEviction,
   proxyArgsOf,
   proxyCacheName,
+  proxyCacheOf,
   proxyRangeOf,
   proxyUrlOf,
+  type ProxyFile,
 } from "./preview-proxy";
 
 const HASH = (value: string) => `h${value[17] ?? "?"}${value.length}`;
@@ -59,5 +62,40 @@ describe("540p 代理（E7）", () => {
     expect(joined).toContain("+faststart");
     // 输入在前、输出在后
     expect(args.indexOf("/tmp/a.mp4")).toBeLessThan(args.indexOf("/tmp/a-proxy.mp4"));
+  });
+});
+
+describe("代理缓存上限（E7 / ADR-0178）", () => {
+  const MB = 1024 * 1024;
+  const file = (name: string, mb: number, age: number): ProxyFile => ({
+    name,
+    bytes: mb * MB,
+    mtimeMs: 1_000_000 - age,
+  });
+
+  it("没超上限就一份都不删", () => {
+    const plan = planProxyEviction([file("a.mp4", 100, 5), file("b.mp4", 100, 1)], undefined, 400 * MB);
+    expect(plan.evict).toEqual([]);
+    expect(plan.freedBytes).toBe(0);
+    expect(plan.bytes).toBe(200 * MB);
+  });
+
+  it("超了就按最久没用的先删，删到不超为止", () => {
+    const files = [file("old.mp4", 100, 50), file("mid.mp4", 100, 30), file("new.mp4", 100, 10)];
+    const plan = planProxyEviction(files, "new.mp4", 250 * MB);
+    expect(plan.evict).toEqual(["old.mp4"]);
+    expect(plan.bytes).toBe(200 * MB);
+  });
+
+  it("刚写好的那份永远不删，哪怕它最旧", () => {
+    const files = [file("fresh.mp4", 100, 999), file("mid.mp4", 100, 30), file("new.mp4", 100, 10)];
+    const plan = planProxyEviction(files, "fresh.mp4", 150 * MB);
+    expect(plan.evict).not.toContain("fresh.mp4");
+    expect(plan.bytes).toBeLessThanOrEqual(150 * MB);
+  });
+
+  it("清点里带上超了多少", () => {
+    expect(proxyCacheOf([file("a.mp4", 100, 1)]).over).toBe(0);
+    expect(proxyCacheOf([file("a.mp4", 300, 1)], 200 * MB).over).toBe(100 * MB);
   });
 });

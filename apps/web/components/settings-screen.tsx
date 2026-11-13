@@ -24,6 +24,7 @@ import {
   referencedUrisOfProjects,
 } from "@/lib/asset-inventory";
 import { inlinePayloadsOf } from "@/lib/log-compact";
+import { canProxy } from "@/lib/preview-proxy";
 import { projectSegments } from "@/lib/spend-report";
 import { cn } from "@/lib/utils";
 
@@ -1224,6 +1225,7 @@ function probeOutcome(report: ProbeReportView): string {
 
 /** 字节数说成人话：素材常是几 MB，也常有几十 KB */
 function fmtBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${bytes} B`;
@@ -1338,6 +1340,22 @@ function AssetStoreSection({ readOnly, storageConfigured }: { readOnly: boolean;
   // 日志瘦身（H3 / ADR-0177）：日志里还被 base64 占着的地方
   const [compactNotice, setCompactNotice] = useState<string>();
   const inlineLog = useMemo(() => inlinePayloadsOf(events), [events]);
+  // 预演代理缓存（E7 / ADR-0178）：可删的派生物，超上限自动按最久没用先删
+  const [proxyCache, setProxyCache] = useState<{ count: number; bytes: number; cap: number }>();
+  const [clearingProxies, setClearingProxies] = useState(false);
+  const [proxyNotice, setProxyNotice] = useState<string>();
+  const [pregenBusy, setPregenBusy] = useState(false);
+  const [pregenNotice, setPregenNotice] = useState<string>();
+  /** 这条片子里用到的、在资产库里的素材：预生成代理时按地址去重送上去 */
+  const proxyAssets = useMemo(() => {
+    const byId = new Map(project.assets.map((asset) => [asset.id, asset]));
+    const uris = new Set<string>();
+    for (const take of project.takes) {
+      const uri = byId.get(take.assetId)?.uri;
+      if (uri && canProxy(uri)) uris.add(uri);
+    }
+    return [...uris];
+  }, [project]);
 
   /**
    * 清理的白名单必须是「所有能回放的项目」的并集（H3）。
@@ -1413,6 +1431,91 @@ function AssetStoreSection({ readOnly, storageConfigured }: { readOnly: boolean;
   useEffect(() => {
     void loadRemote();
   }, [loadRemote, project]);
+
+  const loadProxyCache = useCallback(async () => {
+    try {
+      const response = await fetch("/api/preview/proxy?stats=1", { cache: "no-store" });
+      if (!response.ok) return;
+      const payload = (await response.json()) as { count?: number; bytes?: number; cap?: number };
+      if (
+        typeof payload.count === "number" &&
+        typeof payload.bytes === "number" &&
+        typeof payload.cap === "number"
+      ) {
+        setProxyCache({ count: payload.count, bytes: payload.bytes, cap: payload.cap });
+      }
+    } catch {
+      // 读不到缓存统计不影响这一页：代理本来就可有可无
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadProxyCache();
+  }, [loadProxyCache]);
+
+  /**
+   * 预生成代理：把这条片子里用到的片子先转一遍，第一次开预演就不用等。
+   *
+   * 服务端逐个转、已转好的跳过；一次最多 24 条（路由时限 120 秒）。
+   * 转不出来不影响预演——它会自动回原片。
+   */
+  const pregenProxies = async () => {
+    if (pregenBusy) return;
+    setPregenBusy(true);
+    setPregenNotice(undefined);
+    setError(undefined);
+    try {
+      const response = await fetch("/api/preview/proxy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assets: proxyAssets }),
+      });
+      const payload = (await response.json()) as {
+        done?: number;
+        cached?: number;
+        failed?: number;
+        errors?: string[];
+        error?: string;
+      };
+      if (!response.ok) throw new Error(payload.error || `预生成失败（${response.status}）`);
+      setPregenNotice(
+        `转好 ${payload.done ?? 0} 份代理${
+          payload.cached ? `，${payload.cached} 份本来就在` : ""
+        }${
+          payload.failed
+            ? `，${payload.failed} 份没转成${payload.errors?.[0] ? `：${payload.errors[0]}` : ""}`
+            : ""
+        }。`,
+      );
+      await loadProxyCache();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "预生成失败");
+    } finally {
+      setPregenBusy(false);
+    }
+  };
+
+  /** 清代理缓存：原片还在，下次开预演按需重建，所以不需要确认词 */
+  const clearProxies = async () => {
+    setClearingProxies(true);
+    setProxyNotice(undefined);
+    setError(undefined);
+    try {
+      const response = await fetch("/api/preview/proxy", { method: "DELETE" });
+      const payload = (await response.json()) as { removed?: number; bytes?: number; error?: string };
+      if (!response.ok) throw new Error(payload.error || `清理失败（${response.status}）`);
+      setProxyNotice(
+        payload.removed
+          ? `清掉 ${payload.removed} 份代理（约 ${fmtBytes(payload.bytes ?? 0)}）；下次开预演会按需重建。`
+          : "代理缓存本来就是空的。",
+      );
+      await loadProxyCache();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "清不掉代理缓存");
+    } finally {
+      setClearingProxies(false);
+    }
+  };
 
   const migrate = async () => {
     if (busy) return;
@@ -1870,6 +1973,59 @@ function AssetStoreSection({ readOnly, storageConfigured }: { readOnly: boolean;
         </button>
         {compactNotice && (
           <p className="mt-2 text-[9.5px] leading-[1.7] text-muted">{compactNotice}</p>
+        )}
+      </div>
+
+      <div className="mt-3 rounded-token border border-line px-3 py-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 className="text-[10px] text-text">预演代理缓存</h3>
+          <span className="tnum text-[9px] text-muted-2">
+            {proxyCache
+              ? `${proxyCache.count} 份 · ${fmtBytes(proxyCache.bytes)} / ${fmtBytes(proxyCache.cap)}`
+              : "读不到缓存统计"}
+          </span>
+        </div>
+        <p className="mt-1 max-w-[640px] text-[9.5px] leading-[1.7] text-muted-2">
+          540p 代理只给预演看着顺，原片才是唯一事实：删掉不影响导出，下次开预演按需重建。
+          超过上限时自动按最久没用的先删，刚转好的那份不删。
+        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void pregenProxies()}
+            disabled={readOnly || pregenBusy || clearingProxies || proxyAssets.length === 0}
+            title={
+              readOnly
+                ? "另一个标签页在编辑：这一页只读"
+                : proxyAssets.length === 0
+                  ? "这条片子里还没有在资产库里的视频"
+                  : "把这条片子用到的视频先转一遍；一次最多 24 条"
+            }
+            className="rounded-token border border-line px-2.5 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+          >
+            {pregenBusy ? "正在转…" : `预生成代理（${proxyAssets.length} 条）`}
+          </button>
+          <button
+            type="button"
+            onClick={() => void clearProxies()}
+            disabled={readOnly || clearingProxies || pregenBusy || (proxyCache?.count ?? 0) === 0}
+            title={
+              readOnly
+                ? "另一个标签页在编辑：这一页只读"
+                : (proxyCache?.count ?? 0) === 0
+                  ? "还没有代理缓存"
+                  : "只清代理：原片与素材本体都不动"
+            }
+            className="rounded-token border border-line px-2.5 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+          >
+            {clearingProxies ? "正在清…" : "清掉代理缓存"}
+          </button>
+        </div>
+        {pregenNotice && (
+          <p className="mt-2 text-[9.5px] leading-[1.7] text-muted">{pregenNotice}</p>
+        )}
+        {proxyNotice && (
+          <p className="mt-2 text-[9.5px] leading-[1.7] text-muted">{proxyNotice}</p>
         )}
       </div>
 

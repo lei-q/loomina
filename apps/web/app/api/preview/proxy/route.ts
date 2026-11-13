@@ -1,16 +1,21 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { chmod, mkdir, rename, stat, unlink } from "node:fs/promises";
+import { chmod, mkdir, readdir, rename, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { projectRoot } from "@/lib/app-config";
 import { materializeAsset } from "@/lib/storage-runtime";
 import {
+  PROXY_CACHE_CAP_BYTES,
   PROXY_TIMEOUT_MS,
+  canProxy,
   parseProxyRequest,
+  planProxyEviction,
   proxyArgsOf,
   proxyCacheName,
+  proxyCacheOf,
   proxyRangeOf,
+  type ProxyFile,
 } from "@/lib/preview-proxy";
 
 /**
@@ -40,6 +45,44 @@ function proxyDir(): string {
 
 function hashOf(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 32);
+}
+
+/**
+ * 缓存上限：默认 2 GB，`LOOMINA_PROXY_CACHE_MB` 可以改小（磁盘紧张的机器用）。
+ * 不合法或没设就走默认值——清理缓存不该因为一个环境变量写错而失效。
+ */
+function cacheCapBytes(): number {
+  const mb = Number(process.env.LOOMINA_PROXY_CACHE_MB);
+  return Number.isFinite(mb) && mb > 0 ? Math.round(mb * 1024 * 1024) : PROXY_CACHE_CAP_BYTES;
+}
+
+/** 缓存目录里现在有哪些代理：按 mtime 从旧到新排，好按最久没用先删 */
+async function proxyFiles(): Promise<ProxyFile[]> {
+  const dir = proxyDir();
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+  const files: ProxyFile[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".mp4")) continue;
+    const info = await stat(path.join(/* turbopackIgnore: true */ dir, entry.name)).catch(
+      () => null,
+    );
+    if (!info?.isFile()) continue;
+    files.push({ name: entry.name, bytes: info.size, mtimeMs: info.mtimeMs });
+  }
+  return files.sort((left, right) => left.mtimeMs - right.mtimeMs);
+}
+
+/**
+ * 写完一份新代理之后把缓存压回上限（E7 / ADR-0178）。
+ *
+ * 删的是最久没用的那几份；刚写好的那份 `keep` 不删。删失败不报错——
+ * 缓存清理失败不该让这次播放失败。
+ */
+async function evictOverCap(keep: string): Promise<void> {
+  const plan = planProxyEviction(await proxyFiles(), keep, cacheCapBytes());
+  for (const name of plan.evict) {
+    await unlink(path.join(/* turbopackIgnore: true */ proxyDir(), name)).catch(() => {});
+  }
 }
 
 /** 转一份代理；失败时把 ffmpeg 的 stderr 尾部带回来说人话 */
@@ -102,6 +145,7 @@ async function ensureProxy(asset: string): Promise<{ ok: true; file: string } | 
         if (!result.ok) throw new Error(result.error);
         await rename(temp, file);
         await chmod(file, 0o600).catch(() => {});
+        await evictOverCap(path.basename(file));
       } catch (error) {
         await unlink(temp).catch(() => {});
         throw error;
@@ -126,6 +170,20 @@ async function ensureProxy(asset: string): Promise<{ ok: true; file: string } | 
 
 export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
+  // `?stats=1`：设置页要看这台机器上代理缓存占了多少，不转码、不读字节
+  if (params.get("stats") === "1") {
+    const files = await proxyFiles();
+    const cap = cacheCapBytes();
+    const cache = proxyCacheOf(files, cap);
+    return NextResponse.json(
+      {
+        ...cache,
+        cap,
+        files: files.map((file) => ({ name: file.name, bytes: file.bytes })),
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+  }
   const parsed = parseProxyRequest(params);
   if (!parsed.ok) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
@@ -162,4 +220,78 @@ export async function GET(request: Request) {
       "Cache-Control": "private, max-age=3600",
     },
   });
+}
+
+/**
+ * 清掉代理缓存（E7 / ADR-0178）。
+ *
+ * 代理是派生物：原片还在，下一次开预演按需重建。所以这里不需要确认词，
+ * 也不碰 `.loomina/assets/` 里的素材本体。
+ */
+export async function DELETE() {
+  const files = await proxyFiles();
+  let removed = 0;
+  let bytes = 0;
+  for (const file of files) {
+    try {
+      await unlink(path.join(/* turbopackIgnore: true */ proxyDir(), file.name));
+      removed += 1;
+      bytes += file.bytes;
+    } catch {
+      // 删不掉的跳过：下一次统计还在，作者能看见
+    }
+  }
+  return NextResponse.json({ removed, bytes }, { headers: { "Cache-Control": "no-store" } });
+}
+
+/** 一次最多预生成几条：这个路由的时限是 120 秒，一条 3 秒的片子本地转 1–3 秒 */
+const MAX_PREGEN = 24;
+
+/**
+ * 预生成代理（E7 / ADR-0178）。
+ *
+ * 浏览器把「这条片子里用到的、在资产库里的素材地址」送上来，服务端逐个转。
+ * 已经转好的直接跳过（不算失败），转不出来的如实报数——预演仍会回原片，
+ * 所以这不是致命错误。
+ */
+export async function POST(request: Request) {
+  const body = (await request.json().catch(() => null)) as { assets?: unknown } | null;
+  if (!Array.isArray(body?.assets)) {
+    return NextResponse.json({ error: "缺少素材清单" }, { status: 400 });
+  }
+  const assets = [
+    ...new Set(
+      body.assets.filter((item): item is string => typeof item === "string" && canProxy(item)),
+    ),
+  ].slice(0, MAX_PREGEN);
+  if (assets.length === 0) {
+    return NextResponse.json({ done: 0, cached: 0, failed: 0, error: "一条能转的素材都没有" });
+  }
+
+  let done = 0;
+  let cached = 0;
+  let failed = 0;
+  const errors: string[] = [];
+  for (const asset of assets) {
+    const name = proxyCacheName(asset, hashOf);
+    const existing = await stat(path.join(/* turbopackIgnore: true */ proxyDir(), name)).catch(
+      () => null,
+    );
+    if (existing?.isFile() && existing.size > 0) {
+      cached += 1;
+      continue;
+    }
+    const result = await ensureProxy(asset);
+    if (result.ok) {
+      done += 1;
+    } else {
+      failed += 1;
+      if (errors.length < 3) errors.push(result.error);
+    }
+  }
+  const cache = proxyCacheOf(await proxyFiles(), cacheCapBytes());
+  return NextResponse.json(
+    { done, cached, failed, errors, bytes: cache.bytes, count: cache.count },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
