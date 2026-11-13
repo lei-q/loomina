@@ -16,7 +16,7 @@ import { inventoryOf } from "./asset-inventory";
 
 export type DataExportAsset = {
   id: string;
-  kind: "image" | "video" | "audio";
+  kind: "image" | "video" | "audio" | "lut";
   /** 地址在日志里（data:）/ 本机资产库 / 对象存储 / 没有地址 */
   placement: "inline" | "store" | "remote" | "none";
   /** IR 里记的地址；`none` 时是空串 */

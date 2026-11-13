@@ -484,6 +484,10 @@ describe("清单里的转场与调色（E4 / ADR-0169）", () => {
       saturation: "muted",
       temperature: "cool",
       vignette: true,
+      film: "none",
+      grain: 0,
+      lutAssetId: "",
+      lutName: "",
     });
   });
 
@@ -492,6 +496,37 @@ describe("清单里的转场与调色（E4 / ADR-0169）", () => {
     expect(ok.ok).toBe(false);
     if (ok.ok) return;
     expect(ok.error).toContain("调色");
+  });
+
+  it("胶片与颗粒随调色一起透传；旧清单缺字段时补默认值", () => {
+    const ok = validateRenderManifest(
+      manifest({ grade: { film: "mono", grain: 30, lutAssetId: "", lutName: "" } }),
+    );
+    expect(ok.ok).toBe(true);
+    if (!ok.ok) return;
+    expect(ok.manifest.grade?.film).toBe("mono");
+    expect(ok.manifest.grade?.grain).toBe(30);
+    expect(ok.manifest.grade?.contrast).toBe("natural");
+  });
+
+  it("导入的 LUT 带上地址与名字；别的类型拒收", () => {
+    const cube = `data:application/x-cube;base64,${btoa("LUT_3D_SIZE 2\n")}`;
+    const ok = validateRenderManifest(
+      manifest({ grade: { lutAssetId: "a-lut-1", lutName: "柯达 2383" }, lut: { uri: cube, name: "柯达 2383" } }),
+    );
+    expect(ok.ok).toBe(true);
+    if (!ok.ok) return;
+    expect(ok.manifest.lut).toEqual({ uri: cube, name: "柯达 2383" });
+
+    const wrong = validateRenderManifest(manifest({ lut: { uri: PNG, name: "假 LUT" } }));
+    expect(wrong.ok).toBe(false);
+    if (wrong.ok) return;
+    expect(wrong.error).toContain(".cube");
+
+    const remote = validateRenderManifest(
+      manifest({ lut: { uri: "https://example.com/a.cube", name: "外链" } }),
+    );
+    expect(remote.ok).toBe(false);
   });
 });
 

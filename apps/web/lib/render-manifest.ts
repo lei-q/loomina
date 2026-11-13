@@ -204,6 +204,11 @@ export type RenderManifest = {
    */
   grade?: Grade;
   /**
+   * 导入的 .cube 调色表（I3 / ADR-0181）：`grade.lutAssetId` 指向的那份文件。
+   * 清单里单独带地址，服务端只认这一份，不去猜 id → 文件。
+   */
+  lut?: { uri: string; name: string };
+  /**
    * 画幅与适配（E5 / ADR-0170）：不传就是 9:16 + 留边，
    * 与以前的渲染逐字节同构。
    */
@@ -331,6 +336,33 @@ function gradeOf(value: unknown): { grade?: Grade } | { error: string } {
     return { error: `调色不合法：${parsed.error.issues[0]?.message ?? "未知原因"}` };
   }
   return { grade: parsed.data };
+}
+
+/** 单份 .cube 的上限：17³ 的表也才几百 KB，2 MB 已经足够宽松 */
+const LUT_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * 导入的 .cube（I3）：地址必须是可读素材，类型必须是 `application/x-cube`。
+ *
+ * 不按后缀猜：`.cube` 之外的文本文件交给 ffmpeg 只会报一句看不懂的错，
+ * 不如在清单这一层就说明白。
+ */
+function lutOf(value: unknown): { lut?: { uri: string; name: string } } | { error: string } {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object") return { error: "LUT 不是对象" };
+  const record = value as Record<string, unknown>;
+  const uri = typeof record.uri === "string" ? record.uri.trim() : "";
+  if (!uri) return { error: "LUT 缺少文件地址" };
+  const inspected = inspectAsset(uri);
+  if (!inspected) return { error: "LUT 不是可读素材（data URI 或本机资产库）" };
+  if (inspected.mime !== "application/x-cube") {
+    return { error: `LUT 必须是 .cube 文件，收到的是 ${inspected.mime}` };
+  }
+  if (inspected.bytes > LUT_MAX_BYTES) {
+    return { error: `LUT 超过 ${LUT_MAX_BYTES / 1024 / 1024} MB` };
+  }
+  const name = typeof record.name === "string" ? record.name.trim().slice(0, 80) : "";
+  return { lut: { uri, name: name || "自定义 LUT" } };
 }
 
 /**
@@ -604,6 +636,10 @@ export function validateRenderManifest(
     });
   }
 
+  // 导入的 LUT（I3）：先校验、再算总体积——它的字节也要计入素材总量
+  const lutResult = lutOf(raw.lut);
+  if ("error" in lutResult) return { ok: false, error: lutResult.error };
+
   const totalBytes =
     checkedClips.reduce(
       (sum, clip) =>
@@ -614,7 +650,8 @@ export function validateRenderManifest(
     ) +
     checkedOverlays.reduce((sum, overlay) => sum + assetBytes(overlay.image), 0) +
     checkedAudio.reduce((sum, track) => sum + (track.audio ? assetBytes(track.audio) : 0), 0) +
-    checkedMusic.reduce((sum, track) => sum + (track.audio ? assetBytes(track.audio) : 0), 0);
+    checkedMusic.reduce((sum, track) => sum + (track.audio ? assetBytes(track.audio) : 0), 0) +
+    (lutResult.lut ? assetBytes(lutResult.lut.uri) : 0);
   if (totalBytes > RENDER_MAX_TOTAL_BYTES) {
     return { ok: false, error: "素材总量超过 200 MB，先删掉一些片段再渲染" };
   }
@@ -693,6 +730,7 @@ export function validateRenderManifest(
       audio: checkedAudio,
       music: checkedMusic,
       ...(gradeResult.grade ? { grade: gradeResult.grade } : {}),
+      ...(lutResult.lut ? { lut: lutResult.lut } : {}),
       ...(isDefaultFrame(frame) ? {} : { frame }),
       aiLabel: {
         explicit: true,

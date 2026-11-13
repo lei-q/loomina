@@ -36,6 +36,8 @@ const EXTENSION_BY_MIME: Record<string, string> = {
   "audio/x-wav": "wav",
   "audio/ogg": "ogg",
   "audio/webm": "weba",
+  // 调色表（I3）：.cube 是纯文本，ffmpeg 只看内容、不看后缀
+  "application/x-cube": "cube",
 };
 
 const MIME_BY_EXTENSION: Record<string, string> = {
@@ -52,6 +54,7 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   wav: "audio/wav",
   ogg: "audio/ogg",
   weba: "audio/webm",
+  cube: "application/x-cube",
 };
 
 /** 认不出的类型给 `bin`：地址仍然成立，只是浏览器与 ffmpeg 得自己嗅探 */

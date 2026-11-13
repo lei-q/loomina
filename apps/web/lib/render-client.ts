@@ -439,6 +439,8 @@ export function buildRenderManifest(
       compliance,
       // 调色（E4）：默认档不传，清单与以前逐字一致
       ...(isDefaultGrade(view.grade) ? {} : { grade: view.grade }),
+      // 导入的 LUT（I3）：只有调色真的引用它、文件也还在时才带上
+      ...(view.lut ? { lut: { uri: view.lut.uri, name: view.lut.name } } : {}),
       // 画幅（E5）：默认画幅不传，清单与以前逐字一致
       ...(isDefaultFrame(frame) ? {} : { frame }),
     },

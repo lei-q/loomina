@@ -328,6 +328,7 @@ function buildCommand(
   overlays: string[],
   audio: { mixPath?: string; loudnorm?: string },
   outFile: string,
+  lutPath?: string,
 ): string[] {
   const total = seconds(manifest.totalMs);
   const profile = RENDER_PROFILES[manifest.quality];
@@ -387,7 +388,7 @@ function buildCommand(
   // 字幕压完再调色，白字会变米黄、角标会跟着暗下去——两样都有合规要求（H5）。
   // 不调色时不插这一段，滤镜图与以前逐字一致。
   let videoLabel = "vbase";
-  const grade = gradeFilters(manifest.grade);
+  const grade = gradeFilters(manifest.grade, { lutPath });
   if (grade.length) {
     filters.push(`[vbase]${grade.join(",")}[vgraded]`);
     videoLabel = "vgraded";
@@ -601,6 +602,18 @@ async function runJob(job: RenderJob): Promise<void> {
       overlays.push(await writeAsset(dir, overlay.image, `overlay-${index}`));
     }
 
+    // 导入的 LUT（I3）：与其它素材一样落到临时目录，ffmpeg 只吃路径。
+    // 文件真不在了就失败并说清楚——悄悄少一层调色，作者看到的成片会不一样。
+    let lutPath: string | undefined;
+    if (job.manifest.lut) {
+      job.stage = "准备调色表";
+      try {
+        lutPath = await writeAsset(dir, job.manifest.lut.uri, "lut");
+      } catch {
+        throw new Error("导入的 LUT 文件读不到：重新导入一份，或先换成内置胶片质感");
+      }
+    }
+
     const audio: ResolvedAudio[] = [];
     for (const [index, track] of job.manifest.audio.entries()) {
       const durationMs = Math.max(
@@ -689,6 +702,7 @@ async function runJob(job: RenderJob): Promise<void> {
       overlays,
       mixPath ? { mixPath, loudnorm: loudnormFilter(measured) } : {},
       outFile,
+      lutPath,
     );
 
     let result = { code: -1, stderr: "" };

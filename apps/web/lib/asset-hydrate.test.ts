@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_BRAND } from "@loomina/ir";
+import { DEFAULT_BRAND, DEFAULT_GRADE } from "@loomina/ir";
 import type { EditView } from "./edit";
 import { hydrateView } from "./asset-hydrate";
 
@@ -71,7 +71,7 @@ function view(uri: string): EditView {
     subtitleCustom: false,
     translation: { enabled: false, lang: "en", position: "below" },
     translationCoverage: { lines: 1, translated: 0 },
-    grade: { presetId: "", contrast: "natural", saturation: "natural", temperature: "neutral", vignette: false },
+    grade: { ...DEFAULT_GRADE },
     frame: { aspect: "9:16", fit: "pad" },
     totalMs: 1000,
     totalSec: 1,

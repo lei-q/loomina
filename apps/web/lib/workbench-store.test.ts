@@ -1,4 +1,4 @@
-import { applyEvent, rebuild, type ProjectEvent } from "@loomina/ir";
+import { DEFAULT_GRADE, applyEvent, rebuild, type ProjectEvent } from "@loomina/ir";
 import { parseStoryDraft } from "@loomina/pipeline";
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 import { setEventLog, type EventLog } from "./event-log";
@@ -1206,6 +1206,7 @@ describe("预算（ADR-0035）", () => {
     const before = state().events.length;
     expect(
       state().setGrade({
+        ...DEFAULT_GRADE,
         presetId: "thriller",
         contrast: "punchy",
         saturation: "muted",
@@ -1223,6 +1224,28 @@ describe("预算（ADR-0035）", () => {
   it("调色没变就不写日志", () => {
     const before = state().events.length;
     expect(state().setGrade(state().project.grade)).toBe(false);
+    expect(state().events).toHaveLength(before);
+  });
+
+  it("导入 .cube 落一条 lut 资产，不动当前调色（I3 / ADR-0181）", async () => {
+    const before = state().events.length;
+    const result = await state().importLut({
+      name: "k.cube",
+      base64: btoa("LUT_3D_SIZE 2\n"),
+    });
+    expect(result.assetId).toBeTruthy();
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "asset.updated" });
+    const asset = state().project.assets.find((item) => item.id === result.assetId);
+    expect(asset?.kind).toBe("lut");
+    // 只是把文件放进库，是否启用由作者在面板里勾
+    expect(state().project.grade.lutAssetId).toBe("");
+  });
+
+  it("空的调色表不落资产", async () => {
+    const before = state().events.length;
+    const result = await state().importLut({ name: "empty.cube", base64: "" });
+    expect(result.error).toContain("空");
     expect(state().events).toHaveLength(before);
   });
 

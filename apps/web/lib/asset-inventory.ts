@@ -1,4 +1,4 @@
-import type { Project } from "@loomina/ir";
+import type { AssetKind, Project } from "@loomina/ir";
 import { isStoredAssetUri, S3_PREFIX } from "@/lib/asset-uri";
 
 /**
@@ -14,7 +14,7 @@ import { isStoredAssetUri, S3_PREFIX } from "@/lib/asset-uri";
 
 export type AssetUsage = {
   id: string;
-  kind: "image" | "video" | "audio";
+  kind: AssetKind;
   /** 是否已经被引用 */
   referenced: boolean;
   /** 地址在日志里（data:）、本机资产库（loomina://）还是对象存储（s3://） */
@@ -59,6 +59,8 @@ export function referencedAssetIds(project: Project): Set<string> {
   for (const line of project.dialogue) if (line.audioAssetId) ids.add(line.audioAssetId);
   for (const cue of project.timeline.music) ids.add(cue.assetId);
   for (const pack of project.publishPackages) if (pack.videoAssetId) ids.add(pack.videoAssetId);
+  // 调色表（I3）：项目在用它，清库时不能当孤儿删掉
+  if (project.grade.lutAssetId) ids.add(project.grade.lutAssetId);
   return ids;
 }
 
@@ -163,7 +165,7 @@ export type AssetFilter = "all" | "used" | "unused" | "missing";
 /** 页面上一行资产 */
 export type LibraryRow = {
   assetId: string;
-  kind: "image" | "video" | "audio";
+  kind: AssetKind;
   /** 生成 / 上传 / 素材库 / 导入 */
   source: string;
   /** 在日志里 / 本机库 / 对象存储 / 没地址 */
@@ -249,6 +251,7 @@ export function assetUsageLabels(project: Project): Map<string, string[]> {
   for (const pack of project.publishPackages) {
     if (pack.videoAssetId) add(pack.videoAssetId, `发布包「${pack.platform}」`);
   }
+  add(project.grade.lutAssetId, `调色表「${project.grade.lutName || "自定义 LUT"}」`);
   // 画面轨上真正被排进成片的 take：单独标出来，比「某镜 take」更准
   for (const item of project.timeline.items) {
     const take = takeById.get(item.takeId);
@@ -299,7 +302,7 @@ export function libraryOf(
       storeBytes === undefined;
     return {
       assetId: asset.id,
-      kind: asset.kind === "video" || asset.kind === "audio" ? asset.kind : "image",
+      kind: asset.kind,
       source: asset.source,
       placement,
       usedBy,
@@ -312,7 +315,7 @@ export function libraryOf(
     };
   });
 
-  const kinds: LibraryRow["kind"][] = ["image", "video", "audio"];
+  const kinds: LibraryRow["kind"][] = ["image", "video", "audio", "lut"];
   return {
     rows,
     total: rows.length,

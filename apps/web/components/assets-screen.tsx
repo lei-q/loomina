@@ -34,6 +34,7 @@ const KIND_CN: Record<LibraryRow["kind"], string> = {
   image: "图片",
   video: "视频",
   audio: "音频",
+  lut: "调色表",
 };
 
 const SOURCE_CN: Record<string, string> = {
@@ -291,7 +292,13 @@ function Row({
           />
         ) : (
           <span className="text-[8.5px] text-muted-2">
-            {row.kind === "audio" ? "音" : row.kind === "video" ? "影" : "图"}
+            {row.kind === "audio"
+              ? "音"
+              : row.kind === "video"
+                ? "影"
+                : row.kind === "lut"
+                  ? "色"
+                  : "图"}
           </span>
         )}
       </span>

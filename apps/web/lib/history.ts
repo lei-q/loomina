@@ -1,4 +1,9 @@
-import { rebuildStates, type Project, type ProjectEvent } from "@loomina/ir";
+import {
+  rebuildStates,
+  type AssetKind,
+  type Project,
+  type ProjectEvent,
+} from "@loomina/ir";
 import { shotLabel } from "@/lib/read-model";
 import { stageMetaOf } from "@/lib/stage-flow";
 
@@ -11,6 +16,17 @@ import { stageMetaOf } from "@/lib/stage-flow";
  */
 
 export type HistoryKind = "created" | "edit" | "removal" | "restore";
+
+const ASSET_KIND_CN: Record<AssetKind, string> = {
+  image: "图片",
+  video: "视频",
+  audio: "音频",
+  lut: "调色表",
+};
+
+function assetKindCn(kind: AssetKind): string {
+  return ASSET_KIND_CN[kind];
+}
 
 export type HistoryEntry = {
   /** 事件在日志里的下标（从 0 数） */
@@ -309,19 +325,19 @@ export function describeEvent(before: Project, event: ProjectEvent): string {
     }
     case "asset.reviewed": {
       const asset = before.assets.find((item) => item.id === event.assetId);
-      const where = asset ? `${asset.kind === "video" ? "视频" : asset.kind === "audio" ? "音频" : "图片"} ${asset.id}` : event.assetId;
+      const where = asset ? `${assetKindCn(asset.kind)} ${asset.id}` : event.assetId;
       if (event.status === null) return `收回复核：${where}`;
       return event.status === "passed"
         ? `复核通过：${where}`
         : `标为不可用：${where}${event.note ? `（${event.note}）` : ""}`;
     }
     case "asset.updated": {
-      const kind = event.asset.kind === "image" ? "图片" : event.asset.kind === "video" ? "视频" : "音频";
+      const kind = assetKindCn(event.asset.kind);
       return `落一条${kind}资产`;
     }
     case "asset.removed": {
       const asset = before.assets.find((item) => item.id === event.assetId);
-      const kind = asset ? (asset.kind === "image" ? "图片" : asset.kind === "video" ? "视频" : "音频") : "资产";
+      const kind = asset ? assetKindCn(asset.kind) : "资产";
       return `删掉没人用的${kind} ${event.assetId}`;
     }
     case "timeline.updated": {

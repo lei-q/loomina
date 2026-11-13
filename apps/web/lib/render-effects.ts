@@ -109,14 +109,20 @@ export type GradePreset = {
   id: string;
   name: string;
   blurb: string;
-  value: Omit<Grade, "presetId">;
+  /**
+   * 只改对比 / 饱和 / 色温 / 暗角四档。
+   *
+   * 胶片质感与导入的 LUT 属于另一层（I3）：选一个调色预设不该把作者导入的
+   * 调色表关掉，也不该把颗粒清零。
+   */
+  value: Pick<Grade, "contrast" | "saturation" | "temperature" | "vignette">;
 };
 
 /**
  * 调色预设：短剧要的是「统一」，不是「创作」。
  *
  * 五个取向覆盖日常、回忆、悬疑、都市与明亮；逐项仍可改。
- * 真正的 LUT（.cube 文件导入）属于 I3，这里不做（ADR-0169「不做」）。
+ * 胶片质感与导入的 .cube 是另一层（I3），换预设不会动它们。
  */
 export const GRADE_PRESETS: GradePreset[] = [
   {
@@ -155,6 +161,63 @@ export function gradePresetById(id: string): GradePreset | undefined {
   return GRADE_PRESETS.find((item) => item.id === id);
 }
 
+/* ------------------------------------------------------------------ */
+/* 胶片质感与 LUT（I3 / ADR-0181）                                       */
+/* ------------------------------------------------------------------ */
+
+export type FilmPreset = {
+  id: Grade["film"];
+  name: string;
+  blurb: string;
+};
+
+/**
+ * 内置胶片质感：不引入第三方 LUT 文件，全部用 ffmpeg 的曲线组合拼出来。
+ *
+ * 这样 `package.json` 不用多一个包、库里也不用带一堆来路不明的 `.cube`；
+ * 作者要更精确的胶片表，就导入自己的 `.cube`（同一条滤镜链的 `lut3d`）。
+ */
+export const FILM_PRESETS: FilmPreset[] = [
+  { id: "none", name: "不叠", blurb: "只用上面的逐项调色。" },
+  { id: "warm-film", name: "暖胶片", blurb: "高光偏暖、复古曲线：回忆、家庭、结尾回望。" },
+  { id: "cool-film", name: "冷胶片", blurb: "阴影偏青蓝、中对比：雨夜、审讯、追查。" },
+  { id: "faded", name: "褪色", blurb: "抬黑位、退饱和：旧照片、过期胶片。" },
+  { id: "mono", name: "黑白", blurb: "去色后加中对比：闪回与纪录感。" },
+];
+
+export function filmPresetById(id: Grade["film"]): FilmPreset | undefined {
+  return FILM_PRESETS.find((item) => item.id === id);
+}
+
+/**
+ * 胶片质感 + 颗粒的滤镜。
+ *
+ * 顺序：曲线在前、颗粒在后。颗粒先加会被后面的对比 / 饱和一起放大，
+ * 出来的噪点比作者给的值重得多。
+ */
+export function filmFilters(film: Grade["film"], grain: number): string[] {
+  const filters: string[] = [];
+  if (film === "warm-film") {
+    filters.push("curves=preset=vintage", "colorbalance=rs=0.03:gs=0.01:bs=-0.04");
+  } else if (film === "cool-film") {
+    filters.push("curves=preset=medium_contrast", "colorbalance=rs=-0.04:bs=0.05");
+  } else if (film === "faded") {
+    filters.push("curves=preset=lighter", "eq=saturation=0.82:contrast=0.9");
+  } else if (film === "mono") {
+    filters.push("hue=s=0", "curves=preset=medium_contrast");
+  }
+  if (grain > 0) {
+    // `noise` 的 alls 上限是 100：作者的 0–100 按 0.6 折过去，满格也不糊成雪花
+    filters.push(`noise=alls=${Math.round(grain * 0.6)}:allf=t+u`);
+  }
+  return filters;
+}
+
+/** 滤镜选项里的路径：`\`、`:`、`'`、`,` 在 ffmpeg 的滤镜图里都是特殊字符 */
+function escapeFilterPath(filePath: string): string {
+  return filePath.replace(/([\\:'[\],;])/g, "\\$1");
+}
+
 const GRADE_CONTRAST_CN: Record<Grade["contrast"], string> = {
   flat: "压平对比",
   natural: "对比原样",
@@ -181,7 +244,10 @@ export function isDefaultGrade(grade: Grade | undefined): boolean {
     grade.contrast === DEFAULT_GRADE.contrast &&
     grade.saturation === DEFAULT_GRADE.saturation &&
     grade.temperature === DEFAULT_GRADE.temperature &&
-    grade.vignette === DEFAULT_GRADE.vignette
+    grade.vignette === DEFAULT_GRADE.vignette &&
+    grade.film === DEFAULT_GRADE.film &&
+    grade.grain === DEFAULT_GRADE.grain &&
+    !grade.lutAssetId
   );
 }
 
@@ -189,15 +255,24 @@ export function isDefaultGrade(grade: Grade | undefined): boolean {
 export function gradeLine(grade: Grade | undefined): string {
   const value = grade ?? DEFAULT_GRADE;
   const preset = gradePresetById(value.presetId);
+  const film = filmPresetById(value.film);
   const bits = [
     GRADE_CONTRAST_CN[value.contrast],
     GRADE_SATURATION_CN[value.saturation],
     GRADE_TEMPERATURE_CN[value.temperature],
     ...(value.vignette ? ["四角压暗"] : []),
+    ...(film && film.id !== "none" ? [film.name] : []),
+    ...(value.grain > 0 ? [`颗粒 ${value.grain}`] : []),
+    ...(value.lutAssetId ? ["自定义 LUT"] : []),
   ];
   if (isDefaultGrade(value)) return "原样，不调色";
   return preset ? `${preset.name}：${bits.join("，")}` : bits.join("，");
 }
+
+export type GradeRenderOptions = {
+  /** 导入的 .cube 在本机的绝对路径；没给就跳过 LUT，其余调色照常 */
+  lutPath?: string;
+};
 
 /**
  * 调色滤镜：接在拼好的画面之后、字幕与角标之前。
@@ -205,11 +280,16 @@ export function gradeLine(grade: Grade | undefined): string {
  * 顺序很重要——字幕压完再调色，白字会被调成米黄、角标会跟着变暗，
  * 而这两样都有合规要求（H5）。
  */
-export function gradeFilters(grade: Grade | undefined): string[] {
+export function gradeFilters(grade: Grade | undefined, options: GradeRenderOptions = {}): string[] {
   const value = grade ?? DEFAULT_GRADE;
-  if (isDefaultGrade(value)) return [];
+  // LUT 文件不在（资产被清掉、换机器渲染）时，只跳过这一段：其余调色照常，
+  // 不因为一个文件缺失就让整条片子退回原样
+  const lut = value.lutAssetId && options.lutPath ? options.lutPath : undefined;
+  if (isDefaultGrade(value) && !lut) return [];
 
   const filters: string[] = [];
+  if (lut) filters.push(`lut3d=filename=${escapeFilterPath(lut)}:interp=trilinear`);
+
   const eq: string[] = [];
   if (value.contrast === "flat") eq.push("contrast=0.92");
   if (value.contrast === "punchy") eq.push("contrast=1.16");
@@ -219,6 +299,8 @@ export function gradeFilters(grade: Grade | undefined): string[] {
 
   if (value.temperature === "warm") filters.push("colorbalance=rs=0.06:bs=-0.06");
   if (value.temperature === "cool") filters.push("colorbalance=rs=-0.05:bs=0.05");
+
+  filters.push(...filmFilters(value.film, value.grain));
 
   if (value.vignette) filters.push("vignette=PI/4");
   return filters;
@@ -240,6 +322,12 @@ export function gradeCssFilter(grade: Grade | undefined): string {
   if (value.saturation === "rich") bits.push("saturate(1.18)");
   if (value.temperature === "warm") bits.push("sepia(0.16)");
   if (value.temperature === "cool") bits.push("hue-rotate(-8deg) saturate(0.96)");
+  // 胶片质感只近似：预览用 CSS 对得上「偏暖 / 去色 / 褪色」的大方向，
+  // 曲线与颗粒以导出为准。导入的 LUT 预览里没有——CSS 没有 lut3d。
+  if (value.film === "mono") bits.push("grayscale(1) contrast(1.08)");
+  else if (value.film === "faded") bits.push("contrast(0.9) saturate(0.82)");
+  else if (value.film === "warm-film") bits.push("sepia(0.12)");
+  else if (value.film === "cool-film") bits.push("hue-rotate(6deg) contrast(1.06)");
   return bits.join(" ");
 }
 

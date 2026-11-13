@@ -349,6 +349,11 @@ type WorkbenchState = {
    */
   setGrade: (grade: Grade) => boolean;
   /**
+   * 导入一份 .cube 调色表（I3 / ADR-0181）：落一条 `asset.updated { kind:"lut" }`。
+   * 只加资产、不改调色——是否启用由作者在面板里勾（再走 `setGrade`）。
+   */
+  importLut: (input: { name: string; base64: string }) => Promise<{ assetId?: string; error?: string }>;
+  /**
    * 改输出画幅与适配方式（E5 / ADR-0170）：整块写一条 `project.updated { frame }`。
    * 只影响导出，不影响提示词——已出的图不用重做。
    */
@@ -890,6 +895,9 @@ const VIDEO_URI_MAX = 12_000_000;
 
 /** 手贴音轨的上限：一句台词撑不到这么大，8 MB 已经很多（ADR-0085） */
 const VOICE_URI_MAX = 8_000_000;
+
+/** 导入调色表的上限（I3）：.cube 是纯文本，2 MB 已经远超常见表 */
+const LUT_BASE64_MAX = Math.ceil((2 * 1024 * 1024 * 4) / 3);
 
 /**
  * 手挂的参考图：现在没有上传通道，先收一个图床 / data URI 地址（ADR-0079）。
@@ -1442,13 +1450,42 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       current.contrast === next.contrast &&
       current.saturation === next.saturation &&
       current.temperature === next.temperature &&
-      current.vignette === next.vignette
+      current.vignette === next.vignette &&
+      current.film === next.film &&
+      current.grain === next.grain &&
+      current.lutAssetId === next.lutAssetId &&
+      current.lutName === next.lutName
     ) {
       return false;
     }
     const event: ProjectEvent = { type: "project.updated", at: stamp(), grade: next };
     set({ project: applyEvent(project, event), events: [...events, event], editError: undefined });
     return true;
+  },
+
+  importLut: async ({ name, base64 }) => {
+    if (get().readOnly) return { error: "页面只读，先解锁。" };
+    const clean = base64.replace(/\s+/g, "");
+    if (!clean) return { error: "文件是空的。" };
+    if (clean.length > LUT_BASE64_MAX) return { error: "调色表太大：.cube 文件 2 MB 以内。" };
+    const at = stamp();
+    // 与其它素材同一条路：内容寻址进资产库；写不进去就退回 data URI，
+    // 作者刚拖进来的表不能因为库不可用就丢掉
+    const uri = await persistAsset(`data:application/x-cube;base64,${clean}`, { force: true });
+    const { project, events } = get();
+    let id = `a-lut-${Date.now().toString(36)}`;
+    while (project.assets.some((asset) => asset.id === id)) id += "x";
+    const asset: Asset = {
+      id,
+      kind: "lut",
+      source: "upload",
+      uri,
+      mime: "application/x-cube",
+      createdAt: at,
+    };
+    const event: ProjectEvent = { type: "asset.updated", at, asset };
+    set({ project: applyEvent(project, event), events: [...events, event], editError: undefined });
+    return { assetId: id };
   },
 
   setFrame: (frame) => {

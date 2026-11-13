@@ -22,7 +22,7 @@ interface Project {
 
   bible: StoryBible;        // 故事圣经：全剧共享
   episodes: Episode[];      // 分集
-  assets: Asset[];          // 全项目资产（图/视频/音频/字体）
+  assets: Asset[];          // 全项目资产（图/视频/音频/调色表）
   approvals: Approval[];    // 阶段闸门：定妆 / 道具确认（ADR-0028）
   gates: GateRecord[];      // 阶段确认记录：七阶段各一条，带内容指纹（ADR-0100）
   subtitleOverrides: SubtitleOverride[];  // 手改断句（D2 / ADR-0117），默认 []
@@ -815,6 +815,11 @@ interface Grade {
   saturation: "muted" | "natural" | "rich";
   temperature: "cool" | "neutral" | "warm";
   vignette: boolean;
+  // 胶片质感与 LUT（I3 / ADR-0181），全部有默认值
+  film: "none" | "warm-film" | "cool-film" | "faded" | "mono";
+  grain: number;           // 0–100；0 = 不加
+  lutAssetId: string;      // 导入的 .cube 资产 id；空串 = 没有
+  lutName: string;         // 面板上显示的名字（资产本身没有名字字段）
 }
 
 // 输出画幅（E5 / ADR-0170）：与 look.aspect 分工——look 管提示词，frame 管导出
@@ -827,6 +832,8 @@ interface Frame {
 **写入方式**：画面轨只有一种事件 `timeline.updated { items }`，整条替换；配乐只有一种事件 `timeline.music.updated { music }`，同样整条替换。两条事件分开，换 take 不该顺手重写音乐。applyEvent 当场校验与 `validateProject` 同口径：id 不重复、镜头存在、take 存在且属于该镜、起点 / 时长合法、片段不重叠、转场颜色与时长合法（单侧不超过这一段的一半）。`timeline.updated` 与 `shot.removed` 都保留现有 `music`。
 
 > **画幅与裁切（E5 / ADR-0170，2026-11-13）**：`Project.frame` 决定**导出时**的形状，与 `Project.look.aspect` 分工——`look.aspect` 写进生成提示词（让模型按竖构图作画），`frame` 只决定裁成什么形状；用竖屏生成、再裁成 16:9 发横屏平台是短剧分发的常态。`fit` 三档：`pad`（默认，缩到放得下、留边填深色，与以前的导出逐字节同构）、`crop`（铺满、多出来的切掉）、`blur`（缩到放得下、空处用同一帧放大模糊填满）。裁切时留住哪一块由 `Shot.focus?: { x, y }` 决定（0–1 的比例，缺省居中）——不是主体追踪，是作者点一下九宫格。两项都走既有事件：画幅走 `project.updated { frame }`，焦点走 `shot.updated { focus }`。成片尺寸按画幅定，短边固定（草稿 540、定稿 1080），所以换画幅只换形状、不降清晰度。
+
+> **胶片质感与 LUT（I3 / ADR-0181，2026-11-13）**：`Grade` 在 E4 的四档之上多三层：`film`（五种内置取向，用 ffmpeg 曲线拼出来，不随包分发第三方 LUT）、`grain`（0–100 的颗粒）、`lutAssetId` + `lutName`（导入的 `.cube`）。`AssetKind` 因此多了第四种 `lut`：表文件按内容寻址进资产库（`application/x-cube` ↔ `.cube`），IR 只存 id 与显示名，绝不把表写进事件日志。渲染滤镜顺序固定：LUT → 逐项调色 → 胶片 → 颗粒 → 暗角；清单单独带 `lut { uri, name }` 让服务端拿到文件。调色表被 `grade` 引用，所以资产清点 / 孤儿白名单都把它算进去。三项都有默认值，旧日志回放与导出不变。
 
 > **转场与调色（E4 / ADR-0169，2026-11-13）**：`TimelineItem.transitionIn?: { kind: "black" | "white"; durationMs }` 挂在**后一段**上，缺省是硬切；第一段上的值没有意义，渲染时忽略。只做不改变时长的淡入淡出——`xfade` 会让两段重叠、成片比时间线短，字幕与配音整体错位（准则 P5）。`Project.grade` 是导出时对拼好画面的色彩调整（三档对比 / 饱和 / 色温 + 暗角），默认档不产生任何滤镜；与 `Project.look` 分工：`look` 进提示词（改它要重出图），`grade` 只进渲染（改它只重渲一遍）。两项都走既有事件：转场走 `timeline.updated` 整条替换，调色走 `project.updated { grade }` 整块替换。
 

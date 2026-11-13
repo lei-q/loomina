@@ -192,7 +192,13 @@ export const PropSchema = z.object({
 });
 export type Prop = z.infer<typeof PropSchema>;
 
-export const AssetKindSchema = z.enum(["image", "video", "audio"]);
+/**
+ * 资产类型。
+ *
+ * `lut` 是 I3 加进来的第四种：导入的 `.cube` 调色表也是「被生成或上传的东西」，
+ * 与素材一样按内容寻址存进资产库，只是界面上不显示成图片 / 视频 / 音频。
+ */
+export const AssetKindSchema = z.enum(["image", "video", "audio", "lut"]);
 export type AssetKind = z.infer<typeof AssetKindSchema>;
 
 /**
@@ -961,6 +967,8 @@ export const DEFAULT_LOOK: Look = LookSchema.parse({});
 export const GRADE_CONTRASTS = ["flat", "natural", "punchy"] as const;
 export const GRADE_SATURATIONS = ["muted", "natural", "rich"] as const;
 export const GRADE_TEMPERATURES = ["cool", "neutral", "warm"] as const;
+/** 胶片质感（I3）：在逐项调色之后再叠一层曲线与颗粒 */
+export const GRADE_FILMS = ["none", "warm-film", "cool-film", "faded", "mono"] as const;
 
 /**
  * 调色（E4 / ADR-0169）：整条片子的色彩倾向，在渲染时作用在拼好的画面上。
@@ -970,7 +978,8 @@ export const GRADE_TEMPERATURES = ["cool", "neutral", "warm"] as const;
  * 改 `grade` 只重渲一遍——两者都不是同一种成本，不该合成一个旋钮。
  *
  * 只收三档对比 / 饱和 / 色温加一个暗角：短剧的调色是「统一」，不是「创作」。
- * 真正的 LUT（.cube 文件）属于 I3，这里不做（见 ADR-0169 的「不做」）。
+ * 在此之上再叠一层**胶片质感**与**导入的 .cube 调色表**（I3 / ADR-0181）：
+ * 胶片是几个写死的曲线组合，.cube 是资产库里的一份文件，二者都只改导出画面。
  */
 export const GradeSchema = z.object({
   /** 调色预设 id（`apps/web/lib/render-effects.ts` 的 `GRADE_PRESETS`）；空串表示没选 */
@@ -983,6 +992,14 @@ export const GradeSchema = z.object({
   temperature: z.enum(GRADE_TEMPERATURES).default("neutral"),
   /** 暗角：压住画面四角，把视线收到中间 */
   vignette: z.boolean().default(false),
+  /** 胶片质感（I3）：`none` 就是不加；其余是内置的曲线组合 */
+  film: z.enum(GRADE_FILMS).default("none"),
+  /** 颗粒强度 0–100（I3）：0 表示不加；只在导出时叠，预览看不到 */
+  grain: z.number().int().min(0).max(100).default(0),
+  /** 导入的 .cube 调色表（I3）：资产 id；空串表示没有。文件不合法时渲染会跳过它 */
+  lutAssetId: z.string().default(""),
+  /** 调色表在界面上显示的名字（资产本身没有名字字段） */
+  lutName: z.string().max(80).default(""),
 });
 export type Grade = z.infer<typeof GradeSchema>;
 

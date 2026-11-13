@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_GRADE, type Grade } from "@loomina/ir";
 import {
   GRADE_PRESETS,
   TRANSITION_LABEL,
@@ -16,6 +17,8 @@ import {
 } from "./render-effects";
 
 const cut = { durationMs: 1000 };
+/** 一份完整的调色：新字段（I3）用默认值补上，测试只写自己关心的那几项 */
+const g = (over: Partial<Grade> = {}): Grade => ({ ...DEFAULT_GRADE, ...over });
 /** 留边底色：与 render-effects 里的常量同一份，测试不另写一份颜色 */
 const PAD_COLOR = "0x0C0C0D";
 const dip = (kind: "black" | "white", durationMs = 300, clipMs = 1000) => ({
@@ -69,16 +72,16 @@ describe("转场（E4 / ADR-0169）", () => {
 describe("调色（E4 / ADR-0169）", () => {
   it("默认档不产生任何滤镜：旧项目导出与以前逐字节同构", () => {
     expect(gradeFilters(undefined)).toEqual([]);
-    expect(gradeFilters({ presetId: "", contrast: "natural", saturation: "natural", temperature: "neutral", vignette: false })).toEqual([]);
+    expect(gradeFilters(g())).toEqual([]);
     expect(isDefaultGrade(undefined)).toBe(true);
   });
 
   it("对比 / 饱和 / 色温各编译成一段", () => {
     expect(
-      gradeFilters({ presetId: "", contrast: "punchy", saturation: "muted", temperature: "cool", vignette: false }),
+      gradeFilters(g({ contrast: "punchy", saturation: "muted", temperature: "cool" })),
     ).toEqual(["eq=contrast=1.16:saturation=0.85", "colorbalance=rs=-0.05:bs=0.05"]);
     expect(
-      gradeFilters({ presetId: "", contrast: "flat", saturation: "rich", temperature: "warm", vignette: true }),
+      gradeFilters(g({ contrast: "flat", saturation: "rich", temperature: "warm", vignette: true })),
     ).toEqual(["eq=contrast=0.92:saturation=1.18", "colorbalance=rs=0.06:bs=-0.06", "vignette=PI/4"]);
   });
 
@@ -89,12 +92,12 @@ describe("调色（E4 / ADR-0169）", () => {
       expect(preset.blurb.trim()).not.toBe("");
     }
     const cinema = gradePresetById("cinema")!;
-    expect(gradeFilters({ presetId: "cinema", ...cinema.value })).toContain("vignette=PI/4");
+    expect(gradeFilters(g({ presetId: "cinema", ...cinema.value }))).toContain("vignette=PI/4");
   });
 
   it("预览用的 CSS 近似：默认档为空串，调过才有值", () => {
     expect(gradeCssFilter(undefined)).toBe("");
-    expect(gradeCssFilter({ presetId: "thriller", contrast: "punchy", saturation: "muted", temperature: "cool", vignette: true })).toBe(
+    expect(gradeCssFilter(g({ presetId: "thriller", contrast: "punchy", saturation: "muted", temperature: "cool", vignette: true }))).toBe(
       "contrast(1.16) saturate(0.85) hue-rotate(-8deg) saturate(0.96)",
     );
   });
@@ -102,7 +105,77 @@ describe("调色（E4 / ADR-0169）", () => {
   it("一句人话：默认档说「不调色」，选过预设先说预设名", () => {
     expect(gradeLine(undefined)).toBe("原样，不调色");
     const thriller = gradePresetById("thriller")!;
-    expect(gradeLine({ presetId: "thriller", ...thriller.value })).toContain("冷峻：");
+    expect(gradeLine(g({ presetId: "thriller", ...thriller.value }))).toContain("冷峻：");
+  });
+});
+
+describe("胶片质感与 LUT（I3 / ADR-0181）", () => {
+  const base = {
+    presetId: "",
+    contrast: "natural" as const,
+    saturation: "natural" as const,
+    temperature: "neutral" as const,
+    vignette: false,
+    film: "none" as const,
+    grain: 0,
+    lutAssetId: "",
+    lutName: "",
+  };
+
+  it("选了胶片才算改过；默认档仍然是空滤镜", () => {
+    expect(isDefaultGrade(base)).toBe(true);
+    expect(gradeFilters(base)).toEqual([]);
+    expect(isDefaultGrade({ ...base, film: "mono" })).toBe(false);
+    expect(isDefaultGrade({ ...base, grain: 20 })).toBe(false);
+    expect(isDefaultGrade({ ...base, lutAssetId: "a-lut-1" })).toBe(false);
+  });
+
+  it("五种胶片各编译成曲线组合；颗粒按 0.6 折过去", () => {
+    expect(gradeFilters({ ...base, film: "warm-film" })).toEqual([
+      "curves=preset=vintage",
+      "colorbalance=rs=0.03:gs=0.01:bs=-0.04",
+    ]);
+    expect(gradeFilters({ ...base, film: "mono" })).toEqual([
+      "hue=s=0",
+      "curves=preset=medium_contrast",
+    ]);
+    expect(gradeFilters({ ...base, film: "faded" })).toEqual([
+      "curves=preset=lighter",
+      "eq=saturation=0.82:contrast=0.9",
+    ]);
+    expect(gradeFilters({ ...base, grain: 50 })).toEqual(["noise=alls=30:allf=t+u"]);
+  });
+
+  it("颗粒排在胶片曲线之后：先加噪会被后面的对比一起放大", () => {
+    expect(gradeFilters({ ...base, film: "cool-film", grain: 10 })).toEqual([
+      "curves=preset=medium_contrast",
+      "colorbalance=rs=-0.04:bs=0.05",
+      "noise=alls=6:allf=t+u",
+    ]);
+  });
+
+  it("导入的 LUT 插在最前面；路径里的特殊字符要转义", () => {
+    expect(gradeFilters({ ...base, lutAssetId: "a-lut-1" }, { lutPath: "/tmp/lut.cube" })).toEqual([
+      "lut3d=filename=/tmp/lut.cube:interp=trilinear",
+    ]);
+    expect(
+      gradeFilters({ ...base, lutAssetId: "a-lut-1" }, { lutPath: "/tmp/a:b,c.cube" }),
+    ).toEqual(["lut3d=filename=/tmp/a\\:b\\,c.cube:interp=trilinear"]);
+  });
+
+  it("文件不在时只跳过 LUT，其余调色照常", () => {
+    expect(
+      gradeFilters({ ...base, lutAssetId: "a-lut-1", vignette: true }),
+    ).toEqual(["vignette=PI/4"]);
+  });
+
+  it("一句人话说清胶片、颗粒与自定义 LUT", () => {
+    expect(gradeLine({ ...base, film: "mono", grain: 12, lutAssetId: "a-lut-1" })).toContain(
+      "黑白",
+    );
+    expect(gradeLine({ ...base, film: "mono", grain: 12, lutAssetId: "a-lut-1" })).toContain(
+      "自定义 LUT",
+    );
   });
 });
 

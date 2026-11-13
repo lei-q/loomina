@@ -426,6 +426,7 @@ export function EditScreen() {
   const upsertRights = useWorkbench((state) => state.upsertRights);
   const removeRights = useWorkbench((state) => state.removeRights);
   const setGrade = useWorkbench((state) => state.setGrade);
+  const importLut = useWorkbench((state) => state.importLut);
   const setFrame = useWorkbench((state) => state.setFrame);
   const setShotFocus = useWorkbench((state) => state.setShotFocus);
   const setTimelineTransition = useWorkbench((state) => state.setTimelineTransition);
@@ -3057,6 +3058,7 @@ export function EditScreen() {
           onSave={(next) => setGrade(next)}
           seams={seams}
           onTransition={(itemId, transition) => setTimelineTransition(itemId, transition)}
+          onImportLut={importLut}
           readOnly={Boolean(readOnly)}
           onClose={() => setGradeOpen(false)}
         />

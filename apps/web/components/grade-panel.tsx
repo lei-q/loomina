@@ -1,8 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { Grade, Transition, TransitionKind } from "@loomina/ir";
+import { DEFAULT_GRADE, type Grade, type Transition, type TransitionKind } from "@loomina/ir";
 import {
+  FILM_PRESETS,
   GRADE_PRESETS,
   TRANSITION_LABEL,
   TRANSITION_MAX_MS,
@@ -53,6 +54,11 @@ export type GradePanelProps = {
   seams: SeamOption[];
   /** 设某一处接缝的转场；`undefined` 恢复硬切 */
   onTransition: (itemId: string, transition: Transition | undefined) => boolean;
+  /** 导入 .cube（I3）：落一份资产，返回它的 id；面板据此把 draft 指过去 */
+  onImportLut?: (input: { name: string; base64: string }) => Promise<{
+    assetId?: string;
+    error?: string;
+  }>;
   readOnly?: boolean;
   onClose: () => void;
 };
@@ -69,11 +75,13 @@ export function GradePanel({
   onSave,
   seams,
   onTransition,
+  onImportLut,
   readOnly = false,
   onClose,
 }: GradePanelProps) {
   const [draft, setDraft] = useState<Grade>(grade);
   const [flash, setFlash] = useState("");
+  const [lutBusy, setLutBusy] = useState(false);
   const filters = useMemo(() => gradeFilters(draft), [draft]);
   const preset = gradePresetById(draft.presetId);
   const dirty =
@@ -81,7 +89,11 @@ export function GradePanel({
     draft.contrast !== grade.contrast ||
     draft.saturation !== grade.saturation ||
     draft.temperature !== grade.temperature ||
-    draft.vignette !== grade.vignette;
+    draft.vignette !== grade.vignette ||
+    draft.film !== grade.film ||
+    draft.grain !== grade.grain ||
+    draft.lutAssetId !== grade.lutAssetId ||
+    draft.lutName !== grade.lutName;
 
   const pickPreset = (id: string) => {
     const found = gradePresetById(id);
@@ -113,6 +125,29 @@ export function GradePanel({
           ? "页面只读，先解锁。"
           : "没有变化。",
     );
+  };
+
+  const importLutFile = async (file: File | undefined) => {
+    if (!file || !onImportLut) return;
+    setLutBusy(true);
+    setFlash("");
+    try {
+      const buffer = await file.arrayBuffer();
+      const result = await onImportLut({
+        name: file.name,
+        base64: base64Of(new Uint8Array(buffer)),
+      });
+      if (!result.assetId) {
+        setFlash(result.error ?? "导入失败：换一份 .cube 再试。");
+        return;
+      }
+      setDraft((prev) => ({ ...prev, lutAssetId: result.assetId!, lutName: file.name }));
+      setFlash("调色表已导入：点「存调色」后，下一次导出生效。");
+    } catch {
+      setFlash("读不到这个文件，换一份试试。");
+    } finally {
+      setLutBusy(false);
+    }
   };
 
   const setSeamDuration = (seam: SeamOption, durationMs: number) => {
@@ -225,6 +260,97 @@ export function GradePanel({
             </div>
           </section>
 
+          <section className="mt-4">
+            <h3 className="text-[10.5px] tracking-[.06em] text-text">胶片质感（I3）</h3>
+            <p className="mt-1 text-[9px] leading-[1.65] text-muted-2">
+              内置五种曲线组合，不依赖任何外部文件；和上面的逐项调色叠加，顺序是先调色、再胶片。
+            </p>
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {FILM_PRESETS.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  disabled={readOnly}
+                  onClick={() => setDraft((prev) => ({ ...prev, film: item.id }))}
+                  aria-pressed={draft.film === item.id}
+                  title={item.blurb}
+                  className={cn(
+                    "rounded-token border px-1.5 py-px text-[9px] transition-colors duration-[var(--dur)] disabled:opacity-40",
+                    draft.film === item.id
+                      ? "border-pick text-text"
+                      : "border-line text-muted-2 hover:border-line-2 hover:text-text",
+                  )}
+                >
+                  {item.name}
+                </button>
+              ))}
+            </div>
+            <label className="mt-2 flex items-center gap-2 text-[9.5px] text-muted-2">
+              颗粒
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={draft.grain}
+                disabled={readOnly}
+                onChange={(event) =>
+                  setDraft((prev) => ({ ...prev, grain: Number(event.target.value) }))
+                }
+                className="min-w-0 flex-1 accent-[var(--pick)]"
+              />
+              <span className="tnum w-[34px] text-right text-muted">{draft.grain}</span>
+            </label>
+
+            <div className="mt-2 border border-line px-2.5 py-2">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <span className="text-[10px] text-text">
+                  导入的 .cube
+                  {draft.lutAssetId && (
+                    <span className="ml-1.5 text-[9px] text-pick">
+                      {draft.lutName || "自定义 LUT"}
+                    </span>
+                  )}
+                </span>
+                <label
+                  className={cn(
+                    "cursor-pointer rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text",
+                    (readOnly || lutBusy) && "pointer-events-none opacity-40",
+                  )}
+                >
+                  {lutBusy ? "导入中…" : draft.lutAssetId ? "换一份" : "选文件"}
+                  <input
+                    type="file"
+                    accept=".cube"
+                    disabled={readOnly || lutBusy || !onImportLut}
+                    className="hidden"
+                    onChange={(event) => {
+                      void importLutFile(event.target.files?.[0]);
+                      event.target.value = "";
+                    }}
+                  />
+                </label>
+              </div>
+              <p className="mt-1 text-[9px] leading-[1.65] text-muted-2">
+                {draft.lutAssetId
+                  ? "导出时插在滤镜链最前面（lut3d），上面的逐项调色与胶片再叠在它之后。"
+                  : "没有导入：内置胶片已经够用；有自己调好的表再导。2 MB 以内。"}
+              </p>
+              {draft.lutAssetId && (
+                <button
+                  type="button"
+                  disabled={readOnly}
+                  onClick={() =>
+                    setDraft((prev) => ({ ...prev, lutAssetId: "", lutName: "" }))
+                  }
+                  className="mt-1 text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:text-text disabled:opacity-40"
+                >
+                  不用这份调色表
+                </button>
+              )}
+            </div>
+          </section>
+
           <section className="mt-3 border border-line px-3 py-2.5">
             <p className="text-[8.5px] tracking-[.06em] text-muted-2">会送进渲染的滤镜</p>
             <p className="mt-1 break-words font-mono text-[9px] leading-[1.7] text-text">
@@ -249,7 +375,7 @@ export function GradePanel({
                 type="button"
                 disabled={readOnly}
                 onClick={() => {
-                  setDraft({ presetId: "", contrast: "natural", saturation: "natural", temperature: "neutral", vignette: false });
+                  setDraft({ ...DEFAULT_GRADE });
                   setFlash("");
                 }}
                 className="text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:text-text disabled:opacity-40"
@@ -354,13 +480,26 @@ export function GradePanel({
 }
 
 /** 预设与逐项参数是否还一致：一致时不必提示「已经改过」 */
-function matchesPreset(grade: Grade, preset: { value: Omit<Grade, "presetId"> }): boolean {
+function matchesPreset(
+  grade: Grade,
+  preset: { value: Pick<Grade, "contrast" | "saturation" | "temperature" | "vignette"> },
+): boolean {
   return (
     grade.contrast === preset.value.contrast &&
     grade.saturation === preset.value.saturation &&
     grade.temperature === preset.value.temperature &&
     grade.vignette === preset.value.vignette
   );
+}
+
+/** 分块转 base64：一次 `String.fromCharCode(...大数组)` 会爆调用栈 */
+function base64Of(bytes: Uint8Array): string {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
+  }
+  return btoa(binary);
 }
 
 function Row<T extends string>({

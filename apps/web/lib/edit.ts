@@ -343,6 +343,11 @@ export type EditView = {
   translationCoverage: { lines: number; translated: number };
   /** 调色（E4 / ADR-0169）：导出时对画面做的色彩调整 */
   grade: Grade;
+  /**
+   * 导入的 .cube（I3 / ADR-0181）：`grade.lutAssetId` 指向的资产。
+   * 资产记录还在、文件却不在时这里照样给地址，导出由服务端如实报错。
+   */
+  lut?: { assetId: string; name: string; uri: string };
   /** 画幅与适配（E5 / ADR-0170）：导出时裁成什么形状、多出来的地方怎么补 */
   frame: Frame;
   totalMs: number;
@@ -631,6 +636,12 @@ export function toEditView(
     ];
   });
 
+  const lutAsset = project.grade.lutAssetId
+    ? project.assets.find(
+        (asset) => asset.id === project.grade.lutAssetId && asset.kind === "lut" && asset.uri,
+      )
+    : undefined;
+
   return {
     title: project.title,
     version: project.version,
@@ -649,6 +660,15 @@ export function toEditView(
       translated: project.dialogue.filter((line) => line.translation?.trim()).length,
     },
     grade: project.grade,
+    ...(lutAsset
+      ? {
+          lut: {
+            assetId: lutAsset.id,
+            name: project.grade.lutName || "自定义 LUT",
+            uri: lutAsset.uri!,
+          },
+        }
+      : {}),
     frame: project.frame,
     totalMs,
     totalSec: Math.round(totalMs / 100) / 10,
