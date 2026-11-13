@@ -6641,3 +6641,51 @@ describe("删工作空间（C15 / ADR-0201）", () => {
     expect(state().workspaceError).toContain("不支持多工作空间");
   });
 });
+
+describe("跨空间取技能（C.5 / ADR-0202）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  const source = () => ({
+    id: "sk-night",
+    name: "不要现代物品",
+    description: "夜班是九十年代",
+    stage: "all" as const,
+    body: "场景里不要出现手机、汽车、路灯。",
+    enabled: false,
+    createdAt: "2026-11-13T00:00:00Z",
+  });
+
+  it("取用抄成一条新技能：id 重编、默认启用，一条 project.updated", () => {
+    const before = state().project.skills.length;
+    const snapshot = state().events.length;
+    expect(state().adoptSharedSkill(source())).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "project.updated" });
+    const added = state().project.skills.at(-1)!;
+    expect(state().project.skills).toHaveLength(before + 1);
+    expect(added.id).not.toBe("sk-night");
+    expect(added.name).toBe("不要现代物品");
+    expect(added.description).toBe("夜班是九十年代");
+    expect(added.body).toBe("场景里不要出现手机、汽车、路灯。");
+    // 在来源空间关着的，取过来默认打开
+    expect(added.enabled).toBe(true);
+    expect(rebuild(state().events).skills).toHaveLength(before + 1);
+  });
+
+  it("同名同内容已经在用就不重复加；只读拒绝", () => {
+    expect(state().adoptSharedSkill(source())).toBe(true);
+    const snapshot = state().events.length;
+    expect(state().adoptSharedSkill(source())).toBe(false);
+    expect(state().castError).toContain("已经在用");
+    expect(state().events).toHaveLength(snapshot);
+
+    useWorkbench.setState({ readOnly: true });
+    const other = { ...source(), body: "另一条要求" };
+    expect(state().adoptSharedSkill(other)).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+    useWorkbench.setState({ readOnly: false });
+  });
+});

@@ -400,6 +400,13 @@ type WorkbenchState = {
   ) => boolean;
   removeSkill: (skillId: string) => boolean;
   /**
+   * 取用别的空间的一条技能（C.5 / ADR-0202）：抄成当前项目的一条新技能。
+   *
+   * 内容照抄、id 重新编（`sk-<时间戳>`），默认启用；同名同内容的已在就不重复加。
+   * 不调模型、不花钱。
+   */
+  adoptSharedSkill: (skill: ProjectSkill) => boolean;
+  /**
    * 导入一份 .cube 调色表（I3 / ADR-0181）：落一条 `asset.updated { kind:"lut" }`。
    * 只加资产、不改调色——是否启用由作者在面板里勾（再走 `setGrade`）。
    */
@@ -1772,6 +1779,43 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       type: "project.updated",
       at: stamp(),
       skills: project.skills.filter((skill) => skill.id !== skillId),
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  adoptSharedSkill: (skill) => {
+    if (get().readOnly) {
+      set({ castError: "现在是只读：换到能写的窗口再改技能。" });
+      return false;
+    }
+    const { project, events } = get();
+    const same = (item: ProjectSkill) =>
+      item.name.trim() === skill.name.trim() && item.body.trim() === skill.body.trim();
+    if (project.skills.some(same)) {
+      set({ castError: "这条技能已经在用了。" });
+      return false;
+    }
+    let id = `sk-${Date.now().toString(36)}`;
+    while (project.skills.some((item) => item.id === id)) id += "x";
+    const parsed = ProjectSkillSchema.safeParse({
+      ...skill,
+      id,
+      enabled: true,
+      createdAt: stamp(),
+    });
+    if (!parsed.success) {
+      set({ castError: `技能不合法：${parsed.error.issues[0]?.message ?? "未知原因"}` });
+      return false;
+    }
+    const event: ProjectEvent = {
+      type: "project.updated",
+      at: stamp(),
+      skills: [...project.skills, parsed.data],
     };
     set({
       project: applyEvent(project, event),
