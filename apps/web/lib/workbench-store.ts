@@ -12,6 +12,7 @@ import {
   LookSchema,
   PerformanceSpecSchema,
   placementProblem,
+  ProjectSchema,
   rebuild,
   REFERENCE_IMAGES_MAX,
   RightsRecordSchema,
@@ -77,7 +78,20 @@ import {
   type StoryDraft,
 } from "@loomina/pipeline";
 import { create } from "zustand";
-import { diffEvents, getEventLog, migrateLog } from "@/lib/event-log";
+import {
+  diffEvents,
+  getEventLog,
+  hasWorkspaces,
+  indexedDbLog,
+  indexedDbLogFor,
+  listWorkspaces,
+  migrateLog,
+  rememberWorkspace,
+  rememberedWorkspace,
+  saveWorkspace,
+  setEventLog,
+  type WorkspaceMeta,
+} from "@/lib/event-log";
 import { estimateDialogueMs } from "@/lib/dialogue";
 import type { DoctorRewriteItem } from "@/lib/doctor-ai";
 import { askInstructionAi, describeAiPatch, shotSnapshotOf } from "@/lib/instruction-ai";
@@ -256,6 +270,12 @@ export type GenerateJob =
 type WorkbenchState = {
   project: Project;
   events: ProjectEvent[];
+  /** 当前工作空间（C3 / ADR-0188）：每个空间的日志各自独立 */
+  workspaceId: string;
+  /** 本机的工作空间列表：顶栏切换用 */
+  workspaces: WorkspaceMeta[];
+  /** 工作空间操作失败的原因 */
+  workspaceError?: string;
   currentShotId: string;
   /** 正在生成哪一张：人物 / 场景 / 道具的 id → 任务。出图是分钟级，界面要如实显示进度 */
   jobs: Record<string, GenerateJob | undefined>;
@@ -844,6 +864,20 @@ type WorkbenchState = {
    */
   startProjectFromTemplate: (template: ProjectTemplate, title: string) => boolean;
   /**
+   * 读本机的工作空间列表（C3 / ADR-0188）。
+   *
+   * 第一次打开时把当前空间登记进去，名字取项目名——老日志因此自动成为一个
+   * 「默认工作空间」，不搬家、不丢事件。
+   */
+  refreshWorkspaces: () => Promise<WorkspaceMeta[]>;
+  /**
+   * 新建一个工作空间：一条独立的日志，从示例项目开工，名字即新项目的标题。
+   * 返回新空间的 id；调用方负责整页加载过去（换空间走 reload，见 ADR-0188）。
+   */
+  createWorkspace: (name: string) => Promise<string | undefined>;
+  /** 改工作空间名字：只改本机的登记表，不动项目标题与日志 */
+  renameWorkspace: (id: string, name: string) => Promise<boolean>;
+  /**
    * 改故事层文字（A16）：一条 `story.updated`。
    * 只改传进来的字段；没改的字段与 `provenance` 都不动。
    */
@@ -1219,6 +1253,26 @@ async function generateOne(
 let hydrated = false;
 let ready = false;
 
+/** 这一页停在哪个工作空间：上一次记住的那个，没有就是默认空间（C3） */
+const startingWorkspace = rememberedWorkspace();
+
+/** 把当前工作空间登记进本机的列表（第一次打开老日志时也走这里） */
+async function registerWorkspace(id: string, name: string): Promise<void> {
+  if (!hasWorkspaces()) return;
+  try {
+    const now = new Date().toISOString();
+    const existing = (await listWorkspaces()).find((item) => item.id === id);
+    await saveWorkspace(
+      existing
+        ? { ...existing, name: existing.name || name, lastOpenedAt: now }
+        : { id, name, createdAt: now, lastOpenedAt: now },
+    );
+    useWorkbench.setState({ workspaces: await listWorkspaces() });
+  } catch {
+    // 列表读不到不影响编辑：顶栏最多显示不出别的空间
+  }
+}
+
 function storageMessage(error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error);
   return `本地保存失败：${detail.slice(0, 100)}`;
@@ -1444,6 +1498,8 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
 
   project: sampleProject,
   events: initialEvents,
+  workspaceId: startingWorkspace,
+  workspaces: [],
   currentShotId: initialShotId,
   jobs: {},
   mode: storedMode(),
@@ -1452,13 +1508,17 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
   hydrate: async () => {
     if (hydrated) return;
     hydrated = true;
+    // 测试注入的日志原样使用；真浏览器里换成当前工作空间那一条（C3）
+    if (getEventLog() === indexedDbLog) {
+      setEventLog(indexedDbLogFor(startingWorkspace));
+    }
     const log = getEventLog();
 
     try {
       const stored = migrateLog(await log.load());
 
-      // 另一个标签页正在写：读得到它的进度，但这一页不改、不存
-      if (!(await claimWriter())) {
+      // 另一个标签页正在写同一个空间：读得到它的进度，但这一页不改、不存
+      if (!(await claimWriter(startingWorkspace))) {
         if (stored) {
           const project = rebuild(stored);
           set({ project, events: stored, currentShotId: firstOpenShotId(project) });
@@ -1470,12 +1530,14 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       if (stored) {
         const project = rebuild(stored);
         set({ project, events: stored, currentShotId: firstOpenShotId(project) });
+        void registerWorkspace(startingWorkspace, project.title);
         ready = true;
         return;
       }
       // 第一次打开：把示例项目的引导事件写进去，之后就都有据可查
       await log.replace(get().events);
       set({ storageError: undefined });
+      void registerWorkspace(startingWorkspace, get().project.title);
     } catch (error) {
       set({ storageError: storageMessage(error) });
     }
@@ -5661,6 +5723,91 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       promptOverrides: {},
     });
     return true;
+  },
+
+  refreshWorkspaces: async () => {
+    if (!hasWorkspaces()) return [];
+    try {
+      let list = await listWorkspaces();
+      // 第一次打开：当前空间还没登记，用项目名补一条
+      if (list.length === 0) {
+        await registerWorkspace(get().workspaceId, get().project.title);
+        list = await listWorkspaces();
+      }
+      set({ workspaces: list, workspaceError: undefined });
+      return list;
+    } catch (error) {
+      set({ workspaceError: error instanceof Error ? error.message : "读不到工作空间列表。" });
+      return [];
+    }
+  },
+
+  createWorkspace: async (rawName) => {
+    const name = rawName.trim();
+    if (!name) {
+      set({ workspaceError: "工作空间要有名字。" });
+      return undefined;
+    }
+    if (name.length > 40) {
+      set({ workspaceError: "名字最多 40 个字。" });
+      return undefined;
+    }
+    if (!hasWorkspaces()) {
+      set({ workspaceError: "这个浏览器不支持多工作空间。" });
+      return undefined;
+    }
+
+    try {
+      const list = await listWorkspaces();
+      if (list.some((item) => item.name === name)) {
+        set({ workspaceError: "已经有同名的工作空间。" });
+        return undefined;
+      }
+
+      const id = `w-${Date.now().toString(36)}`;
+      const now = new Date().toISOString();
+      // 新空间从示例项目开工：作者随后可以在故事页换成自己的项目
+      const seed = ProjectSchema.parse({ ...sampleProject, id: `p-${id}`, title: name });
+      await indexedDbLogFor(id).replace(bootstrap(seed));
+      await saveWorkspace({ id, name, createdAt: now, lastOpenedAt: now });
+      rememberWorkspace(id);
+      set({ workspaces: await listWorkspaces(), workspaceError: undefined });
+      return id;
+    } catch (error) {
+      set({ workspaceError: error instanceof Error ? error.message : "工作空间没建成。" });
+      return undefined;
+    }
+  },
+
+  renameWorkspace: async (id, rawName) => {
+    const name = rawName.trim();
+    if (!name) {
+      set({ workspaceError: "工作空间要有名字。" });
+      return false;
+    }
+    if (name.length > 40) {
+      set({ workspaceError: "名字最多 40 个字。" });
+      return false;
+    }
+    if (!hasWorkspaces()) return false;
+    try {
+      const list = await listWorkspaces();
+      if (list.some((item) => item.id !== id && item.name === name)) {
+        set({ workspaceError: "已经有同名的工作空间。" });
+        return false;
+      }
+      const target = list.find((item) => item.id === id);
+      if (!target) {
+        set({ workspaceError: "找不到这个工作空间。" });
+        return false;
+      }
+      await saveWorkspace({ ...target, name });
+      set({ workspaces: await listWorkspaces(), workspaceError: undefined });
+      return true;
+    } catch (error) {
+      set({ workspaceError: error instanceof Error ? error.message : "名字没改成。" });
+      return false;
+    }
   },
 
   startProjectFromVerbatim: (document) => {

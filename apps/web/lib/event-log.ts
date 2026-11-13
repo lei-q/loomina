@@ -195,14 +195,28 @@ export function diffEvents(prev: ProjectEvent[], next: ProjectEvent[]): EventSyn
 // ── IndexedDB 实现 ───────────────────────────────────────────────
 
 const DB_NAME = "loomina";
-/** 第 3 版加了模板仓（F3 / ADR-0180）；事件与 meta 两仓升上来原样保留 */
-const DB_VERSION = 3;
+/**
+ * 第 3 版加了模板仓（F3 / ADR-0180）；第 4 版加工作空间仓（C3 / ADR-0188）。
+ * 事件、meta 与模板三仓升上来原样保留。
+ */
+const DB_VERSION = 4;
 const STORE = "events";
 const META = "meta";
 const TEMPLATES = "templates";
+const WORKSPACES = "workspaces";
 
-type Row = { seq: number; event: ProjectEvent };
-type MetaRow = { key: "log"; version: number };
+/** 老日志（没有 workspaceId 的行）归这个工作空间：升级不搬家 */
+export const DEFAULT_WORKSPACE_ID = "w-default";
+
+export type WorkspaceMeta = {
+  id: string;
+  name: string;
+  createdAt: string;
+  lastOpenedAt: string;
+};
+
+type Row = { seq: number; event: ProjectEvent; workspaceId?: string };
+type MetaRow = { key: string; version: number };
 
 /** 本地库的连接：事件日志与模板（F3）共用，升级时一起建仓 */
 export function openDb(): Promise<IDBDatabase> {
@@ -220,6 +234,10 @@ export function openDb(): Promise<IDBDatabase> {
       // 第 3 版：项目模板（F3 / ADR-0180），主键是模板自带的 id
       if (!db.objectStoreNames.contains(TEMPLATES)) {
         db.createObjectStore(TEMPLATES, { keyPath: "id" });
+      }
+      // 第 4 版：工作空间（C3 / ADR-0188），主键是工作空间 id
+      if (!db.objectStoreNames.contains(WORKSPACES)) {
+        db.createObjectStore(WORKSPACES, { keyPath: "id" });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -242,49 +260,136 @@ function committed(tx: IDBTransaction): Promise<void> {
   });
 }
 
-export const indexedDbLog: EventLog = {
-  async load() {
-    const db = await openDb();
-    try {
-      const tx = db.transaction([STORE, META], "readonly");
-      const rows = await settle(tx.objectStore(STORE).getAll() as IDBRequest<Row[]>);
-      const meta = await settle(
-        tx.objectStore(META).get("log") as IDBRequest<MetaRow | undefined>,
-      );
-      return {
-        version: meta?.version ?? 1,
-        events: rows.sort((a, b) => a.seq - b.seq).map((row) => row.event),
-      };
-    } finally {
-      db.close();
-    }
-  },
+/** 一条行的所属工作空间：老行没有这个字段，归默认空间 */
+const workspaceOfRow = (row: Row): string => row.workspaceId ?? DEFAULT_WORKSPACE_ID;
 
-  async append(event) {
-    const db = await openDb();
-    try {
-      const tx = db.transaction(STORE, "readwrite");
-      tx.objectStore(STORE).add({ event });
-      await committed(tx);
-    } finally {
-      db.close();
-    }
-  },
+/**
+ * 某个工作空间的事件日志（C3 / ADR-0188）。
+ *
+ * 所有工作空间共用 `events` 仓，按 `workspaceId` 过滤：老日志（没有这个字段）
+ * 原样归 `w-default`，升级时不搬行、不改内容。meta 里的版本也按工作空间分开。
+ */
+export function indexedDbLogFor(workspaceId: string = DEFAULT_WORKSPACE_ID): EventLog {
+  return {
+    async load() {
+      const db = await openDb();
+      try {
+        const tx = db.transaction([STORE, META], "readonly");
+        const rows = await settle(tx.objectStore(STORE).getAll() as IDBRequest<Row[]>);
+        const meta = await settle(
+          tx.objectStore(META).get(`log:${workspaceId}`) as IDBRequest<MetaRow | undefined>,
+        );
+        return {
+          version: meta?.version ?? 1,
+          events: rows
+            .filter((row) => workspaceOfRow(row) === workspaceId)
+            .sort((a, b) => a.seq - b.seq)
+            .map((row) => row.event),
+        };
+      } finally {
+        db.close();
+      }
+    },
 
-  async replace(events) {
-    const db = await openDb();
-    try {
-      const tx = db.transaction([STORE, META], "readwrite");
-      const store = tx.objectStore(STORE);
-      store.clear();
-      for (const event of events) store.add({ event });
-      tx.objectStore(META).put({ key: "log", version: LOG_VERSION } satisfies MetaRow);
-      await committed(tx);
-    } finally {
-      db.close();
-    }
-  },
-};
+    async append(event) {
+      const db = await openDb();
+      try {
+        const tx = db.transaction(STORE, "readwrite");
+        tx.objectStore(STORE).add({ event, workspaceId });
+        await committed(tx);
+      } finally {
+        db.close();
+      }
+    },
+
+    async replace(events) {
+      const db = await openDb();
+      try {
+        const tx = db.transaction([STORE, META], "readwrite");
+        const store = tx.objectStore(STORE);
+        // 只清这个工作空间的行：别的空间还在写，不能一起抹掉
+        const cursor = store.openCursor();
+        await new Promise<void>((resolve, reject) => {
+          cursor.onsuccess = () => {
+            const position = cursor.result;
+            if (!position) {
+              resolve();
+              return;
+            }
+            if (workspaceOfRow(position.value as Row) === workspaceId) position.delete();
+            position.continue();
+          };
+          cursor.onerror = () => reject(cursor.error ?? new Error("清工作空间失败"));
+        });
+        for (const event of events) store.add({ event, workspaceId });
+        tx.objectStore(META).put({
+          key: `log:${workspaceId}`,
+          version: LOG_VERSION,
+        } satisfies MetaRow);
+        await committed(tx);
+      } finally {
+        db.close();
+      }
+    },
+  };
+}
+
+export const indexedDbLog: EventLog = indexedDbLogFor(DEFAULT_WORKSPACE_ID);
+
+// ── 工作空间（C3 / ADR-0188）────────────────────────────────────
+
+/** 测试 / 非浏览器环境没有 IndexedDB：调用方据此跳过工作空间管理 */
+export function hasWorkspaces(): boolean {
+  return typeof indexedDB !== "undefined";
+}
+
+export async function listWorkspaces(): Promise<WorkspaceMeta[]> {
+  if (!hasWorkspaces()) return [];
+  const db = await openDb();
+  try {
+    const tx = db.transaction(WORKSPACES, "readonly");
+    const rows = await settle(
+      tx.objectStore(WORKSPACES).getAll() as IDBRequest<WorkspaceMeta[]>,
+    );
+    return rows.sort((a, b) => b.lastOpenedAt.localeCompare(a.lastOpenedAt));
+  } finally {
+    db.close();
+  }
+}
+
+export async function saveWorkspace(meta: WorkspaceMeta): Promise<void> {
+  if (!hasWorkspaces()) return;
+  const db = await openDb();
+  try {
+    const tx = db.transaction(WORKSPACES, "readwrite");
+    tx.objectStore(WORKSPACES).put(meta);
+    await committed(tx);
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * 记住当前工作空间：换工作空间走整页加载（ADR-0188），
+ * 下次打开还停在这个空间。
+ */
+const REMEMBERED_KEY = "loomina.workspace";
+
+export function rememberWorkspace(id: string): void {
+  try {
+    localStorage.setItem(REMEMBERED_KEY, id);
+  } catch {
+    // 隐私模式 / 配额：记不住就回默认空间，不影响当前这一页
+  }
+}
+
+export function rememberedWorkspace(): string {
+  try {
+    return localStorage.getItem(REMEMBERED_KEY) || DEFAULT_WORKSPACE_ID;
+  } catch {
+    return DEFAULT_WORKSPACE_ID;
+  }
+}
 
 let current: EventLog = indexedDbLog;
 

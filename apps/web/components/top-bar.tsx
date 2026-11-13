@@ -11,6 +11,7 @@ import { ModelPicker } from "@/components/model-picker";
 import { SpendLedger } from "@/components/spend-ledger";
 import type { Modality } from "@/lib/config-types";
 import { nextOpenStage, stageStates } from "@/lib/stage-flow";
+import { rememberWorkspace } from "@/lib/event-log";
 import { useWorkbench } from "@/lib/workbench-store";
 
 /** 阶段是一列；还没做出来的阶段 href 为 null，点了不跳。 */
@@ -242,6 +243,10 @@ export function TopBar({
   const [draftBudget, setDraftBudget] = useState<string>("");
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [newWorkspace, setNewWorkspace] = useState("");
+  const [renaming, setRenaming] = useState<{ id: string; name: string }>();
+  const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const project = useWorkbench((state) => state.project);
   const events = useWorkbench((state) => state.events);
   const undo = useWorkbench((state) => state.undo);
@@ -251,6 +256,17 @@ export function TopBar({
   const setMode = useWorkbench((state) => state.setMode);
   const lockedNotice = useWorkbench((state) => state.lockedNotice);
   const dismissLockNotice = useWorkbench((state) => state.dismissLockNotice);
+  const workspaceId = useWorkbench((state) => state.workspaceId);
+  const workspaces = useWorkbench((state) => state.workspaces);
+  const workspaceError = useWorkbench((state) => state.workspaceError);
+  const refreshWorkspaces = useWorkbench((state) => state.refreshWorkspaces);
+  const createWorkspace = useWorkbench((state) => state.createWorkspace);
+  const renameWorkspace = useWorkbench((state) => state.renameWorkspace);
+  const currentWorkspace = workspaces.find((item) => item.id === workspaceId);
+
+  useEffect(() => {
+    void refreshWorkspaces();
+  }, [refreshWorkspaces]);
   // 阶段式只露这一阶段的工具；自由工作台全部展开（F8）
   const shows = (tool: StageTool) => mode === "free" || STAGE_TOOLS[stage].includes(tool);
   // 撤销一步是哪一步：按钮 title 与历史抽屉用同一份判断（F2 / ADR-0109）
@@ -287,6 +303,26 @@ export function TopBar({
     setDraftBudget("");
   };
 
+  /**
+   * 换工作空间走整页加载：各页有自己的播放器、选中镜与本地草稿，
+   * 在内存里换日志容易留下上一份项目的状态。见 ADR-0188。
+   */
+  const openWorkspace = (id: string) => {
+    if (id === workspaceId) {
+      setWorkspaceOpen(false);
+      return;
+    }
+    rememberWorkspace(id);
+    window.location.assign("/");
+  };
+
+  const submitWorkspace = async () => {
+    setWorkspaceBusy(true);
+    const id = await createWorkspace(newWorkspace);
+    setWorkspaceBusy(false);
+    if (id) window.location.assign("/");
+  };
+
   return (
     <header className="flex h-[46px] shrink-0 items-center gap-4 border-b border-line px-4">
       <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
@@ -299,6 +335,148 @@ export function TopBar({
             自由工作台
           </span>
         )}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setWorkspaceOpen((open) => !open)}
+            aria-haspopup="menu"
+            aria-expanded={workspaceOpen}
+            title="工作空间：每个空间是一条独立的完整流程；素材库在这台机器上共用"
+            className="tnum flex items-center gap-1 rounded-token border border-line px-1.5 py-px text-[8.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            <span className="text-muted-2">空间</span>
+            <span className="max-w-[120px] truncate">
+              {currentWorkspace?.name ?? "默认工作空间"}
+            </span>
+            <span aria-hidden="true" className="text-muted-2">
+              ▾
+            </span>
+          </button>
+
+          {workspaceOpen && (
+            <>
+              <div
+                className="fixed inset-0 z-40"
+                onMouseDown={() => setWorkspaceOpen(false)}
+              />
+              <div
+                role="menu"
+                aria-label="工作空间"
+                className="absolute left-0 top-full z-50 mt-1.5 w-[280px] border border-line bg-bg px-3 py-2.5 shadow-[0_12px_32px_rgba(0,0,0,.45)]"
+              >
+                <p className="text-[9px] leading-[1.7] text-muted-2">
+                  每个工作空间有自己的一份项目与流程，互不覆盖；素材库在这台机器上共用。
+                  换空间会整页加载过去。
+                </p>
+
+                <div className="mt-2 flex flex-col gap-1">
+                  {workspaces.length === 0 && (
+                    <p className="text-[9.5px] text-muted-2">还没有登记工作空间。</p>
+                  )}
+                  {workspaces.map((item) => {
+                    const active = item.id === workspaceId;
+                    const isRenaming = renaming?.id === item.id;
+                    return (
+                      <div key={item.id} className="flex items-center gap-1">
+                        {isRenaming ? (
+                          <>
+                            <input
+                              value={renaming.name}
+                              autoFocus
+                              maxLength={40}
+                              aria-label="工作空间名字"
+                              onChange={(event) =>
+                                setRenaming({ id: item.id, name: event.target.value })
+                              }
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  void renameWorkspace(item.id, renaming.name).then(() =>
+                                    setRenaming(undefined),
+                                  );
+                                }
+                                if (event.key === "Escape") setRenaming(undefined);
+                              }}
+                              className="min-w-0 flex-1 rounded-token border border-line-2 bg-surface px-1.5 py-0.5 text-[10px] text-text focus:border-pick focus:outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void renameWorkspace(item.id, renaming.name).then(() =>
+                                  setRenaming(undefined),
+                                )
+                              }
+                              className="rounded-token border border-line-2 px-1.5 py-0.5 text-[9px] text-text hover:bg-text/10"
+                            >
+                              存
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              aria-current={active ? "true" : undefined}
+                              onClick={() => openWorkspace(item.id)}
+                              className={cn(
+                                "min-w-0 flex-1 truncate rounded-token border px-1.5 py-1 text-left text-[10px] transition-colors duration-[var(--dur)]",
+                                active
+                                  ? "border-pick text-text"
+                                  : "border-line text-muted hover:border-line-2 hover:text-text",
+                              )}
+                            >
+                              {item.name}
+                              {active && (
+                                <span className="tnum ml-1.5 text-[8px] text-muted-2">
+                                  现在
+                                </span>
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setRenaming({ id: item.id, name: item.name })}
+                              title="改这个名字（只改本机登记，不动项目标题）"
+                              className="shrink-0 text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
+                            >
+                              改
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <form
+                  className="mt-2 flex items-center gap-1.5 border-t border-line pt-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void submitWorkspace();
+                  }}
+                >
+                  <input
+                    value={newWorkspace}
+                    maxLength={40}
+                    aria-label="新工作空间名字"
+                    placeholder="新工作空间的名字"
+                    onChange={(event) => setNewWorkspace(event.target.value)}
+                    className="min-w-0 flex-1 rounded-token border border-line-2 bg-surface px-1.5 py-0.5 text-[10px] text-text placeholder:text-muted-2 focus:border-pick focus:outline-none"
+                  />
+                  <button
+                    type="submit"
+                    disabled={workspaceBusy || newWorkspace.trim().length === 0}
+                    className="shrink-0 rounded-token border border-line px-1.5 py-0.5 text-[9.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+                  >
+                    {workspaceBusy ? "建…" : "新建"}
+                  </button>
+                </form>
+                {workspaceError && (
+                  <p className="mt-1 text-[9px] leading-[1.6] text-pick">{workspaceError}</p>
+                )}
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {/* 阶段条要整行读，挤到换行 / 截断都不如收起来：xl 以下只留「下一步」 */}
