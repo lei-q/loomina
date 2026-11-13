@@ -612,7 +612,7 @@ type WorkbenchState = {
    * 贴一条音轨当这一句的配音（ADR-0085）：收 http(s):// 或 data:audio/。
    * 供应商配额不通、或已经用自己的录音时，都走这条路。
    */
-  attachVoice: (lineId: string, uri: string) => boolean;
+  attachVoice: (lineId: string, uri: string, source?: Asset["source"]) => boolean;
   /**
    * 量出音轨真实时长后校正台词与镜头（准则 P5）：一条 `dialogue.updated`
    * + 一条 `shot.updated`，音轨资产上补记 `durationMs`。
@@ -3942,7 +3942,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     return true;
   },
 
-  attachVoice: (lineId, rawUri) => {
+  attachVoice: (lineId, rawUri, source = "upload") => {
     if (get().readOnly) return false;
     if (lockedStage({ get, set }, "voice")) return false;
     const { project, events } = get();
@@ -3962,8 +3962,11 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       set({ castError: "先贴一条音轨地址。" });
       return false;
     }
-    if (!/^(https?:\/\/|data:audio\/)/i.test(uri)) {
-      set({ castError: "音轨要先有地址：http(s):// 或 data:audio/ 开头。" });
+    if (!/^(https?:\/\/|data:audio\/|loomina:\/\/assets\/|s3:\/\/)/i.test(uri)) {
+      set({
+        castError:
+          "音轨要先有地址：http(s)://、data:audio/、本机资产库或对象存储地址开头。",
+      });
       return false;
     }
     if (uri.length > VOICE_URI_MAX) {
@@ -3981,11 +3984,12 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
         asset: {
           id: assetId,
           kind: "audio",
-          source: "upload",
+          source,
           uri,
           ...(mime ? { mime } : {}),
           provenance: {
-            modelId: "import",
+            // 从别的空间取来的音轨是「拿过来的」，不是这次导入的
+            modelId: source === "library" ? "library" : "import",
             referenceAssetIds: [],
             createdAt: at,
           },

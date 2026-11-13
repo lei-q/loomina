@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { StageGate } from "@/components/stage-gate";
 import { TopBar } from "@/components/top-bar";
 import { PromptEditor } from "@/components/prompt-editor";
+import { SharedAudioPicker } from "@/components/shared-audio-picker";
 import { VoicePerformancePanel } from "@/components/voice-performance-panel";
 import { shotLabel, toVoiceView, type VoiceLine, type VoiceRole } from "@/lib/read-model";
 import {
@@ -112,7 +113,7 @@ function AttachBox({
           setDraft("");
         }}
         disabled={readOnly}
-        placeholder="http(s):// 或 data:audio/…"
+        placeholder="http(s):// / data:audio/ / 本机资产库…"
         aria-label="音轨地址"
         className="w-[148px] min-w-0 rounded-token border border-line bg-transparent px-1.5 py-0.5 text-[9.5px] text-text placeholder:text-muted-2 focus:border-line-2 focus:outline-none disabled:opacity-45"
       />
@@ -428,6 +429,13 @@ export function VoiceScreen() {
                           readOnly={Boolean(readOnly)}
                           onAttach={(uri) => attachVoice(line.id, uri)}
                         />
+
+                        {!readOnly && (
+                          <SharedAudioPicker
+                            usedUri={line.audioUri}
+                            onPick={(uri) => attachVoice(line.id, uri, "library")}
+                          />
+                        )}
 
                         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                           <button

@@ -6435,3 +6435,47 @@ IndexedDB：夜班 `asset source upload / take modelId import`，
 - 取来的只是文件与一拍记录，不跟原 take 的留用状态、时间线位置、提示词过期标记。
 - 面板没有搜索 / 按空间筛选，最多 60 条。
 - 对象存储未配置时，`s3://` 视频缩略图显示不出来，但地址本身仍可挂。
+
+## 第二百一十四次 · 2026-11-13 · 跨空间取一版配音：同一句不再重录（用户清单 C.1 / 功能 C21）
+
+**问题**
+
+参考图、实体、视频都能跨空间用了，配音还不行。同一句台词在第二集要重录，
+就再按字付一次钱；而贴音轨只收 `http(s)://` / `data:audio/`，
+本机资产库里的 `loomina://assets/…` 根本贴不进去。
+
+**做法**
+
+- `attachVoice(lineId, uri, source?)` 多一个可选 `source`，默认 `upload`；
+  地址白名单扩到 `loomina://assets/` 与 `s3://`，长度上限仍 8 MB。
+  从别的空间取来的传 `library`：不触发授权检查、不算未定价调用；
+  `provenance.modelId` 写 `library`（贴地址导入仍写 `import`）。
+  取用仍写 `asset.updated` + `dialogue.updated { audioAssetId }`；
+  旧音轨记录留在日志与资产里，不删。
+- 配音页每句下多一个「从别的空间取一版」：打开时才回放各空间日志；
+  `sharedAssetsOf(spaces, ["audio"])` 去重、合并用处、新→旧、滤掉当前空间、
+  最多 60 条；每行可播放、列来源与用处，这句已在用的置灰「已采用」。
+- 贴音轨输入框提示补上「本机资产库」：入口与能力对齐。
+
+**验证**
+
+store 2 条：取来的音轨资产记 `library`、`provenance.modelId` 是 `library`、
+台词 `audioAssetId` 指向它、回放一致；`s3://` 能贴、锁定镜头拒绝。
+workspace-assets 1 条：音频清单只出音频。
+IR 257 / gateway 32 / pipeline 144 / web 1234 条测试全过（新增 3 条）；
+`pnpm -r typecheck` 全过。
+
+浏览器实测（两个工作空间）：夜班第一句「贴上」
+`https://cdn.example.com/shared-voice.mp3` → 行内出现音频；
+切到第二集 → 配音页 →「从别的空间取一版」→ 面板列出
+「配音「你早就知道，对吧。」· 夜班 · 取这一版」→ 取来后行内音频指向同一地址；
+IndexedDB：夜班 `source upload / modelId import`，
+第二集同 uri `source library / modelId library`，两句 `dialogue.updated` 都在。
+
+**边界**
+
+- 只拿了音频；故事、剧本的跨空间取用还没有入口。
+- 清单把配音、配乐、音效混在一起，只能靠用处标签分辨。
+- 取来的是音轨文件，不带表演参数、试听台版本与时长校正。
+- 同一句取不同版本会覆盖当前采用的那一版，旧记录只在日志里。
+- 对象存储未配置时，`s3://` 音轨能挂但播不出来。

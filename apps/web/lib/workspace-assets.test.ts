@@ -150,3 +150,18 @@ describe("跨空间取视频（C1 / ADR-0194）", () => {
     expect(sharedAssetsOf(spaces).map((item) => item.uri)).toEqual([STORED]);
   });
 });
+
+describe("跨空间取音频（C1 / ADR-0195）", () => {
+  it("音频清单只出音频", () => {
+    const voice = `loomina://assets/${"d".repeat(64)}.mp3`;
+    const spaces = [
+      space(
+        "w1",
+        "第一集",
+        project("p1", [asset("i1", STORED), asset("a1", voice, "2026-11-12T00:00:00Z", "audio")]),
+      ),
+    ];
+    expect(sharedAssetsOf(spaces, ["audio"]).map((item) => item.uri)).toEqual([voice]);
+    expect(sharedAssetsOf(spaces, ["audio"])[0]?.kind).toBe("audio");
+  });
+});

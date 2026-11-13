@@ -6339,3 +6339,31 @@ describe("从别的空间取一拍视频（C1 / ADR-0194）", () => {
     expect(state().castError).toContain("贴过");
   });
 });
+
+describe("从别的空间取一版配音（C1 / ADR-0195）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("只登记地址与台词当前音轨：资产记 library，不花钱", () => {
+    const uri = `loomina://assets/${"e".repeat(64)}.mp3`;
+    expect(state().attachVoice("d-01", uri, "library")).toBe(true);
+
+    const line = state().project.dialogue.find((item) => item.id === "d-01")!;
+    expect(line.audioAssetId).toBe("a-voice-d-01");
+    const asset = state().project.assets.find((item) => item.id === "a-voice-d-01")!;
+    expect(asset).toMatchObject({ kind: "audio", source: "library", uri });
+    expect(asset.provenance?.modelId).toBe("library");
+    expect(asset.costCny).toBeUndefined();
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("本机资产库 / 对象存储地址都能贴；锁定镜头仍拒绝", () => {
+    expect(
+      state().attachVoice("d-01", `s3://loomina/assets/${"f".repeat(64)}.mp3`),
+    ).toBe(true);
+    expect(state().attachVoice("d-04", "https://cdn.example.com/x.mp3")).toBe(false);
+    expect(state().castError).toContain("锁定");
+  });
+});
