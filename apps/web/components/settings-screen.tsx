@@ -23,6 +23,7 @@ import {
   orphanAssets,
   referencedUrisOfProjects,
 } from "@/lib/asset-inventory";
+import { inlinePayloadsOf } from "@/lib/log-compact";
 import { projectSegments } from "@/lib/spend-report";
 import { cn } from "@/lib/utils";
 
@@ -1319,6 +1320,7 @@ function AssetStoreSection({ readOnly, storageConfigured }: { readOnly: boolean;
   const project = useWorkbench((state) => state.project);
   const events = useWorkbench((state) => state.events);
   const migrateAssets = useWorkbench((state) => state.migrateAssets);
+  const compactLog = useWorkbench((state) => state.compactLog);
   const inventory = useMemo(() => inventoryOf(project), [project]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string>();
@@ -1333,6 +1335,9 @@ function AssetStoreSection({ readOnly, storageConfigured }: { readOnly: boolean;
   const [remoteCleaning, setRemoteCleaning] = useState(false);
   const [remoteWouldRemove, setRemoteWouldRemove] = useState<{ count: number; bytes: number }>();
   const [remoteNotice, setRemoteNotice] = useState<string>();
+  // 日志瘦身（H3 / ADR-0177）：日志里还被 base64 占着的地方
+  const [compactNotice, setCompactNotice] = useState<string>();
+  const inlineLog = useMemo(() => inlinePayloadsOf(events), [events]);
 
   /**
    * 清理的白名单必须是「所有能回放的项目」的并集（H3）。
@@ -1426,6 +1431,39 @@ function AssetStoreSection({ readOnly, storageConfigured }: { readOnly: boolean;
       await loadStore();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "迁移失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * 日志瘦身：把事件里的 base64 换成库里同一段字节的地址。
+   *
+   * 不写新事件——压缩不改变项目，只改变同一段字节在日志里的写法。
+   * 库里找不到同一段字节的（没搬过、或文件已经被清掉）留着不动，
+   * 回执里如实说有几处。
+   */
+  const compact = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(undefined);
+    setNotice(undefined);
+    setCompactNotice(undefined);
+    try {
+      const result = await compactLog(files ?? []);
+      setCompactNotice(
+        result.rewritten === 0
+          ? result.unmatched > 0
+            ? `库里找不到这 ${result.unmatched} 段字节的对应文件：先把素材搬进资产库，再来压缩。`
+            : "日志里没有能压缩的 base64。"
+          : `改写 ${result.assets} 处素材地址（${result.rewritten} 条事件），日志 ${fmtBytes(
+              result.beforeBytes,
+            )} → ${fmtBytes(result.afterBytes)}${
+              result.unmatched > 0 ? `；另有 ${result.unmatched} 段在库里找不到，留着没动` : ""
+            }。`,
+      );
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "压缩失败");
     } finally {
       setBusy(false);
     }
@@ -1798,6 +1836,40 @@ function AssetStoreSection({ readOnly, storageConfigured }: { readOnly: boolean;
           >
             清理没人引用的文件
           </button>
+        )}
+      </div>
+
+      <div className="mt-3 rounded-token border border-line px-3 py-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 className="text-[10px] text-text">日志瘦身</h3>
+          <span className="tnum text-[9px] text-muted-2">
+            {inlineLog.occurrences} 处 base64 · 约 {fmtBytes(inlineLog.bytes)}
+          </span>
+        </div>
+        <p className="mt-1 max-w-[640px] text-[9.5px] leading-[1.7] text-muted-2">
+          迁移只追加新地址，旧事件里那份 base64 不动，所以日志不会自己变小。
+          压缩把它换成库里<span className="text-muted">同一段字节</span>的地址——按内容指纹认，
+          不按资产位认（同一个位换过图，那是两张图）；事件条数、顺序与时间都不变。
+        </p>
+        <button
+          type="button"
+          onClick={() => void compact()}
+          disabled={readOnly || busy || inlineLog.occurrences === 0 || !files || files.length === 0}
+          title={
+            readOnly
+              ? "另一个标签页在编辑：这一页只读"
+              : inlineLog.occurrences === 0
+                ? "日志里没有 base64 了"
+                : !files || files.length === 0
+                  ? "读不到资产库清单，认不出哪段字节进过库"
+                  : "只换地址，不删事件；库里没有同一段字节的留着不动"
+          }
+          className="mt-2 rounded-token border border-line px-2.5 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+        >
+          压缩日志
+        </button>
+        {compactNotice && (
+          <p className="mt-2 text-[9.5px] leading-[1.7] text-muted">{compactNotice}</p>
         )}
       </div>
 

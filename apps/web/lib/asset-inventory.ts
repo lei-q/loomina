@@ -31,7 +31,7 @@ export type AssetInventory = {
   stored: number;
   /** 已在对象存储里的资产数（H3 / s3://） */
   remote: number;
-  /** 日志里 base64 的总字节数（迁移之后这个数不会掉，因为旧事件不动） */
+  /** 日志里 base64 的总字节数（迁移之后这个数不会掉，因为旧事件不动；要真变小走日志压缩，ADR-0177） */
   inlineBytes: number;
   /** 没有任何引用的资产 */
   unreferenced: AssetUsage[];

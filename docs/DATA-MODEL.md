@@ -704,6 +704,8 @@ interface AudioTrack {
 
 **已落地（H3.1，2026-11-12）**：`apps/web/lib/asset-uri.ts` 管地址（`audio/webm` 落 `.weba`，保证扩展名唯一反推 mime；`assetHref()` 给浏览器换成 `/api/asset/<hash>.<ext>`），`apps/web/lib/asset-store.ts` 管读写（临时文件 + `rename`，写失败不留半个文件）。生成路径的 data URI 超过 **128 KB** 自动进库；导出（预览 HTML / OTIO / 发布包）前 `hydrateView()` 读回字节，读不回来保留原地址并计数。
 
+**日志压缩的口径（H3 / ADR-0177，2026-11-13）**：迁移不给日志减重，旧事件里那份 base64 还在。压缩是唯一允许改写历史事件的地方，范围窄到两处：`asset.updated.asset.uri` 与 `project.created.project.assets[].uri`。判定按内容指纹（解 base64 → sha256 + mime 推扩展名 → `<sha256>.<ext>` 到库清单里查），**不按资产 id**；查不到就留原样。事件条数、顺序、`at`、其他字段一律不变，不写新事件——所以撤销 / 回滚 / 历史回退仍然按事件前缀工作。回放结果与压缩前只在 `uri` 这个字符串上不同，两个地址指向同一段字节。
+
 ```ts
 interface Asset {
   id: ID;

@@ -103,6 +103,13 @@ import {
   type AssetInventory,
 } from "@/lib/asset-inventory";
 import { isRemoteAssetUri, isStoredAssetUri } from "@/lib/asset-uri";
+import {
+  compactEvents,
+  inlinePayloadsOf,
+  logBytesOf,
+  replacementsFor,
+  storedIndexOf,
+} from "@/lib/log-compact";
 import { modelIdFor } from "@/lib/model-choice";
 import type { Modality } from "@/lib/config-types";
 import { sampleProject } from "@/lib/sample-project";
@@ -811,6 +818,23 @@ type WorkbenchState = {
   migrateAssets: () => Promise<{ moved: number; failed: number; bytes: number }>;
   /** 素材清点（H3）：几个在日志里、几个已进资产库、哪些没人引用 */
   assetInventory: () => AssetInventory;
+  /**
+   * 日志压缩（H3 / ADR-0177）：把事件里还被 base64 占着的素材地址，
+   * 换成库里**同一段字节**的地址。
+   *
+   * 只认内容指纹，不按资产 id 猜——同一个资产位换过图，旧事件里的那张
+   * 与现在的这张不是一张。事件条数、顺序、`at` 都不动，也不写新事件：
+   * 压缩不改变项目，只改变同一段字节在日志里的写法。
+   * 库清单由界面传进来（它本来就已经取过一份），不在这里再发请求。
+   */
+  compactLog: (files: { uri: string }[]) => Promise<{
+    rewritten: number;
+    assets: number;
+    beforeBytes: number;
+    afterBytes: number;
+    /** 有几段 base64 在库里找不到同一段字节（没搬过、或文件已被清掉） */
+    unmatched: number;
+  }>;
   /**
    * 删掉一条没人引用的资产（F4 / ADR-0136）：一条 `asset.removed`。
    *
@@ -5971,6 +5995,34 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     });
     return true;
   },
+  compactLog: async (files) => {
+    const { events } = get();
+    const beforeBytes = logBytesOf(events);
+    const untouched = { rewritten: 0, assets: 0, beforeBytes, afterBytes: beforeBytes, unmatched: 0 };
+    if (get().readOnly) return untouched;
+    const inline = inlinePayloadsOf(events);
+    if (inline.uris.length === 0) return untouched;
+    const { map, unmatched } = await replacementsFor(inline.uris, storedIndexOf(files));
+    if (map.size === 0) return { ...untouched, unmatched };
+    const compaction = compactEvents(events, map);
+    const afterBytes = logBytesOf(compaction.events);
+    // 当前项目里还在用这些 base64 的资产跟着换地址：压缩之后
+    // `rebuild(events)` 就是这个样子，内存里那份不能和日志对不上
+    const project = get().project;
+    const assets = project.assets.map((asset) => {
+      const to = asset.uri ? map.get(asset.uri) : undefined;
+      return to ? { ...asset, uri: to } : asset;
+    });
+    set({ events: compaction.events, project: { ...project, assets } });
+    return {
+      rewritten: compaction.rewritten,
+      assets: compaction.assets,
+      beforeBytes,
+      afterBytes,
+      unmatched,
+    };
+  },
+
   migrateAssets: async () => {
     if (get().readOnly) return { moved: 0, failed: 0, bytes: 0 };
     let moved = 0;

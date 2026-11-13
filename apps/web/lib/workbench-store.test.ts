@@ -8,6 +8,7 @@ import { referencedAssetIds } from "./asset-inventory";
 import { toEditView } from "./edit";
 import { stageStateOf } from "./stage-flow";
 import { resetPersistenceForTests, useWorkbench } from "./workbench-store";
+import { dataUriBytesOf, logBytesOf, sha256OfBytes } from "./log-compact";
 
 const state = () => useWorkbench.getState();
 const statusOf = (takeId: string) =>
@@ -4887,6 +4888,36 @@ describe("本机资产库（H3 / ADR-0128）", () => {
     // 再迁一次什么都不做
     expect((await state().migrateAssets()).moved).toBe(0);
     vi.unstubAllGlobals();
+  });
+
+  it("日志压缩：只换地址、不删事件，回放结果与内存里那份一致", async () => {
+    state().addCharacterReference("c-lin", BIG);
+    const payload = dataUriBytesOf(BIG)!;
+    const hash = (await sha256OfBytes(payload.bytes))!;
+    const storedUri = `loomina://assets/${hash}.png`;
+    const before = state().events.length;
+    const beforeBytes = logBytesOf(state().events);
+
+    const result = await state().compactLog([{ uri: storedUri }]);
+
+    expect(result.assets).toBeGreaterThan(0);
+    expect(result.unmatched).toBe(0);
+    expect(result.afterBytes).toBeLessThan(beforeBytes);
+    // 事件一条都没少：压缩不改变「怎么变成这样的」
+    expect(state().events).toHaveLength(before);
+    expect(rebuild(state().events)).toEqual(state().project);
+    expect(state().project.assets.some((asset) => asset.uri === storedUri)).toBe(true);
+  });
+
+  it("日志压缩：库里找不到同一段字节就留着不动，如实报几处", async () => {
+    state().addCharacterReference("c-lin", BIG);
+    const before = state().events;
+
+    const result = await state().compactLog([{ uri: `loomina://assets/${HASH}.png` }]);
+
+    expect(result.rewritten).toBe(0);
+    expect(result.unmatched).toBe(1);
+    expect(state().events).toBe(before);
   });
 
   it("迁移失败不动 IR：素材留在日志里，数如实报", async () => {
