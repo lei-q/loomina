@@ -39,6 +39,11 @@ import {
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
 import { assetHref } from "@/lib/asset-uri";
+import {
+  loadWorkspaceProjects,
+  sharedAssetsOf,
+  type SharedAsset,
+} from "@/lib/workspace-assets";
 
 function clock(iso?: string): string {
   if (!iso) return "";
@@ -113,11 +118,38 @@ function ReferenceStrip({
 }) {
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState("");
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [library, setLibrary] = useState<SharedAsset[]>();
+  const [libraryBusy, setLibraryBusy] = useState(false);
+  const [libraryError, setLibraryError] = useState<string>();
 
   const submit = () => {
     if (!onAdd(draft)) return;
     setAdding(false);
     setDraft("");
+  };
+
+  /** 打开挑图面板时才读各工作空间的日志：这是显式动作，不挂在正常编辑路径上 */
+  const openLibrary = async () => {
+    setLibraryOpen(true);
+    if (library) return;
+    setLibraryBusy(true);
+    setLibraryError(undefined);
+    try {
+      setLibrary(sharedAssetsOf(await loadWorkspaceProjects()));
+    } catch (error) {
+      setLibraryError(error instanceof Error ? error.message : "读不到素材库。");
+    } finally {
+      setLibraryBusy(false);
+    }
+  };
+
+  const takeFromLibrary = (asset: SharedAsset) => {
+    if (onAdd(asset.uri)) {
+      setLibraryOpen(false);
+      return;
+    }
+    setLibraryError("这张没挂上：可能已经挂过，或地址不可用。");
   };
 
   return (
@@ -161,6 +193,18 @@ function ReferenceStrip({
             className="grid aspect-[9/16] w-[72px] place-items-center rounded-[1px] border border-dashed border-line-2 text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:border-line hover:text-text"
           >
             ＋ 挂一张
+          </button>
+        )}
+        {!readOnly && (
+          <button
+            type="button"
+            onClick={() => void openLibrary()}
+            title="从本机所有工作空间的素材里挑一张：同一个文件直接用，不重新生成、不花钱"
+            className="grid aspect-[9/16] w-[72px] place-items-center rounded-[1px] border border-dashed border-line-2 text-[9px] leading-[1.5] text-muted-2 transition-colors duration-[var(--dur)] hover:border-line hover:text-text"
+          >
+            从素材库
+            <br />
+            取一张
           </button>
         )}
       </div>
@@ -208,6 +252,90 @@ function ReferenceStrip({
       )}
       {emptyText && references.length === 0 && !adding && (
         <p className="mt-1 text-[9px] leading-[1.5] text-muted-2">{emptyText}</p>
+      )}
+
+      {libraryOpen && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-bg/80 p-4 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setLibraryOpen(false);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-label="从素材库取一张图"
+            className="max-h-[82vh] w-[760px] max-w-[94vw] overflow-y-auto border border-line bg-bg px-4 py-3"
+          >
+            <div className="flex items-baseline justify-between gap-2">
+              <h3 className="text-[11px] tracking-[.06em] text-text">从素材库取一张图</h3>
+              <button
+                type="button"
+                onClick={() => setLibraryOpen(false)}
+                className="rounded-token border border-line px-2 py-0.5 text-[9.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+              >
+                关闭
+              </button>
+            </div>
+            <p className="mt-1 text-[9px] leading-[1.7] text-muted-2">
+              列出本机各工作空间用过的图片，按地址去重。选中只把资产记录挂过来，
+              文件还是同一份：不复制、不重新生成、不花钱。
+            </p>
+
+            {libraryBusy && (
+              <p className="mt-3 text-[10px] text-muted-2">正在读各工作空间的素材…</p>
+            )}
+            {libraryError && <p className="mt-2 text-[9.5px] text-pick">{libraryError}</p>}
+
+            {!libraryBusy && library && (
+              <>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {library.slice(0, 120).map((asset) => {
+                    const already = references.some((reference) => reference.uri === asset.uri);
+                    return (
+                      <button
+                        key={asset.uri}
+                        type="button"
+                        disabled={already}
+                        onClick={() => takeFromLibrary(asset)}
+                        title={
+                          already
+                            ? "这一排里已经挂过这张"
+                            : `${asset.workspaceName} · ${asset.usedBy[0] ?? "图片"}`
+                        }
+                        className="w-[88px] text-left disabled:opacity-40"
+                      >
+                        <span className="block aspect-[9/16] overflow-hidden rounded-[1px] border border-line bg-[#0f1013]">
+                          <img
+                            src={assetHref(asset.uri)}
+                            alt={asset.usedBy[0] ?? "素材库图片"}
+                            className="h-full w-full object-cover"
+                          />
+                        </span>
+                        <span className="mt-1 block truncate text-[8.5px] text-muted">
+                          {asset.usedBy[0] ?? "图片"}
+                        </span>
+                        <span className="block truncate text-[8px] text-muted-2">
+                          {asset.workspaceName}
+                          {already ? " · 已挂" : ""}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {library.length === 0 && (
+                  <p className="mt-3 text-[9.5px] text-muted-2">
+                    还没有可用的图片：先在任何一个工作空间里生成或挂一张参考图。
+                  </p>
+                )}
+                {library.length > 120 && (
+                  <p className="mt-2 text-[8.5px] text-muted-2">
+                    只显示最近 120 张（共 {library.length} 张）。
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

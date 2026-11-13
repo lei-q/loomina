@@ -3844,6 +3844,21 @@ describe("参考图多张与手动挂（ADR-0079）", () => {
     expect(lin.referenceImages).toHaveLength(8);
   });
 
+  it("资产库与对象存储的地址也能挂：跨空间取回来的图就是这两种（C4 / ADR-0189）", () => {
+    const stored = `loomina://assets/${"a".repeat(64)}.png`;
+    const remote = `s3://loomina/assets/${"b".repeat(64)}.png`;
+    expect(state().addCharacterReference("c-lin", stored)).toBe(true);
+    expect(state().addCharacterReference("c-lin", remote)).toBe(true);
+    const lin = state().project.characters.find((item) => item.id === "c-lin")!;
+    expect(lin.referenceImages).toHaveLength(3);
+    const uris = lin.referenceImages.map(
+      (id) => state().project.assets.find((asset) => asset.id === id)?.uri,
+    );
+    expect(uris).toContain(stored);
+    expect(uris).toContain(remote);
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
   it("地点：挂一张写 asset.updated 与 location.updated，再摘掉；只读时不动（B8）", () => {
     const locationId = state().project.locations[0]!.id;
     const refs = () =>

@@ -1019,8 +1019,11 @@ function makeReferenceAsset(
 ): { asset?: Asset; error?: string } {
   const uri = rawUri.trim();
   if (!uri) return { error: "先贴一张图的地址。" };
-  if (!/^(https?:\/\/|data:image\/)/i.test(uri)) {
-    return { error: "参考图要先有地址：http(s):// 或 data:image/ 开头。" };
+  // 资产库 / 对象存储的地址也认（C4 / ADR-0189）：跨工作空间取素材时，
+  // 抄过来的是同一个文件的地址，不复制字节、不重新生成
+  const placeable = isStoredAssetUri(uri) || isRemoteAssetUri(uri);
+  if (!placeable && !/^(https?:\/\/|data:image\/)/i.test(uri)) {
+    return { error: "参考图要先有地址：http(s)://、data:image/ 或资产库地址。" };
   }
   if (uri.length > REFERENCE_URI_MAX) return { error: "地址太长了：400 KB 以内。" };
   let id = `a-ref-${Date.now().toString(36)}`;
