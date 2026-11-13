@@ -15,6 +15,7 @@ import {
 } from "@/lib/config-types";
 import { fetchModelConfig, invalidateModelConfig } from "@/lib/model-choice";
 import { useWorkbench } from "@/lib/workbench-store";
+import { DataSection } from "@/components/data-section";
 import type { CapabilityResponse, ModelCapabilityView } from "@/lib/capabilities";
 import type { ProbeReportView, ProbeTrend } from "@/lib/probes";
 import {
@@ -970,6 +971,11 @@ export function SettingsScreen() {
           eventCount={eventCount}
           readOnly={Boolean(readOnly)}
           onReset={reset}
+        />
+
+        <DataSection
+          readOnly={Boolean(readOnly)}
+          storageConfigured={Boolean(storage?.configured)}
         />
 
         <AssetStoreSection readOnly={Boolean(readOnly)} />

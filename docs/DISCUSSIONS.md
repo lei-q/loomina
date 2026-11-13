@@ -5499,3 +5499,75 @@ E9 是这条「导出一整块」里最后一个还在等设计的。
 - 卡片计入平台时长，但没有「这张卡让你超了」的专门提示。
 - 预览 HTML 与 OTIO 里的卡是同一张 PNG，但 OTIO 的 `target_url` 是 data URI，整份文件会变大。
 - 拿导出的 SRT 去和「没有卡片的版本」对表会差一个片头时长——这是对的，抽屉里写明了。
+
+## 第一百九十四次 · 2026-11-13 · 数据导出与删除（H9）
+
+**背景**
+
+H9 在 FEATURES 里只有一行「用户数据可携带」，风险表 R7（个人信息与数据安全）把它当作缓解手段，
+但它本身没落地。项目实际是**这台浏览器里的一条事件日志**（H18），素材在 `.loomina/assets/`
+或用户自己的对象存储里（H3），密钥在 `.loomina/config.json`。三样东西分三个地方，
+没有任何一处能回答「我的东西有哪些、怎么拿走、怎么删干净」。
+
+**要定的**
+
+1. 导出要不要把素材字节一起装进去？
+2. 删除的作用域是什么——只清浏览器？还是连桶？
+3. 要不要顺手做导入？
+
+**结论**
+
+- **导出给地址，不给副本**（ADR-0175）。一个 JSON：`project`（回放到底的当前状态）+
+  `events`（每一步）+ `assets[]`（`placement` / `uri` / `href` / `referenced` / `inlineBytes`）。
+  素材字节不内嵌——一段 30 MB 的视频编成 base64 会让文件打不开，而且素材本来就在用户自己的盘或桶里。
+- **两个大小数要能分辨**：`totals.storeFiles / storeBytes` 取 `/api/assets`；取不到是 `null`，
+  不是 0。「没问到」和「是空的」混成一个数，用户会以为素材丢了。
+- **删除只清本机两样**：`.loomina/assets/` 里的文件 + 这个浏览器里的项目日志。
+  不碰对象存储、不碰 `config.json`、不碰导出到别处的文件。
+  请求体必须带 `confirm: "删除"`，否则 400；**配了对象存储直接 409，界面按钮也禁用**。
+  桶可能是多机 / 多人共享的，一个「删除本机数据」的按钮不该有清空桶的能力。
+- **不做导入**。schema 版本、素材地址重写、日志校验、冲突合并都要设计；半做的导入比没有更危险。
+  文件里的 `notes` 明写「这一版没有导入」——拿到文件的人可能是几个月后的作者。
+
+**踩到的**
+
+- 删除按钮最初只按 `readOnly` 与确认词禁用，没接「配了对象存储」。实测把配置指向一个假的 S3
+  （`/tmp` 里的临时 config，密钥是假的），点删除仍然会发出请求、服务端 409 才拦。
+  改成设置页把 `storage.configured` 传进来，按钮直接禁用，说明也换成「删除被禁用」。
+- 临时 config 第一次手写成 `{ providers: [], models: [] }`，`loadConfig` 报
+  「配置文件格式不对」——`version: 1` 是必填的。第二次为了走通「已配置」这条分支，
+  从真实配置复制一份、把密钥字段整棵剥掉再填假值，验证完立刻删掉临时文件。
+
+**改了哪些文件**
+
+- `apps/web/lib/data-export.ts`（新：`buildDataExport` / `dataExportFileName`）
+- `apps/web/app/api/data/route.ts`（新：`DELETE`，确认词 + 对象存储 409）
+- `apps/web/components/data-section.tsx`（新：设置页「数据」区）、
+  `apps/web/components/settings-screen.tsx`（挂载 + 传 `storageConfigured`）
+- 测试：`apps/web/lib/data-export.test.ts`（6 条）
+- `docs/adr/0175-data-export-and-delete.md`、`docs/FEATURES.md`（H9）、`docs/ROADMAP.md`、
+  `docs/RISKS.md`（R7 改成「部分缓解」并写清仍缺什么）
+
+**验证**
+
+- typecheck 干净；web 60 个文件 / 1137 通过 / 4 跳过；ir 250；pipeline 134；`pnpm build` 干净。
+- 接口：`DELETE /api/data` 不带确认词 → 400「要在确认框里输入「删除」两个字」；
+  指向临时资产目录、确认词正确 → 删 2 个文件 / 2800 字节、目录清空；
+  配了对象存储 → 409「已经配了对象存储：本机删除只清 .loomina/assets/，不碰你的桶」。
+- 浏览器（无头 Chrome，`/settings`，端口 3100，临时资产目录）：
+  - 「数据」区显示「1 条事件 · 14 个资产」；点「导出一份数据包（JSON）」，
+    提示「数据包已导出：6 条事件、14 个资产、资产库 2 个文件」。
+  - 数据包内容：`format loomina.export` / `version 1` / `logVersion 3` /
+    `totals.storeFiles 2` / `storeBytes 2800`；`notes` 四条，第一条就是「素材字节不在这份文件里」。
+  - 删除：输入「删」按钮仍 `disabled`，输「删除」才 `enabled`；点下去提示
+    「删掉 2 个文件、2800 字节。这个浏览器里的项目日志也清掉了……」，事件数回到 1。
+  - 配了对象存储后重开：按钮 `disabled`、`title` 是「已经配了对象存储……不碰你的桶」，
+    说明改成「删除被禁用」，事件数不变。
+- 截图 `/tmp/h9-section.png`、`/tmp/h9-remote-refuse.png`。
+
+**边界**
+
+- 没有导入：导出的是备份记录，不是可恢复的备份；素材要自己按 `href` 捞。
+- 删除不可恢复（没有回收站）；配了对象存储的人拿不到一键删除。
+- `href` 对 `s3://` 是预签名链接，几个月后多半失效；`uri` 才是长期记录。
+- 只导当前项目，日志段里别的项目没有单独装走。
