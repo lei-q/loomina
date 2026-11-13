@@ -14,6 +14,7 @@ import { badgeCornerLabel, badgePlacementOf } from "./ai-label";
 import { fnv1a } from "./fnv";
 import { platformCheckDetail, platformSpecOf, validatePlatform, type PlatformId } from "./platforms";
 import { reviewSummaryOf } from "./asset-review";
+import { rightsReport } from "./rights";
 
 export type ComplianceSeverity = "block" | "review";
 export type ComplianceCategory =
@@ -337,46 +338,57 @@ export function scanProject(
   return findings;
 }
 
-function rightsCheck(project: Project): {
+function rightsCheck(project: Project, today: string): {
   check: ComplianceCheck;
   findings: ComplianceFinding[];
 } {
-  const uploads = project.assets.filter(
-    (asset) => asset.source === "upload" || asset.source === "imported",
-  );
-  if (uploads.length > 0) {
+  const report = rightsReport(project, today);
+  const findings: ComplianceFinding[] = report.gaps.map((gap) => ({
+    severity: "review" as const,
+    category: "其他" as const,
+    ruleId: `rights-${gap.kind}`,
+    path: "素材授权",
+    term: gap.subject,
+    excerpt: gap.reason,
+    message: `${gap.subject}：${gap.reason}。发布前补一条授权记录，或换成没有真人来源的素材。`,
+  }));
+  for (const record of report.expired) {
+    findings.push({
+      severity: "review",
+      category: "其他",
+      ruleId: `rights-expired-${record.kind}`,
+      path: "素材授权",
+      term: record.subject,
+      excerpt: `到期日 ${record.expiresAt}`,
+      message: `授权「${record.subject}」已经过期：续期或换素材，再导出。`,
+    });
+  }
+
+  const imported = project.story.provenance?.prompt?.startsWith(IMPORT_PROMPT_PREFIX);
+  if (report.gaps.length === 0 && report.expired.length === 0) {
     return {
       check: {
         id: "rights",
         label: "素材授权",
-        status: "review",
-        detail: `${uploads.length} 个上传 / 导入素材没有授权记录（H7 未做）：确认你有使用权再导出`,
+        status: "pass",
+        detail: imported
+          ? "剧本导入时已声明原创或已获授权；原文不落服务端，只留文件名 / 字数 / 前 300 字"
+          : report.total > 0
+            ? `${report.total} 条授权记录，都在有效期`
+            : "全部素材由模型生成或来自内置库，没有外部授权需求",
       },
-      findings: [
-        {
-          severity: "review",
-          category: "其他",
-          ruleId: "rights-upload",
-          path: "素材授权",
-          term: `${uploads.length} 个素材`,
-          excerpt: "上传 / 导入素材",
-          message: "上传或导入的素材还没有授权记录：确认你有使用权，再勾选确认导出。",
-        },
-      ],
+      findings: [],
     };
   }
 
-  const imported = project.story.provenance?.prompt?.startsWith(IMPORT_PROMPT_PREFIX);
   return {
     check: {
       id: "rights",
       label: "素材授权",
-      status: "pass",
-      detail: imported
-        ? "剧本导入时已声明原创或已获授权；原文不落服务端，只留文件名 / 字数 / 前 300 字"
-        : "全部素材由模型生成或来自内置库，没有外部授权需求",
+      status: "review",
+      detail: report.verdict,
     },
-    findings: [],
+    findings,
   };
 }
 
@@ -416,7 +428,7 @@ export function preflightProject(
     detail: `${badgeCornerLabel(badge.corner)}「AI 生成」角标（离边 ${badge.insetPct}%）+ HTML / OTIO 元数据 + 发布包 aiLabel（含内容指纹）`,
   };
 
-  const rights = rightsCheck(project);
+  const rights = rightsCheck(project, (options.at ?? new Date().toISOString()).slice(0, 10));
   if (rights.findings.length > 0) findings.push(...rights.findings);
 
   const durationMs =

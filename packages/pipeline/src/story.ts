@@ -609,6 +609,7 @@ export function projectFromStoryDraft(
     subtitleOverrides: [],
     subtitleLayout: { preset: "default" },
     publishPackages: [],
+    authorizations: [],
   };
 
   assertValidProject(project);

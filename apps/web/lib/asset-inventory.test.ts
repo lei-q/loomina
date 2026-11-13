@@ -51,6 +51,7 @@ function base(): Project {
     subtitleOverrides: [],
     subtitleLayout: { preset: "default" },
     publishPackages: [],
+    authorizations: [],
   };
   return project;
 }

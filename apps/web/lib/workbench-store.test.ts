@@ -1294,6 +1294,147 @@ describe("发布记录（G1 / ADR-0102）", () => {
   });
 });
 
+describe("发布台账回执（G10 / ADR-0166）", () => {
+  beforeEach(() => {
+    state().reset();
+  });
+
+  it("贴回执写 publish.updated，重放后还在；发布包本身不动", () => {
+    expect(
+      state().recordPublish({
+        platform: "douyin",
+        quality: "final",
+        fileName: "夜班-成片.mp4",
+        bytes: 2_000_000,
+        contentHash: "1a2b3c4d",
+      }),
+    ).toBe(true);
+    const pack = state().project.publishPackages[0]!;
+    const before = state().events.length;
+
+    const ok = state().recordPublishReceipt(pack.id, {
+      publishedAt: "2026-11-13 21:04",
+      url: "https://www.douyin.com/video/123",
+      receipt: "已通过审核",
+      note: "主号首发",
+    });
+
+    expect(ok).toBe(true);
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "publish.updated",
+      packageId: pack.id,
+      patch: { publishedAt: "2026-11-13 21:04" },
+    });
+    const after = state().project.publishPackages[0]!;
+    expect(after).toMatchObject({
+      publishedAt: "2026-11-13 21:04",
+      url: "https://www.douyin.com/video/123",
+      receipt: "已通过审核",
+      note: "主号首发",
+    });
+    // 导出那一刻的事实不许回填改
+    expect(after.platform).toBe("douyin");
+    expect(after.quality).toBe("final");
+    expect(after.fileName).toBe("夜班-成片.mp4");
+    expect(after.aiLabel?.contentHash).toBe("1a2b3c4d");
+
+    const replayed = rebuild(state().events);
+    expect(replayed.publishPackages[0]).toMatchObject({
+      publishedAt: "2026-11-13 21:04",
+      receipt: "已通过审核",
+    });
+  });
+
+  it("只写真的变了的字段：全没变就不写事件", () => {
+    state().recordPublish({ platform: "douyin" });
+    const pack = state().project.publishPackages[0]!;
+    state().recordPublishReceipt(pack.id, { url: "https://a.example/1" });
+    const before = state().events.length;
+
+    expect(state().recordPublishReceipt(pack.id, { url: " https://a.example/1 " })).toBe(false);
+    expect(state().recordPublishReceipt(pack.id, {})).toBe(false);
+    expect(state().events).toHaveLength(before);
+
+    // 改一项也只记一项
+    expect(state().recordPublishReceipt(pack.id, { url: "https://a.example/1", note: "补一条" })).toBe(
+      true,
+    );
+    expect(state().events.at(-1)).toMatchObject({
+      type: "publish.updated",
+      patch: { note: "补一条" },
+    });
+  });
+
+  it("指向不存在的发布包就不记", () => {
+    const before = state().events.length;
+    expect(state().recordPublishReceipt("pub-nope", { url: "https://x.example" })).toBe(false);
+    expect(state().events).toHaveLength(before);
+  });
+});
+
+describe("授权记录（H7 / ADR-0167）", () => {
+  beforeEach(() => {
+    state().reset();
+  });
+
+  it("新增写 rights.updated，重放后还在", () => {
+    const before = state().events.length;
+    const ok = state().upsertRights({
+      id: "rights-1",
+      subject: "林晚的肖像",
+      kind: "portrait",
+      targetId: "c-lin",
+      grantor: "本人",
+      grantedAt: "2026-11-01",
+      expiresAt: "2027-11-01",
+      evidence: "合同 2026-A-07",
+      note: "仅本片",
+    });
+
+    expect(ok).toBe(true);
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "rights.updated" });
+    expect(state().project.authorizations).toHaveLength(1);
+    expect(rebuild(state().events).authorizations[0]).toMatchObject({
+      subject: "林晚的肖像",
+      kind: "portrait",
+      targetId: "c-lin",
+    });
+  });
+
+  it("同一个 id 再写一次是替换，不追加", () => {
+    state().upsertRights({ id: "rights-1", subject: "林晚的肖像", kind: "portrait" });
+    state().upsertRights({ id: "rights-1", subject: "林晚的肖像", kind: "portrait", note: "续到 2028" });
+
+    expect(state().project.authorizations).toHaveLength(1);
+    expect(state().project.authorizations[0]?.note).toBe("续到 2028");
+    expect(rebuild(state().events).authorizations).toHaveLength(1);
+  });
+
+  it("缺对象名或字段越界就不记", () => {
+    const before = state().events.length;
+    expect(state().upsertRights({ id: "rights-1", subject: "", kind: "portrait" })).toBe(false);
+    expect(
+      state().upsertRights({ id: "rights-2", subject: "x".repeat(80), kind: "portrait" }),
+    ).toBe(false);
+    expect(state().events).toHaveLength(before);
+  });
+
+  it("删一条写 rights.removed；删不存在的就不写", () => {
+    state().upsertRights({ id: "rights-1", subject: "林晚的肖像", kind: "portrait" });
+    const before = state().events.length;
+
+    expect(state().removeRights("rights-nope")).toBe(false);
+    expect(state().events).toHaveLength(before);
+
+    expect(state().removeRights("rights-1")).toBe(true);
+    expect(state().project.authorizations).toHaveLength(0);
+    expect(state().events.at(-1)).toMatchObject({ type: "rights.removed", rightsId: "rights-1" });
+    expect(rebuild(state().events).authorizations).toHaveLength(0);
+  });
+});
+
 describe("重置为示例项目（H18）", () => {
   beforeEach(() => {
     state().reset();

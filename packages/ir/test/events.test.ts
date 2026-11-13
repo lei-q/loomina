@@ -363,6 +363,150 @@ describe("publish.recorded（G1 / ADR-0102）", () => {
   });
 });
 
+describe("publish.updated（G10 / ADR-0166）", () => {
+  const pack = {
+    id: "pub-ledger",
+    platform: "douyin",
+    quality: "final" as const,
+    fileName: "夜班-成片.mp4",
+    bytes: 8_388_608,
+    recordedAt: AT,
+    aiLabel: { explicit: true, implicit: true, standard: "AI生成", contentHash: "1a2b3c4d" },
+  };
+
+  function withPack(): Project {
+    return applyEvent(load(), { type: "publish.recorded", at: AT, package: pack });
+  }
+
+  it("贴回执只改四项，导出事实原样保留", () => {
+    const next = applyEvent(withPack(), {
+      type: "publish.updated",
+      at: AT,
+      packageId: "pub-ledger",
+      patch: {
+        publishedAt: "2026-11-13 21:04",
+        url: "https://www.douyin.com/video/1",
+        receipt: "已通过审核",
+        note: "主号首发",
+      },
+    });
+    const after = next.publishPackages.at(-1)!;
+    expect(after).toMatchObject({
+      publishedAt: "2026-11-13 21:04",
+      url: "https://www.douyin.com/video/1",
+      receipt: "已通过审核",
+      note: "主号首发",
+    });
+    expect(after.platform).toBe("douyin");
+    expect(after.quality).toBe("final");
+    expect(after.fileName).toBe("夜班-成片.mp4");
+    expect(after.bytes).toBe(8_388_608);
+    expect(after.aiLabel?.contentHash).toBe("1a2b3c4d");
+    // 回放走同一条路径
+    expect(rebuild([created(load()), { type: "publish.recorded", at: AT, package: pack }, {
+      type: "publish.updated", at: AT, packageId: "pub-ledger", patch: { note: "主号首发" },
+    }]).publishPackages.at(-1)?.note).toBe("主号首发");
+  });
+
+  it("指向不存在的发布包、空 patch、改别的字段都抛错", () => {
+    const base = withPack();
+    expect(() =>
+      applyEvent(base, { type: "publish.updated", at: AT, packageId: "pub-nope", patch: { note: "x" } }),
+    ).toThrow();
+    expect(() =>
+      applyEvent(base, { type: "publish.updated", at: AT, packageId: "pub-ledger", patch: {} }),
+    ).toThrow();
+    // 平台与指纹是导出那一刻的事实，不允许回填改
+    expect(() =>
+      applyEvent(base, {
+        type: "publish.updated",
+        at: AT,
+        packageId: "pub-ledger",
+        // @ts-expect-error 故意越界
+        patch: { platform: "kuaishou" },
+      }),
+    ).toThrow();
+  });
+
+  it("回执超长在落库前被挡掉", () => {
+    expect(() =>
+      applyEvent(withPack(), {
+        type: "publish.updated",
+        at: AT,
+        packageId: "pub-ledger",
+        patch: { receipt: "x".repeat(201) },
+      }),
+    ).toThrow();
+  });
+});
+
+describe("授权记录（H7 / ADR-0167）", () => {
+  const record = {
+    id: "rights-1",
+    subject: "林晚的肖像",
+    kind: "portrait" as const,
+    targetId: "c-1",
+    grantor: "本人",
+    grantedAt: "2026-11-01",
+    expiresAt: "2027-11-01",
+    evidence: "合同 2026-A-07",
+    note: "仅本片",
+  };
+
+  it("新增一条授权，回放后还在", () => {
+    const next = applyEvent(load(), { type: "rights.updated", at: AT, record });
+    expect(next.authorizations).toHaveLength(1);
+    expect(next.authorizations[0]).toMatchObject({ subject: "林晚的肖像", kind: "portrait" });
+    expect(
+      rebuild([created(load()), { type: "rights.updated", at: AT, record }]).authorizations,
+    ).toHaveLength(1);
+  });
+
+  it("同一个 id 再写一次是替换，不追加", () => {
+    const once = applyEvent(load(), { type: "rights.updated", at: AT, record });
+    const twice = applyEvent(once, {
+      type: "rights.updated",
+      at: AT,
+      record: { ...record, note: "续到 2028" },
+    });
+    expect(twice.authorizations).toHaveLength(1);
+    expect(twice.authorizations[0]?.note).toBe("续到 2028");
+  });
+
+  it("缺对象名或字段越界直接拒绝", () => {
+    expect(() =>
+      applyEvent(load(), { type: "rights.updated", at: AT, record: { ...record, subject: "" } }),
+    ).toThrow();
+    expect(() =>
+      applyEvent(load(), {
+        type: "rights.updated",
+        at: AT,
+        record: { ...record, evidence: "x".repeat(201) },
+      }),
+    ).toThrow();
+    expect(() =>
+      applyEvent(load(), {
+        type: "rights.updated",
+        at: AT,
+        // @ts-expect-error 故意用不认识的类型
+        record: { ...record, kind: "likeness" },
+      }),
+    ).toThrow();
+  });
+
+  it("删一条只删留档；删不存在的直接拒绝", () => {
+    const once = applyEvent(load(), { type: "rights.updated", at: AT, record });
+    const removed = applyEvent(once, { type: "rights.removed", at: AT, rightsId: "rights-1" });
+    expect(removed.authorizations).toHaveLength(0);
+    // 角色与素材不动
+    expect(removed.characters).toEqual(once.characters);
+    expect(removed.assets).toEqual(once.assets);
+    expect(() =>
+      applyEvent(once, { type: "rights.removed", at: AT, rightsId: "rights-nope" }),
+    ).toThrow();
+  });
+});
+
 describe("Provenance 的用量与金额（H4）", () => {
   it("故事溯源能带 token 用量与这一笔的钱", () => {
     const base = load();

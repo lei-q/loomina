@@ -28,7 +28,8 @@ interface Project {
   subtitleOverrides: SubtitleOverride[];  // 手改断句（D2 / ADR-0117），默认 []
   subtitleLayout: SubtitleLayout;         // 字幕版式（D3 / ADR-0130），默认 { preset: "default" }
   look: Look;                             // 画面风格与摄影参数（B7 / I5 / ADR-0165）
-  publishPackages: PublishPackage[];
+  publishPackages: PublishPackage[];      // 发布台账：发布包 + 回执（G10 / ADR-0166）
+  authorizations: RightsRecord[];         // 授权留档：肖像 / 声音 / 素材 / 音乐（H7 / ADR-0167）
 
   settings: ProjectSettings;
 }
@@ -451,6 +452,10 @@ type ProjectUpdatedEvent = {
 ```
 
 > **画面风格（ADR-0165，2026-11-13）**：`Project.look` 是 `{ presetId, contrast, temperature, texture, aspect, note }`，全部带默认值（`""` / `balanced` / `neutral` / `grain` / `9:16` / `""`），缺省即「实拍电影质感、自然光、轻微胶片颗粒」。`project.updated` 新增可选 `look?: Look`：**整块替换**，`applyEvent` 用 `LookSchema` 校验后才落库（越界与超长在进日志前被挡掉）。IR 里不存编译出来的提示词——提示词是这组参数的纯函数（`compileLook`），换一句写法不该变成一次项目改动。定妆 / 主镜 / 道具三条出图请求各自带一份 `look`，服务端 `parseLook` 不合法就当没带（风格错不拦整张图）。
+
+> **发布台账与回执（G10 / ADR-0166，2026-11-13）**：`PublishPackage` 新增四个可选字段 `publishedAt` / `url` / `receipt` / `note`（依次 ≤40 / 300 / 200 / 200 字）。`publish.recorded` 仍然是「导出这一刻的事实」（平台、档位、文件、AI 指纹），只追加；发布之后才有的事走新事件 `publish.updated { packageId, patch }`，`patch` 只允许这四个键，其余键在 `applyEvent` 里抛错，合并后整包再过一遍 `PublishPackageSchema`。`publishedAt` 与 `recordedAt` 分开：先导出、隔天再发是常态，合成一个时间就看不出「这一版到底发了没有」。
+
+> **授权记录（H7 / ADR-0167，2026-11-13）**：`Project.authorizations: RightsRecord[]`，默认 `[]`。一条记录是 `{ id, subject, kind: portrait | voice | asset | music | other, targetId?, grantor, grantedAt, expiresAt, evidence, note }`，字段都有长度上限、后五项默认空串。事件 `rights.updated { record }` 按 id 幂等 upsert，`rights.removed { rightsId }` 删一条（不存在就抛错）。缺哪一条、哪一条过期**不写 IR**：`lib/rights.ts` 的 `rightsReport` 每次从当前项目现算，合规预检（G8）把它的结果并进「素材授权」一项。`expiresAt` 为空表示不限期，非空时只比日期部分。
 
 > **项目固定模型（ADR-0150，2026-11-12）**：`Project.models` 是 `{ text?, image?, video?, tts?, asr? }`，值为本机配置的模型 id，缺省 `{}`。`project.updated` 新增可选 `models?: Partial<Record<Modality, string | null>>`：非空字符串固定、`null` 取消、不传的模态不动；空串与不认识的模态在 `applyEvent` 里抛错。取值优先级是「项目固定 > 本机选择 > 服务端默认」，生成、报价与故事入口共用 `modelIdFor(modality, project.models)`。
 

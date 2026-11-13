@@ -7,8 +7,10 @@ import {
   LocationSpaceSchema,
   LookSchema,
   MODALITY_KEYS,
+  RightsRecordSchema,
   MusicCueSchema,
   PerformanceSpecSchema,
+  PublishPackageSchema,
   StagingMarkSchema,
   VoicePerformanceSchema,
 } from "./schema";
@@ -16,6 +18,7 @@ import { blockingProblem, placementProblem, spaceProblem, spaceOfShot } from "./
 import type {
   Approval,
   Asset,
+  RightsRecord,
   Character,
   DialogueLine,
   GateStage,
@@ -471,6 +474,32 @@ export type ProjectEvent =
       type: "publish.recorded";
       at: string;
       package: PublishPackage;
+    }
+  | {
+      /**
+       * 发布台账回执（G10 / ADR-0166）：只改「发布之后才有」的四项。
+       *
+       * 发布包本身（平台、档位、文件、指纹）是导出那一刻的事实，不允许回填改；
+       * 回执、链接与备注是作者后来从平台贴回来的。
+       */
+      type: "publish.updated";
+      at: string;
+      packageId: Id;
+      patch: Partial<Pick<PublishPackage, "publishedAt" | "url" | "receipt" | "note">>;
+    }
+  | {
+      /**
+       * 授权记录（H7 / ADR-0167）：整条新增或替换，按 id 幂等。
+       */
+      type: "rights.updated";
+      at: string;
+      record: RightsRecord;
+    }
+  | {
+      /** 删掉一条授权记录：只删这一条留档，不动角色 / 素材 */
+      type: "rights.removed";
+      at: string;
+      rightsId: Id;
     }
   | {
       /**
@@ -1786,9 +1815,75 @@ function applyEventCore(
       ) {
         throw new Error(`发布包 ${pack.id} 的字节数不合法: ${pack.bytes}`);
       }
+      const parsed = PublishPackageSchema.safeParse(pack);
+      if (!parsed.success) {
+        throw new Error(
+          `发布包 ${pack.id} 不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`,
+        );
+      }
       return {
         ...current,
-        publishPackages: [...current.publishPackages, clone(pack)],
+        publishPackages: [...current.publishPackages, clone(parsed.data)],
+      };
+    }
+
+    case "publish.updated": {
+      // 台账回执（G10）：只改发布之后才有的那几项，发布包本身不动
+      if (!current) throw new Error("publish.updated 之前必须有 project.created");
+      const index = current.publishPackages.findIndex((item) => item.id === event.packageId);
+      if (index < 0) {
+        throw new Error(`publish.updated 指向不存在的发布包: ${event.packageId}`);
+      }
+      if (Object.keys(event.patch).length === 0) {
+        throw new Error("publish.updated 的 patch 是空的");
+      }
+      const allowed = ["publishedAt", "url", "receipt", "note"] as const;
+      for (const key of Object.keys(event.patch)) {
+        if (!(allowed as readonly string[]).includes(key)) {
+          throw new Error(`publish.updated 不允许改 ${key}`);
+        }
+      }
+      const next = current.publishPackages.map((item, at) =>
+        at === index ? { ...item, ...event.patch } : item,
+      );
+      const parsed = PublishPackageSchema.safeParse(next[index]);
+      if (!parsed.success) {
+        throw new Error(
+          `发布包 ${event.packageId} 的回执不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`,
+        );
+      }
+      return { ...current, publishPackages: next };
+    }
+
+    case "rights.updated": {
+      // 授权记录（H7 / ADR-0167）：按 id 幂等，整条替换
+      if (!current) throw new Error("authorization.updated 之前必须有 project.created");
+      const parsed = RightsRecordSchema.safeParse(event.record);
+      if (!parsed.success) {
+        throw new Error(
+          `授权记录不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`,
+        );
+      }
+      const record = parsed.data;
+      const replaced = current.authorizations.some((item) => item.id === record.id);
+      return {
+        ...current,
+        authorizations: replaced
+          ? current.authorizations.map((item) => (item.id === record.id ? record : item))
+          : [...current.authorizations, record],
+      };
+    }
+
+    case "rights.removed": {
+      if (!current) throw new Error("authorization.removed 之前必须有 project.created");
+      if (!current.authorizations.some((item) => item.id === event.rightsId)) {
+        throw new Error(`authorization.removed 指向不存在的授权记录: ${event.rightsId}`);
+      }
+      return {
+        ...current,
+        authorizations: current.authorizations.filter(
+          (item) => item.id !== event.rightsId,
+        ),
       };
     }
 

@@ -749,9 +749,52 @@ export const PublishPackageSchema = z.object({
    * 「这一版花了多少机器时间」，而不是笼统写「不花钱」。
    */
   renderMs: z.number().int().nonnegative().optional(),
+  /**
+   * 实际发布出去的时间（G10 / ADR-0166）。
+   *
+   * 与 `recordedAt` 分开：先导出成片、隔天才发是常态，
+   * 记成同一件事会让台账看不出「这一版到底发了没有」。
+   */
+  publishedAt: z.string().max(40).optional(),
+  /** 发布链接（G10）：平台回执里的地址；空表示还没发 */
+  url: z.string().max(300).optional(),
+  /** 平台回执 / 审核结果（G10）：作者自己贴回来的一行字 */
+  receipt: z.string().max(200).optional(),
+  /** 备注（G10）：这一版为什么重发、投了哪个号 */
+  note: z.string().max(200).optional(),
   aiLabel: AILabelSchema.optional(),
 });
 export type PublishPackage = z.infer<typeof PublishPackageSchema>;
+
+/**
+ * 授权记录（H7 / ADR-0167）。
+ *
+ * 短剧里最常见的两类麻烦是「这张脸是谁的」与「这段声音是谁的」。
+ * 这里只留档：谁给的、给了什么、什么时候到期、凭证在哪。
+ * 不校验凭证本身——合同在作者手里，工具只保证发布前看得见缺哪一条。
+ */
+export const RIGHTS_KINDS = ["portrait", "voice", "asset", "music", "other"] as const;
+
+export const RightsRecordSchema = z.object({
+  id: Id,
+  /** 授权对象的人话名字（「林晚的肖像」「周衡的配音」） */
+  subject: z.string().min(1).max(60),
+  kind: z.enum(RIGHTS_KINDS),
+  /** 关联到项目里的角色 / 道具 / 地点；对不上就留空 */
+  targetId: Id.optional(),
+  /** 授权方：谁给的 */
+  grantor: z.string().max(60).default(""),
+  /** 授权日期；空表示没填 */
+  grantedAt: z.string().max(20).default(""),
+  /** 到期日；空表示不限期 */
+  expiresAt: z.string().max(20).default(""),
+  /** 凭证位置：合同编号、存放路径或一句说明 */
+  evidence: z.string().max(200).default(""),
+  note: z.string().max(200).default(""),
+});
+export type RightsRecord = z.infer<typeof RightsRecordSchema>;
+/** 写授权记录时的形状：带 default 的字段可以省略，parse 后补齐 */
+export type RightsRecordInput = z.input<typeof RightsRecordSchema>;
 
 /**
  * 项目固定的模型（H22）。
@@ -843,6 +886,11 @@ export const ProjectSchema = z.object({
   /** 字幕版式（D3）：作者调过的字号 / 位置 / 描边；没调过就用默认档 */
   subtitleLayout: SubtitleLayoutSchema.default({}),
   publishPackages: z.array(PublishPackageSchema).default([]),
+  /**
+   * 授权记录（H7 / ADR-0167）：肖像、声音、素材、音乐各一条。
+   * 只留档，不拦生成；发布前由合规预检提示缺哪一条。
+   */
+  authorizations: z.array(RightsRecordSchema).default([]),
 });
 export type Project = z.infer<typeof ProjectSchema>;
 /** 写项目时的形状：带 default 的字段可以省略，parse 后补齐。 */

@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { StageGate } from "@/components/stage-gate";
 import { ComplianceCheckpoints } from "@/components/compliance-checkpoints";
 import { MusicCurvePanel } from "@/components/music-curve-panel";
+import { PublishLedgerPanel } from "@/components/publish-ledger-panel";
+import { RightsPanel } from "@/components/rights-panel";
 import { SilentWatchPanel } from "@/components/silent-watch-panel";
 import { TopBar } from "@/components/top-bar";
 import {
@@ -70,6 +72,7 @@ import {
 } from "@/lib/cover";
 import { canPreviewFrames } from "@/lib/preview-frame";
 import { silentWatchOfEdit } from "@/lib/silent-watch";
+import { rightsReport } from "@/lib/rights";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
 
@@ -402,6 +405,9 @@ export function EditScreen() {
   const removeMotif = useWorkbench((state) => state.removeMotif);
   const setBudget = useWorkbench((state) => state.setBudget);
   const recordPublish = useWorkbench((state) => state.recordPublish);
+  const recordPublishReceipt = useWorkbench((state) => state.recordPublishReceipt);
+  const upsertRights = useWorkbench((state) => state.upsertRights);
+  const removeRights = useWorkbench((state) => state.removeRights);
 
   useEffect(() => {
     void hydrate();
@@ -419,6 +425,9 @@ export function EditScreen() {
   const [maxChars, setMaxChars] = useState<SubtitleChars>(DEFAULT_SUBTITLE_CHARS);
   // 静音可懂度（C13 / ADR-0164）：只查字幕这一侧，全部从当前时间线派生
   const [silentOpen, setSilentOpen] = useState(false);
+  // 发布台账（G10）与授权记录（H7）：都是留档，不改成片
+  const [publishOpen, setPublishOpen] = useState(false);
+  const [rightsOpen, setRightsOpen] = useState(false);
   const [title, setTitle] = useState(project.title);
   const [description, setDescription] = useState("");
   const [topics, setTopics] = useState("短剧,AI创作");
@@ -483,6 +492,15 @@ export function EditScreen() {
     silent.summary.gap +
     silent.summary.pronoun +
     silent.summary.speaker;
+  // 授权与台账的顶栏徽标：缺几条授权、几份发布包还没贴回执
+  const rights = useMemo(
+    () => rightsReport(project, new Date().toISOString().slice(0, 10)),
+    [project],
+  );
+  const rightsGapCount = rights.gaps.length + rights.expired.length;
+  const unpublishedCount = project.publishPackages.filter(
+    (pack) => !pack.publishedAt?.trim(),
+  ).length;
   const stage = useMemo(() => toStageView(project), [project]);
   const spend = useMemo(() => spendOf(project), [project]);
 
@@ -1020,6 +1038,10 @@ export function EditScreen() {
         onBudgetChange={setBudget}
         onSilent={view.clips.length > 0 ? () => setSilentOpen(true) : undefined}
         silentCount={silentCount}
+        onPublishLedger={() => setPublishOpen(true)}
+        unpublishedCount={unpublishedCount}
+        onRights={() => setRightsOpen(true)}
+        rightsGapCount={rightsGapCount}
       />
 
       {editError && (
@@ -2568,6 +2590,23 @@ export function EditScreen() {
             seekTo(ms);
           }}
           onClose={() => setSilentOpen(false)}
+        />
+      )}
+      {publishOpen && (
+        <PublishLedgerPanel
+          project={project}
+          onSave={(packageId, patch) => recordPublishReceipt(packageId, patch)}
+          readOnly={Boolean(readOnly)}
+          onClose={() => setPublishOpen(false)}
+        />
+      )}
+      {rightsOpen && (
+        <RightsPanel
+          project={project}
+          onSave={(record) => upsertRights(record)}
+          onRemove={(id) => removeRights(id)}
+          readOnly={Boolean(readOnly)}
+          onClose={() => setRightsOpen(false)}
         />
       )}
       <StageGate stage="edit" />

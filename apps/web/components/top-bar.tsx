@@ -47,16 +47,18 @@ type StageTool =
   | "doctor"
   | "polish"
   | "silent"
-  | "look";
+  | "look"
+  | "publish"
+  | "rights";
 
 const STAGE_TOOLS: Record<StageName, StageTool[]> = {
   故事: [],
   剧本: ["export", "doctor", "polish"],
-  定妆: ["ledger", "budget", "look"],
+  定妆: ["ledger", "budget", "look", "rights"],
   分镜: ["ledger", "budget", "export", "preview", "check", "performance", "consistency", "blocking"],
   关键帧: ["ledger", "budget", "preview"],
   声音: ["ledger", "budget", "preview"],
-  成片: ["ledger", "budget", "export", "silent"],
+  成片: ["ledger", "budget", "export", "silent", "publish", "rights"],
 };
 
 export type TopBarProps = {
@@ -115,6 +117,14 @@ export type TopBarProps = {
   onLook?: () => void;
   /** 风格调过没有：调过就在按钮上标一下 */
   lookCustomized?: boolean;
+  /** 打开发布台账（G10 / ADR-0166）；给了才出现「台账」 */
+  onPublishLedger?: () => void;
+  /** 有几份发布包还没贴回执，显示在按钮右上 */
+  unpublishedCount?: number;
+  /** 打开授权记录（H7 / ADR-0167）；给了才出现「授权」 */
+  onRights?: () => void;
+  /** 缺几条授权（含已过期），显示在按钮右上 */
+  rightsGapCount?: number;
 };
 
 function Money({ value }: { value?: number }) {
@@ -152,6 +162,10 @@ export function TopBar({
   silentCount,
   onLook,
   lookCustomized,
+  onPublishLedger,
+  unpublishedCount,
+  onRights,
+  rightsGapCount,
 }: TopBarProps) {
   const [draftBudget, setDraftBudget] = useState<string>("");
   const [ledgerOpen, setLedgerOpen] = useState(false);
@@ -202,8 +216,8 @@ export function TopBar({
   };
 
   return (
-    <header className="flex h-[46px] shrink-0 items-center gap-6 border-b border-line px-4">
-      <div className="flex items-center gap-2">
+    <header className="flex h-[46px] shrink-0 items-center gap-4 border-b border-line px-4">
+      <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
         <Logomark className="h-[21px] w-[21px] text-text" />
         <span className="text-[13px] tracking-[.08em] text-text">{title}</span>
         <span className="tnum text-[9px] text-muted-2">v{version}</span>
@@ -215,7 +229,11 @@ export function TopBar({
         )}
       </div>
 
-      <nav aria-label="阶段" className="tnum hidden items-center gap-2.5 text-[10px] text-muted md:flex">
+      {/* 阶段条要整行读，挤到换行 / 截断都不如收起来：xl 以下只留「下一步」 */}
+      <nav
+        aria-label="阶段"
+        className="tnum hidden shrink-0 items-center gap-2.5 whitespace-nowrap text-[10px] text-muted xl:flex"
+      >
         {stages.map((item, i) => {
           const active = item.name === stage;
           const gate = gateStates.find((state) => state.name === item.name);
@@ -263,14 +281,14 @@ export function TopBar({
       {mode === "guided" && nextStage && (
         <Link
           href={nextStage.href}
-          className="tnum hidden items-center gap-1.5 border-l border-line pl-6 text-[10px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text xl:flex"
+          className="tnum hidden items-center gap-1.5 whitespace-nowrap border-l border-line pl-4 text-[10px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text md:flex"
         >
           下一步 · {nextStage.name}
           <span className="text-muted-2">→</span>
         </Link>
       )}
 
-      <div className="ml-auto flex items-center gap-4">
+      <div className="ml-auto flex shrink-0 items-center gap-4 whitespace-nowrap">
         {STAGE_MODELS[stage] && (
           <div className="hidden items-center gap-3 lg:flex">
             {STAGE_MODELS[stage]!.map((modality) => (
@@ -531,6 +549,32 @@ export function TopBar({
           >
             风格
             {lookCustomized && <span className="text-[9px] text-pick">·</span>}
+          </button>
+        )}
+        {shows("publish") && onPublishLedger && (
+          <button
+            type="button"
+            onClick={onPublishLedger}
+            title="每一份发布包发到哪、平台回了什么、哪一版还没发：不花钱"
+            className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            台账
+            {unpublishedCount !== undefined && unpublishedCount > 0 && (
+              <span className="tnum text-[9px] text-pick">{unpublishedCount}</span>
+            )}
+          </button>
+        )}
+        {shows("rights") && onRights && (
+          <button
+            type="button"
+            onClick={onRights}
+            title="肖像 / 声音 / 素材 / 音乐的授权留档：谁给的、到期没到期、凭证在哪；不花钱"
+            className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            授权
+            {rightsGapCount !== undefined && rightsGapCount > 0 && (
+              <span className="tnum text-[9px] text-pick">{rightsGapCount}</span>
+            )}
           </button>
         )}
         {shows("silent") && onSilent && (

@@ -5146,3 +5146,39 @@ ADR-0029 定的是「图片接口不收参考图，只记进溯源」。用户�
 - 已出的图不会自动重做，换风格要逐格重新生成、会再花钱。
 - 只有五个预设，没有按题材推荐；预设是经验值，未做评测（I9）。
 - 单镜不能覆盖风格（会破坏跨镜一致性）；机位 / 景别 / 构图仍归 I1 / I4。
+
+## 第一百八十六次 · 2026-11-13 · 发布台账与授权记录（G10 + H7）
+
+**问题**
+发布这件事只留了一半：`publish.recorded` 记下导出那一刻的平台、档位、文件与指纹，回答「导出过什么」。作者真正要问的是「这一版发了没有、发在哪、平台回了什么」，以及「这张脸 / 这段声音的授权缺不缺、过期没有」。这两件事都只活在作者的备忘录里；导出时间被当成发布时间，「导出三版、发零版」和「三版都发了」在台账上长得一样。
+
+**决定**
+- G10：`PublishPackage` 增 `publishedAt` / `url` / `receipt` / `note` 四个可选字段；新增事件 `publish.updated { packageId, patch }`，`patch` 在 `applyEvent` 里按四键白名单校验，合并后整包再过一遍 schema。导出事实（平台 / 档位 / 文件 / 指纹）不许回填改，要改就重新导出记新的一条。`publishedAt` 与 `recordedAt` 分开存，台账按它分已发 / 未发。
+- G10 界面：成片页顶栏「台账」抽屉，每份发布包一张卡（导出事实只读 + 四项可贴），「现在」按钮填本机时间；store 逐项比对，四项都没变就不写事件；顶栏数字是未贴回执的份数。
+- H7：`Project.authorizations: RightsRecord[]`（肖像 / 声音 / 素材 / 音乐 / 其他），事件 `rights.updated` 按 id 幂等 upsert、`rights.removed` 删一条。缺哪条、哪条过期由 `lib/rights.ts` 的 `rightsReport` 现算，**不写 IR**。
+- 判定口径宁可少报：角色参考图或定妆图里有上传 / 导入的图才要求肖像授权；上传素材要求一条素材授权；声音不自动判缺（`voiceProfileId` 只是音色名，分不出自带还是克隆）；音乐走 `licenseRef`。
+- G8 的「素材授权」一项接上这份报告：缺口 `rights-<kind>`、过期 `rights-expired-<kind>`，全部 review，不阻断导出；「今天」从 `preflightProject` 的 `at` 取。
+- H7 界面：定妆页与成片页顶栏「授权」抽屉，缺口逐条列出并可「补一条」预填，表单记类型 / 对象 / 授权方 / 起止 / 凭证 / 备注，删除两步确认。
+
+**产物**
+- `packages/ir/src/schema.ts`（`PublishPackage` 四字段、`RightsRecordSchema` / `RIGHTS_KINDS` / `Project.authorizations`）、`packages/ir/src/events.ts`（`publish.updated` / `rights.updated` / `rights.removed` 及应用逻辑）
+- `apps/web/lib/event-log.ts`、`apps/web/lib/history.ts`（三种事件的人话与 `rights.removed` 归为删除）、`apps/web/lib/workbench-store.ts`（`recordPublishReceipt` / `upsertRights` / `removeRights`）
+- `apps/web/lib/rights.ts`（`rightsReport` / `rightsTargets` / `isExpired`）、`apps/web/lib/compliance.ts`（`rightsCheck` 改为读报告）
+- `apps/web/components/publish-ledger-panel.tsx`、`apps/web/components/rights-panel.tsx`、`apps/web/components/top-bar.tsx`（台账 / 授权两个工具位）、`edit-screen.tsx`、`cast-screen.tsx`
+- 测试：`packages/ir/test/events.test.ts`（+7，两种新事件的白名单 / 幂等 / 删除）、`rights.test.ts`（11）、`workbench-store.test.ts`（+7）、`compliance.test.ts`（+2，改 1）
+- `docs/adr/0166-publish-ledger.md`、`docs/adr/0167-rights-records.md`、`docs/FEATURES.md`、`docs/ROADMAP.md`、`docs/DATA-MODEL.md`
+
+**验证**
+- 全仓 1025 + 120 + 228 + 32 条测试通过（4 条跳过），四个 tsconfig 与 `pnpm build` 干净。
+- 浏览器 `/edit`：顶栏「台账 1」→ 抽屉列出那份发布包（通用 / 未发布 / 导出时间 / 指纹），点「贴回执」→「现在」+ 链接 + 回执 + 备注 → 「记进台账」→ 卡片变「已发布」，四项都在；刷新后读回同样内容；顶栏数字消失。截图 `/tmp/g10-ledger-saved.png`。
+- 浏览器 `/cast`：顶栏「授权 1」→ 抽屉报「缺 1 条授权 · 缺素材」，点「补一条」预填类型 `asset`，填授权方后「记下来」→ 记录出现在列表、顶栏徽标消失；刷新后还在；「删」→「确认删」两步删掉。截图 `/tmp/h7-gap-fill.png`。
+- 浏览器 `/edit` 导出前检查：「素材授权」从「需确认 · 2 个上传素材没有授权记录」变成「通过 · 1 条授权记录，都在有效期」。截图 `/tmp/g10-compliance-after.png`。
+- 历史抽屉里三种事件都有句子（「发布台账：链接、回执、发布时间、备注」「授权记录「林」」「删掉一条授权记录」），撤销按钮标题跟着变。
+- 顺手修了顶栏在 1024 宽下换行：阶段条改成 `xl` 以上才显示，md 起只留「下一步」。
+
+**边界**
+- 回执要作者手动贴，不抓平台数据（G4 / G5 未做）；忘了贴就一直显示「未发布」。
+- 发布时间是自由文本，只限长度不校验格式——平台回执格式各异，强校验会挡掉合法值。
+- 一份发布包只对应一个链接：同版发多平台要各导一次发布包。
+- 声音不自动判缺；`expiresAt` 写成非日期格式会被静默放过。
+- 授权只提示、不拦生成、不拦导出；账号体系、授权书 OCR、到期提醒都还没做。

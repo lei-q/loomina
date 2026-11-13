@@ -292,6 +292,18 @@ export function describeEvent(before: Project, event: ProjectEvent): string {
       return `回退「${stageMetaOf(event.stage).name}」阶段`;
     case "publish.recorded":
       return `记录发布：${event.package.platform}`;
+    case "publish.updated": {
+      const touched: string[] = [];
+      if (event.patch.url !== undefined) touched.push("链接");
+      if (event.patch.receipt !== undefined) touched.push("回执");
+      if (event.patch.publishedAt !== undefined) touched.push("发布时间");
+      if (event.patch.note !== undefined) touched.push("备注");
+      return `发布台账：${touched.join("、") || "更新"}`;
+    }
+    case "rights.updated":
+      return `授权记录「${event.record.subject}」`;
+    case "rights.removed":
+      return "删掉一条授权记录";
     case "project.restored":
       return event.label?.trim() || `回到第 ${event.toEventCount} 条事件之后`;
   }
@@ -306,6 +318,7 @@ function kindOf(event: ProjectEvent): HistoryKind {
     case "location.removed":
     case "character.removed":
     case "prop.removed":
+    case "rights.removed":
       return "removal";
     default:
       return "edit";

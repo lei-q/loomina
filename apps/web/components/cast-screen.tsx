@@ -12,6 +12,7 @@ import {
   templateSpace,
 } from "@loomina/pipeline";
 import { fetchImagePrice } from "@/lib/image-price";
+import { rightsReport } from "@/lib/rights";
 import { BlockingBoard } from "@/components/blocking-board";
 import { Bust } from "@/components/bust";
 import { PropObject } from "@/components/prop-object";
@@ -19,6 +20,7 @@ import { PromptEditor } from "@/components/prompt-editor";
 import { Scene } from "@/components/scene";
 import { isDefaultLook } from "@loomina/pipeline";
 import { LookPanel } from "@/components/look-panel";
+import { RightsPanel } from "@/components/rights-panel";
 import { StageGate } from "@/components/stage-gate";
 import { TopBar } from "@/components/top-bar";
 import {
@@ -1510,6 +1512,8 @@ export function CastScreen() {
   const undoLastRemoval = useWorkbench((state) => state.undoLastRemoval);
   const removeProp = useWorkbench((state) => state.removeProp);
   const setLook = useWorkbench((state) => state.setLook);
+  const upsertRights = useWorkbench((state) => state.upsertRights);
+  const removeRights = useWorkbench((state) => state.removeRights);
 
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -1519,6 +1523,7 @@ export function CastScreen() {
   const [newCharacterName, setNewCharacterName] = useState("");
   const [newCharacterAppearance, setNewCharacterAppearance] = useState("");
   const [lookOpen, setLookOpen] = useState(false);
+  const [rightsOpen, setRightsOpen] = useState(false);
   const [creatingProp, setCreatingProp] = useState(false);
   const [newPropName, setNewPropName] = useState("");
   const [newPropDescription, setNewPropDescription] = useState("");
@@ -1562,6 +1567,9 @@ export function CastScreen() {
   const removalNoun =
     pageRemoval?.kind === "character" ? "人物" : pageRemoval?.kind === "prop" ? "道具" : "地点";
   const progress = cast.totalRequired === 0 ? 0 : (cast.lockedCount / cast.totalRequired) * 100;
+  // 授权徽标：缺几条（含过期），与抽屉里同一份报告
+  const rightsReportData = rightsReport(project, new Date().toISOString().slice(0, 10));
+  const rightsGapCount = rightsReportData.gaps.length + rightsReportData.expired.length;
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg text-text">
@@ -1578,6 +1586,8 @@ export function CastScreen() {
         onBudgetChange={setBudget}
         onLook={() => setLookOpen(true)}
         lookCustomized={!isDefaultLook(project.look)}
+        onRights={() => setRightsOpen(true)}
+        rightsGapCount={rightsGapCount}
       />
 
       <main className="flex-1 overflow-y-auto">
@@ -1936,6 +1946,15 @@ export function CastScreen() {
         </div>
       </main>
 
+      {rightsOpen && (
+        <RightsPanel
+          project={project}
+          onSave={(record) => upsertRights(record)}
+          onRemove={(id) => removeRights(id)}
+          readOnly={Boolean(readOnly)}
+          onClose={() => setRightsOpen(false)}
+        />
+      )}
       {lookOpen && (
         <LookPanel
           look={project.look}

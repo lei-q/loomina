@@ -188,6 +188,7 @@ const raw: ProjectInput = {
   },
 
   publishPackages: [],
+  authorizations: [],
 };
 
 export const sampleProject = ProjectSchema.parse(raw);

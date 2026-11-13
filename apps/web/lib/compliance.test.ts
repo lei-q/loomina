@@ -142,7 +142,38 @@ describe("导出前预检（G8）", () => {
     const report = preflightProject(withUpload, { durationMs: 60_000, at: AT });
     expect(report.ok).toBe(true);
     expect(report.checks.find((check) => check.id === "rights")?.status).toBe("review");
-    expect(report.findings.some((finding) => finding.ruleId === "rights-upload")).toBe(true);
+    expect(report.findings.some((finding) => finding.ruleId === "rights-asset")).toBe(true);
+  });
+
+  it("补上授权记录就不再提示缺授权（H7 / ADR-0167）", () => {
+    const withUpload = project({
+      assets: [
+        { id: "a-upload", kind: "image", source: "upload", createdAt: AT },
+      ],
+      authorizations: [
+        { id: "r-1", subject: "参考图", kind: "asset", grantedAt: "2026-11-01" },
+      ],
+    });
+    const report = preflightProject(withUpload, { durationMs: 60_000, at: AT });
+    expect(report.checks.find((check) => check.id === "rights")?.status).toBe("pass");
+    expect(report.checks.find((check) => check.id === "rights")?.detail).toContain("1 条授权记录");
+    expect(report.findings.some((finding) => finding.ruleId.startsWith("rights-"))).toBe(false);
+  });
+
+  it("过期的授权照样标出来", () => {
+    const stale = project({
+      assets: [
+        { id: "a-upload", kind: "image", source: "upload", createdAt: AT },
+      ],
+      authorizations: [
+        { id: "r-1", subject: "参考图", kind: "asset", expiresAt: "2026-01-01" },
+      ],
+    });
+    const report = preflightProject(stale, { durationMs: 60_000, at: AT });
+    expect(report.checks.find((check) => check.id === "rights")?.status).toBe("review");
+    expect(report.findings.some((finding) => finding.ruleId === "rights-expired-asset")).toBe(true);
+    // 过期不算有效：素材仍然报缺
+    expect(report.findings.some((finding) => finding.ruleId === "rights-asset")).toBe(true);
   });
 
   it("剧本导入的 provenance 视为已声明授权", () => {

@@ -10,6 +10,7 @@ import {
   placementProblem,
   rebuild,
   REFERENCE_IMAGES_MAX,
+  RightsRecordSchema,
   sheetSlotAssets,
   sheetSlotsOf,
   SHEET_ANGLES,
@@ -33,6 +34,7 @@ import {
   type Prop,
   type ProjectEvent,
   type PublishPackage,
+  type RightsRecordInput,
   type Scene,
   type SheetView,
   type Shot,
@@ -319,6 +321,11 @@ type WorkbenchState = {
    */
   setLook: (look: Look) => boolean;
   /**
+   * 新增或改一条授权记录（H7 / ADR-0167）：整条写一条 `rights.updated`，按 id 幂等。
+   * 只留档，不拦生成；缺哪一条由合规预检提示。
+   */
+  upsertRights: (record: RightsRecordInput) => boolean;
+  /**
    * 记一条发布记录（G1）：把平台、档位与成片文件信息追加进 `publishPackages`。
    * 只记元数据，不存视频二进制。
    */
@@ -333,6 +340,17 @@ type WorkbenchState = {
     /** 这一版剪辑的内容指纹（H5）：写进发布包的 aiLabel，标识与内容绑在一起 */
     contentHash?: string;
   }) => boolean;
+  /**
+   * 发布台账回执（G10 / ADR-0166）：发布之后才有的四项——发布时间、链接、回执、备注。
+   * 发布包本身（平台、档位、文件、指纹）是导出那一刻的事实，这里不允许回填改。
+   * 只写有变化的字段；四项都没变就不写事件。
+   */
+  recordPublishReceipt: (
+    packageId: string,
+    patch: Partial<Pick<PublishPackage, "publishedAt" | "url" | "receipt" | "note">>,
+  ) => boolean;
+  /** 删掉一条授权记录（H7 / ADR-0167）：写一条 `rights.removed`，只删留档 */
+  removeRights: (rightsId: string) => boolean;
   /**
    * 确认一个阶段（F8 / F9）：按当前内容算签名，写一条 `gate.confirmed`。
    * 已确认的阶段再确认一次就是更新签名，不新增第二条记录。
@@ -1412,6 +1430,63 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     const event: ProjectEvent = { type: "publish.recorded", at: recordedAt, package: pack };
     set({ project: applyEvent(project, event), events: [...events, event] });
     return true;
+  },
+
+  recordPublishReceipt: (packageId, patch) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const pack = project.publishPackages.find((item) => item.id === packageId);
+    if (!pack) return false;
+    // 只留下真的变了的字段：空 patch 是「什么都没改」，不写事件
+    const next: Partial<Pick<PublishPackage, "publishedAt" | "url" | "receipt" | "note">> = {};
+    for (const key of ["publishedAt", "url", "receipt", "note"] as const) {
+      const value = patch[key];
+      if (value === undefined) continue;
+      const trimmed = value.trim();
+      if (trimmed === (pack[key] ?? "")) continue;
+      next[key] = trimmed;
+    }
+    if (Object.keys(next).length === 0) return false;
+    const event: ProjectEvent = { type: "publish.updated", at: stamp(), packageId, patch: next };
+    try {
+      set({ project: applyEvent(project, event), events: [...events, event], castError: undefined });
+      return true;
+    } catch (error) {
+      set({ castError: error instanceof Error ? error.message : "回执没记上。" });
+      return false;
+    }
+  },
+
+  upsertRights: (record) => {
+    if (get().readOnly) return false;
+    const parsed = RightsRecordSchema.safeParse(record);
+    if (!parsed.success) {
+      set({ castError: `授权记录不合法：${parsed.error.issues[0]?.message ?? "未知原因"}` });
+      return false;
+    }
+    const { project, events } = get();
+    const event: ProjectEvent = { type: "rights.updated", at: stamp(), record: parsed.data };
+    try {
+      set({ project: applyEvent(project, event), events: [...events, event], castError: undefined });
+      return true;
+    } catch (error) {
+      set({ castError: error instanceof Error ? error.message : "授权记录没记上。" });
+      return false;
+    }
+  },
+
+  removeRights: (rightsId) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    if (!project.authorizations.some((item) => item.id === rightsId)) return false;
+    const event: ProjectEvent = { type: "rights.removed", at: stamp(), rightsId };
+    try {
+      set({ project: applyEvent(project, event), events: [...events, event], castError: undefined });
+      return true;
+    } catch (error) {
+      set({ castError: error instanceof Error ? error.message : "授权记录没删掉。" });
+      return false;
+    }
   },
 
   confirmGate: (stage, note, override) => {

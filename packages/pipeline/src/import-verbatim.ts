@@ -288,6 +288,7 @@ export function projectFromVerbatimDocument(
     subtitleOverrides: [],
     subtitleLayout: { preset: "default" },
     publishPackages: [],
+    authorizations: [],
   };
   assertValidProject(project);
   return project;
