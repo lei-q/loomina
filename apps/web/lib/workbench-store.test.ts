@@ -1294,6 +1294,108 @@ describe("发布记录（G1 / ADR-0102）", () => {
   });
 });
 
+describe("镜头语言（I1）", () => {
+  beforeEach(() => {
+    state().reset();
+  });
+
+  it("套一套说法写一条 shot.updated，四个字段一起变", () => {
+    const shot = state().project.shots[0]!;
+    const before = state().events.length;
+    expect(state().applyShotLanguage(shot.id, "insert")).toBe(true);
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.updated",
+      shotId: shot.id,
+      patch: { shotSize: "extreme-close" },
+    });
+    const after = state().project.shots[0]!;
+    expect(after.shotSize).toBe("extreme-close");
+    expect(after.camera).toMatchObject({ angle: "high", movement: "static", focalMm: 100 });
+    expect(rebuild(state().events).shots[0]?.camera.focalMm).toBe(100);
+  });
+
+  it("已经是这一套就不写日志，不认识的 id 也不写", () => {
+    const shot = state().project.shots[0]!;
+    expect(state().applyShotLanguage(shot.id, "insert")).toBe(true);
+    const before = state().events.length;
+    expect(state().applyShotLanguage(shot.id, "insert")).toBe(false);
+    expect(state().applyShotLanguage(shot.id, "dutch-angle")).toBe(false);
+    expect(state().events).toHaveLength(before);
+  });
+
+  it("锁定或找不到镜头就不写", () => {
+    const locked = state().project.shots.find((item) => item.locked)!;
+    const before = state().events.length;
+    expect(state().applyShotLanguage(locked.id, "insert")).toBe(false);
+    expect(state().castError).toContain("已锁定");
+    expect(state().applyShotLanguage("sh-nope", "insert")).toBe(false);
+    expect(state().events).toHaveLength(before);
+  });
+});
+
+describe("光影与构图（I2 / I4）", () => {
+  beforeEach(() => {
+    state().reset();
+  });
+
+  it("写光影写一条 shot.updated，重放后还在；清空也留一条", () => {
+    const shot = state().project.shots[1]!;
+    const before = state().events.length;
+    expect(
+      state().setShotLighting(shot.id, {
+        source: "window",
+        position: "back",
+        mood: "silhouette",
+        note: "",
+      }),
+    ).toBe(true);
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "shot.updated", shotId: shot.id });
+    expect(state().project.shots[1]?.lighting).toMatchObject({
+      source: "window",
+      position: "back",
+      mood: "silhouette",
+    });
+    expect(rebuild(state().events).shots[1]?.lighting?.source).toBe("window");
+
+    expect(state().setShotLighting(shot.id, undefined)).toBe(true);
+    expect(state().project.shots[1]?.lighting).toBeUndefined();
+    expect(rebuild(state().events).shots[1]?.lighting).toBeUndefined();
+  });
+
+  it("同值不写；锁定或找不到镜头也不写", () => {
+    const shot = state().project.shots[1]!;
+    const value = { source: "lamp" as const, position: "side" as const, mood: "modeled" as const, note: "" };
+    expect(state().setShotLighting(shot.id, value)).toBe(true);
+    const before = state().events.length;
+    expect(state().setShotLighting(shot.id, value)).toBe(false);
+    expect(state().setShotLighting("sh-nope", value)).toBe(false);
+    const locked = state().project.shots.find((item) => item.locked)!;
+    expect(state().setShotLighting(locked.id, value)).toBe(false);
+    expect(state().events).toHaveLength(before);
+  });
+
+  it("构图同样一条事件，清空也留痕", () => {
+    const shot = state().project.shots[2]!;
+    expect(state().setShotComposition(shot.id, { rule: "centered", note: "" })).toBe(true);
+    expect(state().project.shots[2]?.composition?.rule).toBe("centered");
+    expect(rebuild(state().events).shots[2]?.composition?.rule).toBe("centered");
+    expect(state().setShotComposition(shot.id, { rule: "centered", note: "" })).toBe(false);
+    expect(state().setShotComposition(shot.id, undefined)).toBe(true);
+    expect(state().project.shots[2]?.composition).toBeUndefined();
+  });
+
+  it("不认识的枚举值在 store 层就被挡下", () => {
+    const shot = state().project.shots[0]!;
+    const before = state().events.length;
+    expect(
+      state().setShotLighting(shot.id, { source: "candle" as never, position: "side", mood: "modeled", note: "" }),
+    ).toBe(false);
+    expect(state().events).toHaveLength(before);
+  });
+});
+
 describe("发布台账回执（G10 / ADR-0166）", () => {
   beforeEach(() => {
     state().reset();

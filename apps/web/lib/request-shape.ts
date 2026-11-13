@@ -1,4 +1,11 @@
-import { CameraSchema, LookSchema, ShotSchema, type Look } from "@loomina/ir";
+import {
+  CameraSchema,
+  CompositionSchema,
+  LightingSchema,
+  LookSchema,
+  ShotSchema,
+  type Look,
+} from "@loomina/ir";
 import type { ShotPromptMaterial } from "@loomina/pipeline";
 
 /**
@@ -90,6 +97,8 @@ export function parseShotMaterial(value: unknown): ShotPromptMaterial | string {
 
   const where = name(shot.location?.name);
   const look = parseLook((value as { look?: unknown }).look);
+  const lighting = LightingSchema.safeParse((value as { lighting?: unknown }).lighting);
+  const composition = CompositionSchema.safeParse((value as { composition?: unknown }).composition);
   return {
     description: text(shot.description, 400),
     shotSize: size.data,
@@ -99,5 +108,7 @@ export function parseShotMaterial(value: unknown): ShotPromptMaterial | string {
     props,
     ...(dialogue.length ? { dialogue } : {}),
     ...(look ? { look } : {}),
+    ...(lighting.success ? { lighting: lighting.data } : {}),
+    ...(composition.success ? { composition: composition.data } : {}),
   };
 }

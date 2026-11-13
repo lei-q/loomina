@@ -5182,3 +5182,37 @@ ADR-0029 定的是「图片接口不收参考图，只记进溯源」。用户�
 - 一份发布包只对应一个链接：同版发多平台要各导一次发布包。
 - 声音不自动判缺；`expiresAt` 写成非日期格式会被静默放过。
 - 授权只提示、不拦生成、不拦导出；账号体系、授权书 OCR、到期提醒都还没做。
+
+## 第一百八十七次 · 2026-11-13 · 镜头语言、光影与构图（I1 + I2 + I4）
+
+**问题**
+一镜的摄影信息分在两处：`Shot.shotSize` / `Shot.camera` 管景别、机位、运镜、焦段，`Project.look` 管光比、色温、质感。作者想拍「过肩」，得自己在心里翻译成「中景 + 平视 + 固定 + 50mm」；想把这一镜改成台灯下的桌面戏，没有字段可写，只能塞进 `description` 或 `promptNotes`——那两处是给人读的叙事文字，混进技术意图之后就都读不清了。构图（三分、居中、框中框）完全没有字段。
+
+**决定**
+- I1：`packages/pipeline/src/language.ts` 的 `SHOT_LANGUAGES` 十四套说法，分建立 / 对话 / 反应 / 细节 / 氛围五组，每套 = 景别 + 机位 + 运镜 + 焦段 + 一句用途。套用 = 一条 `shot.updated`，改的是四个已有字段；库本身不进 IR。机位坐标（B13 的 `placement`）从现值原样带过来。`matchShotLanguage` 四项全对才算「正好是这套」，不在库里如实写「作者自己拼的一组」。
+- I2：`Shot.lighting = { source, position, mood, note }`（窗 / 台灯 / 顶灯 / 实用光源 / 月光 × 正 / 侧 / 逆 / 顶 / 底 × 平 / 立体 / 剪影 + 60 字），可选。与 `Project.look` 分工：风格管整条片子的调子，光影管这一镜的光源是谁。
+- I4：`Shot.composition = { rule, note }`（三分 / 居中 / 引导线 / 框中框 / 对角线 / 留白 + 60 字），可选，只写意图不写坐标。
+- 编译：`compileLighting` / `compileComposition` 各出一句，排在 `shotParts` 的镜头参数**之前**；没写就不 push，旧提示词逐字不变。服务端用 `LightingSchema` / `CompositionSchema` 解析，不合法就当没带。
+- 事件：三项都走已有的 `shot.updated`，`applyEvent` 校验后落库；清空写属性值为 `undefined`（与 `setShotPerformance` 同一写法）。
+- 界面：分镜页顶栏「语言」抽屉——当前镜四项参数 + 已经写上的两句提示词、十四套说法按组列出、光影七套与构图六套各带「不指定」、底部镜头号直接换镜。顶栏的点在「既对上了说法、又写了光影与构图」时消失。
+
+**产物**
+- `packages/ir/src/schema.ts`（`LightingSchema` / `CompositionSchema` / 两组枚举、`Shot.lighting` / `Shot.composition`）、`packages/ir/src/events.ts`（`shot.updated` 两项校验）
+- `packages/pipeline/src/language.ts`（说法库 + 两套模板 + 两个编译器）、`packages/pipeline/src/index.ts`（`ShotPromptMaterial` 两项、`shotMaterial` 取值、`shotParts` 两句）、`packages/pipeline/test/language.test.ts`（11）、`chain.test.ts`（+3）
+- `apps/web/lib/request-shape.ts`（两项解析）、`apps/web/lib/workbench-store.ts`（`applyShotLanguage` / `setShotLighting` / `setShotComposition`）
+- `apps/web/components/shot-language-panel.tsx`、`apps/web/components/workbench.tsx`、`apps/web/components/top-bar.tsx`
+- 测试：`workbench-store.test.ts`（+7）
+- `docs/adr/0168-shot-language-lighting-composition.md`、`docs/FEATURES.md`、`docs/ROADMAP.md`、`docs/DATA-MODEL.md`
+
+**验证**
+- 全仓测试通过（apps/web 1028、pipeline 134、ir 228、gateway 32，4 条跳过），四个 tsconfig 与 `pnpm build` 干净。
+- 浏览器 `/`：顶栏「语言·」→ 抽屉显示 SH-03「大特写 · 平视 · 固定 · 50mm · 不在库里」；点「插入特写」→ 变成「大特写 · 俯拍 · 固定 · 100mm · 正好是『插入特写』」，提示词那一行同步变成「大特写，俯拍，固定机位，100mm」；刷新后读回同样的值。截图 `/tmp/i1-language-applied.png`。
+- 同一抽屉里点「台灯局部光」与「框中框」→ 卡片多出两行预览 `光线：台灯，侧光，明暗过渡清晰，只有一盏台灯亮着，周围很暗` / `构图：框中框构图，透过门框或窗框看`，实际提示词里这两句排在 `大特写，俯拍，固定机位，100mm` 之前；刷新后还在；点「不指定光影」清空、构图保留。截图 `/tmp/i24-panel.png`。
+- 没写光影 / 构图的镜头，提示词里既没有「光线：」也没有「构图：」，与旧口径逐字一致（单测断言）。
+
+**边界**
+- 十四套说法是经验值，没有评测；打斗、追车这类戏覆盖不到。
+- 光影模板与 `Project.look` 是叠加关系（风格偏冷 + 月光冷调），不是覆盖，需要作者理解。
+- 构图只到「说法」这一层，没有九宫格位置与占比。
+- 说法库是代码里的表，不能自定义存进项目；也不能按场批量套用。
+- `CameraSchema` 里没有荷兰角，I1 也就给不出来。

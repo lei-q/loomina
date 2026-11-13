@@ -49,13 +49,24 @@ type StageTool =
   | "silent"
   | "look"
   | "publish"
-  | "rights";
+  | "rights"
+  | "language";
 
 const STAGE_TOOLS: Record<StageName, StageTool[]> = {
   故事: [],
   剧本: ["export", "doctor", "polish"],
   定妆: ["ledger", "budget", "look", "rights"],
-  分镜: ["ledger", "budget", "export", "preview", "check", "performance", "consistency", "blocking"],
+  分镜: [
+    "ledger",
+    "budget",
+    "export",
+    "preview",
+    "check",
+    "performance",
+    "consistency",
+    "blocking",
+    "language",
+  ],
   关键帧: ["ledger", "budget", "preview"],
   声音: ["ledger", "budget", "preview"],
   成片: ["ledger", "budget", "export", "silent", "publish", "rights"],
@@ -125,6 +136,10 @@ export type TopBarProps = {
   onRights?: () => void;
   /** 缺几条授权（含已过期），显示在按钮右上 */
   rightsGapCount?: number;
+  /** 打开镜头语言库（I1）；给了才出现「语言」 */
+  onLanguage?: () => void;
+  /** 当前镜有没有对上库里的说法：对上了就不标点 */
+  languageMatched?: boolean;
 };
 
 function Money({ value }: { value?: number }) {
@@ -166,6 +181,8 @@ export function TopBar({
   unpublishedCount,
   onRights,
   rightsGapCount,
+  onLanguage,
+  languageMatched,
 }: TopBarProps) {
   const [draftBudget, setDraftBudget] = useState<string>("");
   const [ledgerOpen, setLedgerOpen] = useState(false);
@@ -601,6 +618,17 @@ export function TopBar({
             {consistencyCount !== undefined && consistencyCount > 0 && (
               <span className="tnum text-[9px] text-pick">{consistencyCount}</span>
             )}
+          </button>
+        )}
+        {shows("language") && onLanguage && (
+          <button
+            type="button"
+            onClick={onLanguage}
+            title="镜头语言库：景别 / 机位 / 运镜 / 焦段收成十四套说法，一套一条镜头改动；不花钱"
+            className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            语言
+            {languageMatched === false && <span className="text-[9px] text-pick">·</span>}
           </button>
         )}
         {shows("blocking") && onBlocking && (

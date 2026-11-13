@@ -7,6 +7,7 @@ import { ConsistencyPanel } from "@/components/consistency-panel";
 import { PerformancePanel } from "@/components/performance-panel";
 import { ReelBar } from "@/components/reel-bar";
 import { Stage } from "@/components/stage";
+import { ShotLanguagePanel } from "@/components/shot-language-panel";
 import { StoryboardPanel } from "@/components/storyboard-panel";
 import { TimelineStrip } from "@/components/timeline-strip";
 import { StageGate } from "@/components/stage-gate";
@@ -15,6 +16,7 @@ import { toAnimaticView, toStageView } from "@/lib/read-model";
 import { fetchPrice } from "@/lib/image-price";
 import { analyzeConsistency } from "@/lib/consistency";
 import { analyzeStoryboard } from "@/lib/storyboard";
+import { matchShotLanguage } from "@loomina/pipeline";
 import { useWorkbench } from "@/lib/workbench-store";
 
 export function Workbench() {
@@ -32,6 +34,9 @@ export function Workbench() {
   const setShotLock = useWorkbench((state) => state.setShotLock);
   const setShotBudget = useWorkbench((state) => state.setShotBudget);
   const setShotPlan = useWorkbench((state) => state.setShotPlan);
+  const applyShotLanguage = useWorkbench((state) => state.applyShotLanguage);
+  const setShotLighting = useWorkbench((state) => state.setShotLighting);
+  const setShotComposition = useWorkbench((state) => state.setShotComposition);
   const setShotPerformance = useWorkbench((state) => state.setShotPerformance);
   const setShotStaging = useWorkbench((state) => state.setShotStaging);
   const setShotBlocking = useWorkbench((state) => state.setShotBlocking);
@@ -88,13 +93,25 @@ export function Workbench() {
   const [consistencyOpen, setConsistencyOpen] = useState(false);
   // 走位（B13.1 / ADR-0126）：俯视平面图 + 自动摆位 + 精确越轴
   const [blockingOpen, setBlockingOpen] = useState(false);
+  // 镜头语言库（I1）：景别 / 机位 / 运镜 / 焦段收成一套套说法
+  const [languageOpen, setLanguageOpen] = useState(false);
   const consistency = useMemo(() => analyzeConsistency(project), [project]);
+  // 当前镜是不是正好对上了库里的一套说法（I1）：没对上就在按钮上标一点
   const currentShot = view.shots[view.current];
+  const languageMatched = useMemo(() => {
+    const shot = currentShot
+      ? project.shots.find((item) => item.id === currentShot.id)
+      : undefined;
+    return shot
+      ? Boolean(matchShotLanguage(shot)) && Boolean(shot.lighting) && Boolean(shot.composition)
+      : false;
+  }, [project.shots, currentShot]);
   const videoJob = currentShot ? jobs[`${currentShot.id}:video`] : undefined;
 
   // 键盘：← → 换格，⌘⏎ 留用；输入框里只让 ⌘⏎ 生效；预演 / 检查打开时让给它们
   useEffect(() => {
-    if (previewOpen || checkOpen || consistencyOpen || performanceOpen || blockingOpen) return;
+    if (previewOpen || checkOpen || consistencyOpen || performanceOpen || blockingOpen || languageOpen)
+      return;
     function onKeyDown(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
       const typing =
@@ -120,7 +137,17 @@ export function Workbench() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [view, select, decide, previewOpen, checkOpen, consistencyOpen, performanceOpen, blockingOpen]);
+  }, [
+    view,
+    select,
+    decide,
+    previewOpen,
+    checkOpen,
+    consistencyOpen,
+    performanceOpen,
+    blockingOpen,
+    languageOpen,
+  ]);
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg text-text">
@@ -182,6 +209,18 @@ export function Workbench() {
         }
         blockingCount={storyboard.issues.filter((issue) => issue.rule === "V3").length}
         consistencyCount={consistency.summary.review + consistency.summary.fail}
+        onLanguage={
+          view.shots.length > 0
+            ? () => {
+                setCheckOpen(false);
+                setPerformanceOpen(false);
+                setConsistencyOpen(false);
+                setBlockingOpen(false);
+                setLanguageOpen(true);
+              }
+            : undefined
+        }
+        languageMatched={languageMatched}
         onPreview={view.shots.length > 0 ? () => setPreviewOpen(true) : undefined}
       />
       {castError && (
@@ -280,6 +319,18 @@ export function Workbench() {
           onSelect={select}
           onApply={(shotId, blocking, placement) => setShotBlocking(shotId, blocking, placement)}
           onClose={() => setBlockingOpen(false)}
+        />
+      )}
+      {languageOpen && view.shots.length > 0 && (
+        <ShotLanguagePanel
+          project={project}
+          currentShotId={view.shots[view.current]!.id}
+          readOnly={readOnly ?? false}
+          onSelectShot={select}
+          onApply={(shotId, languageId) => applyShotLanguage(shotId, languageId)}
+          onLighting={(shotId, lighting) => setShotLighting(shotId, lighting)}
+          onComposition={(shotId, composition) => setShotComposition(shotId, composition)}
+          onClose={() => setLanguageOpen(false)}
         />
       )}
       {consistencyOpen && view.shots.length > 0 && (

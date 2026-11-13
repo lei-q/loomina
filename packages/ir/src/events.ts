@@ -4,6 +4,8 @@ import { clone } from "./clone";
 import {
   BlockingSchema,
   CameraSchema,
+  CompositionSchema,
+  LightingSchema,
   LocationSpaceSchema,
   LookSchema,
   MODALITY_KEYS,
@@ -930,6 +932,21 @@ function applyEventCore(
           );
         }
         patch = { ...patch, staging: parsed.data };
+      }
+      // 光影与构图（I2 / I4）：枚举与长度在 schema 里，不合法就不该进日志
+      if (event.patch.lighting !== undefined) {
+        const parsed = LightingSchema.safeParse(event.patch.lighting);
+        if (!parsed.success) {
+          throw new Error(`光影模板不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`);
+        }
+        patch = { ...patch, lighting: parsed.data };
+      }
+      if (event.patch.composition !== undefined) {
+        const parsed = CompositionSchema.safeParse(event.patch.composition);
+        if (!parsed.success) {
+          throw new Error(`构图模板不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`);
+        }
+        patch = { ...patch, composition: parsed.data };
       }
       // 走位与机位坐标（B13）：越界、不在场、两点重合都不进日志
       if (event.patch.blocking !== undefined) {

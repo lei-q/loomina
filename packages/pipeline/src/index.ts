@@ -4,8 +4,10 @@ import {
   shotAnchors,
   type ActionBeat,
   type Character,
+  type Composition,
   type GazeTarget,
   type Id,
+  type Lighting,
   type Location,
   type Look,
   type Project,
@@ -18,6 +20,7 @@ import {
 import type { ImageAdapter, VideoAdapter } from "@loomina/gateway";
 import { sceneTemplateById, sceneTemplatePrompt, type SceneTemplate } from "./scene-templates";
 import { compileLook, compileStudioLook } from "./look";
+import { compileComposition, compileLighting } from "./language";
 
 export * from "./dialogue";
 export * from "./story";
@@ -255,6 +258,10 @@ export type ShotPromptMaterial = {
    * 不传就是默认档，编译结果与以前逐字一致。
    */
   look?: Look;
+  /** 光影模板（I2）：这一镜的光从哪来；不传就不带这一句 */
+  lighting?: Lighting;
+  /** 构图模板（I4）：主体放在哪；不传就不带这一句 */
+  composition?: Composition;
 };
 
 export type PerformancePrompt = {
@@ -405,6 +412,8 @@ export function shotMaterial(
       : {}),
     ...(frameBeat ? { frameBeat } : {}),
     ...(project.look ? { look: project.look } : {}),
+    ...(shot.lighting ? { lighting: shot.lighting } : {}),
+    ...(shot.composition ? { composition: shot.composition } : {}),
   };
 }
 
@@ -470,6 +479,13 @@ function shotParts(material: ShotPromptMaterial): string[] {
     prop.description ? `${prop.name}，${prop.description}` : prop.name,
   );
   if (props.length) parts.push(`道具：${props.join("；")}`);
+
+  // 光影与构图（I2 / I4）：各一句，排在镜头参数前面——先说怎么打光、怎么摆，
+  // 再说用多大的镜头；两者都没写时提示词与以前逐字一致。
+  const lighting = compileLighting(material.lighting);
+  if (lighting) parts.push(lighting);
+  const composition = compileComposition(material.composition);
+  if (composition) parts.push(composition);
 
   const { shotSize, camera } = material;
   parts.push(
@@ -665,4 +681,5 @@ export function buildPropPrompt(
   return parts.join("。");
 }
 export * from "./look";
+export * from "./language";
 export * from "./import-verbatim";

@@ -519,6 +519,45 @@ export const StagingMarkSchema = z
   });
 export type StagingMark = z.infer<typeof StagingMarkSchema>;
 
+/**
+ * 光影模板（I2）：这一镜的光**从哪来、往哪打、塑不塑形**。
+ *
+ * 光比与色温是整条片子的风格（`Project.look`），这里只管「这一场的光源是谁」——
+ * 窗光、台灯、顶灯、实用光源、月光。两者分工明确，避免同一个旋钮在两个地方各说一套。
+ */
+export const LIGHTING_SOURCES = ["window", "lamp", "overhead", "practical", "moon"] as const;
+export const LIGHTING_POSITIONS = ["front", "side", "back", "top", "under"] as const;
+export const LIGHTING_MOODS = ["flat", "modeled", "silhouette"] as const;
+
+export const LightingSchema = z.object({
+  source: z.enum(LIGHTING_SOURCES).default("window"),
+  /** 主光相对人的方向：正面平 / 侧面立体 / 逆光轮廓 / 顶光压 / 底光怪 */
+  position: z.enum(LIGHTING_POSITIONS).default("side"),
+  /** 塑形：平（不塑形）/ 立体（明暗过渡）/ 剪影（只剩轮廓） */
+  mood: z.enum(LIGHTING_MOODS).default("modeled"),
+  note: z.string().max(60).default(""),
+});
+export type Lighting = z.infer<typeof LightingSchema>;
+
+/**
+ * 构图模板（I4）：画面里主体放在哪、视线往哪走。
+ * 只写构图意图，不写镜头参数——景别与机位是另一组字段。
+ */
+export const COMPOSITION_RULES = [
+  "thirds",
+  "centered",
+  "leading",
+  "frame",
+  "diagonal",
+  "negative",
+] as const;
+
+export const CompositionSchema = z.object({
+  rule: z.enum(COMPOSITION_RULES).default("thirds"),
+  note: z.string().max(60).default(""),
+});
+export type Composition = z.infer<typeof CompositionSchema>;
+
 export const ShotSchema = z.object({
   id: Id,
   sceneId: Id,
@@ -530,6 +569,10 @@ export const ShotSchema = z.object({
   promptNotes: z.array(z.string()).default([]),
   shotSize: z.enum(["wide", "medium", "close", "extreme-close"]),
   camera: CameraSchema,
+  /** 光影模板（I2）：可选；没写就沿用场景与风格给的光 */
+  lighting: LightingSchema.optional(),
+  /** 构图模板（I4）：可选；没写就让模型自己构图 */
+  composition: CompositionSchema.optional(),
   /**
    * 故事节拍与镜头目的（A11 / A12，ADR-0096）。
    * 可选：旧项目没有这两个字段，分镜检查会按镜序推断，不把推断偷偷写回 IR。

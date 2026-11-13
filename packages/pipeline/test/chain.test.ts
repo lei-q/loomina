@@ -150,6 +150,35 @@ describe("提示词里的道具", () => {
   });
 });
 
+describe("光影与构图进入提示词（I2 / I4）", () => {
+  it("没写光影 / 构图时，提示词与以前逐字一致", () => {
+    const project = load();
+    const shot = project.shots[0]!;
+    const prompt = buildShotPrompt(project, shot);
+    expect(prompt).not.toContain("光线：");
+    expect(prompt).not.toContain("构图：");
+  });
+
+  it("写了光影，镜头 / 首帧 / 视频三条提示词都带上这一句", () => {
+    const base = load();
+    const shot = { ...base.shots[0]!, lighting: { source: "lamp" as const, position: "side" as const, mood: "modeled" as const, note: "" } };
+    const project: Project = { ...base, shots: [shot, ...base.shots.slice(1)] };
+    const material = shotMaterial(project, shot);
+    expect(buildShotPrompt(project, shot)).toContain("光线：台灯，侧光，明暗过渡清晰");
+    expect(buildKeyframePrompt(material)).toContain("光线：台灯");
+    expect(buildVideoPrompt(material)).toContain("光线：台灯");
+  });
+
+  it("写了构图，提示词带上构图那一句，且排在镜头参数之前", () => {
+    const base = load();
+    const shot = { ...base.shots[0]!, composition: { rule: "frame" as const, note: "" } };
+    const project: Project = { ...base, shots: [shot, ...base.shots.slice(1)] };
+    const prompt = buildShotPrompt(project, shot);
+    expect(prompt).toContain("构图：框中框构图");
+    expect(prompt.indexOf("构图：")).toBeLessThan(prompt.indexOf("mm"));
+  });
+});
+
 describe("画面风格进入提示词（B7 / I5，ADR-0165）", () => {
   it("默认档的提示词最后一句与旧口径逐字一致", () => {
     const project = load();

@@ -5,6 +5,8 @@ import {
   castReadiness,
   BlockingSchema,
   blockingProblem,
+  CompositionSchema,
+  LightingSchema,
   LookSchema,
   PerformanceSpecSchema,
   placementProblem,
@@ -22,7 +24,9 @@ import {
   type Asset,
   type BeatKind,
   type Character,
+  type Composition,
   type GateStage,
+  type Lighting,
   type Location,
   type Look,
   type Motif,
@@ -53,6 +57,9 @@ import {
   projectFromVerbatimDocument,
   mergeTemplateSpace,
   sceneTemplateById,
+  matchShotLanguage,
+  shotLanguageById,
+  shotLanguagePatch,
   shotMaterial,
   templateSpace,
   type Frame,
@@ -392,6 +399,18 @@ type WorkbenchState = {
     blocking: Blocking,
     placement?: CameraPlacement,
   ) => boolean;
+  /**
+   * 套一套镜头语言（I1）：把景别 / 机位 / 运镜 / 焦段四个字段一起写成
+   * 一条 `shot.updated`。机位坐标（B13）原样保留；已经正好是这套就不写。
+   */
+  applyShotLanguage: (shotId: string, languageId: string) => boolean;
+  /**
+   * 写这一镜的光影模板（I2）：一条 `shot.updated { lighting }`；
+   * `undefined` 表示清空（沿用场景与风格给的光）。
+   */
+  setShotLighting: (shotId: string, lighting: Lighting | undefined) => boolean;
+  /** 写这一镜的构图模板（I4）：一条 `shot.updated { composition }`；`undefined` 清空 */
+  setShotComposition: (shotId: string, composition: Composition | undefined) => boolean;
   /** 这一镜里谁出场：一条 `shot.updated { characterIds }`（ADR-0065） */
   toggleShotCharacter: (shotId: string, characterId: string) => boolean;
   /** 道具出场：点一下把这件道具加进或移出这一镜（ADR-0066） */
@@ -1698,6 +1717,111 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       castError: undefined,
     });
     return true;
+  },
+
+  applyShotLanguage: (shotId, languageId) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) {
+      set({ castError: "找不到这一镜。" });
+      return false;
+    }
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定，先解锁再换镜头语言。" });
+      return false;
+    }
+    const language = shotLanguageById(languageId);
+    if (!language) return false;
+    if (matchShotLanguage(shot)?.id === language.id) {
+      set({ castError: "这一镜已经是这套说法了。" });
+      return false;
+    }
+    const patch = shotLanguagePatch(language, shot);
+    const event: ProjectEvent = { type: "shot.updated", at: stamp(), shotId: shot.id, patch };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  setShotLighting: (shotId, lighting) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) {
+      set({ castError: "找不到这一镜。" });
+      return false;
+    }
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定，先解锁再改光影。" });
+      return false;
+    }
+    // 不合法在写之前就挡掉：日志里不该出现回放不了的补丁
+    let next: Lighting | undefined;
+    if (lighting !== undefined) {
+      const parsed = LightingSchema.safeParse(lighting);
+      if (!parsed.success) {
+        set({ castError: `光影模板不合法：${parsed.error.issues[0]?.message ?? "未知原因"}` });
+        return false;
+      }
+      next = parsed.data;
+    }
+    const same = JSON.stringify(shot.lighting ?? null) === JSON.stringify(next ?? null);
+    if (same) return false;
+    const event: ProjectEvent = {
+      type: "shot.updated",
+      at: stamp(),
+      shotId: shot.id,
+      patch: { lighting: next },
+    };
+    try {
+      set({ project: applyEvent(project, event), events: [...events, event], castError: undefined });
+      return true;
+    } catch (error) {
+      set({ castError: error instanceof Error ? error.message : "光影没写上。" });
+      return false;
+    }
+  },
+
+  setShotComposition: (shotId, composition) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) {
+      set({ castError: "找不到这一镜。" });
+      return false;
+    }
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定，先解锁再改构图。" });
+      return false;
+    }
+    let next: Composition | undefined;
+    if (composition !== undefined) {
+      const parsed = CompositionSchema.safeParse(composition);
+      if (!parsed.success) {
+        set({ castError: `构图模板不合法：${parsed.error.issues[0]?.message ?? "未知原因"}` });
+        return false;
+      }
+      next = parsed.data;
+    }
+    const same = JSON.stringify(shot.composition ?? null) === JSON.stringify(next ?? null);
+    if (same) return false;
+    const event: ProjectEvent = {
+      type: "shot.updated",
+      at: stamp(),
+      shotId: shot.id,
+      patch: { composition: next },
+    };
+    try {
+      set({ project: applyEvent(project, event), events: [...events, event], castError: undefined });
+      return true;
+    } catch (error) {
+      set({ castError: error instanceof Error ? error.message : "构图没写上。" });
+      return false;
+    }
   },
 
   setShotPerformance: (shotId, performance) => {
