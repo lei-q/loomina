@@ -370,6 +370,45 @@ export async function saveWorkspace(meta: WorkspaceMeta): Promise<void> {
 }
 
 /**
+ * 删掉一个工作空间（C15 / ADR-0201）：事件行、日志版本、登记表一起清。
+ *
+ * 只动这个空间自己的行：别的空间还在写，不能一起抹掉。
+ * 素材文件不在这里删——字节是内容寻址、可能被别的空间用着（H3 管清理）。
+ * 返回删掉了几条事件。
+ */
+export async function deleteWorkspace(workspaceId: string): Promise<number> {
+  if (!hasWorkspaces()) return 0;
+  const db = await openDb();
+  try {
+    const tx = db.transaction([STORE, META, WORKSPACES], "readwrite");
+    const store = tx.objectStore(STORE);
+    let removed = 0;
+    const cursor = store.openCursor();
+    await new Promise<void>((resolve, reject) => {
+      cursor.onsuccess = () => {
+        const position = cursor.result;
+        if (!position) {
+          resolve();
+          return;
+        }
+        if (workspaceOfRow(position.value as Row) === workspaceId) {
+          position.delete();
+          removed += 1;
+        }
+        position.continue();
+      };
+      cursor.onerror = () => reject(cursor.error ?? new Error("删工作空间失败"));
+    });
+    tx.objectStore(META).delete(`log:${workspaceId}`);
+    tx.objectStore(WORKSPACES).delete(workspaceId);
+    await committed(tx);
+    return removed;
+  } finally {
+    db.close();
+  }
+}
+
+/**
  * 记住当前工作空间：换工作空间走整页加载（ADR-0188），
  * 下次打开还停在这个空间。
  */

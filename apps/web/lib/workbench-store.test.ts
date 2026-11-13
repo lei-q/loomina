@@ -6622,3 +6622,22 @@ describe("废片库取回配音（C14 / ADR-0196）", () => {
     useWorkbench.setState({ readOnly: false });
   });
 });
+
+describe("删工作空间（C15 / ADR-0201）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("不能删正在打开的空间：说清楚先切走，不写状态", async () => {
+    const list = state().workspaces;
+    expect(await state().deleteWorkspace(state().workspaceId)).toBeUndefined();
+    expect(state().workspaceError).toContain("正在打开");
+    expect(state().workspaces).toBe(list);
+  });
+
+  it("测试环境没有 IndexedDB：删别的空间也不报成功", async () => {
+    expect(await state().deleteWorkspace("w-somewhere-else")).toBeUndefined();
+    expect(state().workspaceError).toContain("不支持多工作空间");
+  });
+});

@@ -83,6 +83,7 @@ import {
 } from "@loomina/pipeline";
 import { create } from "zustand";
 import {
+  deleteWorkspace as deleteWorkspaceRows,
   diffEvents,
   getEventLog,
   hasWorkspaces,
@@ -927,6 +928,13 @@ type WorkbenchState = {
   createWorkspace: (name: string, fromWorkspaceId?: string) => Promise<string | undefined>;
   /** 改工作空间名字：只改本机的登记表，不动项目标题与日志 */
   renameWorkspace: (id: string, name: string) => Promise<boolean>;
+  /**
+   * 删掉一个工作空间（C15 / ADR-0201）：事件行、日志版本、登记表一起清。
+   *
+   * 不能删当前打开的空间（先切走再删）；素材文件不删，字节可能被别的空间用着。
+   * 返回删掉了几条事件；失败写 `workspaceError`。
+   */
+  deleteWorkspace: (id: string) => Promise<number | undefined>;
   /**
    * 改故事层文字（A16）：一条 `story.updated`。
    * 只改传进来的字段；没改的字段与 `provenance` 都不动。
@@ -6173,6 +6181,26 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     } catch (error) {
       set({ workspaceError: error instanceof Error ? error.message : "名字没改成。" });
       return false;
+    }
+  },
+
+  deleteWorkspace: async (id) => {
+    // 先拦「删当前空间」：这条与浏览器能力无关，是最该说清楚的一句
+    if (id === get().workspaceId) {
+      set({ workspaceError: "不能删正在打开的空间：先切到别的空间，再回来删。" });
+      return undefined;
+    }
+    if (!hasWorkspaces()) {
+      set({ workspaceError: "这个浏览器不支持多工作空间。" });
+      return undefined;
+    }
+    try {
+      const removed = await deleteWorkspaceRows(id);
+      set({ workspaces: await listWorkspaces(), workspaceError: undefined });
+      return removed;
+    } catch (error) {
+      set({ workspaceError: error instanceof Error ? error.message : "工作空间没删掉。" });
+      return undefined;
     }
   },
 
