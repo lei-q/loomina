@@ -22,6 +22,8 @@ export type SharedAsset = {
   /** 文件地址：loomina:// / s3:// / data: / http(s) */
   uri: string;
   kind: Asset["kind"];
+  /** 原件怎么来的：生成过的取过来记 `library`，上传的仍记上传（C1 / ADR-0190） */
+  source: Asset["source"];
   /** 第一次见到它的工作空间（同一份字节可能被多个空间用过） */
   workspaceId: string;
   workspaceName: string;
@@ -56,6 +58,7 @@ export function sharedAssetsOf(
       seen.set(asset.uri, {
         uri: asset.uri,
         kind: asset.kind,
+        source: asset.source,
         workspaceId: space.id,
         workspaceName: space.name,
         usedBy: [...usage],

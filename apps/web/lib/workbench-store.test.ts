@@ -3844,6 +3844,44 @@ describe("参考图多张与手动挂（ADR-0079）", () => {
     expect(lin.referenceImages).toHaveLength(8);
   });
 
+  it("从别的空间搬一个演员：事件落库、回放一致、只读拒绝（C1 / ADR-0190）", () => {
+    const character = state().project.characters[0]!;
+    const shared = {
+      key: `w1:character:${character.id}`,
+      kind: "character" as const,
+      id: character.id,
+      name: character.name,
+      detail: "",
+      workspaceId: "w1",
+      workspaceName: "第一集",
+      entity: character,
+      assets: state().project.assets.filter(
+        (asset) =>
+          [...Object.values(character.sheet), ...character.referenceImages].includes(asset.id) &&
+          Boolean(asset.uri),
+      ),
+    };
+    const count = state().events.length;
+    expect(state().importSharedEntity(shared)).toBe(true);
+    expect(state().events.length).toBeGreaterThan(count);
+    expect(rebuild(state().events)).toEqual(state().project);
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().importSharedEntity(shared)).toBe(false);
+    expect(state().castError).toContain("只读");
+  });
+
+  it("从别的空间取来、原件是生成的：记 library，不按「另有未定价调用」算（C1 / ADR-0190）", () => {
+    const uri = `loomina://assets/${"c".repeat(64)}.png`;
+    const unpricedBefore = spendOf(state().project).unpriced;
+    expect(state().addCharacterReference("c-lin", uri, "library")).toBe(true);
+    const lin = state().project.characters.find((item) => item.id === "c-lin")!;
+    const copied = state().project.assets.find((item) => item.id === lin.referenceImages.at(-1))!;
+    expect(copied).toMatchObject({ source: "library", uri });
+    expect(copied.costCny).toBeUndefined();
+    expect(spendOf(state().project).unpriced).toBe(unpricedBefore);
+  });
+
   it("资产库与对象存储的地址也能挂：跨空间取回来的图就是这两种（C4 / ADR-0189）", () => {
     const stored = `loomina://assets/${"a".repeat(64)}.png`;
     const remote = `s3://loomina/assets/${"b".repeat(64)}.png`;

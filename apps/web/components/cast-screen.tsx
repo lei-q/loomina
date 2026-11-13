@@ -21,6 +21,7 @@ import { Scene } from "@/components/scene";
 import { isDefaultLook } from "@loomina/pipeline";
 import { LookPanel } from "@/components/look-panel";
 import { RightsPanel } from "@/components/rights-panel";
+import { SharedEntityPicker } from "@/components/shared-entity-picker";
 import { StageGate } from "@/components/stage-gate";
 import { TopBar } from "@/components/top-bar";
 import {
@@ -113,7 +114,7 @@ function ReferenceStrip({
   startAt: number;
   readOnly: boolean;
   emptyText?: string;
-  onAdd: (uri: string) => boolean;
+  onAdd: (uri: string, source?: Asset["source"]) => boolean;
   onRemove: (assetId: string) => void;
 }) {
   const [adding, setAdding] = useState(false);
@@ -144,8 +145,12 @@ function ReferenceStrip({
     }
   };
 
+  /** 原件是生成的，取过来记 `library`：本空间没花过钱，也不该按「另有未定价调用」算 */
+  const copiedSource = (asset: SharedAsset): Asset["source"] =>
+    asset.source === "generated" ? "library" : asset.source;
+
   const takeFromLibrary = (asset: SharedAsset) => {
-    if (onAdd(asset.uri)) {
+    if (onAdd(asset.uri, copiedSource(asset))) {
       setLibraryOpen(false);
       return;
     }
@@ -455,7 +460,7 @@ function CharacterRow({
   /** 划掉一条「不许变」（ADR-0074） */
   onRemoveMustNotChange: (text: string) => boolean;
   /** 挂一张参考图：成功返回 true，输入框据此收起（ADR-0079） */
-  onAddReference: (uri: string) => boolean;
+  onAddReference: (uri: string, source?: Asset["source"]) => boolean;
   onRemoveReference: (assetId: string) => void;
   /** 名字 / 外形改过哪几版（ADR-0082） */
   history?: CastTextHistory;
@@ -909,7 +914,7 @@ function LocationRow({
   /** 删掉这个地点：成功返回 true（ADR-0061 / ADR-0062） */
   onRemove: (moveToId?: string) => boolean;
   /** 挂一张参考图：成功返回 true（B8） */
-  onAddReference: (uri: string) => boolean;
+  onAddReference: (uri: string, source?: Asset["source"]) => boolean;
   onRemoveReference: (assetId: string) => void;
   /** 还有哪些地点可以搬：这一行自己不在里面 */
   otherLocations: { id: string; name: string }[];
@@ -1357,7 +1362,7 @@ function PropRow({
   /** 删掉这件道具：成功返回 true（ADR-0073） */
   onRemove: () => boolean;
   /** 挂一张参考图：成功返回 true（ADR-0079） */
-  onAddReference: (uri: string) => boolean;
+  onAddReference: (uri: string, source?: Asset["source"]) => boolean;
   onRemoveReference: (assetId: string) => void;
   /** 名字 / 描述改过哪几版（ADR-0082） */
   history?: CastTextHistory;
@@ -1626,6 +1631,7 @@ export function CastScreen() {
   const removeLocation = useWorkbench((state) => state.removeLocation);
   const addCharacter = useWorkbench((state) => state.addCharacter);
   const addCharacterReference = useWorkbench((state) => state.addCharacterReference);
+  const importSharedEntity = useWorkbench((state) => state.importSharedEntity);
   const removeCharacterReference = useWorkbench((state) => state.removeCharacterReference);
   const addPropReference = useWorkbench((state) => state.addPropReference);
   const removePropReference = useWorkbench((state) => state.removePropReference);
@@ -1770,14 +1776,19 @@ export function CastScreen() {
           <section className="mt-7">
             <div className="flex items-center justify-between gap-3">
               <h2 className="tnum text-[9px] tracking-[.14em] text-muted-2">人物 · 三视图</h2>
-              {!readOnly && !creatingCharacter && (
-                <button
-                  type="button"
-                  onClick={() => setCreatingCharacter(true)}
-                  className="rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
-                >
-                  新建人物
-                </button>
+              {!readOnly && (
+                <div className="flex items-center gap-1.5">
+                  {!creatingCharacter && (
+                    <button
+                      type="button"
+                      onClick={() => setCreatingCharacter(true)}
+                      className="rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                    >
+                      新建人物
+                    </button>
+                  )}
+                  <SharedEntityPicker kind="character" onPick={importSharedEntity} />
+                </div>
               )}
             </div>
 
@@ -1855,7 +1866,7 @@ export function CastScreen() {
                   onRemoveMustNotChange={(text) =>
                     removeMustNotChange(character.id, text)
                   }
-                  onAddReference={(uri) => addCharacterReference(character.id, uri)}
+                  onAddReference={(uri, source) => addCharacterReference(character.id, uri, source)}
                   onRemoveReference={(assetId) =>
                     removeCharacterReference(character.id, assetId)
                   }
@@ -1873,14 +1884,19 @@ export function CastScreen() {
           <section className="mt-8">
             <div className="flex items-center justify-between gap-3">
               <h2 className="tnum text-[9px] tracking-[.14em] text-muted-2">场景 · 主镜</h2>
-              {!readOnly && !creating && (
-                <button
-                  type="button"
-                  onClick={() => setCreating(true)}
-                  className="rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
-                >
-                  新建地点
-                </button>
+              {!readOnly && (
+                <div className="flex items-center gap-1.5">
+                  {!creating && (
+                    <button
+                      type="button"
+                      onClick={() => setCreating(true)}
+                      className="rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                    >
+                      新建地点
+                    </button>
+                  )}
+                  <SharedEntityPicker kind="location" onPick={importSharedEntity} />
+                </div>
               )}
             </div>
 
@@ -1963,7 +1979,7 @@ export function CastScreen() {
                   if (template) editLocation(location.id, { space: templateSpace(template) });
                 }}
                 onRemove={(moveToId) => removeLocation(location.id, moveToId)}
-                onAddReference={(uri) => addLocationReference(location.id, uri)}
+                onAddReference={(uri, source) => addLocationReference(location.id, uri, source)}
                 onRemoveReference={(assetId) =>
                   removeLocationReference(location.id, assetId)
                 }
@@ -1978,18 +1994,23 @@ export function CastScreen() {
             ))}
           </section>
 
-          {cast.props.length > 0 && (
+          {(cast.props.length > 0 || !readOnly) && (
             <section className="mt-8">
               <div className="flex items-center justify-between gap-3">
                 <h2 className="tnum text-[9px] tracking-[.14em] text-muted-2">道具 · 参考</h2>
-                {!readOnly && !creatingProp && (
-                  <button
-                    type="button"
-                    onClick={() => setCreatingProp(true)}
-                    className="rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
-                  >
-                    新建道具
-                  </button>
+                {!readOnly && (
+                  <div className="flex items-center gap-1.5">
+                    {!creatingProp && (
+                      <button
+                        type="button"
+                        onClick={() => setCreatingProp(true)}
+                        className="rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                      >
+                        新建道具
+                      </button>
+                    )}
+                    <SharedEntityPicker kind="prop" onPick={importSharedEntity} />
+                  </div>
                 )}
               </div>
 
@@ -2061,7 +2082,7 @@ export function CastScreen() {
                   onUnlock={() => unlockCast("prop", prop.id)}
                   onEdit={(name, description) => editProp(prop.id, { name, description })}
                   onRemove={() => removeProp(prop.id)}
-                  onAddReference={(uri) => addPropReference(prop.id, uri)}
+                  onAddReference={(uri, source) => addPropReference(prop.id, uri, source)}
                   onRemoveReference={(assetId) => removePropReference(prop.id, assetId)}
                   history={castTextHistory(events, "prop", prop.id)}
                   onRestoreText={(version) =>

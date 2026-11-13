@@ -100,6 +100,7 @@ import { planMusicFill } from "@/lib/music-curve";
 import { instructionsOf, performanceOf } from "@/lib/voice-performance";
 import { buildHistory, historyPosition, nextUndo } from "@/lib/history";
 import { storyRestorePatch, storyVersionsOf } from "@/lib/story-versions";
+import { sharedEntityImport, type SharedEntity } from "@/lib/shared-entities";
 import { claimWriter } from "@/lib/writer-lock";
 import {
   latestTake,
@@ -824,10 +825,16 @@ type WorkbenchState = {
   /** 划掉一条「不许变」：同上（ADR-0074） */
   removeMustNotChange: (characterId: string, text: string) => boolean;
   /** 挂一张参考图：贴地址，建资产，写进 referenceImages（ADR-0079） */
-  addCharacterReference: (characterId: string, uri: string) => boolean;
+  /** `source: "library"` 表示从别的空间取来、本空间没有花过钱（C16） */
+  addCharacterReference: (characterId: string, uri: string, source?: Asset["source"]) => boolean;
   removeCharacterReference: (characterId: string, assetId: string) => boolean;
-  addPropReference: (propId: string, uri: string) => boolean;
+  addPropReference: (propId: string, uri: string, source?: Asset["source"]) => boolean;
   removePropReference: (propId: string, assetId: string) => boolean;
+  /**
+   * 从别的空间搬一个演员 / 场景 / 道具（C1 / ADR-0190）：
+   * 资产按地址复用或登记复制件，实体换新 id，不重新生成、不花钱。
+   */
+  importSharedEntity: (shared: SharedEntity) => boolean;
   /** 加一件道具：一条 `prop.added`（ADR-0072） */
   addProp: (name: string, description?: string) => string | undefined;
   /** 改道具名字 / 描述：一条 `prop.updated`（ADR-0072） */
@@ -917,7 +924,7 @@ type WorkbenchState = {
   /** 删一个地点；还有场次占着就先把它们搬到 `moveToId` 再删（ADR-0061 / ADR-0062） */
   removeLocation: (locationId: string, moveToId?: string) => boolean;
   /** 给地点挂一张参考图（B8）：贴地址，建资产，写进 referenceImages */
-  addLocationReference: (locationId: string, uri: string) => boolean;
+  addLocationReference: (locationId: string, uri: string, source?: Asset["source"]) => boolean;
   /** 摘掉地点的一张参考图：图留在资产里，可以再挂回来 */
   removeLocationReference: (locationId: string, assetId: string) => boolean;
   /** 撤销最近一次删除：按前缀重放取回快照，再写补偿事件（ADR-0076） */
@@ -1016,6 +1023,7 @@ function makeReferenceAsset(
   rawUri: string,
   assets: Asset[],
   at: string,
+  source: Asset["source"] = "upload",
 ): { asset?: Asset; error?: string } {
   const uri = rawUri.trim();
   if (!uri) return { error: "先贴一张图的地址。" };
@@ -1033,7 +1041,7 @@ function makeReferenceAsset(
     asset: {
       id,
       kind: "image",
-      source: "upload",
+      source,
       uri,
       ...(mime ? { mime } : {}),
       createdAt: at,
@@ -5380,7 +5388,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     return true;
   },
 
-  addCharacterReference: (characterId, rawUri) => {
+  addCharacterReference: (characterId, rawUri, source) => {
     if (get().readOnly) return false;
     const { project, events } = get();
     const character = project.characters.find((item) => item.id === characterId);
@@ -5393,7 +5401,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       return false;
     }
     const at = stamp();
-    const { asset, error } = makeReferenceAsset(rawUri, project.assets, at);
+    const { asset, error } = makeReferenceAsset(rawUri, project.assets, at, source);
     if (!asset) {
       set({ castError: error ?? "这张图挂不上。" });
       return false;
@@ -5439,7 +5447,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     return true;
   },
 
-  addPropReference: (propId, rawUri) => {
+  addPropReference: (propId, rawUri, source) => {
     if (get().readOnly) return false;
     const { project, events } = get();
     const prop = project.props.find((item) => item.id === propId);
@@ -5452,7 +5460,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       return false;
     }
     const at = stamp();
-    const { asset, error } = makeReferenceAsset(rawUri, project.assets, at);
+    const { asset, error } = makeReferenceAsset(rawUri, project.assets, at, source);
     if (!asset) {
       set({ castError: error ?? "这张图挂不上。" });
       return false;
@@ -5496,6 +5504,28 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       castError: undefined,
     });
     return true;
+  },
+
+  importSharedEntity: (shared) => {
+    if (get().readOnly) {
+      set({ castError: "现在是只读：换到能写的窗口再取。" });
+      return false;
+    }
+    const { project, events } = get();
+    try {
+      const imported = sharedEntityImport(shared, project, stamp());
+      set({
+        project: imported.events.reduce(applyEvent, project),
+        events: [...events, ...imported.events],
+        castError: undefined,
+      });
+      return true;
+    } catch (error) {
+      set({
+        castError: error instanceof Error ? `这个取不过来：${error.message}` : "这个取不过来。",
+      });
+      return false;
+    }
   },
 
   addProp: (name, description) => {
@@ -6198,7 +6228,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     return true;
   },
 
-  addLocationReference: (locationId, rawUri) => {
+  addLocationReference: (locationId, rawUri, source) => {
     if (get().readOnly) return false;
     const { project, events } = get();
     const location = project.locations.find((item) => item.id === locationId);
@@ -6211,7 +6241,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       return false;
     }
     const at = stamp();
-    const { asset, error } = makeReferenceAsset(rawUri, project.assets, at);
+    const { asset, error } = makeReferenceAsset(rawUri, project.assets, at, source);
     if (!asset) {
       set({ castError: error ?? "这张图挂不上。" });
       return false;
