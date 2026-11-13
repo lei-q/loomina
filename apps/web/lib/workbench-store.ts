@@ -986,6 +986,15 @@ type WorkbenchState = {
   addLocationReference: (locationId: string, uri: string, source?: Asset["source"]) => boolean;
   /** 摘掉地点的一张参考图：图留在资产里，可以再挂回来 */
   removeLocationReference: (locationId: string, assetId: string) => boolean;
+  /**
+   * 把废片库里的旧关键帧挂成人物 / 场景 / 道具的参考图（C2 / ADR-0200）。
+   *
+   * 只登记引用，不复制文件、不重新生成、不花钱；图片已经在资产里，直接挂同一个 id。
+   */
+  attachTrashReference: (
+    assetId: string,
+    target: { kind: "character" | "location" | "prop"; id: string },
+  ) => boolean;
   /** 撤销最近一次删除：按前缀重放取回快照，再写补偿事件（ADR-0076） */
   undoLastRemoval: () => boolean;
   /** 回收站里恢复某一条删除：与撤销删除走同一条补偿逻辑（F2 / ADR-0109） */
@@ -6669,6 +6678,54 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
         referenceImages: location.referenceImages.filter((id) => id !== assetId),
       },
     };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  attachTrashReference: (assetId, target) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const asset = project.assets.find((item) => item.id === assetId);
+    if (!asset) {
+      set({ castError: "这个文件已经不在项目里了。" });
+      return false;
+    }
+    if (asset.kind !== "image") {
+      set({ castError: "只有图片能当参考图；视频要先抽一帧。" });
+      return false;
+    }
+
+    const current =
+      target.kind === "character"
+        ? project.characters.find((item) => item.id === target.id)
+        : target.kind === "location"
+          ? project.locations.find((item) => item.id === target.id)
+          : project.props.find((item) => item.id === target.id);
+    if (!current) {
+      set({ castError: "找不到要挂的那一条。" });
+      return false;
+    }
+    if (current.referenceImages.includes(assetId)) {
+      set({ castError: "这张图已经挂过了。" });
+      return false;
+    }
+    if (current.referenceImages.length >= REFERENCE_IMAGES_MAX) {
+      set({ castError: `参考图最多 ${REFERENCE_IMAGES_MAX} 张：再多会把提示词挤爆。` });
+      return false;
+    }
+
+    const at = stamp();
+    const referenceImages = [...current.referenceImages, assetId];
+    const event: ProjectEvent =
+      target.kind === "character"
+        ? { type: "character.updated", at, characterId: target.id, patch: { referenceImages } }
+        : target.kind === "location"
+          ? { type: "location.updated", at, locationId: target.id, patch: { referenceImages } }
+          : { type: "prop.updated", at, propId: target.id, patch: { referenceImages } };
     set({
       project: applyEvent(project, event),
       events: [...events, event],

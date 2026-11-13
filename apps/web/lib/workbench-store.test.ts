@@ -1,4 +1,4 @@
-import { DEFAULT_GRADE, applyEvent, rebuild, type ProjectEvent } from "@loomina/ir";
+import { DEFAULT_GRADE, ProjectSchema, applyEvent, rebuild, type ProjectEvent } from "@loomina/ir";
 import { parseStoryDraft } from "@loomina/pipeline";
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 import { setEventLog, type EventLog } from "./event-log";
@@ -6299,6 +6299,76 @@ describe("关键帧版本库（C2）", () => {
     expect(state().castError).toContain("不在资产库");
     expect(state().project.assets.find((item) => item.id === "a-keyframe-s-02")?.uri).not.toBe(firstUri);
     vi.unstubAllGlobals();
+  });
+});
+
+describe("废片作参考（C2 / ADR-0200）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("挂到人物 / 场景 / 道具的参考图：一条 updated 事件，同一个文件不复制", () => {
+    const assetId = "a-keyframe-s-03";
+    useWorkbench.setState({
+      project: ProjectSchema.parse({
+        ...state().project,
+        assets: [
+          ...state().project.assets,
+          {
+            id: assetId,
+            kind: "image",
+            source: "generated",
+            uri: "loomina://assets/kf.png",
+            createdAt: "2026-11-13T00:00:00Z",
+          },
+        ],
+      }),
+    });
+    const snapshot = state().events.length;
+
+    expect(state().attachTrashReference(assetId, { kind: "character", id: "c-lin" })).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "character.updated", characterId: "c-lin" });
+    expect(state().project.characters.find((item) => item.id === "c-lin")!.referenceImages).toContain(assetId);
+    // 同一张图只登记一次，资产数量不变
+    expect(state().project.assets).toHaveLength(state().project.assets.length);
+
+    expect(state().attachTrashReference(assetId, { kind: "location", id: "loc-corridor" })).toBe(true);
+    expect(state().project.locations.find((item) => item.id === "loc-corridor")!.referenceImages).toContain(assetId);
+    expect(state().attachTrashReference(assetId, { kind: "prop", id: "p-cup" })).toBe(true);
+    expect(state().project.props.find((item) => item.id === "p-cup")!.referenceImages).toContain(assetId);
+  });
+
+  it("已经挂过 / 不是图片 / 文件不在 都拒绝且不写事件", () => {
+    const snapshot = state().events.length;
+    // a-lin-expr 已经挂在林身上
+    expect(state().attachTrashReference("a-lin-expr", { kind: "character", id: "c-lin" })).toBe(false);
+    expect(state().castError).toContain("已经挂过");
+
+    useWorkbench.setState({
+      project: ProjectSchema.parse({
+        ...state().project,
+        assets: [
+          ...state().project.assets,
+          { id: "a-vid", kind: "video", source: "generated", createdAt: "2026-11-13T00:00:00Z" },
+        ],
+      }),
+    });
+    expect(state().attachTrashReference("a-vid", { kind: "character", id: "c-lin" })).toBe(false);
+    expect(state().castError).toContain("只有图片");
+
+    expect(state().attachTrashReference("a-nope", { kind: "character", id: "c-lin" })).toBe(false);
+    expect(state().castError).toContain("不在项目里");
+    expect(state().events).toHaveLength(snapshot);
+  });
+
+  it("只读时拒绝", () => {
+    useWorkbench.setState({ readOnly: true });
+    const snapshot = state().events.length;
+    expect(state().attachTrashReference("a-lin-expr", { kind: "prop", id: "p-cup" })).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+    useWorkbench.setState({ readOnly: false });
   });
 });
 

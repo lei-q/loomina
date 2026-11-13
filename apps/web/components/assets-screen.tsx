@@ -52,6 +52,15 @@ const PLACEMENT_CN: Record<LibraryRow["placement"], string> = {
   none: "没地址",
 };
 
+/** 废片「作参考」能挂的地方（C2 / ADR-0200）：人物 / 场景 / 道具的参考图 */
+type ReferenceTarget = {
+  kind: "character" | "location" | "prop";
+  id: string;
+  name: string;
+  group: string;
+  attached: string[];
+};
+
 export function AssetsScreen() {
   const project = useWorkbench((state) => state.project);
   const hydrate = useWorkbench((state) => state.hydrate);
@@ -62,6 +71,7 @@ export function AssetsScreen() {
   const restoreTake = useWorkbench((state) => state.restoreTake);
   const restoreVoiceTake = useWorkbench((state) => state.restoreVoiceTake);
   const useKeyframeVersion = useWorkbench((state) => state.useKeyframeVersion);
+  const attachTrashReference = useWorkbench((state) => state.attachTrashReference);
   const [filter, setFilter] = useState<AssetFilter>("all");
   const [files, setFiles] = useState<Map<string, number>>();
   const [storeError, setStoreError] = useState<string>();
@@ -105,6 +115,33 @@ export function AssetsScreen() {
   const rows = useMemo(() => filterLibrary(library.rows, filter), [library.rows, filter]);
   // 废片库（C14）：淘汰 / 删掉的拍子与旧版关键帧，汇到一处才能取回
   const trash = useMemo(() => trashOf(project, events), [project, events]);
+  // 「作参考」能挂的地方（C2 / ADR-0200）
+  const referenceTargets = useMemo<ReferenceTarget[]>(
+    () => [
+      ...project.characters.map((character) => ({
+        kind: "character" as const,
+        id: character.id,
+        name: character.name,
+        group: "人物",
+        attached: character.referenceImages,
+      })),
+      ...project.locations.map((location) => ({
+        kind: "location" as const,
+        id: location.id,
+        name: location.name,
+        group: "场景",
+        attached: location.referenceImages,
+      })),
+      ...project.props.map((prop) => ({
+        kind: "prop" as const,
+        id: prop.id,
+        name: prop.name,
+        group: "道具",
+        attached: prop.referenceImages,
+      })),
+    ],
+    [project.characters, project.locations, project.props],
+  );
 
   return (
     <div className="flex h-dvh flex-col bg-bg text-text">
@@ -142,6 +179,19 @@ export function AssetsScreen() {
           <TrashSection
             items={trash}
             readOnly={Boolean(readOnly)}
+            targets={referenceTargets}
+            onReference={(item, target) => {
+              const ok = attachTrashReference(item.assetId, {
+                kind: target.kind,
+                id: target.id,
+              });
+              setNote(
+                ok
+                  ? `挂到了「${target.name}」的参考图：只登记同一个文件，不复制、不花钱。`
+                  : (useWorkbench.getState().castError ?? "这张图挂不上。"),
+              );
+              return ok;
+            }}
             onRestoreTake={(takeId) => {
               const ok = restoreTake(takeId);
               setNote(
@@ -242,16 +292,21 @@ export function AssetsScreen() {
 function TrashSection({
   items,
   readOnly,
+  targets,
+  onReference,
   onRestoreTake,
   onRestoreVoice,
   onRestoreKeyframe,
 }: {
   items: TrashItem[];
   readOnly: boolean;
+  targets: ReferenceTarget[];
+  onReference: (item: TrashItem, target: ReferenceTarget) => boolean;
   onRestoreTake: (takeId: string) => void;
   onRestoreVoice: (takeId: string) => void;
   onRestoreKeyframe: (item: TrashItem) => void;
 }) {
+  const [referenceFor, setReferenceFor] = useState<TrashItem>();
   const counts = {
     rejected: items.filter((item) => item.state === "rejected").length,
     removed: items.filter((item) => item.state === "removed").length,
@@ -368,10 +423,85 @@ function TrashSection({
                 >
                   {item.kind === "keyframe" ? "换回" : "取回"}
                 </button>
+
+                {item.kind === "keyframe" && (
+                  <button
+                    type="button"
+                    onClick={() => setReferenceFor(item)}
+                    disabled={readOnly}
+                    title="把这张旧图挂成人物 / 场景 / 道具的参考图；只登记同一个文件，不花钱"
+                    className="shrink-0 rounded-token border border-line px-2 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:pointer-events-none disabled:opacity-40"
+                  >
+                    作参考
+                  </button>
+                )}
               </li>
             );
           })}
         </ul>
+      )}
+
+      {referenceFor && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-bg/80 p-4 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setReferenceFor(undefined);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-label="把这张图作参考"
+            className="max-h-[82vh] w-[520px] max-w-[94vw] overflow-y-auto border border-line bg-bg px-4 py-3"
+          >
+            <div className="flex items-baseline justify-between gap-2">
+              <h3 className="text-[11px] tracking-[.06em] text-text">把这张图作参考</h3>
+              <button
+                type="button"
+                onClick={() => setReferenceFor(undefined)}
+                className="rounded-token border border-line px-2 py-0.5 text-[9.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+              >
+                关闭
+              </button>
+            </div>
+            <p className="mt-1 text-[9px] leading-[1.7] text-muted-2">
+              「{referenceFor.shotLabel}」的这张旧版挂成谁的参考图？只登记同一个文件，
+              不复制、不重新生成、不花钱；同一张图对同一条只能挂一次。
+            </p>
+            {["人物", "场景", "道具"].map((group) => {
+              const groupTargets = targets.filter((target) => target.group === group);
+              if (groupTargets.length === 0) return null;
+              return (
+                <div key={group} className="mt-3">
+                  <p className="text-[9px] text-muted-2">{group}</p>
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    {groupTargets.map((target) => {
+                      const attached = target.attached.includes(referenceFor.assetId);
+                      return (
+                        <button
+                          key={`${target.kind}:${target.id}`}
+                          type="button"
+                          disabled={attached}
+                          onClick={() => {
+                            if (onReference(referenceFor, target)) setReferenceFor(undefined);
+                          }}
+                          className="rounded-token border border-line px-2 py-0.5 text-[9.5px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-pick enabled:hover:text-pick disabled:opacity-40"
+                        >
+                          {target.name}
+                          {attached ? " · 已挂" : ""}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+            {targets.length === 0 && (
+              <p className="mt-3 text-[10px] text-muted-2">
+                还没有人物 / 场景 / 道具可以挂：先去定妆页建一个。
+              </p>
+            )}
+          </div>
+        </div>
       )}
       {items.length > shown.length && (
         <p className="mt-2 text-[9px] text-muted-2">
