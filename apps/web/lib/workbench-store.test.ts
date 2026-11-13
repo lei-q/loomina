@@ -4598,6 +4598,67 @@ describe("跨空间取一版故事（C1 / ADR-0198）", () => {
   });
 });
 
+describe("跨空间取一场剧本（C1 / ADR-0199）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  const sourceOf = () => structuredClone(state().project);
+
+  it("整场追加到末尾：场 / 镜 / 台词一起进来，一条事件一目了然", () => {
+    const before = state().project;
+    const source = sourceOf();
+    const snapshot = state().events.length;
+
+    expect(state().adoptSharedScene(source, "sc-1", "夜班")).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 6);
+    expect(state().events.slice(snapshot).map((event) => event.type)).toEqual([
+      "scene.added",
+      "shot.added",
+      "dialogue.added",
+      "shot.added",
+      "shot.added",
+      "dialogue.added",
+    ]);
+    // 同一批事件共用一个 at：撤销一步就能整场退回
+    const batch = state().events.slice(snapshot);
+    expect(new Set(batch.map((event) => event.at)).size).toBe(1);
+
+    const scene = state().project.scenes.at(-1)!;
+    expect(scene.id).not.toBe("sc-1");
+    expect(scene.shotIds).toHaveLength(3);
+    expect(state().project.shots).toHaveLength(before.shots.length + 3);
+    expect(state().project.dialogue).toHaveLength(before.dialogue.length + 2);
+    expect(rebuild(state().events).scenes).toHaveLength(before.scenes.length + 1);
+  });
+
+  it("缺演员时整场拒绝且不写事件", () => {
+    const source = sourceOf();
+    const snapshot = state().events.length;
+    useWorkbench.setState({
+      project: {
+        ...state().project,
+        characters: state().project.characters.filter((character) => character.id !== "c-lin"),
+      },
+    });
+    const trimmed = state().project;
+    expect(state().adoptSharedScene(source, "sc-1", "夜班")).toBe(false);
+    expect(state().castError).toContain("演员「林」");
+    expect(state().events).toHaveLength(snapshot);
+    expect(state().project).toBe(trimmed);
+  });
+
+  it("只读时拒绝", () => {
+    const source = sourceOf();
+    useWorkbench.setState({ readOnly: true });
+    const snapshot = state().events.length;
+    expect(state().adoptSharedScene(source, "sc-1", "夜班")).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+    useWorkbench.setState({ readOnly: false });
+  });
+});
+
 describe("采用剧本医生的改写（A18 / ADR-0123）", () => {
   beforeEach(() => {
     state().reset();

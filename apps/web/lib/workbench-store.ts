@@ -103,6 +103,7 @@ import { autoCut, timelineEquals } from "@/lib/edit";
 import { planMusicFill } from "@/lib/music-curve";
 import { instructionsOf, performanceOf } from "@/lib/voice-performance";
 import { buildHistory, historyPosition, nextUndo } from "@/lib/history";
+import { sceneImportEvents, sceneReadiness } from "@/lib/shared-scenes";
 import { storyImportPatch } from "@/lib/shared-stories";
 import { storyRestorePatch, storyVersionsOf } from "@/lib/story-versions";
 import { takeFromLog, voiceTakeFromLog } from "@/lib/trash";
@@ -947,6 +948,14 @@ type WorkbenchState = {
    * 与本空间现在一致时不写事件。
    */
   adoptSharedStory: (source: Project, fromWorkspaceName: string) => boolean;
+  /**
+   * 取用别的空间的一场剧本（C1 / ADR-0199）：场 + 镜 + 台词整场追加到末尾。
+   *
+   * 地点与出场演员必须本空间同名同 id，否则整场拒绝（不取半场）；
+   * 对不上的道具只摘引用。id 全部重编、关键帧 / take / 配音 / 时间线不跟。
+   * 同一批事件共用一个 `at`，撤销一步就能整场退回。不调模型、不花钱。
+   */
+  adoptSharedScene: (source: Project, sceneId: string, fromWorkspaceName: string) => boolean;
   /**
    * 采用剧本医生的一条改写（A18 / ADR-0123）：台词走 `editDialogue`、
    * 动作走 `editAction`、故事层走 `editStory`——同一个决定只用一套写入口。
@@ -6294,6 +6303,42 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       return true;
     } catch (error) {
       set({ castError: error instanceof Error ? error.message : "故事没取成。" });
+      return false;
+    }
+  },
+
+  adoptSharedScene: (source, sceneId, fromWorkspaceName) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const sourceScene = source.scenes.find((scene) => scene.id === sceneId);
+    if (!sourceScene) {
+      set({ castError: "找不到这一场。" });
+      return false;
+    }
+    const tag = Date.now().toString(36);
+    const imported = sceneImportEvents(source, project, sceneId, tag, stamp());
+    if (!imported) {
+      const readiness = sceneReadiness(source, project, sourceScene);
+      set({
+        castError: readiness.missing.length
+          ? `这一场取不过来：本空间缺 ${readiness.missing.join("、")}。`
+          : "这一场取不过来。",
+      });
+      return false;
+    }
+
+    try {
+      // 先整批在草稿上回放：任何一条不合法都不落半场
+      let nextProject = project;
+      for (const event of imported.events) nextProject = applyEvent(nextProject, event);
+      set({
+        project: nextProject,
+        events: [...events, ...imported.events],
+        castError: undefined,
+      });
+      return true;
+    } catch (error) {
+      set({ castError: error instanceof Error ? error.message : "这一场没取成。" });
       return false;
     }
   },
