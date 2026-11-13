@@ -245,6 +245,7 @@ export function TopBar({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [newWorkspace, setNewWorkspace] = useState("");
+  const [newWorkspaceFrom, setNewWorkspaceFrom] = useState("");
   const [renaming, setRenaming] = useState<{ id: string; name: string }>();
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const project = useWorkbench((state) => state.project);
@@ -318,7 +319,7 @@ export function TopBar({
 
   const submitWorkspace = async () => {
     setWorkspaceBusy(true);
-    const id = await createWorkspace(newWorkspace);
+    const id = await createWorkspace(newWorkspace, newWorkspaceFrom || undefined);
     setWorkspaceBusy(false);
     if (id) window.location.assign("/");
   };
@@ -447,8 +448,25 @@ export function TopBar({
                   })}
                 </div>
 
+                <label className="mt-2 flex flex-col gap-1 border-t border-line pt-2 text-[9px] text-muted-2">
+                  新空间从哪里开工
+                  <select
+                    aria-label="新空间从哪里开工"
+                    value={newWorkspaceFrom}
+                    onChange={(event) => setNewWorkspaceFrom(event.target.value)}
+                    className="w-full rounded-token border border-line bg-surface px-1.5 py-0.5 text-[9.5px] text-text focus:border-pick focus:outline-none"
+                  >
+                    <option value="">示例项目（从零开工）</option>
+                    {workspaces.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        照「{item.name}」的设定开工（带故事 / 演员 / 场景 / 道具，不带成片）
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
                 <form
-                  className="mt-2 flex items-center gap-1.5 border-t border-line pt-2"
+                  className="mt-1 flex items-center gap-1.5"
                   onSubmit={(event) => {
                     event.preventDefault();
                     void submitWorkspace();

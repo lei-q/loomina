@@ -138,6 +138,7 @@ import {
 import { modelIdFor } from "@/lib/model-choice";
 import type { Modality } from "@/lib/config-types";
 import { sampleProject } from "@/lib/sample-project";
+import { projectFromSetup } from "@/lib/workspace-template";
 import { stageMetaOf, stageSignature } from "@/lib/stage-flow";
 import {
   stageLockOf,
@@ -915,10 +916,13 @@ type WorkbenchState = {
    */
   refreshWorkspaces: () => Promise<WorkspaceMeta[]>;
   /**
-   * 新建一个工作空间：一条独立的日志，从示例项目开工，名字即新项目的标题。
+   * 新建一个工作空间：一条独立的日志，名字即新项目的标题。
+   *
+   * 不给 `fromWorkspaceId` 时从示例项目开工；给了就照那个空间的**设定**
+   * 开工（故事 / 演员 / 场景 / 道具 / 技能 / 风格，不带成片，C.1 / ADR-0197）。
    * 返回新空间的 id；调用方负责整页加载过去（换空间走 reload，见 ADR-0188）。
    */
-  createWorkspace: (name: string) => Promise<string | undefined>;
+  createWorkspace: (name: string, fromWorkspaceId?: string) => Promise<string | undefined>;
   /** 改工作空间名字：只改本机的登记表，不动项目标题与日志 */
   renameWorkspace: (id: string, name: string) => Promise<boolean>;
   /**
@@ -6067,7 +6071,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     }
   },
 
-  createWorkspace: async (rawName) => {
+  createWorkspace: async (rawName, fromWorkspaceId) => {
     const name = rawName.trim();
     if (!name) {
       set({ workspaceError: "工作空间要有名字。" });
@@ -6091,8 +6095,18 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
 
       const id = `w-${Date.now().toString(36)}`;
       const now = new Date().toISOString();
-      // 新空间从示例项目开工：作者随后可以在故事页换成自己的项目
-      const seed = ProjectSchema.parse({ ...sampleProject, id: `p-${id}`, title: name });
+      let seed: Project;
+      if (fromWorkspaceId) {
+        // 照别的空间的设定开新一集：读它的日志、回放，再只搬设定（ADR-0197）
+        const stored = migrateLog(await indexedDbLogFor(fromWorkspaceId).load());
+        if (!stored) throw new Error("来源空间的日志读不出来。");
+        seed = ProjectSchema.parse(
+          projectFromSetup(rebuild(stored), { id: `p-${id}`, title: name }),
+        );
+      } else {
+        // 新空间从示例项目开工：作者随后可以在故事页换成自己的项目
+        seed = ProjectSchema.parse({ ...sampleProject, id: `p-${id}`, title: name });
+      }
       await indexedDbLogFor(id).replace(bootstrap(seed));
       await saveWorkspace({ id, name, createdAt: now, lastOpenedAt: now });
       rememberWorkspace(id);
