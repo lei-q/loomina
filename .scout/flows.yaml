@@ -1,0 +1,24 @@
+# 关键业务流程：只登记跨模块、出错代价高的流程。entry 必须是该模块公开导出中的符号。
+# caller：这一步由谁调用（默认是上一步的模块）
+flows:
+  - id: FL-1
+    name: 一句话 → 故事草稿 → 项目
+    feature: A1
+    steps:
+      - { module: web, entry: generateStory }
+      - { module: pipeline, entry: parseStoryDraft }
+      - { module: pipeline, entry: projectFromStoryDraft, caller: web }
+      - { module: ir, entry: assertValidProject }
+  - id: FL-2
+    name: 镜头出视频
+    steps:
+      - { module: web, entry: generateShotVideo }
+      - { module: pipeline, entry: buildVideoPrompt }
+      - { module: gateway, entry: TreecloudVideoAdapter, caller: web }
+  - id: FL-3
+    name: 一句话指令改镜头
+    feature: H19
+    steps:
+      - { module: web, entry: interpretInstruction }
+      - { module: pipeline, entry: parseInstruction }
+      - { module: ir, entry: applyEvent, caller: web }
