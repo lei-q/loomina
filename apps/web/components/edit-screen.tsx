@@ -932,8 +932,10 @@ export function EditScreen() {
         renderedAt: new Date().toISOString(),
         renderMs: Date.now() - renderStartedAt,
       });
+      // 尺寸按实际画幅报（E5）：说 1080×1920 却给了一条横屏片子是最容易看漏的错
+      const exported = frameSize(quality, project.frame.aspect);
       setNotice(
-        `${profile.label}成片已导出：${mb} MB · ${profile.width}×${profile.height} / ${profile.fps}fps · ${
+        `${profile.label}成片已导出：${mb} MB · ${exported.width}×${exported.height} / ${profile.fps}fps · ${
           burnSubtitles ? "带字幕" : "无字幕"
         }与「AI 生成」角标${notes.length > 0 ? `。${notes.join("；")}` : ""}。`,
       );
