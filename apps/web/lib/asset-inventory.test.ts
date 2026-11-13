@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rebuild, type Project, type ProjectEvent } from "@loomina/ir";
+import { DEFAULT_LOOK, rebuild, type Project, type ProjectEvent } from "@loomina/ir";
 import {
   assetUsageLabels,
   filterLibrary,
@@ -21,6 +21,7 @@ function base(): Project {
     title: "测试",
     version: 0,
     models: {},
+    look: DEFAULT_LOOK,
     budgetCny: 60,
     maxAttemptsPerShot: 3,
     onBudgetExceed: "block",

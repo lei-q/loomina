@@ -1,4 +1,4 @@
-import { assertValidProject, type Project } from "@loomina/ir";
+import { assertValidProject, DEFAULT_LOOK, type Project } from "@loomina/ir";
 
 /**
  * 逐字导入与章节拆分（F6 / ADR-0154）。
@@ -216,6 +216,7 @@ export function projectFromVerbatimDocument(
     title,
     version: 1,
     models: {},
+    look: DEFAULT_LOOK,
     budgetCny: options.budgetCny,
     maxAttemptsPerShot: 3,
     onBudgetExceed: "block",

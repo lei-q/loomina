@@ -5,6 +5,7 @@ import {
   castReadiness,
   BlockingSchema,
   blockingProblem,
+  LookSchema,
   PerformanceSpecSchema,
   placementProblem,
   rebuild,
@@ -22,6 +23,7 @@ import {
   type Character,
   type GateStage,
   type Location,
+  type Look,
   type Motif,
   type MusicCue,
   type Blocking,
@@ -311,6 +313,11 @@ type WorkbenchState = {
   setOnBudgetExceed: (mode: "block" | "keep") => void;
   /** 固定 / 取消固定本项目某个模态的模型（H22）：写一条 `project.updated`；null 取消 */
   setModelPin: (modality: Modality, id: string | null) => void;
+  /**
+   * 改画面风格与摄影参数（B7 / I5，ADR-0165）：整块写一条 `project.updated`。
+   * 改完下一次出图就用新的最后一句；已出的图不会自动重做。
+   */
+  setLook: (look: Look) => boolean;
   /**
    * 记一条发布记录（G1）：把平台、档位与成片文件信息追加进 `publishPackages`。
    * 只记元数据，不存视频二进制。
@@ -1264,6 +1271,29 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     set({ videoCnyPerSecond: cnyPerSecond });
   },
 
+  setLook: (look) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const parsed = LookSchema.safeParse(look);
+    if (!parsed.success) {
+      set({ castError: `画面风格不合法：${parsed.error.issues[0]?.message ?? "未知原因"}` });
+      return false;
+    }
+    const next = parsed.data;
+    const current = project.look;
+    const same =
+      current.presetId === next.presetId &&
+      current.contrast === next.contrast &&
+      current.temperature === next.temperature &&
+      current.texture === next.texture &&
+      current.aspect === next.aspect &&
+      current.note === next.note;
+    if (same) return false;
+    const event: ProjectEvent = { type: "project.updated", at: stamp(), look: next };
+    set({ project: applyEvent(project, event), events: [...events, event], castError: undefined });
+    return true;
+  },
+
   setBudget: (cny) => {
     if (get().readOnly) return;
     if (!(cny > 0) || !Number.isFinite(cny)) return;
@@ -2180,6 +2210,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
               mustNotChange: active.mustNotChange,
             },
             angle,
+            look: get().project.look,
             ...withPromptOverride(get, `sheet:${characterId}:${angle}`),
           },
           references: referenceImagesOf(get().project, sheetRefs),
@@ -2254,6 +2285,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
         body: {
           kind: "master",
           location: { name: location.name, description: location.description },
+          look: get().project.look,
           ...withPromptOverride(get, `master:${locationId}`),
         },
         references: refs,
@@ -5404,6 +5436,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
         body: {
           kind: "prop",
           prop: { name: prop.name, description: prop.description },
+          look: get().project.look,
           ...withPromptOverride(get, `prop:${propId}`),
         },
         references: refs,

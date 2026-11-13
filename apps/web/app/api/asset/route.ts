@@ -6,7 +6,7 @@ import { recordHealthEvent } from "@/lib/health-events";
 import { PromptBlockedError } from "@/lib/moderation";
 import { withLongJobSlot } from "@/lib/long-job";
 import { readPromptOverride } from "@/lib/prompt-override";
-import { name, parseShotMaterial, text } from "@/lib/request-shape";
+import { name, parseLook, parseShotMaterial, text } from "@/lib/request-shape";
 
 /** 出图是 20–45 秒的事，别让它跑在 edge 的短超时里。 */
 export const runtime = "nodejs";
@@ -22,6 +22,8 @@ type Body = {
   /** 主镜请求：`description` 是场景描述，会整句进提示词（ADR-0063） */
   location?: { name?: unknown; description?: unknown };
   prop?: { name?: unknown; description?: unknown };
+  /** 画面风格参数（B7 / I5，ADR-0165）：定妆 / 主镜 / 道具的提示词最后一句 */
+  look?: unknown;
   /**
    * 参考图（B2 / ADR-0162）：调用方点名要随这一张发出去的资产。
    * 只收地址与标签，字节由服务端从资产库读——浏览器不需要把图再传一遍。
@@ -97,6 +99,7 @@ function parse(body: Body | null): CastImageRequest | string {
         mustNotChange,
       },
       angle: body.angle as SheetView,
+      ...(parseLook(body.look) ? { look: parseLook(body.look)! } : {}),
     };
   }
 
@@ -106,6 +109,7 @@ function parse(body: Body | null): CastImageRequest | string {
     return {
       kind: "master",
       location: { name: where, description: text(body.location?.description, 200) },
+      ...(parseLook(body.look) ? { look: parseLook(body.look)! } : {}),
     };
   }
 
@@ -115,6 +119,7 @@ function parse(body: Body | null): CastImageRequest | string {
     return {
       kind: "prop",
       prop: { name: what, description: text(body.prop?.description, 300) },
+      ...(parseLook(body.look) ? { look: parseLook(body.look)! } : {}),
     };
   }
 

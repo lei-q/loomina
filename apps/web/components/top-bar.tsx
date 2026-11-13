@@ -46,12 +46,13 @@ type StageTool =
   | "blocking"
   | "doctor"
   | "polish"
-  | "silent";
+  | "silent"
+  | "look";
 
 const STAGE_TOOLS: Record<StageName, StageTool[]> = {
   故事: [],
   剧本: ["export", "doctor", "polish"],
-  定妆: ["ledger", "budget"],
+  定妆: ["ledger", "budget", "look"],
   分镜: ["ledger", "budget", "export", "preview", "check", "performance", "consistency", "blocking"],
   关键帧: ["ledger", "budget", "preview"],
   声音: ["ledger", "budget", "preview"],
@@ -110,6 +111,10 @@ export type TopBarProps = {
   onSilent?: () => void;
   /** 静音时有问题的地方数，显示在按钮右上 */
   silentCount?: number;
+  /** 打开画面风格（B7 / I5，ADR-0165）；给了才出现「风格」 */
+  onLook?: () => void;
+  /** 风格调过没有：调过就在按钮上标一下 */
+  lookCustomized?: boolean;
 };
 
 function Money({ value }: { value?: number }) {
@@ -145,6 +150,8 @@ export function TopBar({
   polishCount,
   onSilent,
   silentCount,
+  onLook,
+  lookCustomized,
 }: TopBarProps) {
   const [draftBudget, setDraftBudget] = useState<string>("");
   const [ledgerOpen, setLedgerOpen] = useState(false);
@@ -513,6 +520,17 @@ export function TopBar({
             {polishCount !== undefined && polishCount > 0 && (
               <span className="tnum text-[9px] text-pick">{polishCount}</span>
             )}
+          </button>
+        )}
+        {shows("look") && onLook && (
+          <button
+            type="button"
+            onClick={onLook}
+            title="画面风格与摄影参数：所有出图提示词的最后一句由它编译；不花钱"
+            className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            风格
+            {lookCustomized && <span className="text-[9px] text-pick">·</span>}
           </button>
         )}
         {shows("silent") && onSilent && (

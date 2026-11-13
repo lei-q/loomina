@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   assertValidProject,
+  DEFAULT_LOOK,
   sheetSlotAssets,
   sheetSlotsOf,
   type BeatKind,
@@ -566,6 +567,7 @@ export function projectFromStoryDraft(
     title: draft.title,
     version: 1,
     models: {},
+    look: DEFAULT_LOOK,
     budgetCny: options.budgetCny ?? 60,
     maxAttemptsPerShot: 3,
     onBudgetExceed: "block",

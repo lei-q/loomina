@@ -12,7 +12,7 @@ import {
   buildSheetPrompt,
   type ShotPromptMaterial,
 } from "@loomina/pipeline";
-import type { Character, Id, Location, Prop, SheetView } from "@loomina/ir";
+import type { Character, Id, Location, Look, Prop, SheetView } from "@loomina/ir";
 import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
 import { readAssetBytes } from "@/lib/asset-store";
 import { assertPromptAllowed, type PromptModeration } from "@/lib/moderation";
@@ -29,9 +29,15 @@ export type CastImageRequest =
       kind: "sheet";
       character: Pick<Character, "name" | "appearance" | "mustNotChange">;
       angle: SheetView;
+      /** 画面风格（B7 / I5，ADR-0165）：不给就是默认档 */
+      look?: Look;
     }
-  | { kind: "master"; location: Pick<Location, "name" | "description"> }
-  | { kind: "prop"; prop: Pick<Prop, "name" | "description"> }
+  | {
+      kind: "master";
+      location: Pick<Location, "name" | "description">;
+      look?: Look;
+    }
+  | { kind: "prop"; prop: Pick<Prop, "name" | "description">; look?: Look }
   | { kind: "keyframe"; shot: ShotPromptMaterial; frame?: "first" | "last" };
 
 export type GeneratedImage = {
@@ -56,19 +62,19 @@ export type GeneratedImage = {
 function plan(request: CastImageRequest): { prompt: string; label: string } {
   if (request.kind === "sheet") {
     return {
-      prompt: buildSheetPrompt(request.character, request.angle),
+      prompt: buildSheetPrompt(request.character, request.angle, request.look),
       label: `sheet-${request.character.name}-${request.angle}`,
     };
   }
   if (request.kind === "master") {
     return {
-      prompt: buildMasterPrompt(request.location),
+      prompt: buildMasterPrompt(request.location, request.look),
       label: `master-${request.location.name}`,
     };
   }
   if (request.kind === "prop") {
     return {
-      prompt: buildPropPrompt(request.prop),
+      prompt: buildPropPrompt(request.prop, request.look),
       label: `prop-${request.prop.name}`,
     };
   }

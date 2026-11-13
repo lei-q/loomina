@@ -1171,6 +1171,35 @@ describe("预算（ADR-0035）", () => {
     expect(replayed.onBudgetExceed).toBe("keep");
   });
 
+  it("改画面风格写一条 project.updated，重放后一致（B7 / ADR-0165）", () => {
+    const before = state().events.length;
+    const ok = state().setLook({
+      ...state().project.look,
+      presetId: "noir",
+      contrast: "hard",
+      temperature: "cool",
+      note: "雨夜霓虹",
+    });
+    expect(ok).toBe(true);
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "project.updated" });
+    expect(state().project.look.presetId).toBe("noir");
+    expect(state().project.look.note).toBe("雨夜霓虹");
+
+    const replayed = rebuild(state().events);
+    expect(replayed.look.presetId).toBe("noir");
+    expect(replayed.look.contrast).toBe("hard");
+  });
+
+  it("风格没变就不写日志，越界的项被挡下", () => {
+    const before = state().events.length;
+    expect(state().setLook(state().project.look)).toBe(false);
+    expect(state().events).toHaveLength(before);
+    const bad = { ...state().project.look, note: "x".repeat(200) };
+    expect(state().setLook(bad)).toBe(false);
+    expect(state().events).toHaveLength(before);
+  });
+
   it("重试上限越界或没变就不写日志", () => {
     const before = state().events.length;
     state().setRetryLimit(0);

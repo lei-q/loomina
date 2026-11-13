@@ -150,6 +150,44 @@ describe("提示词里的道具", () => {
   });
 });
 
+describe("画面风格进入提示词（B7 / I5，ADR-0165）", () => {
+  it("默认档的提示词最后一句与旧口径逐字一致", () => {
+    const project = load();
+    const shot = project.shots[0]!;
+    const prompt = buildKeyframePrompt(shotMaterial(project, shot));
+    expect(prompt.endsWith("竖屏 9:16，实拍电影质感，自然光，轻微胶片颗粒")).toBe(true);
+  });
+
+  it("改了项目风格，镜头 / 首帧 / 视频三条提示词一起变", () => {
+    const base = load();
+    const shot = base.shots[0]!;
+    const project: Project = {
+      ...base,
+      look: { ...base.look, presetId: "noir" },
+    };
+    const material = shotMaterial(project, shot);
+    expect(buildShotPrompt(project, shot)).toContain("黑色电影质感");
+    expect(buildKeyframePrompt(material)).toContain("黑色电影质感");
+    expect(buildVideoPrompt(material)).toContain("黑色电影质感");
+  });
+
+  it("定妆与道具在默认档仍走棚拍口径", () => {
+    const project = load();
+    const character = project.characters[0]!;
+    expect(buildSheetPrompt(character, "front", project.look)).toContain("柔光棚拍");
+    const prop = project.props[0];
+    if (prop) expect(buildPropPrompt(prop, project.look)).toContain("柔光棚拍");
+  });
+
+  it("改过风格后定妆照接上项目质感，仍保留棚拍", () => {
+    const base = load();
+    const look = { ...base.look, presetId: "warm" };
+    const prompt = buildSheetPrompt(base.characters[0]!, "front", look);
+    expect(prompt).toContain("家庭剧质感");
+    expect(prompt).toContain("柔光棚拍");
+  });
+});
+
 describe("首帧提示词（ADR-0037）", () => {
   it("与镜头提示词同源，但明确是定住这一刻的静帧", () => {
     const project = load();

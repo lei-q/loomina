@@ -27,6 +27,7 @@ interface Project {
   gates: GateRecord[];      // 阶段确认记录：七阶段各一条，带内容指纹（ADR-0100）
   subtitleOverrides: SubtitleOverride[];  // 手改断句（D2 / ADR-0117），默认 []
   subtitleLayout: SubtitleLayout;         // 字幕版式（D3 / ADR-0130），默认 { preset: "default" }
+  look: Look;                             // 画面风格与摄影参数（B7 / I5 / ADR-0165）
   publishPackages: PublishPackage[];
 
   settings: ProjectSettings;
@@ -448,6 +449,8 @@ type ProjectUpdatedEvent = {
   budgetCny: number;   // 只接受正数；非正数在 applyEvent 里直接抛错
 };
 ```
+
+> **画面风格（ADR-0165，2026-11-13）**：`Project.look` 是 `{ presetId, contrast, temperature, texture, aspect, note }`，全部带默认值（`""` / `balanced` / `neutral` / `grain` / `9:16` / `""`），缺省即「实拍电影质感、自然光、轻微胶片颗粒」。`project.updated` 新增可选 `look?: Look`：**整块替换**，`applyEvent` 用 `LookSchema` 校验后才落库（越界与超长在进日志前被挡掉）。IR 里不存编译出来的提示词——提示词是这组参数的纯函数（`compileLook`），换一句写法不该变成一次项目改动。定妆 / 主镜 / 道具三条出图请求各自带一份 `look`，服务端 `parseLook` 不合法就当没带（风格错不拦整张图）。
 
 > **项目固定模型（ADR-0150，2026-11-12）**：`Project.models` 是 `{ text?, image?, video?, tts?, asr? }`，值为本机配置的模型 id，缺省 `{}`。`project.updated` 新增可选 `models?: Partial<Record<Modality, string | null>>`：非空字符串固定、`null` 取消、不传的模态不动；空串与不认识的模态在 `applyEvent` 里抛错。取值优先级是「项目固定 > 本机选择 > 服务端默认」，生成、报价与故事入口共用 `modelIdFor(modality, project.models)`。
 

@@ -7,6 +7,7 @@ import {
   type GazeTarget,
   type Id,
   type Location,
+  type Look,
   type Project,
   type Prop,
   type SheetView,
@@ -16,6 +17,7 @@ import {
 } from "@loomina/ir";
 import type { ImageAdapter, VideoAdapter } from "@loomina/gateway";
 import { sceneTemplateById, sceneTemplatePrompt, type SceneTemplate } from "./scene-templates";
+import { compileLook, compileStudioLook } from "./look";
 
 export * from "./dialogue";
 export * from "./story";
@@ -248,6 +250,11 @@ export type ShotPromptMaterial = {
   staging?: StagingPrompt[];
   /** 生成首帧 / 尾帧时要对上的那一拍（B16 不变量 24） */
   frameBeat?: ActionBeat;
+  /**
+   * 画面风格与摄影参数（B7 / I5，ADR-0165）：提示词最后一句由它编译。
+   * 不传就是默认档，编译结果与以前逐字一致。
+   */
+  look?: Look;
 };
 
 export type PerformancePrompt = {
@@ -397,6 +404,7 @@ export function shotMaterial(
         }
       : {}),
     ...(frameBeat ? { frameBeat } : {}),
+    ...(project.look ? { look: project.look } : {}),
   };
 }
 
@@ -471,8 +479,6 @@ function shotParts(material: ShotPromptMaterial): string[] {
   return parts;
 }
 
-const LOOK = "竖屏 9:16，实拍电影质感，自然光，轻微胶片颗粒";
-
 /**
  * 镜头提示词：先写“看到什么”，再写人物锚点与技术参数。
  *
@@ -480,8 +486,9 @@ const LOOK = "竖屏 9:16，实拍电影质感，自然光，轻微胶片颗粒"
  * 模型就会把它当成另一个人（CONSISTENCY.md 第三层）。
  */
 export function buildShotPrompt(project: Project, shot: Shot): string {
-  const parts = shotParts(shotMaterial(project, shot));
-  parts.push(LOOK);
+  const material = shotMaterial(project, shot);
+  const parts = shotParts(material);
+  parts.push(compileLook(material.look));
   return parts.join("。");
 }
 
@@ -502,7 +509,7 @@ export function buildVideoPrompt(material: ShotPromptMaterial): string {
     parts.push(`台词（口型对齐）：${lines}`);
   }
   parts.push("从首帧起势，动作连贯，镜头平稳，保持人物一致");
-  parts.push(LOOK);
+  parts.push(compileLook(material.look));
   return parts.join("。");
 }
 
@@ -528,7 +535,7 @@ export function buildKeyframePrompt(
 ): string {
   const parts = shotParts(material);
   parts.push(FRAME_LINE[frame]);
-  parts.push(LOOK);
+  parts.push(compileLook(material.look));
   return parts.join("。");
 }
 
@@ -621,6 +628,7 @@ function round2(value: number): number {
 export function buildSheetPrompt(
   character: Pick<Character, "name" | "appearance" | "mustNotChange">,
   angle: SheetView,
+  look?: Look,
 ): string {
   const parts = [`角色定妆照，${SHEET_LABELS[angle]}视角：${character.name}`];
   if (character.appearance) parts.push(character.appearance);
@@ -628,29 +636,33 @@ export function buildSheetPrompt(
     parts.push(`不许变：${character.mustNotChange.join("、")}`);
   }
   parts.push("全身站姿，自然表情，纯浅灰背景，无文字，无水印");
-  parts.push("竖屏 9:16，实拍电影质感，柔光棚拍");
+  // 定妆是棚拍：默认档保持原来的棚拍口径，作者改过风格才接上项目质感
+  parts.push(compileStudioLook(look));
   return parts.join("。");
 }
 
 /** 场景主镜：空镜，只交代空间与光线。同一场所有镜头都引这一张。 */
 export function buildMasterPrompt(
   location: Pick<Location, "name" | "description">,
+  look?: Look,
 ): string {
   const parts = [`场景主镜，空镜：${location.name}`];
   if (location.description) parts.push(location.description);
   parts.push("无人入画，广角，交代空间结构、陈设与光源方向");
-  parts.push("竖屏 9:16，实拍电影质感，自然光，轻微胶片颗粒");
+  parts.push(compileLook(look));
   return parts.join("。");
 }
 
 /** 道具参考图：一张能认出这件东西的静物。 */
 export function buildPropPrompt(
   prop: Pick<Prop, "name" | "description">,
+  look?: Look,
 ): string {
   const parts = [`道具参考图：${prop.name}`];
   if (prop.description) parts.push(prop.description);
   parts.push("单件静物，正面，纯浅灰背景，无人物，无文字，无水印");
-  parts.push("竖屏 9:16，实拍电影质感，柔光棚拍");
+  parts.push(compileStudioLook(look));
   return parts.join("。");
 }
+export * from "./look";
 export * from "./import-verbatim";

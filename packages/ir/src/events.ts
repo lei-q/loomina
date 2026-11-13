@@ -5,6 +5,7 @@ import {
   BlockingSchema,
   CameraSchema,
   LocationSpaceSchema,
+  LookSchema,
   MODALITY_KEYS,
   MusicCueSchema,
   PerformanceSpecSchema,
@@ -21,6 +22,7 @@ import type {
   Id,
   Location,
   LocationSpace,
+  Look,
   MusicCue,
   Motif,
   Project,
@@ -93,6 +95,11 @@ export type ProjectEvent =
        * 不传某个模态就保持原样。
        */
       models?: Partial<Record<(typeof MODALITY_KEYS)[number], string | null>>;
+      /**
+       * 画面风格与摄影参数（B7 / I5，ADR-0165）。整块替换：这几项一起决定
+       * 提示词最后一句，分开改会让中间态读起来自相矛盾。
+       */
+      look?: Look;
     }
   | {
       /**
@@ -767,6 +774,17 @@ function applyEventCore(
           next.models = models;
           touched += 1;
         }
+      }
+      if (event.look !== undefined) {
+        // 整块替换：默认值补齐，越界项在进日志前就被挡掉（B7 / ADR-0165）
+        const parsed = LookSchema.safeParse(event.look);
+        if (!parsed.success) {
+          throw new Error(
+            `画面风格不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`,
+          );
+        }
+        next.look = parsed.data;
+        touched += 1;
       }
       if (touched === 0) throw new Error("project.updated 没有要改的字段");
       return next;

@@ -771,6 +771,31 @@ export type ModelPins = z.infer<typeof ModelPinsSchema>;
 
 export const MODALITY_KEYS = ["text", "image", "video", "tts", "asr"] as const;
 
+/**
+ * 画面风格与摄影参数（B7 / I5，ADR-0165）。
+ *
+ * 只存「作者选的」这几项，不存编译出来的提示词：提示词是这些参数的函数，
+ * 换一句写法不该变成一次项目改动。每一项留空表示用默认值。
+ */
+export const LookSchema = z.object({
+  /** 风格预设 id（`packages/pipeline` 的 `LOOK_PRESETS`）；空串表示没选 */
+  presetId: z.string().max(40).default(""),
+  /** 光比：`soft` 柔 / `balanced` 标准 / `hard` 硬 */
+  contrast: z.enum(["soft", "balanced", "hard"]).default("balanced"),
+  /** 色温倾向：`warm` 暖 / `neutral` 中性 / `cool` 冷 */
+  temperature: z.enum(["warm", "neutral", "cool"]).default("neutral"),
+  /** 质感：`clean` 干净 / `grain` 胶片颗粒 / `dream` 柔焦 */
+  texture: z.enum(["clean", "grain", "dream"]).default("grain"),
+  /** 画幅描述进提示词；目前只支持竖屏 9:16 */
+  aspect: z.literal("9:16").default("9:16"),
+  /** 作者手写的补充风格句（最多 80 字）；空串表示没有 */
+  note: z.string().max(80).default(""),
+});
+export type Look = z.infer<typeof LookSchema>;
+
+/** 一项都没改的 look：`ProjectSchema` 的默认值就是它 */
+export const DEFAULT_LOOK: Look = LookSchema.parse({});
+
 export const ProjectSchema = z.object({
   id: Id,
   title: z.string().min(1),
@@ -782,6 +807,10 @@ export const ProjectSchema = z.object({
    * 换浏览器、刷新、重放事件日志之后还得是同一个模型。
    */
   models: ModelPinsSchema.default({}),
+  /**
+   * 画面风格与摄影参数（B7 / I5，ADR-0165）：所有出图提示词的最后一句由它编译。
+   */
+  look: LookSchema.default({}),
   /**
    * 这条片子的预算上限（元）。写进项目而不是写进界面：预算是项目自己的约束，
    * 换设备、刷新、重放事件日志之后还得是同一个数（准则 P14 / H10）。

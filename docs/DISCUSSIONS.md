@@ -5117,3 +5117,32 @@ ADR-0029 定的是「图片接口不收参考图，只记进溯源」。用户�
 - 说话人不清只算同一镜内换人；切镜后的换人不报。
 - 6 秒空档与 20% 覆盖率是经验值，慢节奏片子里可能误报。
 - 不做自动改断句 / 拆句 / 加旁白，也不做成发布硬闸门。
+
+## 第一百八十五次 · 2026-11-13 · 画面风格与摄影参数（B7 + I5）
+
+**问题**
+所有出图提示词的最后一句话都是硬编码在五个函数里的（镜头 / 首尾帧 / 视频 / 定妆 / 道具 / 主镜）。作者想把整条片子调成冷调都市，只能逐格手改提示词，改到第三格就不一致了——而跨格一致性正是短剧最贵的东西。
+
+**决定**
+- `Project.look = { presetId, contrast, temperature, texture, aspect, note }`，全部带默认值；`project.updated` 新增可选 `look`，整块替换，`applyEvent` 用 `LookSchema` 校验后落库。
+- `packages/pipeline/src/look.ts`：五个预设（实拍电影 / 冷调都市 / 暖调家庭 / 梦境柔焦 / 黑色电影）+ `compileLook` / `compileStudioLook` / `isDefaultLook`。
+- 编译规则：预设与逐项参数一致 → 用预设整句；不一致 → 整句按参数重编、只留预设的质感名词（避免「冷调……暖调」自相矛盾）；没选预设且全默认 → 原样返回旧的那句；`note` 永远排最后。
+- 定妆与道具走棚拍口径：默认 `竖屏 9:16，实拍电影质感，柔光棚拍`，改过风格才接项目质感但仍以「柔光棚拍」收尾（定妆的首要任务是看清脸）。
+- 关键帧 / 视频的 look 随 `ShotPromptMaterial.look` 走；sheet / master / prop 三条请求各带一份，服务端 `parseLook` 不合法就当没带。
+- 定妆页顶栏「风格」抽屉：预设卡 + 光比 / 色温 / 质感 + 80 字补充句 + 「提示词最后一句」实时预览 + 存风格 / 恢复默认；底部说明已出的图不自动重做。
+
+**产物**
+- `packages/ir/src/schema.ts`（`LookSchema` / `DEFAULT_LOOK` / `Project.look`）、`packages/ir/src/events.ts`（`project.updated.look`）
+- `packages/pipeline/src/look.ts`、`packages/pipeline/src/index.ts`（六个 builder 接上编译器）、`packages/pipeline/test/look.test.ts`（11 条）、`chain.test.ts`（+4 条）
+- `apps/web/lib/request-shape.ts`（`parseLook`）、`apps/web/app/api/asset/route.ts`、`apps/web/lib/generate-image.ts`、`apps/web/lib/workbench-store.ts`（`setLook` + 三条请求带 look）、2 条 store 测试
+- `apps/web/components/look-panel.tsx`、`apps/web/components/cast-screen.tsx`、`apps/web/components/top-bar.tsx`
+- `docs/adr/0165-look-presets-and-compiler.md`、`docs/FEATURES.md`、`docs/ROADMAP.md`、`docs/DATA-MODEL.md`
+
+**验证**
+- 全仓 1001 + 120 + 221 + 32 条测试通过（4 条跳过）；`pnpm typecheck` 与 `pnpm build` 通过。
+- 浏览器 `/cast`：点「风格」→ 抽屉显示默认档与实时预览 `竖屏 9:16，实拍电影质感，自然光，轻微胶片颗粒`；选「黑色电影」→ 预览变 `竖屏 9:16，黑色电影质感，硬光，深阴影，冷调，颗粒明显`；把色温改成「暖」→ 整句重编为 `黑色电影质感，硬光，高反差，暖调，轻微胶片颗粒`（没有同时出现冷调与暖调）；填补充句「雨夜霓虹，湿地面反光」→ 接在最后；「存风格」→ 顶栏出现「风格·」、刷新后读回同样的预览与补充句；「恢复默认」→ 回到默认档、按钮变灰。截图 `/tmp/look5.png`。
+
+**边界**
+- 已出的图不会自动重做，换风格要逐格重新生成、会再花钱。
+- 只有五个预设，没有按题材推荐；预设是经验值，未做评测（I9）。
+- 单镜不能覆盖风格（会破坏跨镜一致性）；机位 / 景别 / 构图仍归 I1 / I4。

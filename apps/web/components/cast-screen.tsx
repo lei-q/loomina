@@ -17,6 +17,8 @@ import { Bust } from "@/components/bust";
 import { PropObject } from "@/components/prop-object";
 import { PromptEditor } from "@/components/prompt-editor";
 import { Scene } from "@/components/scene";
+import { isDefaultLook } from "@loomina/pipeline";
+import { LookPanel } from "@/components/look-panel";
 import { StageGate } from "@/components/stage-gate";
 import { TopBar } from "@/components/top-bar";
 import {
@@ -1507,6 +1509,7 @@ export function CastScreen() {
   const removeMustNotChange = useWorkbench((state) => state.removeMustNotChange);
   const undoLastRemoval = useWorkbench((state) => state.undoLastRemoval);
   const removeProp = useWorkbench((state) => state.removeProp);
+  const setLook = useWorkbench((state) => state.setLook);
 
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -1515,6 +1518,7 @@ export function CastScreen() {
   const [creatingCharacter, setCreatingCharacter] = useState(false);
   const [newCharacterName, setNewCharacterName] = useState("");
   const [newCharacterAppearance, setNewCharacterAppearance] = useState("");
+  const [lookOpen, setLookOpen] = useState(false);
   const [creatingProp, setCreatingProp] = useState(false);
   const [newPropName, setNewPropName] = useState("");
   const [newPropDescription, setNewPropDescription] = useState("");
@@ -1572,6 +1576,8 @@ export function CastScreen() {
         storageError={storageError}
         readOnly={readOnly}
         onBudgetChange={setBudget}
+        onLook={() => setLookOpen(true)}
+        lookCustomized={!isDefaultLook(project.look)}
       />
 
       <main className="flex-1 overflow-y-auto">
@@ -1930,6 +1936,14 @@ export function CastScreen() {
         </div>
       </main>
 
+      {lookOpen && (
+        <LookPanel
+          look={project.look}
+          onSave={(next) => setLook(next)}
+          readOnly={Boolean(readOnly)}
+          onClose={() => setLookOpen(false)}
+        />
+      )}
       <StageGate stage="cast" />
     </div>
   );

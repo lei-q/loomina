@@ -1,4 +1,4 @@
-import { CameraSchema, ShotSchema } from "@loomina/ir";
+import { CameraSchema, LookSchema, ShotSchema, type Look } from "@loomina/ir";
 import type { ShotPromptMaterial } from "@loomina/pipeline";
 
 /**
@@ -15,6 +15,16 @@ export function text(value: unknown, max: number): string {
 /** 只切掉两侧空白；名字全空就当作没填。 */
 export function name(value: unknown): string {
   return text(value, 40).trim();
+}
+
+/**
+ * 画面风格参数（B7 / I5，ADR-0165）：定妆 / 主镜 / 道具三条请求各自带一份，
+ * 因为提示词最后一句由它编译。不合法就当作没带——风格错不该拦下整张图。
+ */
+export function parseLook(value: unknown): Look | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const parsed = LookSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
 }
 
 /**
@@ -79,6 +89,7 @@ export function parseShotMaterial(value: unknown): ShotPromptMaterial | string {
     : [];
 
   const where = name(shot.location?.name);
+  const look = parseLook((value as { look?: unknown }).look);
   return {
     description: text(shot.description, 400),
     shotSize: size.data,
@@ -87,5 +98,6 @@ export function parseShotMaterial(value: unknown): ShotPromptMaterial | string {
     location: where ? { name: where } : undefined,
     props,
     ...(dialogue.length ? { dialogue } : {}),
+    ...(look ? { look } : {}),
   };
 }
