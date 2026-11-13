@@ -6173,3 +6173,42 @@ describe("关键帧版本库（C2）", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("技能（C.5 / ADR-0191）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("加一条技能写整份 skills，关掉不删，删掉留事件", () => {
+    const count = state().events.length;
+    const id = state().addSkill({
+      name: "禁止现代物品",
+      body: "场景里不要出现现代物品。",
+      stage: "master",
+    });
+    expect(id).toBeTruthy();
+    expect(state().events).toHaveLength(count + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "project.updated" });
+    const skill = state().project.skills.find((item) => item.id === id)!;
+    expect(skill).toMatchObject({ name: "禁止现代物品", stage: "master", enabled: true });
+
+    expect(state().updateSkill(id!, { enabled: false })).toBe(true);
+    expect(state().project.skills[0]?.enabled).toBe(false);
+    expect(state().updateSkill(id!, { enabled: false })).toBe(false);
+
+    expect(state().removeSkill(id!)).toBe(true);
+    expect(state().project.skills).toEqual([]);
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("空名字、空内容与只读都拒绝", () => {
+    const count = state().events.length;
+    expect(state().addSkill({ name: " ", body: "有内容" })).toBeUndefined();
+    expect(state().addSkill({ name: "有名字", body: "  " })).toBeUndefined();
+    expect(state().events).toHaveLength(count);
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().addSkill({ name: "有名字", body: "有内容" })).toBeUndefined();
+  });
+});

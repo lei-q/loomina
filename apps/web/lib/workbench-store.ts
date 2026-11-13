@@ -13,6 +13,7 @@ import {
   PerformanceSpecSchema,
   placementProblem,
   ProjectSchema,
+  ProjectSkillSchema,
   rebuild,
   REFERENCE_IMAGES_MAX,
   RightsRecordSchema,
@@ -44,6 +45,7 @@ import {
   type CameraPlacement,
   type PerformanceSpec,
   type Project,
+  type ProjectSkill,
   type Prop,
   type ProjectEvent,
   type PublishPackage,
@@ -54,6 +56,7 @@ import {
   type Shot,
   type ShotFocus,
   type ShotPurpose,
+  type SkillStage,
   type StagingMark,
   type StoryArc,
   type StoryRelationship,
@@ -375,6 +378,21 @@ type WorkbenchState = {
    * 只影响导出，不影响提示词——已出的图不用重做。
    */
   setGrade: (grade: Grade) => boolean;
+  /**
+   * 加一条技能（C.5 / ADR-0191）：整份 `skills` 写一条 `project.updated`。
+   * 技能会改下一次出图的提示词；已出的图不自动重做。
+   */
+  addSkill: (input: {
+    name: string;
+    description?: string;
+    stage?: SkillStage;
+    body: string;
+  }) => string | undefined;
+  updateSkill: (
+    skillId: string,
+    patch: Partial<Pick<ProjectSkill, "name" | "description" | "stage" | "body" | "enabled">>,
+  ) => boolean;
+  removeSkill: (skillId: string) => boolean;
   /**
    * 导入一份 .cube 调色表（I3 / ADR-0181）：落一条 `asset.updated { kind:"lut" }`。
    * 只加资产、不改调色——是否启用由作者在面板里勾（再走 `setGrade`）。
@@ -1611,6 +1629,97 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     }
     const event: ProjectEvent = { type: "project.updated", at: stamp(), grade: next };
     set({ project: applyEvent(project, event), events: [...events, event], editError: undefined });
+    return true;
+  },
+
+  addSkill: ({ name, description, stage, body }) => {
+    if (get().readOnly) {
+      set({ castError: "现在是只读：换到能写的窗口再改技能。" });
+      return undefined;
+    }
+    const { project, events } = get();
+    const trimmed = name.trim();
+    if (!trimmed) {
+      set({ castError: "技能得有个名字。" });
+      return undefined;
+    }
+    let id = `sk-${Date.now().toString(36)}`;
+    while (project.skills.some((skill) => skill.id === id)) id += "x";
+    const at = stamp();
+    const parsed = ProjectSkillSchema.safeParse({
+      id,
+      name: trimmed,
+      description: (description ?? "").trim(),
+      stage: stage ?? "all",
+      body: body.trim(),
+      enabled: true,
+      createdAt: at,
+    });
+    if (!parsed.success) {
+      set({ castError: `技能不合法：${parsed.error.issues[0]?.message ?? "未知原因"}` });
+      return undefined;
+    }
+    const event: ProjectEvent = {
+      type: "project.updated",
+      at,
+      skills: [...project.skills, parsed.data],
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return id;
+  },
+
+  updateSkill: (skillId, patch) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const current = project.skills.find((skill) => skill.id === skillId);
+    if (!current) return false;
+    const merged = {
+      ...current,
+      ...patch,
+      ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
+      ...(patch.description !== undefined ? { description: patch.description.trim() } : {}),
+      ...(patch.body !== undefined ? { body: patch.body.trim() } : {}),
+    };
+    const parsed = ProjectSkillSchema.safeParse(merged);
+    if (!parsed.success) {
+      set({ castError: `技能不合法：${parsed.error.issues[0]?.message ?? "未知原因"}` });
+      return false;
+    }
+    const same = (Object.keys(patch) as Array<keyof typeof patch>).every(
+      (key) => parsed.data[key] === current[key],
+    );
+    if (same) return false;
+    const event: ProjectEvent = {
+      type: "project.updated",
+      at: stamp(),
+      skills: project.skills.map((skill) => (skill.id === skillId ? parsed.data : skill)),
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  removeSkill: (skillId) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    if (!project.skills.some((skill) => skill.id === skillId)) return false;
+    const event: ProjectEvent = {
+      type: "project.updated",
+      at: stamp(),
+      skills: project.skills.filter((skill) => skill.id !== skillId),
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
     return true;
   },
 
@@ -2893,6 +3002,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
             },
             angle,
             look: get().project.look,
+            skills: get().project.skills,
             ...withPromptOverride(get, `sheet:${characterId}:${angle}`),
           },
           references: referenceImagesOf(get().project, sheetRefs),
@@ -2968,6 +3078,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
           kind: "master",
           location: { name: location.name, description: location.description },
           look: get().project.look,
+          skills: get().project.skills,
           ...withPromptOverride(get, `master:${locationId}`),
         },
         references: refs,
@@ -3037,6 +3148,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
           kind: "keyframe",
           frame,
           shot: shotMaterial(project, shot, { frame }),
+          skills: project.skills,
           ...withPromptOverride(get, `keyframe:${shotId}:${frame}`),
         },
         references: refs.slice(0, 4),
@@ -6759,6 +6871,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
           kind: "prop",
           prop: { name: prop.name, description: prop.description },
           look: get().project.look,
+          skills: get().project.skills,
           ...withPromptOverride(get, `prop:${propId}`),
         },
         references: refs,

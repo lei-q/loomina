@@ -16,6 +16,7 @@ import {
   AudioMixSchema,
   SfxCueSchema,
   PerformanceSpecSchema,
+  ProjectSkillSchema,
   PublishPackageSchema,
   ShotFocusSchema,
   StagingMarkSchema,
@@ -41,6 +42,7 @@ import type {
   MusicCue,
   Motif,
   Project,
+  ProjectSkill,
   SfxCue,
   Prop,
   PublishPackage,
@@ -125,6 +127,11 @@ export type ProjectEvent =
        * 输出画幅（E5 / ADR-0170）。整块替换：只影响导出，不改提示词。
        */
       frame?: Frame;
+      /**
+       * 技能（C.5 / ADR-0191）。整块替换：技能按顺序拼进提示词，
+       * 分开增删会让「中间态」与最终提示词对不上。
+       */
+      skills?: ProjectSkill[];
     }
   | {
       /**
@@ -980,6 +987,21 @@ function applyEventCore(
           );
         }
         next.frame = parsed.data;
+        touched += 1;
+      }
+      if (event.skills !== undefined) {
+        const parsed = z.array(ProjectSkillSchema).safeParse(event.skills);
+        if (!parsed.success) {
+          throw new Error(
+            `技能不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`,
+          );
+        }
+        const ids = new Set<string>();
+        for (const skill of parsed.data) {
+          if (ids.has(skill.id)) throw new Error(`技能 id 重复：${skill.id}`);
+          ids.add(skill.id);
+        }
+        next.skills = parsed.data;
         touched += 1;
       }
       if (touched === 0) throw new Error("project.updated 没有要改的字段");

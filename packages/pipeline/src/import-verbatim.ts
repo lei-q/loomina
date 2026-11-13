@@ -248,6 +248,7 @@ export function projectFromVerbatimDocument(
       sourceDocument: document,
     },
     motifs: [],
+    skills: [],
     locations: [
       {
         id: locationId,

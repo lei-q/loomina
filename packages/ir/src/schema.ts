@@ -1141,6 +1141,34 @@ export type Brand = z.infer<typeof BrandSchema>;
 
 export const DEFAULT_BRAND: Brand = BrandSchema.parse({});
 
+/**
+ * 技能（C.5 / ADR-0191）：作者可复用的一段提示词要求。
+ *
+ * 不进「模型配置」也不进 localStorage：技能会改变出图提示词，属于项目约束，
+ * 要跟着日志回放。`stage` 决定加在哪种提示词后面；`all` 表示都加。
+ */
+export const SKILL_STAGES = ["all", "sheet", "master", "prop", "keyframe"] as const;
+export const SkillStageSchema = z.enum(SKILL_STAGES);
+export type SkillStage = z.infer<typeof SkillStageSchema>;
+
+export const SKILL_NAME_MAX = 40;
+export const SKILL_DESCRIPTION_MAX = 200;
+export const SKILL_BODY_MAX = 2000;
+
+export const ProjectSkillSchema = z.object({
+  id: Id,
+  name: z.string().min(1).max(SKILL_NAME_MAX),
+  /** 给人看的用途说明，不进提示词 */
+  description: z.string().max(SKILL_DESCRIPTION_MAX).default(""),
+  stage: SkillStageSchema.default("all"),
+  /** 真正拼进提示词的那一段；不自动加标点，作者写什么就是什么 */
+  body: z.string().min(1).max(SKILL_BODY_MAX),
+  /** 关掉只是不加进提示词，不删记录 */
+  enabled: z.boolean().default(true),
+  createdAt: z.string().min(1),
+});
+export type ProjectSkill = z.infer<typeof ProjectSkillSchema>;
+
 export const ProjectSchema = z.object({
   id: Id,
   title: z.string().min(1),
@@ -1182,6 +1210,8 @@ export const ProjectSchema = z.object({
   story: StoryBibleSchema.default({}),
   /** 主题动机（C10 / ADR-0125）：代表一个人 / 一对关系 / 一个地点 */
   motifs: z.array(MotifSchema).default([]),
+  /** 可复用的提示词要求（C.5 / ADR-0191）：按阶段拼进出图提示词 */
+  skills: z.array(ProjectSkillSchema).default([]),
   locations: z.array(LocationSchema).default([]),
   characters: z.array(CharacterSchema).default([]),
   props: z.array(PropSchema).default([]),

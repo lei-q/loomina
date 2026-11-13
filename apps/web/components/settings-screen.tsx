@@ -16,6 +16,8 @@ import {
 } from "@/lib/config-types";
 import { fetchModelConfig, invalidateModelConfig } from "@/lib/model-choice";
 import { useWorkbench } from "@/lib/workbench-store";
+import { SKILL_BODY_MAX, SKILL_NAME_MAX, type SkillStage } from "@loomina/ir";
+import { SKILL_STAGE_CN } from "@loomina/pipeline";
 import { DataSection } from "@/components/data-section";
 import type { CapabilityResponse, ModelCapabilityView } from "@/lib/capabilities";
 import type { ProbeReportView, ProbeTrend } from "@/lib/probes";
@@ -979,6 +981,7 @@ export function SettingsScreen() {
         />
 
         <TemplateSection readOnly={Boolean(readOnly)} />
+        <SkillsSection readOnly={Boolean(readOnly)} />
 
         <DataSection
           readOnly={Boolean(readOnly)}
@@ -1238,6 +1241,189 @@ function fmtBytes(bytes: number): string {
 
 function modelIdValid(model: ModelDraft): boolean {
   return Boolean(model.providerId && model.model.trim());
+}
+
+/**
+ * 技能（C.5 / ADR-0191）。
+ *
+ * 技能是作者写好的、可复用的提示词要求：按阶段拼进出图提示词，
+ * 排在风格那句之前。写进项目日志，回放、换设备都在；关掉只是不加，不删记录。
+ */
+function SkillsSection({ readOnly }: { readOnly: boolean }) {
+  const skills = useWorkbench((state) => state.project.skills);
+  const addSkill = useWorkbench((state) => state.addSkill);
+  const updateSkill = useWorkbench((state) => state.updateSkill);
+  const removeSkill = useWorkbench((state) => state.removeSkill);
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [body, setBody] = useState("");
+  const [stage, setStage] = useState<SkillStage>("all");
+  const [error, setError] = useState<string>();
+
+  const close = () => {
+    setOpen(false);
+    setName("");
+    setDescription("");
+    setBody("");
+    setStage("all");
+    setError(undefined);
+  };
+
+  const submit = () => {
+    const id = addSkill({ name, description, stage, body });
+    if (!id) {
+      setError(useWorkbench.getState().castError ?? "这条技能加不上。");
+      return;
+    }
+    close();
+  };
+
+  return (
+    <section className="mt-9 border-t border-line pt-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-[12px] tracking-[.04em]">技能</h2>
+          <span className="tnum text-[9px] text-muted-2">C.5</span>
+        </div>
+        <span className="tnum text-[9.5px] text-muted-2">
+          {skills.filter((skill) => skill.enabled).length} / {skills.length} 条生效
+        </span>
+      </div>
+      <p className="mt-1 max-w-[640px] text-[9.5px] leading-[1.7] text-muted-2">
+        技能是一段可复用的提示词要求，按阶段拼进出图提示词（排在风格那句之前）。
+        写进项目日志：刷新、换设备、回放都在。关掉只是不加进提示词，不删记录；
+        已出的图不会自动重做。
+      </p>
+
+      <div className="mt-3 space-y-1.5">
+        {skills.map((skill) => (
+          <div
+            key={skill.id}
+            className="flex flex-wrap items-start gap-2 border border-line px-2.5 py-2"
+          >
+            <button
+              type="button"
+              disabled={readOnly}
+              onClick={() => updateSkill(skill.id, { enabled: !skill.enabled })}
+              title={skill.enabled ? "关掉：不加进下一次提示词" : "打开：下一次提示词带上它"}
+              className={cn(
+                "shrink-0 rounded-[1px] border px-1.5 py-0.5 text-[9px] transition-colors duration-[var(--dur)] disabled:opacity-40",
+                skill.enabled
+                  ? "border-pick/60 text-pick"
+                  : "border-line text-muted-2 hover:border-line-2 hover:text-text",
+              )}
+            >
+              {skill.enabled ? "生效中" : "已关"}
+            </button>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-baseline gap-x-2">
+                <span className="text-[10.5px] text-text">{skill.name}</span>
+                <span className="tnum text-[8.5px] text-muted-2">
+                  {SKILL_STAGE_CN[skill.stage]}
+                </span>
+              </div>
+              {skill.description && (
+                <p className="mt-0.5 text-[9px] text-muted-2">{skill.description}</p>
+              )}
+              <p className="mt-1 whitespace-pre-wrap break-words text-[9.5px] leading-[1.7] text-muted">
+                {skill.body}
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={readOnly}
+              onClick={() => removeSkill(skill.id)}
+              title="删掉这条技能：事件日志里仍留着记录"
+              className="shrink-0 text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-pick disabled:opacity-40"
+            >
+              删
+            </button>
+          </div>
+        ))}
+        {skills.length === 0 && (
+          <p className="text-[9.5px] text-muted-2">
+            还没有技能。比如「所有提示词都不要出现现代物品」。
+          </p>
+        )}
+      </div>
+
+      {open ? (
+        <div className="mt-3 space-y-2 border border-dashed border-line-2 px-3 py-2.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <input
+              value={name}
+              maxLength={SKILL_NAME_MAX}
+              aria-label="技能名字"
+              placeholder="技能名字：禁止现代物品"
+              onChange={(event) => setName(event.target.value)}
+              className="min-w-[200px] flex-1 rounded-token border border-line-2 bg-surface px-2 py-1 text-[10.5px] text-text placeholder:text-muted-2 focus:border-pick focus:outline-none"
+            />
+            <select
+              value={stage}
+              aria-label="技能用在哪个阶段"
+              onChange={(event) => setStage(event.target.value as SkillStage)}
+              className="rounded-token border border-line-2 bg-surface px-1.5 py-1 text-[10px] text-text focus:border-pick focus:outline-none"
+            >
+              {Object.entries(SKILL_STAGE_CN).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <input
+            value={description}
+            maxLength={200}
+            aria-label="技能说明"
+            placeholder="给自己看的说明（不进提示词）"
+            onChange={(event) => setDescription(event.target.value)}
+            className="w-full rounded-token border border-line-2 bg-surface px-2 py-1 text-[10px] text-text placeholder:text-muted-2 focus:border-pick focus:outline-none"
+          />
+          <textarea
+            value={body}
+            maxLength={SKILL_BODY_MAX}
+            rows={3}
+            aria-label="技能内容"
+            placeholder="真正拼进提示词的那一段：场景里不要出现现代物品，灯具一律是老式钨丝灯。"
+            onChange={(event) => setBody(event.target.value)}
+            className="w-full resize-y rounded-token border border-line-2 bg-surface px-2 py-1.5 text-[10.5px] leading-[1.7] text-text placeholder:text-muted-2 focus:border-pick focus:outline-none"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={submit}
+              disabled={readOnly || !name.trim() || !body.trim()}
+              className="rounded-token border border-line-2 px-2.5 py-1 text-[10.5px] text-text transition-colors duration-[var(--dur)] hover:border-pick hover:text-pick disabled:opacity-40"
+            >
+              存下这条
+            </button>
+            <button
+              type="button"
+              onClick={close}
+              className="rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+            >
+              取消
+            </button>
+            <span className="tnum text-[8.5px] text-muted-2">
+              {body.length} / {SKILL_BODY_MAX}
+            </span>
+          </div>
+          {error && <p className="text-[9.5px] text-pick">{error}</p>}
+        </div>
+      ) : (
+        !readOnly && (
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            className="mt-3 rounded-token border border-line px-2.5 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            加一条技能
+          </button>
+        )
+      )}
+    </section>
+  );
 }
 
 /**

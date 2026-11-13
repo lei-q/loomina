@@ -473,6 +473,7 @@ function CharacterRow({
 }) {
   const promptOverrides = useWorkbench((state) => state.promptOverrides);
   const setPromptOverride = useWorkbench((state) => state.setPromptOverride);
+  const skills = useWorkbench((state) => state.project.skills);
   const missing = character.panels.filter((panel) => !panel.assetId).length;
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -821,6 +822,8 @@ function CharacterRow({
                   mustNotChange: character.mustNotChange,
                 },
                 panel.angle,
+                undefined,
+                skills,
               ),
             }))}
             values={promptOverrides}
@@ -925,6 +928,7 @@ function LocationRow({
 }) {
   const promptOverrides = useWorkbench((state) => state.promptOverrides);
   const setPromptOverride = useWorkbench((state) => state.setPromptOverride);
+  const skills = useWorkbench((state) => state.project.skills);
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [moveTarget, setMoveTarget] = useState(otherLocations[0]?.id ?? "");
@@ -1281,10 +1285,11 @@ function LocationRow({
             {
               key: `master:${location.id}`,
               label: "主镜",
-              prompt: buildMasterPrompt({
-                name: location.name,
-                description: location.description,
-              }),
+              prompt: buildMasterPrompt(
+                { name: location.name, description: location.description },
+                undefined,
+                skills,
+              ),
             },
           ]}
           values={promptOverrides}
@@ -1371,6 +1376,7 @@ function PropRow({
 }) {
   const promptOverrides = useWorkbench((state) => state.promptOverrides);
   const setPromptOverride = useWorkbench((state) => state.setPromptOverride);
+  const skills = useWorkbench((state) => state.project.skills);
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [draftName, setDraftName] = useState("");
@@ -1597,7 +1603,11 @@ function PropRow({
             {
               key: `prop:${prop.id}`,
               label: "参考图",
-              prompt: buildPropPrompt({ name: prop.name, description: prop.description }),
+              prompt: buildPropPrompt(
+                { name: prop.name, description: prop.description },
+                undefined,
+                skills,
+              ),
             },
           ]}
           values={promptOverrides}

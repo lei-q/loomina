@@ -599,6 +599,7 @@ export function projectFromStoryDraft(
       },
     },
     motifs: [],
+    skills: [],
     locations,
     characters,
     props,

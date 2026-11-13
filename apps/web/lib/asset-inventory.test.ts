@@ -47,6 +47,7 @@ function base(): Project {
       relationships: [],
     },
     motifs: [],
+    skills: [],
     locations: [],
     characters: [],
     props: [],

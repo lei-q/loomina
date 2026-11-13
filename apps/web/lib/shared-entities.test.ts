@@ -54,6 +54,7 @@ function project(fields: Partial<Project> = {}): Project {
       relationships: [],
     },
     motifs: [],
+    skills: [],
     locations: [],
     characters: [],
     props: [],

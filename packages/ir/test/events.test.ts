@@ -208,6 +208,65 @@ describe("project.updated", () => {
     expect(next.shots).toEqual(project.shots);
   });
 
+  it("技能整块替换，缺省值补齐，其余字段不动（C.5 / ADR-0191）", () => {
+    const project = load();
+    const next = applyEvent(project, {
+      type: "project.updated",
+      at: AT,
+      skills: [
+        {
+          id: "sk-1",
+          name: "禁止现代物品",
+          description: "",
+          stage: "all",
+          body: "场景里不要出现现代物品。",
+          enabled: true,
+          createdAt: AT,
+        },
+      ],
+    });
+    expect(next.skills).toHaveLength(1);
+    expect(next.skills[0]).toMatchObject({
+      stage: "all",
+      enabled: true,
+      description: "",
+    });
+    expect(next.look).toEqual(project.look);
+    expect(next.shots).toEqual(project.shots);
+
+    const cleared = applyEvent(next, { type: "project.updated", at: AT, skills: [] });
+    expect(cleared.skills).toEqual([]);
+  });
+
+  it("技能 id 重复或字段越界都拒绝（C.5 / ADR-0191）", () => {
+    const skill = {
+      id: "sk-1",
+      name: "禁止现代物品",
+      description: "",
+      stage: "all" as const,
+      body: "场景里不要出现现代物品。",
+      enabled: true,
+      createdAt: AT,
+    };
+    expect(() =>
+      applyEvent(load(), { type: "project.updated", at: AT, skills: [skill, skill] }),
+    ).toThrow(/重复/);
+    expect(() =>
+      applyEvent(load(), {
+        type: "project.updated",
+        at: AT,
+        skills: [{ ...skill, body: "" }],
+      }),
+    ).toThrow();
+    expect(() =>
+      applyEvent(load(), {
+        type: "project.updated",
+        at: AT,
+        skills: [{ ...skill, name: "x".repeat(41) }],
+      }),
+    ).toThrow();
+  });
+
   it("调色整块替换，不动画面风格与提示词（E4 / ADR-0169）", () => {
     const project = load();
     const next = applyEvent(project, {

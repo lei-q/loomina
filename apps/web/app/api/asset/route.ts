@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { ConfigError, TreecloudError } from "@loomina/gateway";
-import { SHEET_ANGLES, type SheetView } from "@loomina/ir";
+import { SHEET_ANGLES, ProjectSkillSchema, type ProjectSkill, type SheetView } from "@loomina/ir";
+import { z } from "zod";
 import { generateCastImage, type CastImageRequest } from "@/lib/generate-image";
 import { recordHealthEvent } from "@/lib/health-events";
 import { PromptBlockedError } from "@/lib/moderation";
@@ -24,6 +25,8 @@ type Body = {
   prop?: { name?: unknown; description?: unknown };
   /** 画面风格参数（B7 / I5，ADR-0165）：定妆 / 主镜 / 道具的提示词最后一句 */
   look?: unknown;
+  /** 技能（C.5 / ADR-0191）：只收已经写进项目日志的那几条，服务端再校验一遍 */
+  skills?: unknown;
   /**
    * 参考图（B2 / ADR-0162）：调用方点名要随这一张发出去的资产。
    * 只收地址与标签，字节由服务端从资产库读——浏览器不需要把图再传一遍。
@@ -38,6 +41,14 @@ type Body = {
     props?: unknown;
   };
 };
+
+/** 技能清单：最多 20 条，字段与 IR 同 schema；越界直接拒，不截断 */
+function skillsOf(value: unknown): ProjectSkill[] | string {
+  if (value === undefined) return [];
+  const parsed = z.array(ProjectSkillSchema).max(20).safeParse(value);
+  if (!parsed.success) return "技能的格式不对";
+  return parsed.data;
+}
 
 function bad(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
@@ -80,6 +91,9 @@ function labelOf(request: CastImageRequest): string {
 
 function parse(body: Body | null): CastImageRequest | string {
   if (!body) return "请求体不是 JSON";
+  const skills = skillsOf(body.skills);
+  if (typeof skills === "string") return skills;
+  const withSkills = skills.length > 0 ? { skills } : {};
 
   if (body.kind === "sheet") {
     const who = name(body.character?.name);
@@ -100,6 +114,7 @@ function parse(body: Body | null): CastImageRequest | string {
       },
       angle: body.angle as SheetView,
       ...(parseLook(body.look) ? { look: parseLook(body.look)! } : {}),
+      ...withSkills,
     };
   }
 
@@ -110,6 +125,7 @@ function parse(body: Body | null): CastImageRequest | string {
       kind: "master",
       location: { name: where, description: text(body.location?.description, 200) },
       ...(parseLook(body.look) ? { look: parseLook(body.look)! } : {}),
+      ...withSkills,
     };
   }
 
@@ -120,6 +136,7 @@ function parse(body: Body | null): CastImageRequest | string {
       kind: "prop",
       prop: { name: what, description: text(body.prop?.description, 300) },
       ...(parseLook(body.look) ? { look: parseLook(body.look)! } : {}),
+      ...withSkills,
     };
   }
 
@@ -128,7 +145,7 @@ function parse(body: Body | null): CastImageRequest | string {
     if (frame !== "first" && frame !== "last") return "关键帧不认识";
     const shot = parseShotMaterial(body.shot);
     if (typeof shot === "string") return shot;
-    return { kind: "keyframe", frame, shot };
+    return { kind: "keyframe", frame, shot, ...withSkills };
   }
 
   return "不认识的资产类型";

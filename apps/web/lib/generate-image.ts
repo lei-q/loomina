@@ -12,7 +12,7 @@ import {
   buildSheetPrompt,
   type ShotPromptMaterial,
 } from "@loomina/pipeline";
-import type { Character, Id, Location, Look, Prop, SheetView } from "@loomina/ir";
+import type { Character, Id, Location, Look, ProjectSkill, Prop, SheetView } from "@loomina/ir";
 import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
 import { readAssetBytes } from "@/lib/asset-store";
 import { assertPromptAllowed, type PromptModeration } from "@/lib/moderation";
@@ -31,14 +31,27 @@ export type CastImageRequest =
       angle: SheetView;
       /** 画面风格（B7 / I5，ADR-0165）：不给就是默认档 */
       look?: Look;
+      /** 技能（C.5 / ADR-0191）：按阶段拼进提示词 */
+      skills?: ProjectSkill[];
     }
   | {
       kind: "master";
       location: Pick<Location, "name" | "description">;
       look?: Look;
+      skills?: ProjectSkill[];
     }
-  | { kind: "prop"; prop: Pick<Prop, "name" | "description">; look?: Look }
-  | { kind: "keyframe"; shot: ShotPromptMaterial; frame?: "first" | "last" };
+  | {
+      kind: "prop";
+      prop: Pick<Prop, "name" | "description">;
+      look?: Look;
+      skills?: ProjectSkill[];
+    }
+  | {
+      kind: "keyframe";
+      shot: ShotPromptMaterial;
+      frame?: "first" | "last";
+      skills?: ProjectSkill[];
+    };
 
 export type GeneratedImage = {
   uri: string;
@@ -62,26 +75,26 @@ export type GeneratedImage = {
 function plan(request: CastImageRequest): { prompt: string; label: string } {
   if (request.kind === "sheet") {
     return {
-      prompt: buildSheetPrompt(request.character, request.angle, request.look),
+      prompt: buildSheetPrompt(request.character, request.angle, request.look, request.skills),
       label: `sheet-${request.character.name}-${request.angle}`,
     };
   }
   if (request.kind === "master") {
     return {
-      prompt: buildMasterPrompt(request.location, request.look),
+      prompt: buildMasterPrompt(request.location, request.look, request.skills),
       label: `master-${request.location.name}`,
     };
   }
   if (request.kind === "prop") {
     return {
-      prompt: buildPropPrompt(request.prop, request.look),
+      prompt: buildPropPrompt(request.prop, request.look, request.skills),
       label: `prop-${request.prop.name}`,
     };
   }
   // 关键帧是某一镜的静帧：用描述当标签，方便在溯源里认出是哪一格（ADR-0038 起分首尾）
   const frame = request.frame ?? "first";
   return {
-    prompt: buildKeyframePrompt(request.shot, frame),
+    prompt: buildKeyframePrompt(request.shot, frame, request.skills),
     label: `${frame === "last" ? "lastframe" : "keyframe"}-${request.shot.description.slice(0, 16) || "shot"}`,
   };
 }

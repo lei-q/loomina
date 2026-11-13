@@ -11,6 +11,7 @@ import {
   type Location,
   type Look,
   type Project,
+  type ProjectSkill,
   type Prop,
   type SheetView,
   type Shot,
@@ -20,6 +21,7 @@ import {
 import type { ImageAdapter, VideoAdapter } from "@loomina/gateway";
 import { sceneTemplateById, sceneTemplatePrompt, type SceneTemplate } from "./scene-templates";
 import { compileLook, compileStudioLook } from "./look";
+import { compileSkills } from "./skills";
 import { compileComposition, compileLighting } from "./language";
 
 export * from "./dialogue";
@@ -548,9 +550,14 @@ const FRAME_LINE: Record<Frame, string> = {
 export function buildKeyframePrompt(
   material: ShotPromptMaterial,
   frame: Frame = "first",
+  skills?: ProjectSkill[],
 ): string {
   const parts = shotParts(material);
   parts.push(FRAME_LINE[frame]);
+  // 技能排在风格之前：风格那句始终是提示词的最后一句（B7 / I5）
+  const guidance = compileSkills(skills, "keyframe");
+  // 作者常以句号结尾：去掉末尾句号，避免与 parts 的连接符叠成「。。」
+  if (guidance) parts.push(guidance.replace(/[。.]+$/, ""));
   parts.push(compileLook(material.look));
   return parts.join("。");
 }
@@ -645,6 +652,7 @@ export function buildSheetPrompt(
   character: Pick<Character, "name" | "appearance" | "mustNotChange">,
   angle: SheetView,
   look?: Look,
+  skills?: ProjectSkill[],
 ): string {
   const parts = [`角色定妆照，${SHEET_LABELS[angle]}视角：${character.name}`];
   if (character.appearance) parts.push(character.appearance);
@@ -652,6 +660,8 @@ export function buildSheetPrompt(
     parts.push(`不许变：${character.mustNotChange.join("、")}`);
   }
   parts.push("全身站姿，自然表情，纯浅灰背景，无文字，无水印");
+  const guidance = compileSkills(skills, "sheet");
+  if (guidance) parts.push(guidance.replace(/[。.]+$/, ""));
   // 定妆是棚拍：默认档保持原来的棚拍口径，作者改过风格才接上项目质感
   parts.push(compileStudioLook(look));
   return parts.join("。");
@@ -661,10 +671,13 @@ export function buildSheetPrompt(
 export function buildMasterPrompt(
   location: Pick<Location, "name" | "description">,
   look?: Look,
+  skills?: ProjectSkill[],
 ): string {
   const parts = [`场景主镜，空镜：${location.name}`];
   if (location.description) parts.push(location.description);
   parts.push("无人入画，广角，交代空间结构、陈设与光源方向");
+  const guidance = compileSkills(skills, "master");
+  if (guidance) parts.push(guidance.replace(/[。.]+$/, ""));
   parts.push(compileLook(look));
   return parts.join("。");
 }
@@ -673,13 +686,17 @@ export function buildMasterPrompt(
 export function buildPropPrompt(
   prop: Pick<Prop, "name" | "description">,
   look?: Look,
+  skills?: ProjectSkill[],
 ): string {
   const parts = [`道具参考图：${prop.name}`];
   if (prop.description) parts.push(prop.description);
   parts.push("单件静物，正面，纯浅灰背景，无人物，无文字，无水印");
+  const guidance = compileSkills(skills, "prop");
+  if (guidance) parts.push(guidance.replace(/[。.]+$/, ""));
   parts.push(compileStudioLook(look));
   return parts.join("。");
 }
+export * from "./skills";
 export * from "./look";
 export * from "./language";
 export * from "./import-verbatim";

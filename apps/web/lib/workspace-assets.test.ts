@@ -42,6 +42,7 @@ function project(id: string, assets: Asset[], characters: Character[] = []): Pro
       relationships: [],
     },
     motifs: [],
+    skills: [],
     locations: [],
     characters,
     props: [],

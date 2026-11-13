@@ -641,8 +641,8 @@ export function toStageView(project: Project, options: StageOptions = {}): Stage
       angle: SHOT_ANGLE_CN[shot.camera.angle],
       notes: shot.promptNotes,
       prompts: {
-        first: buildKeyframePrompt(firstMaterial, "first"),
-        last: buildKeyframePrompt(lastMaterial, "last"),
+        first: buildKeyframePrompt(firstMaterial, "first", project.skills),
+        last: buildKeyframePrompt(lastMaterial, "last", project.skills),
         video: buildVideoPrompt(material),
       },
       anchors: {
