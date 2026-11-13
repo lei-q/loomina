@@ -22,6 +22,11 @@ type Body = {
   /** 主镜请求：`description` 是场景描述，会整句进提示词（ADR-0063） */
   location?: { name?: unknown; description?: unknown };
   prop?: { name?: unknown; description?: unknown };
+  /**
+   * 参考图（B2 / ADR-0162）：调用方点名要随这一张发出去的资产。
+   * 只收地址与标签，字节由服务端从资产库读——浏览器不需要把图再传一遍。
+   */
+  references?: unknown;
   shot?: {
     description?: unknown;
     shotSize?: unknown;
@@ -34,6 +39,33 @@ type Body = {
 
 function bad(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
+}
+
+/**
+ * 参考图清单（B2 / ADR-0162）：最多 4 张，只要地址与标签。
+ *
+ * 地址必须是资产库 / 对象存储 / data URI 之一；别的形态（比如 http 外链）
+ * 不读，避免服务端被当成任意 URL 的代理。读不到字节的由下游如实回 missing。
+ */
+function referencesOf(
+  value: unknown,
+): { assetId: string; uri: string; label: string }[] | string {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) return "参考图格式不对";
+  const refs: { assetId: string; uri: string; label: string }[] = [];
+  for (const item of value.slice(0, 4)) {
+    if (!item || typeof item !== "object") return "参考图格式不对";
+    const record = item as { assetId?: unknown; uri?: unknown; label?: unknown };
+    const uri = typeof record.uri === "string" ? record.uri.trim() : "";
+    if (!uri) return "参考图缺少地址";
+    if (!/^(loomina:\/\/|s3:\/\/|data:image\/)/i.test(uri)) {
+      return "参考图只能来自资产库（loomina:// 或 s3://）或 data URI";
+    }
+    const assetId = typeof record.assetId === "string" ? record.assetId.slice(0, 120) : uri;
+    const label = typeof record.label === "string" ? record.label.slice(0, 40) : "参考图";
+    refs.push({ assetId, uri, label });
+  }
+  return refs;
 }
 
 /** 队列里显示的人话：出的哪一张（H2 / ADR-0135） */
@@ -105,11 +137,13 @@ export async function POST(request: Request) {
   const modelId = typeof body?.modelId === "string" ? body.modelId : undefined;
   const override = readPromptOverride(body?.prompt);
   if (override.error) return bad(override.error);
+  const refs = referencesOf(body?.references);
+  if (typeof refs === "string") return bad(refs);
   try {
     // 出图也排进同一条长任务队列（H2 / ADR-0135）：渲染正在跑时等它跑完，
     // 别让 ffmpeg 与出图同时抢 CPU。队列只影响排队，失败语义不变。
     const result = await withLongJobSlot("image", labelOf(parsed), () =>
-      generateCastImage(parsed, modelId, override.prompt),
+      generateCastImage(parsed, modelId, override.prompt, refs),
     );
     void recordHealthEvent({
       at: new Date().toISOString(),

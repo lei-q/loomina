@@ -1482,6 +1482,7 @@ export function CastScreen() {
   const generateProp = useWorkbench((state) => state.generateProp);
   const jobs = useWorkbench((state) => state.jobs);
   const castError = useWorkbench((state) => state.castError);
+  const generationNotice = useWorkbench((state) => state.generationNotice);
   const hydrate = useWorkbench((state) => state.hydrate);
   const storageError = useWorkbench((state) => state.storageError);
   const readOnly = useWorkbench((state) => state.readOnly);
@@ -1596,6 +1597,12 @@ export function CastScreen() {
             {castError && (
               <p className="mt-3 max-w-[60ch] text-[10.5px] leading-[1.6] text-pick">
                 {castError}
+              </p>
+            )}
+
+            {generationNotice && (
+              <p className="mt-2 max-w-[60ch] text-[10px] leading-[1.6] text-muted-2">
+                {generationNotice}
               </p>
             )}
 

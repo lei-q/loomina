@@ -6,6 +6,7 @@ import type {
   ImageAdapter,
   ImageInput,
   ImageOutput,
+  ImageReference,
   SpeechAdapter,
   SpeechInput,
   SpeechOutput,
@@ -227,6 +228,36 @@ export class TreecloudClient {
 export interface TreecloudImageOptions {
   model?: string;
   size?: string;
+  /**
+   * 参考图走哪条路（B2 / ADR-0162）：
+   * - `edits`（默认）：`POST /v1/images/edits`，multipart 带 `image[]`；
+   * - `off`：不尝试参考图，直接纯文生图。
+   *
+   * 实测 2026-11-13 该代理支持单张与多张 `image[]`，并且 `size` 照常生效。
+   */
+  references?: "edits" | "off";
+}
+
+/** 单张参考图的上限：`images/edits` 是 multipart，太大只会拖慢或直接被拒 */
+export const MAX_REFERENCE_BYTES = 8 * 1024 * 1024;
+export const MAX_REFERENCES = 4;
+
+function referenceForm(
+  model: string,
+  prompt: string,
+  size: string | undefined,
+  references: ImageReference[],
+): FormData {
+  const form = new FormData();
+  form.append("model", model);
+  form.append("prompt", prompt);
+  form.append("n", "1");
+  if (size) form.append("size", size);
+  references.forEach((reference, index) => {
+    const bytes = new Uint8Array(reference.bytes);
+    form.append("image[]", new Blob([bytes], { type: reference.mime }), `ref-${index + 1}.png`);
+  });
+  return form;
 }
 
 export class TreecloudImageAdapter implements ImageAdapter {
@@ -244,15 +275,48 @@ export class TreecloudImageAdapter implements ImageAdapter {
     const model = this.options.model ?? this.client.config.imageModel;
     const size = input.size ?? this.options.size ?? this.client.config.imageSize;
 
-    const payload = await this.client.request("/v1/images/generations", {
-      method: "POST",
-      body: {
-        model,
-        prompt: input.prompt,
-        n: 1,
-        ...(size ? { size } : {}),
-      },
-    });
+    const usable = (input.references ?? []).filter(
+      (reference) => reference.bytes.byteLength > 0 && reference.bytes.byteLength <= MAX_REFERENCE_BYTES,
+    );
+    const references = (this.options.references ?? "edits") === "off"
+      ? []
+      : usable.slice(0, MAX_REFERENCES);
+
+    // 有参考图就走 edits：真的把字节发给供应商，而不是只记进溯源（ADR-0029 → ADR-0162）。
+    // 代理明确说这条端点不支持时退回纯文生图，并把 referenceMode 如实写回——
+    // 换了供应商不至于整条出图路径都坏掉，界面也能看出这一张没吃到参考图。
+    let usedReferences = references;
+    let payload: Json;
+    if (references.length > 0) {
+      try {
+        payload = await this.client.request("/v1/images/edits", {
+          method: "POST",
+          body: referenceForm(model, input.prompt, size, references),
+        });
+      } catch (error) {
+        if (!isReferenceUnsupported(error)) throw error;
+        usedReferences = [];
+        payload = await this.client.request("/v1/images/generations", {
+          method: "POST",
+          body: {
+            model,
+            prompt: input.prompt,
+            n: 1,
+            ...(size ? { size } : {}),
+          },
+        });
+      }
+    } else {
+      payload = await this.client.request("/v1/images/generations", {
+        method: "POST",
+        body: {
+          model,
+          prompt: input.prompt,
+          n: 1,
+          ...(size ? { size } : {}),
+        },
+      });
+    }
 
     const uri = imageUriOf(payload);
     if (!uri) {
@@ -273,6 +337,8 @@ export class TreecloudImageAdapter implements ImageAdapter {
         referenceAssetIds: input.referenceAssetIds ?? [],
         createdAt: this.now(),
       },
+      referenceMode: usedReferences.length > 0 ? "edits" : "prompt-only",
+      referenceCount: usedReferences.length,
     };
   }
 }
@@ -819,6 +885,28 @@ function errorMessageOf(payload: Json): string | undefined {
   if (isJson(error) && typeof error.message === "string") return error.message;
   if (typeof payload.message === "string" && payload.message) return payload.message;
   return undefined;
+}
+
+/**
+ * 代理明确表示「这条端点不收参考图」时返回 true。
+ *
+ * 只认这几种：端点不存在（404 / 405）、明确说参数或接口不支持（400 + unsupported /
+ * not supported / image request rejected）。超时、429、5xx 一律不退回——
+ * 那些是偶发故障，悄悄换成纯文生图只会让作者以为参考图生效了。
+ */
+function isReferenceUnsupported(error: unknown): boolean {
+  if (!(error instanceof TreecloudError)) return false;
+  if (error.status === 404 || error.status === 405) return true;
+  if (error.status !== 400) return false;
+  const text = `${error.code} ${error.message}`.toLowerCase();
+  return (
+    text.includes("unsupported") ||
+    text.includes("not support") ||
+    text.includes("not_support") ||
+    text.includes("image request rejected") ||
+    text.includes("unknown parameter") ||
+    text.includes("unrecognized")
+  );
 }
 
 function parseError(status: number, text: string, requestId: string | undefined, apiKey: string) {

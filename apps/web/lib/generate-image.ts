@@ -2,6 +2,8 @@ import {
   TreecloudClient,
   TreecloudImageAdapter,
   imageCostCny,
+  MAX_REFERENCES,
+  type ImageReference,
 } from "@loomina/gateway";
 import {
   buildKeyframePrompt,
@@ -12,6 +14,7 @@ import {
 } from "@loomina/pipeline";
 import type { Character, Id, Location, Prop, SheetView } from "@loomina/ir";
 import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
+import { readAssetBytes } from "@/lib/asset-store";
 import { assertPromptAllowed, type PromptModeration } from "@/lib/moderation";
 
 /**
@@ -39,6 +42,14 @@ export type GeneratedImage = {
   cny?: number;
   /** 发出请求前的提示词审核结果（H6，ADR-0105） */
   moderation: PromptModeration;
+  /** 这次有没有真的把参考图发给供应商（B2 / ADR-0162） */
+  references: {
+    mode: "edits" | "prompt-only";
+    /** 实际发出去几张 */
+    sent: number;
+    /** 调用方点名要带、但读不到字节的几张 */
+    missing: string[];
+  };
 };
 
 /** 提示词与占位 shotId 都按资产语义走，不按"这一格是哪个角色的"走。 */
@@ -90,11 +101,35 @@ export async function imagePrice(modelId?: string): Promise<ImagePrice> {
   };
 }
 
+/**
+ * 把调用方点名的参考图读成字节（B2 / ADR-0162）。
+ *
+ * 读不到的不报错、不阻塞生成：如实回一份 `missing` 名单，界面据此说
+ * 「这一张没吃到参考图」，比悄悄当它存在更可信（准则 P15）。
+ */
+async function referencesOf(
+  refs: { assetId: string; uri: string; label: string }[] | undefined,
+): Promise<{ references: ImageReference[]; missing: string[] }> {
+  const references: ImageReference[] = [];
+  const missing: string[] = [];
+  for (const ref of (refs ?? []).slice(0, MAX_REFERENCES)) {
+    const file = await readAssetBytes(ref.uri);
+    if (!file) {
+      missing.push(ref.label);
+      continue;
+    }
+    references.push({ bytes: file.bytes, mime: file.mime, label: ref.label });
+  }
+  return { references, missing };
+}
+
 export async function generateCastImage(
   request: CastImageRequest,
   modelId?: string,
   /** 作者手改过的提示词（ADR-0148）：给了就用它，不再拼默认那段 */
   promptOverride?: string,
+  /** 调用方点名的参考图（B2 / ADR-0162）：给了就真的发给供应商 */
+  refs?: { assetId: string; uri: string; label: string }[],
 ): Promise<GeneratedImage> {
   const resolved = await resolveModel("image", modelId);
   const config = gatewayConfigOf(resolved);
@@ -107,11 +142,14 @@ export async function generateCastImage(
   const prompt = promptOverride ?? built.prompt;
   // H6：硬阻断的提示词在这里就停，供应商一次请求都不发
   const moderation = assertPromptAllowed(prompt, "image");
+  const { references, missing } = await referencesOf(refs);
   const output = await adapter.generate({
     // 定妆资产还不属于某一镜，用语义 id 占位，保证溯源能对上是什么东西
     shotId: built.label as Id,
     prompt,
     size: "1024x1536",
+    ...(references.length ? { references } : {}),
+    ...(refs?.length ? { referenceAssetIds: refs.map((ref) => ref.assetId as Id) } : {}),
   });
 
   return {
@@ -120,5 +158,10 @@ export async function generateCastImage(
     prompt,
     cny: resolved.model.perImageCny ?? imageCostCny(output.provenance.modelId),
     moderation,
+    references: {
+      mode: output.referenceMode ?? "prompt-only",
+      sent: output.referenceCount ?? 0,
+      missing,
+    },
   };
 }

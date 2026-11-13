@@ -131,6 +131,79 @@ describe("图片适配器", () => {
       "data:image/png;base64,QUJD",
     );
   });
+
+  it("有参考图时走 images/edits：multipart 带 image[]，并把张数写回", async () => {
+    const { client, calls } = clientWith([
+      () => jsonResponse({ created: 1, data: [{ url: "https://cdn.test/b.png" }] }),
+    ]);
+    const adapter = new TreecloudImageAdapter(client, { size: "1024x1536" });
+    const output = await adapter.generate({
+      shotId: "sh-1",
+      prompt: "同一个人，换侧面",
+      references: [
+        { bytes: new Uint8Array([1, 2, 3]), mime: "image/png", label: "林 · 正面" },
+        { bytes: new Uint8Array([4, 5]), mime: "image/png", label: "林 · 3/4" },
+      ],
+    });
+
+    expect(calls[0]?.url).toBe("https://relay.test/v1/images/edits");
+    expect(calls[0]?.headers["Content-Type"]).toBeUndefined();
+    const form = calls[0]?.body as FormData;
+    expect(form).toBeInstanceOf(FormData);
+    expect(form.get("model")).toBe("gpt-image-2-c");
+    expect(form.get("size")).toBe("1024x1536");
+    expect(form.getAll("image[]")).toHaveLength(2);
+    expect(output.referenceMode).toBe("edits");
+    expect(output.referenceCount).toBe(2);
+    expect(output.provenance.referenceAssetIds).toEqual([]);
+  });
+
+  it("代理不收参考图时退回纯文生图，并如实写 prompt-only", async () => {
+    const { client, calls } = clientWith([
+      () =>
+        jsonResponse(
+          { error: { message: "unsupported_parameter: image", type: "invalid_request_error" } },
+          400,
+        ),
+      () => jsonResponse({ created: 1, data: [{ url: "https://cdn.test/c.png" }] }),
+    ]);
+    const adapter = new TreecloudImageAdapter(client);
+    const output = await adapter.generate({
+      shotId: "sh-1",
+      prompt: "同一个人",
+      references: [{ bytes: new Uint8Array([9]), mime: "image/png" }],
+    });
+
+    expect(calls[0]?.url).toBe("https://relay.test/v1/images/edits");
+    expect(calls[1]?.url).toBe("https://relay.test/v1/images/generations");
+    expect(output.referenceMode).toBe("prompt-only");
+    expect(output.referenceCount).toBe(0);
+  });
+
+  it("超时这类偶发失败不悄悄退回：照常报错", async () => {
+    const { client, calls } = clientWith([
+      () => jsonResponse({ error: { message: "upstream timeout" } }, 504),
+    ]);
+    const adapter = new TreecloudImageAdapter(client);
+    await expect(
+      adapter.generate({
+        shotId: "sh-1",
+        prompt: "同一个人",
+        references: [{ bytes: new Uint8Array([9]), mime: "image/png" }],
+      }),
+    ).rejects.toBeInstanceOf(TreecloudError);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("没有参考图时仍走 generations，不多发一次 edits", async () => {
+    const { client, calls } = clientWith([
+      () => jsonResponse({ created: 1, data: [{ url: "https://cdn.test/d.png" }] }),
+    ]);
+    const adapter = new TreecloudImageAdapter(client);
+    const output = await adapter.generate({ shotId: "sh-1", prompt: "空镜" });
+    expect(calls[0]?.url).toBe("https://relay.test/v1/images/generations");
+    expect(output.referenceMode).toBe("prompt-only");
+  });
 });
 
 describe("视频适配器", () => {

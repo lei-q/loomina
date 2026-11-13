@@ -5031,3 +5031,34 @@ A18 的 12 维报告回答「结构上缺不缺」，但短剧作者改稿时盯
 **边界**
 - 这张表不是排期：依赖什么时候解除取决于供应商与授权，不取决于本机进度。
 - 不记录密钥、账号或供应商内部信息；只写公开的能力缺口与界面现状。
+
+## 第一百八十二次 · 2026-11-13 · 参考图进入出图请求（B2）
+
+**议题**
+ADR-0029 定的是「图片接口不收参考图，只记进溯源」。用户换了图像模型之后，这条前提不再成立：实测 `POST /v1/images/edits`（multipart，`image[]`）单张与多张都返回 200，`size` 也照常生效。参考图是短剧一致性的第一层，继续只当装饰等于白白放弃。
+
+**结论**
+- 网关 `ImageInput.references` 收字节（mime + 标签），`ImageOutput` 回 `referenceMode` 与 `referenceCount`；有参考图走 edits，没有仍走 generations，请求体与以前逐字一致。
+- 只在代理明确表示不支持时退回纯文生图（404 / 405，或 400 + unsupported / not support / image request rejected / unknown parameter）；超时、429、5xx 照常报错，不悄悄降级。
+- 上限：单张 8 MB、最多 4 张，与 `MAX_ANCHORS` 同量级。
+- `POST /api/asset` 收 `references: [{ assetId, uri, label }]`，地址只认 `loomina://` / `s3://` / `data:image/`（不收 http 外链，避免服务端变成任意 URL 代理）；服务端读字节，读不到的进 `missing`，不阻塞出图。
+- 装配规则：三视图用当前角度之前已出的格子（最多 2 张，正面不拿自己当参考）；关键帧用 `shotAnchors`，尾帧额外把首帧排第一；地点主镜用自己的参考图；道具参考图延续上一张。
+- 出图后写 `generationNotice`（「已带 N 张参考图生成」/「按纯文生图生成」），与 `castError` 分开显示，定妆页与关键帧页各一行。
+- `POST /api/video` 的首帧接受 `loomina://` / `s3://`：读回字节换成 data URI 再发，修掉资产库首帧会 400 的旧问题。
+
+**产物**
+- `packages/gateway/src/types.ts`、`packages/gateway/src/treecloud.ts`、4 条新网关测试
+- `apps/web/lib/generate-image.ts`、`apps/web/app/api/asset/route.ts`、`apps/web/app/api/video/route.ts`
+- `apps/web/lib/workbench-store.ts`（`references` 装配 + `generationNotice`）、`cast-screen.tsx`、`keyframes-screen.tsx`、5 条新 store 测试
+- `docs/adr/0162-reference-images-in-request.md`、`docs/FEATURES.md`、`docs/ROADMAP.md`、`docs/RISKS.md`
+
+**验证**
+- 全仓 981 条测试通过（4 条跳过）；`pnpm typecheck` 与 `pnpm build` 通过。
+- 真实接口实测：单张 / 两张 `image[]` 均 200，返回 `b64_json`；`size=1024x1536` 生效。
+- 浏览器 `/keyframes`：点 SH-01「首帧」→ 出图（首✓）；再点「尾帧」→ 出图后页面顶部出现「已带 1 张参考图生成。」，`首✓ · 尾✓`，无错误行。截图 `/tmp/ref.png`。
+
+**边界**
+- 出图变慢（multipart 多传几 MB），实测仍在 20–50 秒量级。
+- 参考图质量决定结果：三视图画歪了，后面的帧会一起歪；B14 只查结构化锚点，不做像素校验。
+- 多人同框时 4 张名额可能不够；`shotAnchors` 的取舍规则现在有了像素后果。
+- 不做参考图权重、自动挑图、局部重绘（B10）、压缩裁剪。

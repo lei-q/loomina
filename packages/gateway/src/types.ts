@@ -1,9 +1,19 @@
 import type { Id, Provenance } from "@loomina/ir";
 
+/** 一张随请求发出去的参考图（B2 / ADR-0162）：字节由调用方从资产库读好 */
+export interface ImageReference {
+  bytes: Uint8Array;
+  mime: string;
+  /** 溯源与报错里用的名字，例如「林 · 正面」 */
+  label?: string;
+}
+
 export interface ImageInput {
   shotId: Id;
   prompt: string;
   referenceAssetIds?: Id[];
+  /** 真正的参考图字节；非空时走 `images/edits`，空则走纯文生图 */
+  references?: ImageReference[];
   /** 例如 "1024x1536"（竖屏 2:3）。不给就用适配器默认值。 */
   size?: string;
 }
@@ -14,6 +24,14 @@ export interface ImageOutput {
   provenance: Provenance;
   /** 本次调用真实花费（若供应商返回了 usage）。缺失表示未知。 */
   costCny?: number;
+  /**
+   * 参考图是怎么处理的：
+   * - `edits`：真的当参考图发出去了；
+   * - `prompt-only`：供应商不收参考图（或这次失败），退回纯文生图。
+   */
+  referenceMode?: "edits" | "prompt-only";
+  /** 发出去几张参考图；`prompt-only` 时为 0 */
+  referenceCount?: number;
 }
 
 export interface VideoInput {

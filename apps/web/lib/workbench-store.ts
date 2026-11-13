@@ -12,6 +12,7 @@ import {
   sheetSlotAssets,
   sheetSlotsOf,
   SHEET_ANGLES,
+  SHEET_LABELS,
   shotAnchors,
   StagingMarkSchema,
   VOICE_PROFILE_MAX,
@@ -140,8 +141,53 @@ function withPromptOverride(
   return prompt ? { prompt } : {};
 }
 
+/**
+ * 把资产 id 变成「随请求发出去的参考图」（B2 / ADR-0162）。
+ *
+ * 只收有地址的图；缺的、不是图的都跳过——服务端还会再按字节校验一次，
+ * 这里少带一张比带一个空地址更安全。最多 4 张，与 `MAX_REFERENCES` 对齐。
+ */
+function referenceImagesOf(
+  project: Project,
+  refs: { assetId: string; label: string }[],
+): { assetId: string; uri: string; label: string }[] {
+  const out: { assetId: string; uri: string; label: string }[] = [];
+  const seen = new Set<string>();
+  for (const ref of refs) {
+    if (out.length >= 4) break;
+    if (seen.has(ref.assetId)) continue;
+    const asset = project.assets.find((item) => item.id === ref.assetId);
+    if (!asset?.uri || asset.kind !== "image") continue;
+    seen.add(ref.assetId);
+    out.push({ assetId: ref.assetId, uri: asset.uri, label: ref.label });
+  }
+  return out;
+}
+
 function clipReason(reason: string): string {
   return reason.length > 240 ? `${reason.slice(0, 240)}…` : reason;
+}
+
+/**
+ * 出图之后那句「参考图到底发出去没有」（B2 / ADR-0162）。
+ *
+ * 三种情况分开说：真的带上了、读不到字节所以少带、供应商不收于是退回纯文生图。
+ * 没说清的话，作者会以为身份一致性已经靠参考图锁住了（准则 P3 / P15）。
+ */
+function referenceNotice(
+  result: { mode?: "edits" | "prompt-only"; sent?: number; missing?: string[] } | undefined,
+): string | undefined {
+  if (!result) return undefined;
+  const sent = result.sent ?? 0;
+  const missing = result.missing ?? [];
+  if (result.mode === "edits" && sent > 0) {
+    const tail = missing.length ? `；另有 ${missing.length} 张读不到字节没发出去（${missing.join("、")}）` : "";
+    return `已带 ${sent} 张参考图生成${tail}。`;
+  }
+  if (missing.length > 0) {
+    return `参考图读不到字节（${missing.join("、")}），这一张按纯文生图生成。`;
+  }
+  return "这一张按纯文生图生成：供应商没有接收参考图。";
 }
 
 /**
@@ -183,6 +229,11 @@ type WorkbenchState = {
   /** 正在生成哪一张：人物 / 场景 / 道具的 id → 任务。出图是分钟级，界面要如实显示进度 */
   jobs: Record<string, GenerateJob | undefined>;
   castError?: string;
+  /**
+   * 出图成功但有一句要说的话（B2 / ADR-0162）：例如「参考图没发出去，退回纯文生图」。
+   * 与 `castError` 分开：这不是失败，别让作者以为这张没出。
+   */
+  generationNotice?: string;
   /** 模型读懂了哪句（H19）：成功才写，不是错误 */
   instructionNotice?: string;
   /** 正在等模型回话：按钮转圈，防重复点 */
@@ -829,6 +880,13 @@ async function generateOne(
     after?: (assetId: string, at: string) => ProjectEvent | undefined;
     /** 溯源里记下这一张引用了哪些已锁定的锚点 */
     referenceAssetIds?: string[];
+    /**
+     * 随请求真正发出去的参考图（B2 / ADR-0162）。
+     *
+     * 只传地址与标签：字节由服务端从资产库读，浏览器不重复上传。
+     * 不传就是纯文生图——这和以前一样，不改任何已有路径的行为。
+     */
+    references?: { assetId: string; uri: string; label: string }[];
   },
 ): Promise<boolean> {
   const setJob = (value: GenerateJob | undefined) =>
@@ -868,6 +926,7 @@ async function generateOne(
   }
 
   setJob(input.job);
+  set({ generationNotice: undefined });
   try {
     const response = await fetch("/api/asset", {
       method: "POST",
@@ -875,6 +934,7 @@ async function generateOne(
       body: JSON.stringify({
         ...input.body,
         modelId: modelIdFor("image", get().project.models),
+        ...(input.references?.length ? { references: input.references } : {}),
       }),
     });
     const payload = (await response.json()) as {
@@ -883,6 +943,7 @@ async function generateOne(
       prompt?: string;
       cny?: number;
       error?: string;
+      references?: { mode?: "edits" | "prompt-only"; sent?: number; missing?: string[] };
     };
     if (!response.ok || !payload.uri) {
       throw new Error(payload.error ?? `生成失败（${response.status}）`);
@@ -915,7 +976,7 @@ async function generateOne(
     const appended = extra ? [event, extra] : [event];
     let project = get().project;
     for (const item of appended) project = applyEvent(project, item);
-    set({ project, events: [...get().events, ...appended] });
+    set({ project, events: [...get().events, ...appended], generationNotice: referenceNotice(payload.references) });
     setJob(undefined);
     return true;
   } catch (error) {
@@ -2052,7 +2113,6 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     if (!character) return;
     // 锁定的定妆不能被覆盖：要重做先解锁（准则 P14）
     if (isLocked(project, "character", characterId)) return;
-
     // 旧项目 / 还没补格子的角色（ADR-0144）：点「生成三视图」先补一条
     // `character.updated { sheet }` 把四个资产位占上，再一格一格出图。
     // 已有的格子（可能是作者换过的 id）原样保留。
@@ -2099,6 +2159,12 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     for (const angle of SHEET_ANGLES) {
       const assetId = active.sheet[angle];
       if (!assetId) continue;
+      // 参考图（B2 / ADR-0162）：已经出过的正面 / 3/4 当作这一格的身份锚。
+      // 正面是锚点本身，不拿自己当参考；其余角度按「先正后侧」的顺序取前两张。
+      const sheetRefs = SHEET_ANGLES.slice(0, SHEET_ANGLES.indexOf(angle))
+        .map((other) => ({ assetId: active.sheet[other], label: `${active.name} · ${SHEET_LABELS[other]}` }))
+        .filter((ref): ref is { assetId: string; label: string } => Boolean(ref.assetId))
+        .slice(0, 2);
       const ok = await generateOne(
         { get, set },
         {
@@ -2116,6 +2182,8 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
             angle,
             ...withPromptOverride(get, `sheet:${characterId}:${angle}`),
           },
+          references: referenceImagesOf(get().project, sheetRefs),
+          referenceAssetIds: sheetRefs.map((ref) => ref.assetId),
         },
       );
       if (!ok) return; // 一格没成，后面的也多半不成；别继续烧钱
@@ -2170,6 +2238,12 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     }
 
     set({ castError: undefined });
+    // 参考图（B2 / ADR-0162）：地点自己的参考图（B8）就是这张主镜要延续的角度与细节。
+    // 参考图本身不占主镜的资产位，重生成也不会把它覆盖掉。
+    const refs = referenceImagesOf(
+      project,
+      location.referenceImages.map((assetId) => ({ assetId, label: `${location.name} · 参考图` })),
+    );
     await generateOne(
       { get, set },
       {
@@ -2182,6 +2256,8 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
           location: { name: location.name, description: location.description },
           ...withPromptOverride(get, `master:${locationId}`),
         },
+        references: refs,
+        referenceAssetIds: refs.map((ref) => ref.assetId),
       },
     );
   },
@@ -2200,6 +2276,16 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     // 镜号要按整片的顺序算：`shot.index` 是场内序号，第二场以后会报错镜号
     const no = toStageView(project).shots.find((item) => item.id === shot.id)?.no;
     set({ castError: undefined });
+    // 参考图（B2 / ADR-0162）：把锚点装配出来的那几张真的发出去。
+    // 尾帧优先拿首帧当参考——同一镜的两端必须是同一个人、同一间屋子。
+    const anchors = shotAnchors(project, shot);
+    const firstAsset = shot.keyframes.firstAssetId
+      ? project.assets.find((item) => item.id === shot.keyframes.firstAssetId)
+      : undefined;
+    const refs =
+      frame === "last" && firstAsset?.uri
+        ? [{ assetId: firstAsset.id, uri: firstAsset.uri, label: "这一镜的首帧" }, ...referenceImagesOf(project, anchors.refs)]
+        : referenceImagesOf(project, anchors.refs);
     return generateOne(
       { get, set },
       {
@@ -2215,7 +2301,8 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
           shot: shotMaterial(project, shot, { frame }),
           ...withPromptOverride(get, `keyframe:${shotId}:${frame}`),
         },
-        referenceAssetIds: shotAnchors(project, shot).refs.map((ref) => ref.assetId),
+        references: refs.slice(0, 4),
+        referenceAssetIds: anchors.refs.map((ref) => ref.assetId),
         after: (id, at) => ({
           type: "shot.updated",
           at,
@@ -5301,6 +5388,12 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     while (project.assets.some((item) => item.id === assetId)) assetId += "x";
 
     set({ castError: undefined });
+    // 参考图（B2 / ADR-0162）：已有的参考图当成这件道具的同一件东西，
+    // 新的一张要延续它的材质、颜色与比例。第一张没有参考，纯文生图。
+    const refs = referenceImagesOf(
+      project,
+      prop.referenceImages.map((id) => ({ assetId: id, label: `${prop.name} · 参考图` })),
+    );
     await generateOne(
       { get, set },
       {
@@ -5313,6 +5406,8 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
           prop: { name: prop.name, description: prop.description },
           ...withPromptOverride(get, `prop:${propId}`),
         },
+        references: refs,
+        referenceAssetIds: refs.map((ref) => ref.assetId),
         after: (id, at) => ({
           type: "prop.updated",
           at,

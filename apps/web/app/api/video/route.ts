@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { ConfigError } from "@loomina/gateway";
+import { readAssetBytes } from "@/lib/asset-store";
 import { VideoGenerationError, generateShotVideo } from "@/lib/generate-video";
 import { recordHealthEvent } from "@/lib/health-events";
 import { PromptBlockedError } from "@/lib/moderation";
@@ -42,10 +43,19 @@ export async function POST(request: Request) {
 
   const firstFrame = typeof body.firstFrame === "string" ? body.firstFrame.trim() : "";
   if (!firstFrame) return bad("先有首帧，才能让它动起来");
-  if (!/^(https?:\/\/|data:(image|video)\/)/i.test(firstFrame)) {
-    return bad("首帧要先有地址：http(s):// 或 data:image/ 开头");
+  if (!/^(https?:\/\/|data:(image|video)\/|loomina:\/\/|s3:\/\/)/i.test(firstFrame)) {
+    return bad("首帧要先有地址：http(s)://、data:image/ 或资产库地址");
   }
-  if (firstFrame.length > FIRST_FRAME_MAX) return bad("首帧太大了：12 MB 以内");
+  // 资产库里的首帧不能原样发给供应商：它只是本机的一个地址。
+  // 读回字节换成 data URI；读不到就如实说，不发一个空地址出去（H3 / ADR-0128）。
+  let firstFrameUri = firstFrame;
+  if (!/^(https?:\/\/|data:)/i.test(firstFrame)) {
+    const file = await readAssetBytes(firstFrame);
+    if (!file) return bad("首帧读不到字节：资产库里这个地址不存在或已损坏");
+    if (file.bytes.byteLength > FIRST_FRAME_MAX) return bad("首帧太大了：12 MB 以内");
+    firstFrameUri = `data:${file.mime};base64,${Buffer.from(file.bytes).toString("base64")}`;
+  }
+  if (firstFrameUri.length > FIRST_FRAME_MAX) return bad("首帧太大了：12 MB 以内");
 
   const rawDuration = typeof body.durationMs === "number" ? body.durationMs : 3000;
   const durationMs = Math.min(8000, Math.max(1000, Math.round(rawDuration)));
@@ -61,7 +71,7 @@ export async function POST(request: Request) {
       shot.description.slice(0, 20) || "一镜",
       () =>
         generateShotVideo(
-          { shot, firstFrame, durationMs, ...(override.prompt ? { prompt: override.prompt } : {}) },
+          { shot, firstFrame: firstFrameUri, durationMs, ...(override.prompt ? { prompt: override.prompt } : {}) },
           modelId,
         ),
     );

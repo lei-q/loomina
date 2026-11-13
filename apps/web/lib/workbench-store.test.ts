@@ -5175,3 +5175,81 @@ describe("逐字导入开工（F6 / ADR-0154）", () => {
     state().readOnly = false;
   });
 });
+
+describe("参考图真的发出去（B2 / ADR-0162）", () => {
+  beforeEach(() => {
+    state().reset();
+    state().setImagePrice({ model: "gpt-image-2-c", cny: 0.12 });
+  });
+
+  type Body = {
+    kind: string;
+    references?: { assetId: string; uri: string; label: string }[];
+    referenceAssetIds?: string[];
+  };
+
+  const stub = (reply: (body: Body) => Record<string, unknown> = () => ({})) => {
+    const calls: Body[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as Body;
+        calls.push(body);
+        return new Response(
+          JSON.stringify({
+            uri: "data:image/png;base64,RkFLRQ==",
+            model: "gpt-image-2-c",
+            cny: 0.12,
+            ...reply(body),
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+    return calls;
+  };
+
+  it("尾帧把这一镜的首帧当参考图发出去", async () => {
+    const calls = stub();
+    await state().generateKeyframe("s-03");
+    await state().generateKeyframe("s-03", "last");
+
+    const last = calls.at(-1)!;
+    expect(last.kind).toBe("keyframe");
+    expect(last.references?.length).toBe(1);
+    expect(last.references?.[0]?.assetId).toBe("a-keyframe-s-03");
+    expect(last.references?.[0]?.uri).toContain("data:image/png");
+    vi.unstubAllGlobals();
+  });
+
+  it("首帧没有参考图时不带 references，请求体与以前一致", async () => {
+    const calls = stub();
+    await state().generateKeyframe("s-03");
+    expect(calls[0]?.references).toBeUndefined();
+    vi.unstubAllGlobals();
+  });
+
+  it("服务端说参考图没发出去时，界面留一句人话而不是假装带上了", async () => {
+    stub(() => ({ references: { mode: "prompt-only", sent: 0, missing: [] } }));
+    await state().generateKeyframe("s-03");
+    expect(state().generationNotice).toContain("纯文生图");
+    vi.unstubAllGlobals();
+  });
+
+  it("参考图真的带上时，回执说清带了几张", async () => {
+    stub(() => ({ references: { mode: "edits", sent: 1, missing: [] } }));
+    await state().generateKeyframe("s-03");
+    expect(state().generationNotice).toContain("已带 1 张参考图");
+    vi.unstubAllGlobals();
+  });
+
+  it("参考图资产还没有地址时不硬塞空地址：这一张按纯文生图出", async () => {
+    const calls = stub(() => ({ references: { mode: "prompt-only", sent: 0, missing: [] } }));
+    // 示例项目里的道具参考图只有 id、没有 uri（还没真出过图）
+    await state().generateProp("p-cup");
+    expect(calls[0]?.kind).toBe("prop");
+    expect(calls[0]?.references).toBeUndefined();
+    expect(state().generationNotice).toContain("纯文生图");
+    vi.unstubAllGlobals();
+  });
+});

@@ -211,6 +211,7 @@ export function KeyframesScreen() {
   const readOnly = useWorkbench((state) => state.readOnly);
   const storageError = useWorkbench((state) => state.storageError);
   const castError = useWorkbench((state) => state.castError);
+  const generationNotice = useWorkbench((state) => state.generationNotice);
   const imageCny = useWorkbench((state) => state.imageCny);
   const setImagePrice = useWorkbench((state) => state.setImagePrice);
   const videoCnyPerSecond = useWorkbench((state) => state.videoCnyPerSecond);
@@ -266,6 +267,9 @@ export function KeyframesScreen() {
 
       {castError && (
         <p className="shrink-0 px-6 pb-1 pt-2 text-[10.5px] leading-[1.6] text-pick">{castError}</p>
+      )}
+      {generationNotice && (
+        <p className="shrink-0 px-6 pb-1 text-[10px] leading-[1.6] text-muted-2">{generationNotice}</p>
       )}
 
       <main className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
