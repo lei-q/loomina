@@ -6251,3 +6251,61 @@ describe("接上一段（C.6 / ADR-0192）", () => {
     expect(state().setShotContinuation("s-02", 3000)).toBe(false);
   });
 });
+
+describe("废片库取回（C14 / ADR-0193）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("淘汰的一拍改回待审，并回到镜头最后", () => {
+    state().select("s-03");
+    state().decide("rejected");
+    expect(statusOf("t-03")).toBe("rejected");
+    const before = state().events.length;
+
+    expect(state().restoreTake("t-03")).toBe(true);
+    expect(statusOf("t-03")).toBe("draft");
+    const shot = state().project.shots.find((item) => item.id === "s-03")!;
+    expect(shot.takeIds.at(-1)).toBe("t-03");
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "take.updated",
+      takeId: "t-03",
+      patch: { status: "draft" },
+    });
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("删掉的一拍按日志里原记录放回去，不重新生成", () => {
+    expect(state().removeTake("t-04")).toBe(true);
+    expect(state().project.takes.some((take) => take.id === "t-04")).toBe(false);
+    const before = state().events.length;
+
+    expect(state().restoreTake("t-04")).toBe(true);
+    expect(state().project.takes.find((take) => take.id === "t-04")?.status).toBe("draft");
+    const shot = state().project.shots.find((item) => item.id === "s-04")!;
+    expect(shot.takeIds).toContain("t-04");
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "take.added",
+      take: { id: "t-04", shotId: "s-04", status: "draft" },
+    });
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("找不到、锁定、已留用与只读都拒绝，且不写事件", () => {
+    const before = state().events.length;
+    expect(state().restoreTake("t-nope")).toBe(false);
+    expect(state().restoreTake("t-08")).toBe(false); // s-08 锁定
+    expect(state().castError).toContain("锁定");
+    expect(state().restoreTake("t-02")).toBe(false); // 已留用
+    expect(state().castError).toContain("留用");
+    expect(state().events).toHaveLength(before);
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().restoreTake("t-03")).toBe(false);
+    expect(state().events).toHaveLength(before);
+    useWorkbench.setState({ readOnly: false });
+  });
+});

@@ -104,6 +104,7 @@ import { planMusicFill } from "@/lib/music-curve";
 import { instructionsOf, performanceOf } from "@/lib/voice-performance";
 import { buildHistory, historyPosition, nextUndo } from "@/lib/history";
 import { storyRestorePatch, storyVersionsOf } from "@/lib/story-versions";
+import { takeFromLog } from "@/lib/trash";
 import { sharedEntityImport, type SharedEntity } from "@/lib/shared-entities";
 import { claimWriter } from "@/lib/writer-lock";
 import {
@@ -540,6 +541,13 @@ type WorkbenchState = {
    * 资产不动——资产可能还被别处引用；回滚能把这一拍找回来。
    */
   removeTake: (takeId: string) => boolean;
+  /**
+   * 从废片库取回一拍（C14 / ADR-0193）。
+   *
+   * 淘汰的拍改回待审并挪到本镜最后；日志里删掉的拍按原记录重新 `take.added`。
+   * 不重新生成、不花钱。锁定的镜头拒绝；已留用的拍不在这里动。
+   */
+  restoreTake: (takeId: string) => boolean;
   /** 定妆闸门：锁定 / 解锁一个角色、场景或道具 */
   lockCast: (targetType: ApprovalTargetType, targetId: string) => void;
   unlockCast: (targetType: ApprovalTargetType, targetId: string) => void;
@@ -2150,6 +2158,79 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       events: [...events, event],
       castError: undefined,
       currentShotId,
+    });
+    return true;
+  },
+
+  restoreTake: (takeId) => {
+    if (get().readOnly) {
+      set({ castError: "现在是只读：换到能写的窗口再取回。" });
+      return false;
+    }
+    const { project, events } = get();
+    const existing = project.takes.find((take) => take.id === takeId);
+    // 删掉的拍只剩日志里的记录：take.added 里有原始 take
+    const take = existing ?? takeFromLog(events, takeId);
+    if (!take) {
+      set({ castError: "日志里找不到这一拍。" });
+      return false;
+    }
+    const shot = project.shots.find((item) => item.id === take.shotId);
+    if (!shot) {
+      set({ castError: "这一镜已经删了，拍子挂不回去。" });
+      return false;
+    }
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定，先解锁再取回。" });
+      return false;
+    }
+    if (existing?.status === "approved") {
+      set({ castError: "这一拍已经留用了，不用从废片库取回。" });
+      return false;
+    }
+    const at = stamp();
+
+    // 删掉的一拍：按原记录放回去（新记录仍是待审，作者再决定留不留用）
+    if (!existing) {
+      const event: ProjectEvent = {
+        type: "take.added",
+        at,
+        take: { ...take, status: "draft" },
+      };
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        castError: undefined,
+      });
+      return true;
+    }
+
+    // 淘汰的一拍：改回待审，并挪到镜头最后一拍（界面默认显示的那一拍）
+    const needsStatus = existing.status !== "draft";
+    const needsOrder = shot.takeIds.at(-1) !== takeId;
+    if (!needsStatus && !needsOrder) {
+      set({ castError: "这一拍已经在镜头最后，也是待审状态。" });
+      return false;
+    }
+    const written: ProjectEvent[] = [];
+    if (needsStatus) {
+      written.push({ type: "take.updated", at, takeId, patch: { status: "draft" } });
+    }
+    if (needsOrder) {
+      written.push({
+        type: "shot.updated",
+        at,
+        shotId: shot.id,
+        patch: {
+          takeIds: [...shot.takeIds.filter((id) => id !== takeId), takeId],
+        },
+      });
+    }
+    const next = written.reduce(applyEvent, project);
+    set({
+      project: next,
+      events: [...events, ...written],
+      castError: undefined,
     });
     return true;
   },

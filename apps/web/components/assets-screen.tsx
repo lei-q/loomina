@@ -12,6 +12,7 @@ import {
 } from "@/lib/asset-inventory";
 import { assetHref } from "@/lib/asset-uri";
 import { formatSize } from "@/lib/platforms";
+import { trashOf, trashStateLabel, type TrashItem } from "@/lib/trash";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
 
@@ -56,7 +57,10 @@ export function AssetsScreen() {
   const hydrate = useWorkbench((state) => state.hydrate);
   const storageError = useWorkbench((state) => state.storageError);
   const readOnly = useWorkbench((state) => state.readOnly);
+  const events = useWorkbench((state) => state.events);
   const removeAsset = useWorkbench((state) => state.removeAsset);
+  const restoreTake = useWorkbench((state) => state.restoreTake);
+  const useKeyframeVersion = useWorkbench((state) => state.useKeyframeVersion);
   const [filter, setFilter] = useState<AssetFilter>("all");
   const [files, setFiles] = useState<Map<string, number>>();
   const [storeError, setStoreError] = useState<string>();
@@ -98,6 +102,8 @@ export function AssetsScreen() {
 
   const library = useMemo(() => libraryOf(project, files), [project, files]);
   const rows = useMemo(() => filterLibrary(library.rows, filter), [library.rows, filter]);
+  // 废片库（C14）：淘汰 / 删掉的拍子与旧版关键帧，汇到一处才能取回
+  const trash = useMemo(() => trashOf(project, events), [project, events]);
 
   return (
     <div className="flex h-dvh flex-col bg-bg text-text">
@@ -132,6 +138,26 @@ export function AssetsScreen() {
           {note && (
             <p className="mt-3 text-[9.5px] leading-[1.7] text-muted-2">{note}</p>
           )}
+          <TrashSection
+            items={trash}
+            readOnly={Boolean(readOnly)}
+            onRestoreTake={(takeId) => {
+              const ok = restoreTake(takeId);
+              setNote(
+                ok
+                  ? "取回了一拍：回到本镜最后一拍、待审状态。原文件没有重新生成，也没花钱。时间线上的片段要自己再接回。"
+                  : (useWorkbench.getState().castError ?? "这一拍取不回来。"),
+              );
+            }}
+            onRestoreKeyframe={(item) => {
+              const ok = useKeyframeVersion(item.shotId, item.frame ?? "first", item.assetId);
+              setNote(
+                ok
+                  ? "换回了这张旧版：现在这一版会先进历史，不重新生成、不花钱。"
+                  : (useWorkbench.getState().castError ?? "这张旧版换不回来。"),
+              );
+            }}
+          />
           <ul className="mt-5 border-t border-line">
             {rows.length === 0 ? (
               <li className="py-8 text-center text-[10px] text-muted-2">
@@ -201,6 +227,140 @@ export function AssetsScreen() {
         </span>
       </footer>
     </div>
+  );
+}
+
+function TrashSection({
+  items,
+  readOnly,
+  onRestoreTake,
+  onRestoreKeyframe,
+}: {
+  items: TrashItem[];
+  readOnly: boolean;
+  onRestoreTake: (takeId: string) => void;
+  onRestoreKeyframe: (item: TrashItem) => void;
+}) {
+  const counts = {
+    rejected: items.filter((item) => item.state === "rejected").length,
+    removed: items.filter((item) => item.state === "removed").length,
+    old: items.filter((item) => item.state === "old").length,
+  };
+  const shown = items.slice(0, 40);
+
+  return (
+    <section className="mt-6" aria-label="废片库">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h2 className="text-[10px] tracking-[.08em] text-text">废片库</h2>
+        <span className="tnum text-[9px] text-muted-2">
+          {items.length === 0
+            ? "空的"
+            : `淘汰 ${counts.rejected} · 删掉 ${counts.removed} · 旧版 ${counts.old}`}
+        </span>
+      </div>
+      <p className="mt-1 max-w-[70ch] text-[9px] leading-[1.7] text-muted-2">
+        淘汰的拍、删掉的拍、被重生成换下来的关键帧都留在这里。取回用的是原文件，
+        不重新生成、不花钱；删掉的拍子的时间线片段不会自动接回。
+      </p>
+
+      {items.length === 0 ? (
+        <p className="mt-3 rounded-token border border-line px-3 py-4 text-center text-[10px] text-muted-2">
+          还没有废片。淘汰或删掉一拍、重生成一次关键帧，这里就会有东西。
+        </p>
+      ) : (
+        <ul className="mt-2 border-t border-line">
+          {shown.map((item) => {
+            const href = item.uri ? assetHref(item.uri) : undefined;
+            return (
+              <li
+                key={item.key}
+                className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line py-2"
+              >
+                <span className="flex h-10 w-16 shrink-0 items-center justify-center overflow-hidden rounded-[2px] border border-line bg-surface">
+                  {item.kind === "keyframe" && href ? (
+                    <img src={href} alt={item.shotLabel} className="h-full w-full object-cover" />
+                  ) : item.kind === "take" && href ? (
+                    <video
+                      src={href}
+                      muted
+                      playsInline
+                      preload="metadata"
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <span className="text-[8.5px] text-muted-2">
+                      {item.kind === "take" ? "影" : "图"}
+                    </span>
+                  )}
+                </span>
+
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-baseline gap-x-2">
+                    <span
+                      className={cn(
+                        "shrink-0 rounded-token border px-1 py-px text-[8.5px]",
+                        item.state === "rejected"
+                          ? "border-line-2 text-muted"
+                          : item.state === "removed"
+                            ? "border-pick/60 text-pick"
+                            : "border-line text-muted-2",
+                      )}
+                    >
+                      {trashStateLabel(item.state)}
+                    </span>
+                    <span className="shrink-0 text-[10px] text-text">{item.shotLabel}</span>
+                    {item.kind === "keyframe" && (
+                      <span className="shrink-0 text-[8.5px] text-muted-2">
+                        {item.frame === "last" ? "尾帧旧版" : "首帧旧版"}
+                      </span>
+                    )}
+                    {item.modelId && (
+                      <span className="shrink-0 text-[8.5px] text-muted-2">{item.modelId}</span>
+                    )}
+                  </span>
+                  <span className="mt-0.5 block truncate text-[8.5px] text-muted-2">
+                    {item.shotDescription || item.assetId}
+                  </span>
+                </span>
+
+                {item.costCny !== undefined && (
+                  <span className="tnum shrink-0 text-[9px] text-muted-2">
+                    ¥{item.costCny.toFixed(2)}
+                  </span>
+                )}
+                <span className="tnum shrink-0 text-[9px] text-muted-2">
+                  {item.at ? item.at.slice(5, 16).replace("T", " ") : "—"}
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (item.kind === "take") onRestoreTake(item.key.slice("take:".length));
+                    else onRestoreKeyframe(item);
+                  }}
+                  disabled={readOnly}
+                  title={
+                    readOnly
+                      ? "只读窗口不能取回"
+                      : item.kind === "take"
+                        ? "放回本镜最后一拍，状态改回待审；不重新生成、不花钱"
+                        : "把这张旧图换回这一帧；现在这一版会进历史，不重新生成"
+                  }
+                  className="tnum shrink-0 rounded-token border border-line px-2 py-px text-[9px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-pick enabled:hover:text-pick disabled:pointer-events-none disabled:opacity-40"
+                >
+                  {item.kind === "take" ? "取回" : "换回"}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {items.length > shown.length && (
+        <p className="mt-2 text-[9px] text-muted-2">
+          还有 {items.length - shown.length} 条没列出：先取回或清理前面的，再显示后面的。
+        </p>
+      )}
+    </section>
   );
 }
 
