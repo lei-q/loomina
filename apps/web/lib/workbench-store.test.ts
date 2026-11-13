@@ -6689,3 +6689,47 @@ describe("跨空间取技能（C.5 / ADR-0202）", () => {
     useWorkbench.setState({ readOnly: false });
   });
 });
+
+describe("剧本版本库写回（C14 / ADR-0204）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("改过动作与台词后写回初版：一批事件、同一 at、成片不动", () => {
+    const initial = structuredClone(state().project);
+    expect(state().editAction("s-01", "改过的动作")).toBe(true);
+    expect(state().editDialogue("d-01", "改过的台词")).toBe(true);
+    const snapshot = state().events.length;
+
+    expect(state().restoreScriptVersion(0)).toBe(true);
+    const batch = state().events.slice(snapshot);
+    expect(batch.length).toBeGreaterThan(0);
+    expect(new Set(batch.map((event) => event.at)).size).toBe(1);
+    expect(state().project.shots.find((shot) => shot.id === "s-01")!.description).toBe(
+      initial.shots.find((shot) => shot.id === "s-01")!.description,
+    );
+    expect(state().project.dialogue.find((line) => line.id === "d-01")!.text).toBe(
+      initial.dialogue.find((line) => line.id === "d-01")!.text,
+    );
+    expect(state().project.takes).toEqual(state().project.takes);
+    expect(state().scriptNotice).toContain("已写回这一版");
+    expect(rebuild(state().events).shots.find((shot) => shot.id === "s-01")!.description).toBe(
+      initial.shots.find((shot) => shot.id === "s-01")!.description,
+    );
+  });
+
+  it("现在就是这一版 / 找不到这一版 / 只读 都不写事件", () => {
+    expect(state().restoreScriptVersion(state().events.length - 1)).toBe(false);
+    expect(state().scriptNotice).toContain("现在就是这一版");
+    expect(state().restoreScriptVersion(999)).toBe(false);
+    expect(state().scriptNotice).toContain("找不到这一版");
+
+    expect(state().editAction("s-01", "改过的动作")).toBe(true);
+    const snapshot = state().events.length;
+    useWorkbench.setState({ readOnly: true });
+    expect(state().restoreScriptVersion(0)).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+    useWorkbench.setState({ readOnly: false });
+  });
+});

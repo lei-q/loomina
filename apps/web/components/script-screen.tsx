@@ -7,6 +7,7 @@ import { TopBar } from "@/components/top-bar";
 import { DoctorPanel } from "@/components/doctor-panel";
 import { DialoguePolishPanel } from "@/components/dialogue-polish-panel";
 import { SharedScenePicker } from "@/components/shared-scene-picker";
+import { ScriptVersionSection } from "@/components/script-version-section";
 import { analyzeScript } from "@/lib/script-doctor";
 import { polishDialogue, type PolishLineInput } from "@/lib/dialogue-polish";
 import { sceneNumberingOf } from "@/lib/scene-numbering";
@@ -452,6 +453,7 @@ export function ScriptScreen() {
               场 / 镜 / 台词整场从另一个工作空间取过来；缺人缺地点会整场拒绝。
             </span>
           </div>
+          <ScriptVersionSection />
 
           {sourceDocument && (
             <details className="mt-4 rounded-token border border-line bg-surface px-3 py-2">

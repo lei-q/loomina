@@ -106,6 +106,7 @@ import { instructionsOf, performanceOf } from "@/lib/voice-performance";
 import { buildHistory, historyPosition, nextUndo } from "@/lib/history";
 import { sceneImportEvents, sceneReadiness } from "@/lib/shared-scenes";
 import { storyImportPatch } from "@/lib/shared-stories";
+import { replayRestore, scriptRestoreEvents, scriptVersionsOf } from "@/lib/script-versions";
 import { storyRestorePatch, storyVersionsOf } from "@/lib/story-versions";
 import { takeFromLog, voiceTakeFromLog } from "@/lib/trash";
 import { sharedEntityImport, type SharedEntity } from "@/lib/shared-entities";
@@ -303,6 +304,8 @@ type WorkbenchState = {
   historyNotice?: string;
   /** 故事版本库的一句话：恢复了哪一版、有几条带不回来（C2） */
   storyNotice?: string;
+  /** 剧本版本库的一句话：写回了几条、哪些带不回来（C14 / ADR-0204） */
+  scriptNotice?: string;
   /** 阶段式 / 自由工作台（F8）：存在 localStorage，跨页面生效 */
   mode: WorkbenchMode;
   /** 刚刚被阶段硬锁拦下的那句话（F8）：写一次就弹一次 */
@@ -955,6 +958,12 @@ type WorkbenchState = {
    * 与现在完全一样时不写事件。
    */
   useStoryVersion: (eventIndex: number) => boolean;
+  /**
+   * 把剧本 / 分镜写回某一版（C14 / ADR-0204）：一批事件只改当前仍存在的
+   * 场 / 镜 / 句的剧本字段，不动 take / 关键帧 / 配音 / 时间线。
+   * 同批共用一个 `at`，撤销一步可退；与现在一致时不写事件。
+   */
+  restoreScriptVersion: (eventIndex: number) => boolean;
   /**
    * 取用别的空间的一版故事（C1 / ADR-0198）：一条 `story.updated` 整份写回。
    *
@@ -6360,6 +6369,42 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     }
   },
 
+  restoreScriptVersion: (eventIndex) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const version = scriptVersionsOf(events).find((item) => item.eventIndex === eventIndex);
+    if (!version) {
+      set({ scriptNotice: "找不到这一版剧本。" });
+      return false;
+    }
+    const restore = scriptRestoreEvents(project, version.project, stamp());
+    if (restore.events.length === 0) {
+      set({ scriptNotice: "现在就是这一版，没有要改的。" });
+      return false;
+    }
+    try {
+      // 先整批在草稿上回放：任何一条不合法都不落半份剧本
+      const nextProject = replayRestore(project, restore.events);
+      const skipped =
+        restore.missingScenes + restore.missingShots + restore.missingLines +
+        restore.lockedShots + restore.droppedLocations;
+      set({
+        project: nextProject,
+        events: [...events, ...restore.events],
+        castError: undefined,
+        scriptNotice:
+          (skipped > 0
+            ? `已写回这一版：${restore.events.length} 条改动；${skipped} 处带不回来（已删结构 / 锁定镜头 / 失效地点不重建）。`
+            : `已写回这一版：${restore.events.length} 条改动。`) +
+          "关键帧、take 与配音没有动；想连别的阶段一起回退，用「整份回到这里」。",
+      });
+      return true;
+    } catch (error) {
+      set({ scriptNotice: error instanceof Error ? error.message : "这一版剧本没写回来。" });
+      return false;
+    }
+  },
+
   adoptSharedStory: (source, fromWorkspaceName) => {
     if (get().readOnly) return false;
     const { project, events } = get();
@@ -7386,6 +7431,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       batch: undefined,
       castError: undefined,
       storyNotice: undefined,
+      scriptNotice: undefined,
       lastSwap: undefined,
       asrResult: undefined,
       editError: undefined,
