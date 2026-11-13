@@ -38,6 +38,7 @@ function Cell({
   videoCnyPerSecond,
   onGenerate,
   onGenerateVideo,
+  onUseVersion,
 }: {
   cell: KeyframeCell;
   /** 正在生成哪一帧 */
@@ -53,6 +54,8 @@ function Cell({
   videoCnyPerSecond?: number;
   onGenerate: (frame: "first" | "last") => void;
   onGenerateVideo: () => void;
+  /** 换回某一版旧帧（C2）：不重新生成、不花钱 */
+  onUseVersion: (frame: "first" | "last", assetId: string) => void;
 }) {
   const promptOverrides = useWorkbench((state) => state.promptOverrides);
   const setPromptOverride = useWorkbench((state) => state.setPromptOverride);
@@ -64,6 +67,7 @@ function Cell({
   const uri = frame === "first" ? cell.firstUri : cell.lastUri;
   // 出图之后画面输入又改过：这一帧已经对不上这一镜了
   const staleAt = frame === "first" ? cell.staleFirst : cell.staleLast;
+  const history = frame === "first" ? cell.firstHistory : cell.lastHistory;
   const videoQuote = videoCnyPerSecond === undefined ? undefined : cell.dur * videoCnyPerSecond;
 
   return (
@@ -135,7 +139,7 @@ function Cell({
                     : has
                       ? staleAt
                         ? "画面改过，这一帧已对不上：重生成"
-                        : "重生成，按同一资产位覆盖"
+                        : "重生成；现在这一版会进历史，不会丢"
                       : "生成"
               }
               className={cn(
@@ -151,6 +155,35 @@ function Cell({
           );
         })}
       </div>
+
+      {/* 版本库（C2 / ADR-0185）：重生成不再把上一张冲掉，旧版留在这里 */}
+      {history.length > 0 && (
+        <div>
+          <div className="flex items-baseline justify-between text-[8.5px] text-muted-2">
+            <span>旧版 {history.length}</span>
+            <span>点一张换回</span>
+          </div>
+          <div className="mt-1 flex gap-1 overflow-x-auto pb-0.5">
+            {history.map((version) => (
+              <button
+                key={version.id}
+                type="button"
+                onClick={() => onUseVersion(frame, version.id)}
+                disabled={cell.locked || readOnly || busy !== null || batchRunning}
+                title={`${clock(version.at)} 出的这一版${version.modelId ? ` · ${version.modelId}` : ""}：点一下换回，当前这版会进历史`}
+                className="flex shrink-0 flex-col items-center gap-0.5 rounded-token border border-line p-0.5 text-[8px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-pick enabled:hover:text-text disabled:pointer-events-none disabled:opacity-40"
+              >
+                <img
+                  src={assetHref(version.uri)}
+                  alt={`旧版 ${clock(version.at)}`}
+                  className="h-10 w-7 object-cover"
+                />
+                <span className="tnum">{clock(version.at)}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 首尾两帧各自会送出的提示词（ADR-0148） */}
       <PromptEditor
@@ -218,6 +251,7 @@ export function KeyframesScreen() {
   const setVideoPrice = useWorkbench((state) => state.setVideoPrice);
   const setBudget = useWorkbench((state) => state.setBudget);
   const generateKeyframe = useWorkbench((state) => state.generateKeyframe);
+  const useKeyframeVersion = useWorkbench((state) => state.useKeyframeVersion);
   const generateVideo = useWorkbench((state) => state.generateVideo);
   const generateMissingFrames = useWorkbench((state) => state.generateMissingFrames);
   const batch = useWorkbench((state) => state.batch);
@@ -414,6 +448,9 @@ export function KeyframesScreen() {
                   videoCnyPerSecond={videoCnyPerSecond}
                   onGenerate={(frame) => void generateKeyframe(cell.id, frame)}
                   onGenerateVideo={() => void generateVideo(cell.id)}
+                  onUseVersion={(frame, assetId) =>
+                    useKeyframeVersion(cell.id, frame, assetId)
+                  }
                 />
               );
             })}

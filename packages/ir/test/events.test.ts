@@ -2413,7 +2413,7 @@ describe("音效层与三路平衡（C7 / ADR-0184）", () => {
       applyEvent(project, {
         type: "timeline.mix.updated",
         at: AT,
-        // @ts-expect-error 三路都只有 ±12 dB
+        // 三路都只有 ±12 dB：schema 在运行时拦下
         mix: { dialogueDb: 13, musicDb: 0, sfxDb: 0 },
       }),
     ).toThrow(/三路平衡不合法/);

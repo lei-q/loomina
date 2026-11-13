@@ -424,6 +424,17 @@ export type Blocking = z.infer<typeof BlockingSchema>;
 export const KeyframesSchema = z.object({
   firstAssetId: Id.optional(),
   lastAssetId: Id.optional(),
+  /**
+   * 这一帧的旧版本（C2 / ADR-0185）。重生成不再原地丢掉上一张：
+   * 旧的图先复制成 `a-kfhist-…` 资产挂在这里，最新版仍是上面两个 id。
+   * 每帧最多留 20 版；有地址才算，占位与已失效的资产不进历史。
+   */
+  history: z
+    .object({
+      first: z.array(Id).max(20).default([]),
+      last: z.array(Id).max(20).default([]),
+    })
+    .optional(),
 });
 export type Keyframes = z.infer<typeof KeyframesSchema>;
 

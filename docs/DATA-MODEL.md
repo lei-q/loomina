@@ -254,8 +254,14 @@ interface DialogueLine {
 interface Keyframes {
   firstAssetId?: ID;
   lastAssetId?: ID;
+  history?: {                // C2 / ADR-0185：旧版仍留在项目里，每帧最多 20 条
+    first: ID[];             // 新 → 旧
+    last: ID[];
+  };
 }
 ```
+
+> **落地情况（ADR-0185，2026-11-13）**：`Keyframes.history` 是**可选**字段（老日志、手写项目不用补），存旧版关键帧的资产 id。重生成首 / 尾帧前，先把当前那一张复制成 `a-kfhist-<shotId>-<first|last>-<时间戳>` 写一条 `asset.updated`，再写 `shot.updated { keyframes }` 把新帧挂回标准位并把复制件插到历史最前；按 uri 去重，超过 20 条时挤掉最早的。复制件照抄原资产的 uri / mime / provenance / createdAt，**不带 `costCny`**：花费口径是「记在资产位上」，复制件再记一次会重复计账。当前版仍占 `a-keyframe-<shotId>` / `a-lastframe-<shotId>`，指针不变；`useKeyframeVersion` 换回旧版时把旧图内容写回标准位并保留该位当前的花费。历史 id 属于项目的引用，`referencedAssetIds` 收录，清库不当孤儿；资产不复制文件（内容寻址，指向同一份字节）。
 
 > **落地情况（ADR-0096，2026-11-11）**：`Shot.beat?: BeatKind` 与 `Shot.purpose?: ShotPurpose` 已进 IR，都是可选字段；旧日志回放不受影响。生成提示词要求模型直接标，中文别名可解析，不认识的词留空。没有标注的镜头由 `apps/web/lib/storyboard.ts` 在读模型里推断，推断不写回 IR；作者在分镜页「检查」抽屉里改过才写 `shot.updated`。覆盖率（每拍同时有信息与情绪 / 反应镜头）与 V1 / V2 / V4 / V5 / V6 / V8 校验都是读模型结论，不落字段。
 

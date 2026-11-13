@@ -498,6 +498,11 @@ type WorkbenchState = {
   /** 给当前镜生成首帧或尾帧；落一张图 + 一条 shot.updated（ADR-0037 / 0038） */
   generateKeyframe: (shotId: string, frame?: Frame) => Promise<boolean>;
   /**
+   * 换回某一版旧关键帧（C2 / ADR-0185）：把选中的旧图内容写回这一帧的资产位，
+   * 现在这一版先复制进历史。不重新生成、不花钱。
+   */
+  useKeyframeVersion: (shotId: string, frame: Frame, assetId: string) => boolean;
+  /**
    * 首帧 → 视频：提交、等出片，落一条 `asset.updated` + 一条 `take.added`（ADR-0083）。
    * 失败如实写进 `castError`，界面还有「贴视频地址导入」兜底。
    */
@@ -1073,7 +1078,7 @@ async function generateOne(
     /** 这一张属于哪一镜：单镜上限按它算（H10） */
     shotId?: string;
     /** 这张图还要改项目结构时，在这里追加事件（例如首帧挂回镜头） */
-    after?: (assetId: string, at: string) => ProjectEvent | undefined;
+    after?: (assetId: string, at: string) => ProjectEvent | ProjectEvent[] | undefined;
     /** 溯源里记下这一张引用了哪些已锁定的锚点 */
     referenceAssetIds?: string[];
     /**
@@ -1169,7 +1174,10 @@ async function generateOne(
       },
     };
     const extra = input.after?.(input.assetId, at);
-    const appended = extra ? [event, extra] : [event];
+    const appended = [
+      event,
+      ...(extra === undefined ? [] : Array.isArray(extra) ? extra : [extra]),
+    ];
     let project = get().project;
     for (const item of appended) project = applyEvent(project, item);
     set({ project, events: [...get().events, ...appended], generationNotice: referenceNotice(payload.references) });
@@ -2846,6 +2854,30 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       frame === "last" && firstAsset?.uri
         ? [{ assetId: firstAsset.id, uri: firstAsset.uri, label: "这一镜的首帧" }, ...referenceImagesOf(project, anchors.refs)]
         : referenceImagesOf(project, anchors.refs);
+
+    // 版本库（C2 / ADR-0185）：重生成前把现在这张复制一份挂进历史，
+    // 旧的画面与提示词留得下来；复制件不再记钱，免得同一笔花销被数两次。
+    const frameKey = frame === "last" ? "last" : "first";
+    const currentId =
+      frame === "last" ? shot.keyframes.lastAssetId : shot.keyframes.firstAssetId;
+    const currentAsset = currentId
+      ? project.assets.find((item) => item.id === currentId)
+      : undefined;
+    const history = shot.keyframes.history ?? { first: [], last: [] };
+    const kept = history[frameKey] ?? [];
+    const alreadyKept = currentAsset?.uri
+      ? kept.some(
+          (id) => project.assets.find((item) => item.id === id)?.uri === currentAsset.uri,
+        )
+      : true;
+    let archiveAsset: Asset | undefined;
+    if (currentAsset?.uri && !alreadyKept) {
+      let archiveId = `a-kfhist-${shot.id}-${frameKey}-${Date.now().toString(36)}`;
+      while (project.assets.some((item) => item.id === archiveId)) archiveId += "x";
+      const { costCny: _cost, ...rest } = currentAsset;
+      archiveAsset = { ...rest, id: archiveId };
+    }
+
     return generateOne(
       { get, set },
       {
@@ -2863,19 +2895,115 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
         },
         references: refs.slice(0, 4),
         referenceAssetIds: anchors.refs.map((ref) => ref.assetId),
-        after: (id, at) => ({
-          type: "shot.updated",
-          at,
-          shotId: shot.id,
-          patch: {
-            keyframes:
-              frame === "last"
-                ? { ...shot.keyframes, lastAssetId: id }
-                : { ...shot.keyframes, firstAssetId: id },
-          },
-        }),
+        after: (id, at) => {
+          const events: ProjectEvent[] = [];
+          if (archiveAsset) {
+            events.push({ type: "asset.updated", at, asset: archiveAsset });
+          }
+          const nextHistory = archiveAsset
+            ? { ...history, [frameKey]: [archiveAsset.id, ...kept].slice(0, 20) }
+            : history;
+          events.push({
+            type: "shot.updated",
+            at,
+            shotId: shot.id,
+            patch: {
+              keyframes: {
+                ...shot.keyframes,
+                ...(frame === "last" ? { lastAssetId: id } : { firstAssetId: id }),
+                ...(archiveAsset ? { history: nextHistory } : {}),
+              },
+            },
+          });
+          return events;
+        },
       },
     );
+  },
+
+  useKeyframeVersion: (shotId, frame, assetId) => {
+    if (get().readOnly) {
+      set({ editError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) return false;
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定：要换旧版先解锁。" });
+      return false;
+    }
+    const frameKey = frame === "last" ? "last" : "first";
+    const chosen = project.assets.find((item) => item.id === assetId && item.uri);
+    if (!chosen) {
+      set({ castError: "这一版旧图已经不在资产库里了。" });
+      return false;
+    }
+    const standardId = frame === "last" ? `a-lastframe-${shot.id}` : `a-keyframe-${shot.id}`;
+    if (assetId === standardId) return true;
+    const currentId =
+      frame === "last" ? shot.keyframes.lastAssetId : shot.keyframes.firstAssetId;
+    const currentAsset = currentId
+      ? project.assets.find((item) => item.id === currentId)
+      : undefined;
+    const at = stamp();
+    const history = shot.keyframes.history ?? { first: [], last: [] };
+    const kept = history[frameKey] ?? [];
+    // 现在这一版也进历史：换过去之后还能换回来
+    const alreadyKept = currentAsset?.uri
+      ? kept.some(
+          (id) => project.assets.find((item) => item.id === id)?.uri === currentAsset.uri,
+        )
+      : true;
+    const written: ProjectEvent[] = [];
+    let archiveId: string | undefined;
+    if (currentAsset?.uri && !alreadyKept) {
+      let id = `a-kfhist-${shot.id}-${frameKey}-${Date.now().toString(36)}`;
+      while (project.assets.some((item) => item.id === id)) id += "x";
+      archiveId = id;
+      const { costCny: _cost, ...rest } = currentAsset;
+      written.push({
+        type: "asset.updated",
+        at,
+        asset: { ...rest, id },
+      });
+    }
+    const { costCny: _chosenCost, ...chosenRest } = chosen;
+    written.push({
+      type: "asset.updated",
+      at,
+      asset: {
+        ...chosenRest,
+        id: standardId,
+        // 钱记账在资产位上：换回旧版不该让已花的钱消失
+        ...(currentAsset?.costCny !== undefined ? { costCny: currentAsset.costCny } : {}),
+      },
+    });
+    written.push({
+      type: "shot.updated",
+      at,
+      shotId: shot.id,
+      patch: {
+        keyframes: {
+          ...shot.keyframes,
+          ...(frame === "last"
+            ? { lastAssetId: standardId }
+            : { firstAssetId: standardId }),
+          ...(archiveId
+            ? { history: { ...history, [frameKey]: [archiveId, ...kept].slice(0, 20) } }
+            : {}),
+        },
+      },
+    });
+    try {
+      let next = project;
+      for (const event of written) next = applyEvent(next, event);
+      set({ project: next, events: [...events, ...written], castError: undefined });
+    } catch (error) {
+      set({ castError: error instanceof Error ? error.message : "换不回这一版" });
+      return false;
+    }
+    return true;
   },
 
   generateVideo: async (shotId) => {

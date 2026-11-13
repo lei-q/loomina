@@ -1090,6 +1090,15 @@ export function recycleBin(
 
 // ── 关键帧页（ADR-0042）───────────────────────────────────────────
 
+/** 一版旧关键帧（C2 / ADR-0185）：只带界面要显示的三样 */
+export type KeyframeVersion = {
+  id: string;
+  uri: string;
+  /** 这版是什么时候出的 */
+  at: string;
+  modelId?: string;
+};
+
 export type KeyframeCell = {
   id: string;
   no: number;
@@ -1112,6 +1121,9 @@ export type KeyframeCell = {
   staleLast?: StaleMark;
   /** 首尾帧与出片这一版会送出的提示词（ADR-0148）：界面上可以就地改 */
   prompts: { first: string; last: string; video: string };
+  /** 旧版本（C2 / ADR-0185）：最新的在前，不含当前这一版 */
+  firstHistory: KeyframeVersion[];
+  lastHistory: KeyframeVersion[];
 };
 
 /** 影响画面的镜头字段：改了这些，已经出的帧就不算数了（ADR-0057） */
@@ -1416,7 +1428,24 @@ export function toKeyframeView(
 ): KeyframeView {
   const view = toStageView(project, {});
   const stale = options.events ? staleFrames(options.events, project) : new Map<string, StaleFrame>();
+  const assetById = new Map(project.assets.map((asset) => [asset.id, asset]));
+  const versionsOf = (ids: string[] | undefined): KeyframeVersion[] =>
+    (ids ?? []).flatMap((id) => {
+      const asset = assetById.get(id);
+      if (!asset?.uri) return [];
+      return [
+        {
+          id,
+          uri: asset.uri,
+          at: asset.createdAt,
+          ...(asset.provenance?.modelId ? { modelId: asset.provenance.modelId } : {}),
+        },
+      ];
+    });
+  const shotsById = new Map(project.shots.map((shot) => [shot.id, shot]));
   const cells: KeyframeCell[] = view.shots.map((shot) => ({
+    firstHistory: versionsOf(shotsById.get(shot.id)?.keyframes.history?.first),
+    lastHistory: versionsOf(shotsById.get(shot.id)?.keyframes.history?.last),
     id: shot.id,
     no: shot.no,
     art: shot.art,

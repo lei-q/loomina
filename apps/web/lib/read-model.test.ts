@@ -674,6 +674,46 @@ describe("关键帧页读模型（ADR-0042）", () => {
     expect(cell.art).toBeTruthy();
   });
 
+  it("旧版关键帧按历史顺序给到格子里，没有地址的不算（C2 / ADR-0185）", () => {
+    const project = {
+      ...sampleProject,
+      assets: [
+        ...sampleProject.assets,
+        {
+          id: "a-kfhist-s-03-first-1",
+          kind: "image" as const,
+          source: "generated" as const,
+          uri: "data:image/png;base64,T0xE",
+          provenance: { modelId: "gpt-image-2-c", referenceAssetIds: [], createdAt: "2026-11-09T08:00:00+08:00" },
+          createdAt: "2026-11-09T08:00:00+08:00",
+        },
+        {
+          id: "a-kfhist-s-03-first-2",
+          kind: "image" as const,
+          source: "generated" as const,
+          createdAt: "2026-11-09T09:00:00+08:00",
+        },
+      ],
+      shots: sampleProject.shots.map((shot) =>
+        shot.id === "s-03"
+          ? {
+              ...shot,
+              keyframes: {
+                firstAssetId: "a-keyframe-s-03",
+                history: { first: ["a-kfhist-s-03-first-1", "a-kfhist-s-03-first-2"], last: [] },
+              },
+            }
+          : shot,
+      ),
+    };
+    const cell = toKeyframeView(project).cells.find((item) => item.id === "s-03")!;
+    expect(cell.firstHistory).toHaveLength(1);
+    expect(cell.firstHistory[0]).toMatchObject({
+      id: "a-kfhist-s-03-first-1",
+      modelId: "gpt-image-2-c",
+    });
+  });
+
   it("没价目的关键帧单独计数，不算成 0", () => {
     const project = {
       ...sampleProject,

@@ -54,10 +54,15 @@ export function referencedAssetIds(project: Project): Set<string> {
   for (const shot of project.shots) {
     if (shot.keyframes.firstAssetId) ids.add(shot.keyframes.firstAssetId);
     if (shot.keyframes.lastAssetId) ids.add(shot.keyframes.lastAssetId);
+    // 版本库（C2）：历史帧仍在项目里，清库时不能当孤儿删掉
+    for (const id of shot.keyframes.history?.first ?? []) ids.add(id);
+    for (const id of shot.keyframes.history?.last ?? []) ids.add(id);
   }
   for (const take of project.takes) ids.add(take.assetId);
   for (const line of project.dialogue) if (line.audioAssetId) ids.add(line.audioAssetId);
   for (const cue of project.timeline.music) ids.add(cue.assetId);
+  // 音效层（C7）：与配乐一样是项目在用的素材
+  for (const cue of project.timeline.sfx) ids.add(cue.assetId);
   for (const pack of project.publishPackages) if (pack.videoAssetId) ids.add(pack.videoAssetId);
   // 调色表（I3）：项目在用它，清库时不能当孤儿删掉
   if (project.grade.lutAssetId) ids.add(project.grade.lutAssetId);
@@ -239,6 +244,13 @@ export function assetUsageLabels(project: Project): Map<string, string[]> {
     const no = shotNo.get(shot.id) ?? 0;
     if (shot.keyframes.firstAssetId) add(shot.keyframes.firstAssetId, `第 ${no} 镜 首帧`);
     if (shot.keyframes.lastAssetId) add(shot.keyframes.lastAssetId, `第 ${no} 镜 尾帧`);
+    // 旧版（C2）：不是孤儿，也不是当前帧
+    for (const id of shot.keyframes.history?.first ?? []) {
+      add(id, `第 ${no} 镜 首帧旧版`);
+    }
+    for (const id of shot.keyframes.history?.last ?? []) {
+      add(id, `第 ${no} 镜 尾帧旧版`);
+    }
   }
   for (const take of project.takes) {
     const no = shotNo.get(take.shotId) ?? 0;
@@ -248,6 +260,7 @@ export function assetUsageLabels(project: Project): Map<string, string[]> {
     add(line.audioAssetId, `配音「${line.text.slice(0, 10)}${line.text.length > 10 ? "…" : ""}」`);
   }
   for (const cue of project.timeline.music) add(cue.assetId, `配乐「${cue.title}」`);
+  for (const cue of project.timeline.sfx) add(cue.assetId, `音效「${cue.title}」`);
   for (const pack of project.publishPackages) {
     if (pack.videoAssetId) add(pack.videoAssetId, `发布包「${pack.platform}」`);
   }

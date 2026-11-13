@@ -3,7 +3,7 @@ import { parseStoryDraft } from "@loomina/pipeline";
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 import { setEventLog, type EventLog } from "./event-log";
 import { claimWriter, releaseWriter } from "./writer-lock";
-import { toScriptView, toStageView } from "./read-model";
+import { spendOf, toScriptView, toStageView } from "./read-model";
 import { referencedAssetIds } from "./asset-inventory";
 import { toEditView } from "./edit";
 import { stageStateOf } from "./stage-flow";
@@ -5905,5 +5905,93 @@ describe("音效层与三路平衡（C7）", () => {
     const settled = state().events.length;
     expect(state().setMix({ dialogueDb: 12 })).toBe(true);
     expect(state().events).toHaveLength(settled);
+  });
+});
+
+describe("关键帧版本库（C2）", () => {
+  beforeEach(() => {
+    state().reset();
+    state().setImagePrice({ model: "gpt-image-2-c", cny: 0.12 });
+  });
+
+  // 每次生成给一个不同的地址：同一张图不去重历史，不同图才进旧版
+  let round = 0;
+  const stub = () => {
+    round = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        round += 1;
+        return new Response(
+          JSON.stringify({
+            uri: `data:image/png;base64,RkFLRR${round}`,
+            model: "gpt-image-2-c",
+            cny: 0.12,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+  };
+
+  it("重生成把上一版复制进历史，不丢、也不重复记钱", async () => {
+    stub();
+    await state().generateKeyframe("s-03");
+    const firstUri = state().project.assets.find((item) => item.id === "a-keyframe-s-03")?.uri;
+    const spentAfterFirst = spendOf(state().project).spent;
+
+    await state().generateKeyframe("s-03");
+    const shot = state().project.shots.find((item) => item.id === "s-03")!;
+    const history = shot.keyframes.history?.first ?? [];
+    expect(history).toHaveLength(1);
+    expect(history[0]!.startsWith("a-kfhist-s-03-first-")).toBe(true);
+
+    const archive = state().project.assets.find((item) => item.id === history[0]);
+    expect(archive?.uri).toBe(firstUri);
+    expect(archive?.costCny).toBeUndefined();
+    // 旧的图还在，最新的仍是标准资产位
+    expect(state().project.assets.find((item) => item.id === "a-keyframe-s-03")?.uri).not.toBe(firstUri);
+    // 历史副本不另记一笔：花费仍按资产位记（与改动前的口径一致）
+    expect(spendOf(state().project).spent).toBeCloseTo(spentAfterFirst, 2);
+    vi.unstubAllGlobals();
+  });
+
+  it("换回旧版：内容写回资产位，现在这版也进历史，钱不变", async () => {
+    stub();
+    await state().generateKeyframe("s-03");
+    const firstUri = state().project.assets.find((item) => item.id === "a-keyframe-s-03")?.uri;
+    await state().generateKeyframe("s-03");
+    const shot = state().project.shots.find((item) => item.id === "s-03")!;
+    const archiveId = shot.keyframes.history!.first[0]!;
+    const spentBefore = spendOf(state().project).spent;
+
+    expect(state().useKeyframeVersion("s-03", "first", archiveId)).toBe(true);
+    const after = state().project.shots.find((item) => item.id === "s-03")!;
+    expect(state().project.assets.find((item) => item.id === "a-keyframe-s-03")?.uri).toBe(firstUri);
+    expect(after.keyframes.firstAssetId).toBe("a-keyframe-s-03");
+    // 换走的那一版也留在历史里，可以换回去
+    expect(after.keyframes.history!.first.length).toBe(2);
+    expect(spendOf(state().project).spent).toBeCloseTo(spentBefore, 2);
+    vi.unstubAllGlobals();
+  });
+
+  it("锁定的镜头不让换版；旧图没了如实拒绝", async () => {
+    stub();
+    // s-02 已经有一条留用的 take，可以锁定
+    await state().generateKeyframe("s-02");
+    const firstUri = state().project.assets.find((item) => item.id === "a-keyframe-s-02")?.uri;
+    await state().generateKeyframe("s-02");
+    const archiveId =
+      state().project.shots.find((item) => item.id === "s-02")!.keyframes.history!.first[0]!;
+
+    state().setShotLock("s-02", true);
+    expect(state().useKeyframeVersion("s-02", "first", archiveId)).toBe(false);
+    expect(state().castError).toContain("锁定");
+    state().setShotLock("s-02", false);
+
+    expect(state().useKeyframeVersion("s-02", "first", "a-kfhist-nope")).toBe(false);
+    expect(state().castError).toContain("不在资产库");
+    expect(state().project.assets.find((item) => item.id === "a-keyframe-s-02")?.uri).not.toBe(firstUri);
+    vi.unstubAllGlobals();
   });
 });
