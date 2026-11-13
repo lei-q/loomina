@@ -859,6 +859,8 @@ interface MusicCue {
 
 校验：资产存在且是音频、授权备注非空、起点在成片之内、增益与 ducking 深度在范围内；`motifId` 若存在，必须是 `project.motifs` 里的 id（C10）。
 
+**混排语义（C4 / ADR-0182，2026-11-13）**：数组里的每一段是一个时间段，**允许重叠**（铺底 + 重音是常态，不是错误）；起点必须 `0 ≤ startMs < timelineEnd`、`durationMs ≥ 500`，最多 4 段（渲染清单上限）。改起点不连带改长度。界面与 store 都支持事后改 `startMs` / `durationMs`，仍然只写一条 `timeline.music.updated`。
+
 **落地细节（C10 第一档，2026-11-12）**
 
 - **校验顺序**：`timeline.music.updated` 先跑 `checkMusic`（上面这些，人话报错），再逐条 `MusicCueSchema.safeParse` 填 `role` 默认值。反过来 zod 的英文报错会盖掉「起点不合法」，而旧日志缺 `role` 时必须走一次 `safeParse` 才补得上默认值。

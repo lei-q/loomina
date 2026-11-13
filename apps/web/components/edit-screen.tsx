@@ -502,6 +502,8 @@ export function EditScreen() {
   }>();
   const [musicMood, setMusicMood] = useState("紧张");
   const [musicLicense, setMusicLicense] = useState("");
+  /** 新加这一段的起点（秒）：多条 cue 混排时各占一段 */
+  const [musicStartSec, setMusicStartSec] = useState("0");
   const [musicBusy, setMusicBusy] = useState(false);
   const [musicError, setMusicError] = useState("");
   const musicPreviewRef = useRef<HTMLAudioElement>(null);
@@ -907,18 +909,22 @@ export function EditScreen() {
       mood: musicMood,
       durationMs: musicFile.durationMs,
       licenseRef: musicLicense,
+      startMs: Math.max(0, Math.round(Number(musicStartSec) * 1000) || 0),
     });
     if (ok) {
       setMusicFile(undefined);
       setMusicLicense("");
       setMusicError("");
-      setNotice("配乐已加入：导出时会按台词窗自动 ducking。");
+      setNotice(
+        view.music.length === 0
+          ? "配乐已加入：导出时会按台词窗自动 ducking。"
+          : "又加了一段配乐：各段在自己的起点进来，导出时一起混。",
+      );
     }
   };
 
-  const toggleMusicPreview = () => {
+  const toggleMusicPreview = (cue?: { uri?: string; gainDb: number }) => {
     const element = musicPreviewRef.current;
-    const cue = view.music[0];
     if (!element || !cue?.uri) return;
     if (element.paused) {
       const src = assetHref(cue.uri);
@@ -2093,11 +2099,176 @@ export function EditScreen() {
                     <span className="text-[8.5px] tracking-[.06em] text-muted-2">C4 · C12</span>
                   </div>
 
-                  {view.music.length === 0 ? (
-                    <>
+                  {view.music.length > 0 && (
+                    <div className="mt-2 flex flex-col gap-2">
+                      {view.music.map((cue, index) => (
+                        <div key={cue.id} className="rounded-token border border-line p-2.5">
+                          <div className="flex flex-wrap items-baseline justify-between gap-2">
+                            <span className="min-w-0 flex-1 truncate text-[10.5px] text-text">
+                              <span className="tnum mr-1.5 text-[8.5px] text-muted-2">
+                                {index + 1}
+                              </span>
+                              {cue.title}
+                            </span>
+                            <span className="tnum text-[8.5px] text-muted-2">
+                              {cue.assetDurationMs ? fmtSec(cue.assetDurationMs) : "时长未知"} ·{" "}
+                              {cue.loop ? "循环" : "只播一遍"} · {fmtSec(cue.startMs)} 起 · 长{" "}
+                              {fmtSec(cue.durationMs)}
+                            </span>
+                          </div>
+                          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                            <label className="flex items-center gap-2 text-[9.5px] text-muted-2">
+                              起点（秒）
+                              <input
+                                type="number"
+                                min={0}
+                                max={Math.max(0, view.totalMs / 1000)}
+                                step={0.5}
+                                value={(cue.startMs / 1000).toFixed(1)}
+                                disabled={Boolean(readOnly)}
+                                onChange={(event) =>
+                                  updateMusic(
+                                    {
+                                      startMs: Math.round(
+                                        Math.max(0, Number(event.target.value)) * 1000,
+                                      ),
+                                    },
+                                    cue.id,
+                                  )
+                                }
+                                className="tnum w-full min-w-0 rounded-token border border-line bg-transparent px-1.5 py-0.5 text-[9.5px] text-text focus:border-line-2 focus:outline-none"
+                              />
+                            </label>
+                            <label className="flex items-center gap-2 text-[9.5px] text-muted-2">
+                              这一段多长（秒）
+                              <input
+                                type="number"
+                                min={0.5}
+                                step={0.5}
+                                value={(cue.durationMs / 1000).toFixed(1)}
+                                disabled={Boolean(readOnly)}
+                                onChange={(event) =>
+                                  updateMusic(
+                                    {
+                                      durationMs: Math.round(
+                                        Math.max(0.5, Number(event.target.value)) * 1000,
+                                      ),
+                                    },
+                                    cue.id,
+                                  )
+                                }
+                                className="tnum w-full min-w-0 rounded-token border border-line bg-transparent px-1.5 py-0.5 text-[9.5px] text-text focus:border-line-2 focus:outline-none"
+                              />
+                            </label>
+                          </div>
+                          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                            <label className="flex items-center gap-2 text-[9.5px] text-muted-2">
+                              基准增益
+                              <input
+                                type="range"
+                                min={-40}
+                                max={0}
+                                step={1}
+                                value={cue.gainDb}
+                                disabled={Boolean(readOnly)}
+                                onChange={(event) =>
+                                  updateMusic({ gainDb: Number(event.target.value) }, cue.id)
+                                }
+                                className="min-w-0 flex-1 accent-[var(--pick)]"
+                              />
+                              <span className="tnum w-[42px] text-right text-[9px] text-muted">
+                                {cue.gainDb} dB
+                              </span>
+                            </label>
+                            <label className="flex items-center gap-2 text-[9.5px] text-muted-2">
+                              台词下压低
+                              <input
+                                type="range"
+                                min={12}
+                                max={18}
+                                step={1}
+                                value={cue.duckDb}
+                                disabled={Boolean(readOnly) || !cue.ducking}
+                                onChange={(event) =>
+                                  updateMusic({ duckDb: Number(event.target.value) }, cue.id)
+                                }
+                                className="min-w-0 flex-1 accent-[var(--pick)]"
+                              />
+                              <span className="tnum w-[42px] text-right text-[9px] text-muted">
+                                {cue.duckDb} dB
+                              </span>
+                            </label>
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center gap-3">
+                            <label className="flex cursor-pointer items-center gap-1.5 text-[9.5px] text-muted">
+                              <input
+                                type="checkbox"
+                                checked={cue.ducking}
+                                disabled={Boolean(readOnly)}
+                                onChange={(event) =>
+                                  updateMusic({ ducking: event.target.checked }, cue.id)
+                                }
+                                className="accent-[var(--pick)]"
+                              />
+                              台词下自动 ducking
+                            </label>
+                            <label className="flex items-center gap-1.5 text-[9.5px] text-muted-2">
+                              情绪
+                              <select
+                                value={cue.mood}
+                                disabled={Boolean(readOnly)}
+                                onChange={(event) =>
+                                  updateMusic({ mood: event.target.value }, cue.id)
+                                }
+                                className="rounded-token border border-line bg-transparent px-1 py-0.5 text-[9.5px] text-text focus:border-line-2 focus:outline-none"
+                              >
+                                {["", "紧张", "悬疑", "温柔", "悲伤", "燃", "轻松"].map(
+                                  (mood) => (
+                                    <option key={mood || "none"} value={mood} className="bg-surface">
+                                      {mood || "未标"}
+                                    </option>
+                                  ),
+                                )}
+                              </select>
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => toggleMusicPreview(cue)}
+                              className="rounded-token border border-line px-2 py-0.5 text-[9.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                            >
+                              试听
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                removeMusic(cue.id);
+                                setLoudness(undefined);
+                              }}
+                              disabled={Boolean(readOnly)}
+                              className="rounded-token border border-line px-2 py-0.5 text-[9.5px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-pick enabled:hover:text-pick disabled:opacity-40"
+                            >
+                              移除
+                            </button>
+                          </div>
+                          <p className="mt-1.5 text-[8.5px] leading-[1.6] text-muted-2">
+                            授权：{cue.licenseRef} · 导出时混音总线归一到 −14 LUFS，真峰值目标
+                            ≤ −1 dBTP。
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {view.music.length < 4 ? (
+                    <div
+                      className={
+                        view.music.length > 0 ? "mt-3 border-t border-line pt-3" : undefined
+                      }
+                    >
                       <p className="mt-1 text-[9.5px] leading-[1.7] text-muted-2">
-                        选一条自己有权使用的音乐。加入后默认循环铺满全片，台词出现时自动压低
-                        15 dB；整片混音会归一到 −14 LUFS。
+                        {view.music.length === 0
+                          ? "选一条自己有权使用的音乐。加入后默认循环铺满全片，台词出现时自动压低 15 dB；整片混音会归一到 −14 LUFS。"
+                          : "再加一段：各段在自己的起点进来，可以叠在同一段时间上做层次，也可以各占一段。"}
                       </p>
                       <div className="mt-2 flex flex-wrap items-end gap-2">
                         <label className="flex min-w-[180px] flex-1 flex-col gap-1 text-[9.5px] text-muted-2">
@@ -2112,6 +2283,18 @@ export function EditScreen() {
                               event.target.value = "";
                             }}
                             className="rounded-token border border-line bg-transparent px-2 py-1 text-[10px] text-muted file:mr-2 file:rounded-token file:border-0 file:bg-line file:px-2 file:py-0.5 file:text-[9.5px] file:text-text"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1 text-[9.5px] text-muted-2">
+                          起点（秒）
+                          <input
+                            type="number"
+                            min={0}
+                            max={Math.max(0, view.totalMs / 1000)}
+                            step={0.5}
+                            value={musicStartSec}
+                            onChange={(event) => setMusicStartSec(event.target.value)}
+                            className="tnum w-[76px] rounded-token border border-line bg-transparent px-1.5 py-1 text-[10px] text-text focus:border-line-2 focus:outline-none"
                           />
                         </label>
                         <label className="flex flex-col gap-1 text-[9.5px] text-muted-2">
@@ -2150,7 +2333,7 @@ export function EditScreen() {
                           }
                           className="rounded-token border border-line px-3 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
                         >
-                          加入配乐
+                          {view.music.length === 0 ? "加入配乐" : "再加一段"}
                         </button>
                       </div>
                       {musicFile && (
@@ -2166,117 +2349,17 @@ export function EditScreen() {
                         <p className="mt-1 text-[9px] leading-[1.6] text-pick">{musicError}</p>
                       )}
                       <p className="mt-1 text-[8.5px] leading-[1.6] text-muted-2">
-                        mp3 / m4a / wav / ogg，≤ 18 MB。没有授权来源的音乐不会进项目；
+                        mp3 / m4a / wav / ogg，≤ 18 MB，最多 4 段。没有授权来源的音乐不会进项目；
                         上传素材在导出前检查里还会再要求确认一次。
                       </p>
-                    </>
+                    </div>
                   ) : (
-                    view.music.map((cue) => (
-                      <div key={cue.id} className="mt-2 rounded-token border border-line p-2.5">
-                        <div className="flex flex-wrap items-baseline justify-between gap-2">
-                          <span className="min-w-0 flex-1 truncate text-[10.5px] text-text">
-                            {cue.title}
-                          </span>
-                          <span className="text-[8.5px] text-muted-2">
-                            {cue.assetDurationMs ? fmtSec(cue.assetDurationMs) : "时长未知"} ·{" "}
-                            {cue.loop ? "循环铺满" : "只播一遍"} · 全片 {fmtSec(cue.durationMs)}
-                          </span>
-                        </div>
-                        <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                          <label className="flex items-center gap-2 text-[9.5px] text-muted-2">
-                            基准增益
-                            <input
-                              type="range"
-                              min={-40}
-                              max={0}
-                              step={1}
-                              value={cue.gainDb}
-                              disabled={Boolean(readOnly)}
-                              onChange={(event) =>
-                                updateMusic({ gainDb: Number(event.target.value) }, cue.id)
-                              }
-                              className="min-w-0 flex-1 accent-[var(--pick)]"
-                            />
-                            <span className="tnum w-[42px] text-right text-[9px] text-muted">
-                              {cue.gainDb} dB
-                            </span>
-                          </label>
-                          <label className="flex items-center gap-2 text-[9.5px] text-muted-2">
-                            台词下压低
-                            <input
-                              type="range"
-                              min={12}
-                              max={18}
-                              step={1}
-                              value={cue.duckDb}
-                              disabled={Boolean(readOnly) || !cue.ducking}
-                              onChange={(event) =>
-                                updateMusic({ duckDb: Number(event.target.value) }, cue.id)
-                              }
-                              className="min-w-0 flex-1 accent-[var(--pick)]"
-                            />
-                            <span className="tnum w-[42px] text-right text-[9px] text-muted">
-                              {cue.duckDb} dB
-                            </span>
-                          </label>
-                        </div>
-                        <div className="mt-2 flex flex-wrap items-center gap-3">
-                          <label className="flex cursor-pointer items-center gap-1.5 text-[9.5px] text-muted">
-                            <input
-                              type="checkbox"
-                              checked={cue.ducking}
-                              disabled={Boolean(readOnly)}
-                              onChange={(event) =>
-                                updateMusic({ ducking: event.target.checked }, cue.id)
-                              }
-                              className="accent-[var(--pick)]"
-                            />
-                            台词下自动 ducking
-                          </label>
-                          <label className="flex items-center gap-1.5 text-[9.5px] text-muted-2">
-                            情绪
-                            <select
-                              value={cue.mood}
-                              disabled={Boolean(readOnly)}
-                              onChange={(event) =>
-                                updateMusic({ mood: event.target.value }, cue.id)
-                              }
-                              className="rounded-token border border-line bg-transparent px-1 py-0.5 text-[9.5px] text-text focus:border-line-2 focus:outline-none"
-                            >
-                              {["", "紧张", "悬疑", "温柔", "悲伤", "燃", "轻松"].map((mood) => (
-                                <option key={mood || "none"} value={mood} className="bg-surface">
-                                  {mood || "未标"}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <button
-                            type="button"
-                            onClick={toggleMusicPreview}
-                            className="rounded-token border border-line px-2 py-0.5 text-[9.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
-                          >
-                            试听
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              removeMusic(cue.id);
-                              setLoudness(undefined);
-                            }}
-                            disabled={Boolean(readOnly)}
-                            className="rounded-token border border-line px-2 py-0.5 text-[9.5px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-pick enabled:hover:text-pick disabled:opacity-40"
-                          >
-                            移除
-                          </button>
-                          <audio ref={musicPreviewRef} className="hidden" />
-                        </div>
-                        <p className="mt-1.5 text-[8.5px] leading-[1.6] text-muted-2">
-                          授权：{cue.licenseRef} · 导出时混音总线归一到 −14 LUFS，真峰值目标 ≤ −1
-                          dBTP。
-                        </p>
-                      </div>
-                    ))
+                    <p className="mt-3 border-t border-line pt-3 text-[9px] leading-[1.6] text-muted-2">
+                      已经有 4 段配乐（渲染清单上限）：先移掉或合并一段再加。
+                    </p>
                   )}
+
+                  <audio ref={musicPreviewRef} className="hidden" />
 
                   <MusicCurvePanel
                     project={project}

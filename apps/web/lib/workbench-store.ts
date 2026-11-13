@@ -578,10 +578,19 @@ type WorkbenchState = {
     mood: string;
     durationMs: number;
     licenseRef: string;
+    /** 从成片第几毫秒进来（默认 0）；多条 cue 混排时各占一段 */
+    startMs?: number;
+    /** 占多长（默认从起点铺到成片末尾） */
+    spanMs?: number;
   }) => boolean;
-  /** 调配乐：增益 / ducking 深度 / 开关 / 情绪 / 角色 / 动机；写一条 `timeline.music.updated` */
+  /**
+   * 调配乐：增益 / ducking 深度 / 开关 / 情绪 / 角色 / 动机 / 起点 / 长度；
+   * 写一条 `timeline.music.updated`。
+   */
   updateMusic: (
-    patch: Partial<Pick<MusicCue, "gainDb" | "duckDb" | "ducking" | "mood" | "role" | "motifId">>,
+    patch: Partial<
+      Pick<MusicCue, "gainDb" | "duckDb" | "ducking" | "mood" | "role" | "motifId" | "startMs" | "durationMs">
+    >,
     cueId?: string,
   ) => boolean;
   /** 移掉配乐床：不给 id 就全部移掉；写一条 `timeline.music.updated`，资产留在项目里 */
@@ -3750,7 +3759,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     return true;
   },
 
-  addMusic: ({ uri: rawUri, mime, title, mood, durationMs, licenseRef }) => {
+  addMusic: ({ uri: rawUri, mime, title, mood, durationMs, licenseRef, startMs, spanMs }) => {
     if (get().readOnly) {
       set({ editError: "另一个标签页正在编辑：这里只读。" });
       return false;
@@ -3797,14 +3806,25 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       (end, item) => Math.max(end, item.startMs + item.durationMs),
       0,
     );
+    // 多条 cue 混排（C4）：每段可以有自己的起点与长度；
+    // 不给就从 0 铺到成片末尾，与只有一条时的旧行为一致
+    const start = Math.max(0, Math.round(startMs ?? 0));
+    if (timelineMs > 0 && start >= timelineMs) {
+      set({ editError: "这一段配乐的起点在成片之外：先把它挪回时间线里。" });
+      return false;
+    }
+    const span = Math.max(
+      500,
+      Math.round(spanMs ?? (timelineMs > start ? timelineMs - start : durationMs)),
+    );
     const cue: MusicCue = {
       id: cueId,
       assetId,
       title: title.trim().slice(0, 120) || "配乐",
       mood: mood.trim().slice(0, 40),
-      startMs: 0,
-      // 默认循环铺满全片；音乐文件本身多长记在资产上
-      durationMs: timelineMs || Math.round(durationMs),
+      startMs: start,
+      // 默认循环铺满这一段；音乐文件本身多长记在资产上
+      durationMs: span,
       gainDb: -18,
       duckDb: 15,
       ducking: true,
@@ -3840,8 +3860,24 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       ? project.timeline.music.find((item) => item.id === cueId)
       : project.timeline.music[0];
     if (!cue) return false;
+    const timelineEnd = project.timeline.items.reduce(
+      (end, item) => Math.max(end, item.startMs + item.durationMs),
+      0,
+    );
+    // 起点不夹：输入框夹住只会让数字自己跳回去，说清楚为什么不动更好
+    if (patch.startMs !== undefined) {
+      const start = Math.round(patch.startMs);
+      if (!Number.isFinite(start) || start < 0 || (timelineEnd > 0 && start >= timelineEnd)) {
+        set({ editError: "这一段的起点在成片之外：先把它挪回时间线里。" });
+        return false;
+      }
+    }
     const next: MusicCue = {
       ...cue,
+      ...(patch.startMs !== undefined ? { startMs: Math.round(patch.startMs) } : {}),
+      ...(patch.durationMs !== undefined
+        ? { durationMs: Math.max(500, Math.round(patch.durationMs)) }
+        : {}),
       ...(patch.gainDb !== undefined
         ? { gainDb: Math.max(-40, Math.min(0, Math.round(patch.gainDb))) }
         : {}),

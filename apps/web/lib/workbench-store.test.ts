@@ -5736,3 +5736,60 @@ describe("品牌包与头尾卡（E9 / ADR-0174）", () => {
     expect(state().editError).toMatch(/500–10000/);
   });
 });
+
+describe("多条配乐混排（C4）", () => {
+  beforeEach(() => {
+    state().reset();
+  });
+
+  const add = (startSec: number) =>
+    state().addMusic({
+      uri: "data:audio/mpeg;base64,AAAA",
+      mime: "audio/mpeg",
+      title: "床",
+      mood: "紧张",
+      durationMs: 8000,
+      licenseRef: "自己录制",
+      startMs: startSec * 1000,
+    });
+
+  it("两段各有自己的起点，后一段不改前一段", () => {
+    expect(add(0)).toBe(true);
+    expect(add(3)).toBe(true);
+    const music = state().project.timeline.music;
+    expect(music).toHaveLength(2);
+    expect(music[0]!.startMs).toBe(0);
+    expect(music[1]!.startMs).toBe(3000);
+    // 默认铺到成片末尾（示例时间线 5.5 秒）
+    expect(music[1]!.durationMs).toBe(2500);
+  });
+
+  it("改起点与长度只写一条 timeline.music.updated", () => {
+    add(0);
+    const cueId = state().project.timeline.music[0]!.id;
+    const before = state().events.length;
+    expect(state().updateMusic({ startMs: 1500, durationMs: 4000 }, cueId)).toBe(true);
+    const cue = state().project.timeline.music[0]!;
+    expect(cue.startMs).toBe(1500);
+    expect(cue.durationMs).toBe(4000);
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "timeline.music.updated" });
+  });
+
+  it("起点落在成片之外：拒收，项目不动", () => {
+    add(0);
+    const cueId = state().project.timeline.music[0]!.id;
+    const before = state().project.timeline.music;
+    expect(state().updateMusic({ startMs: 6000 }, cueId)).toBe(false);
+    expect(state().project.timeline.music).toEqual(before);
+    expect(add(9)).toBe(false);
+    expect(state().editError).toContain("成片之外");
+  });
+
+  it("最多 4 段：第 5 段被拦下", () => {
+    for (let index = 0; index < 4; index += 1) expect(add(index)).toBe(true);
+    expect(state().project.timeline.music).toHaveLength(4);
+    expect(add(0)).toBe(false);
+    expect(state().editError).toContain("最多 4 条");
+  });
+});
