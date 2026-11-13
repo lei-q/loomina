@@ -58,7 +58,7 @@ import {
   type PlatformCheck,
   type PlatformId,
 } from "@/lib/platforms";
-import { badgeCornerLabel, badgePlacementOf } from "@/lib/ai-label";
+import { aiLabelRecordFor, badgeCornerLabel, badgePlacementOf } from "@/lib/ai-label";
 import {
   COVER_HEIGHT,
   COVER_WIDTH,
@@ -81,6 +81,8 @@ import {
   isDefaultGrade,
 } from "@/lib/render-effects";
 import { FramePanel, type FrameShot } from "@/components/frame-panel";
+import { MultiPlatformPanel } from "@/components/multi-platform-panel";
+import { versionLine, versionPlans, versionSuffix } from "@/lib/multi-platform";
 import { rightsReport } from "@/lib/rights";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
@@ -445,6 +447,14 @@ export function EditScreen() {
   const [gradeOpen, setGradeOpen] = useState(false);
   // 画幅与裁切（E5 / ADR-0170）：同样只影响导出
   const [frameOpen, setFrameOpen] = useState(false);
+  // 多平台版本（G9 / ADR-0171）：勾几个平台就出几版
+  const [multiOpen, setMultiOpen] = useState(false);
+  const [multiPicks, setMultiPicks] = useState<PlatformId[]>(["douyin", "bilibili"]);
+  const [multiStage, setMultiStage] = useState("");
+  const [multiBusy, setMultiBusy] = useState(false);
+  const [multiResults, setMultiResults] = useState<
+    { platform: PlatformId; name: string; bytes: number; fileName: string }[]
+  >([]);
   const [title, setTitle] = useState(project.title);
   const [description, setDescription] = useState("");
   const [topics, setTopics] = useState("短剧,AI创作");
@@ -575,8 +585,24 @@ export function EditScreen() {
   const editGate = useMemo(() => stageStateOf(project, "edit"), [project]);
   const finalAllowed = editGate.gate === "confirmed";
   const profile = RENDER_PROFILES[quality];
+  // 硬阻断有两种来源：文案命中的 findings，以及平台规格这类整项判死的检查。
+  // 后者 findings 为 0，只报「0 处硬阻断」会让人以为没拦住（G7 / E5 都撞上过）。
+  const blockingCheck = report.checks.find((check) => check.status === "block");
   const gateReason = !report.ok
-    ? `还有 ${report.blocked} 处硬阻断：改完文案再导出。`
+    ? report.blocked > 0
+      ? `还有 ${report.blocked} 处硬阻断：改完文案再导出。`
+      : `${blockingCheck?.label ?? "有一项"}没过：${blockingCheck?.detail ?? "看下面的检查结果"}`
+    : report.review > 0 && !acknowledged
+      ? `有 ${report.review} 处需要人工确认：读完后勾选确认。`
+      : "";
+  // 多平台版本（G9）的闸门要去掉「平台规格」这一项：每个平台各自判规格，
+  // 不能被当前选中的平台一票否决——项目是 16:9 却选着抖音时，B 站 / X 那几版照样能出。
+  const contentBlocking = report.checks.find(
+    (check) => check.status === "block" && check.id !== "spec",
+  );
+  const contentGateOpen = !contentBlocking && (report.review === 0 || acknowledged);
+  const contentGateReason = contentBlocking
+    ? `${contentBlocking.label}没过：${contentBlocking.detail}`
     : report.review > 0 && !acknowledged
       ? `有 ${report.review} 处需要人工确认：读完后勾选确认。`
       : "";
@@ -945,6 +971,89 @@ export function EditScreen() {
       setRendering(false);
       setRenderStage("");
       setRenderJobId(undefined);
+    }
+  };
+
+  /**
+   * 多平台版本渲染（G9 / ADR-0171）。
+   *
+   * 勾上的平台依次各出一版：形状与角标位置按平台走，项目里的画幅设置不动。
+   * 不并发——本机渲染队列同一时间只跑一条，并发只会把几版都排进队列、进度互相盖住。
+   * 一版失败不中断后面几版：失败的那一版报出来，别的照出。
+   */
+  const exportVersions = async () => {
+    if (multiBusy || rendering) return;
+    if (!contentGateOpen) {
+      setNotice(contentGateReason);
+      return;
+    }
+    // 定稿闸门与单版导出一致：几版一起导也是定稿，同样要先确认这一版成片
+    if (quality === "final" && !finalAllowed) {
+      setNotice("定稿渲染要先在页面底部确认这一版成片；还没确认时只能导出草稿。");
+      return;
+    }
+    const plans = versionPlans(project.frame, view.totalMs, multiPicks, quality).filter(
+      (plan) => !plan.blocker,
+    );
+    if (plans.length === 0) {
+      setNotice("没有能出的平台：先在画幅里选一个平台收的形状。");
+      return;
+    }
+    setMultiBusy(true);
+    setMultiResults([]);
+    setNotice("");
+    const done: { platform: PlatformId; name: string; bytes: number; fileName: string }[] = [];
+    const failed: string[] = [];
+    try {
+      for (const [index, plan] of plans.entries()) {
+        setMultiStage(versionLine(plan, index, plans.length, quality));
+        const startedAt = Date.now();
+        try {
+          const result = await exportMp4(
+            view,
+            style,
+            renderComplianceOf(report, acknowledged),
+            quality,
+            setMultiStage,
+            {
+              subtitles: burnSubtitles,
+              platform: plan.platform,
+              frame: plan.frame,
+              fileNameSuffix: `-${versionSuffix(plan.platform)}`,
+              onJob: setRenderJobId,
+            },
+          );
+          done.push({
+            platform: plan.platform,
+            name: plan.spec.name,
+            bytes: result.bytes,
+            fileName: result.fileName,
+          });
+          // 每一版都记一条发布记录（G10）：平台 / 档位 / 文件 / 体积 / 指纹。
+          // 指纹按剪辑内容算（画幅不进指纹），同一剪法出的几版指纹相同，对得上。
+          recordPublish({
+            platform: plan.platform,
+            quality,
+            fileName: result.fileName,
+            bytes: result.bytes,
+            renderMs: Date.now() - startedAt,
+            contentHash: aiLabelRecordFor(view).contentHash,
+          });
+          setMultiResults([...done]);
+        } catch (error) {
+          failed.push(`${plan.spec.name}：${error instanceof Error ? error.message : "渲染失败"}`);
+        } finally {
+          setRenderJobId(undefined);
+        }
+      }
+      setNotice(
+        failed.length === 0
+          ? `${done.length} 版都导出了：${done.map((item) => item.name).join(" / ")}。每版都记进了发布记录。`
+          : `导出 ${done.length} 版，${failed.length} 版失败：${failed.join("；")}`,
+      );
+    } finally {
+      setMultiBusy(false);
+      setMultiStage("");
     }
   };
 
@@ -2521,7 +2630,9 @@ export function EditScreen() {
                       </div>
                     )}
 
-                    {report.review > 0 && report.ok && (
+                    {/* 勾选确认看的是内容侧：平台规格那一项由每个平台各自判（G9），
+                        当前选着抖音不该挡住 B 站 / X 那几版的确认 */}
+                    {report.review > 0 && !contentBlocking && (
                       <label className="mt-2 flex cursor-pointer items-start gap-2 border-t border-line pt-2 text-[9.5px] leading-[1.6] text-muted">
                         <input
                           type="checkbox"
@@ -2689,6 +2800,17 @@ export function EditScreen() {
                     >
                       {rendering ? "正在渲染 MP4…" : `导出${profile.label} MP4`}
                     </button>
+                    {/* 多平台版本（G9）：勾几个平台就出几版，形状与角标跟着平台走。
+                        闸门不看法当前平台的规格——那一项由面板里每个平台各自判。 */}
+                    <button
+                      type="button"
+                      onClick={() => setMultiOpen(true)}
+                      disabled={!contentGateOpen || view.clips.length === 0}
+                      title="按平台规格一次出好几版：抖音竖屏、B 站横屏、X 方形；不另开渲染路径"
+                      className="rounded-token border border-line px-3 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      多平台版本
+                    </button>
                     {rendering && renderJobId && (
                       <button
                         type="button"
@@ -2794,6 +2916,32 @@ export function EditScreen() {
           onSave={(packageId, patch) => recordPublishReceipt(packageId, patch)}
           readOnly={Boolean(readOnly)}
           onClose={() => setPublishOpen(false)}
+        />
+      )}
+      {multiOpen && (
+        <MultiPlatformPanel
+          plans={versionPlans(project.frame, view.totalMs, PLATFORM_SPECS.map((spec) => spec.id), quality)}
+          selected={multiPicks}
+          onToggle={(id) =>
+            setMultiPicks((prev) =>
+              prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+            )
+          }
+          onExport={() => void exportVersions()}
+          stage={multiStage}
+          busy={multiBusy}
+          results={multiResults}
+          frameLabel={`${project.frame.aspect} · ${
+            project.frame.fit === "pad" ? "留边" : project.frame.fit === "crop" ? "裁切" : "模糊填充"
+          }`}
+          gateReason={
+            contentGateReason ||
+            (quality === "final" && !finalAllowed
+              ? "定稿要先在页面底部确认这一版成片；没确认时只能导草稿。"
+              : "")
+          }
+          readOnly={Boolean(readOnly)}
+          onClose={() => setMultiOpen(false)}
         />
       )}
       {frameOpen && (

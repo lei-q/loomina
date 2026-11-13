@@ -30,6 +30,20 @@ function nowText(): string {
   return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`;
 }
 
+/**
+ * 记录时间 → `2026-11-13 14:04`。
+ *
+ * `recordedAt` 是 ISO 的 UTC（`2026-11-13T06:04:00.000Z`），直接切前 16 位
+ * 会把 UTC 当成本机时间显示——下午两点导的片子写着早上六点。
+ */
+function recordedText(iso?: string): string {
+  if (!iso) return "—";
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return iso;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`;
+}
+
 function sizeText(bytes?: number): string {
   if (bytes === undefined) return "";
   if (bytes < 1024) return `${bytes} B`;
@@ -171,7 +185,7 @@ export function PublishLedgerPanel({
                       <div className="flex gap-1.5">
                         <dt className="shrink-0">导出</dt>
                         <dd className="tnum min-w-0 break-all">
-                          {(pack.recordedAt ?? "").slice(0, 16).replace("T", " ") || "—"}
+                          {recordedText(pack.recordedAt)}
                           {pack.quality ? ` · ${pack.quality === "final" ? "定稿" : "草稿"}` : ""}
                           {pack.fileName ? ` · ${pack.fileName}` : ""}
                           {pack.bytes !== undefined ? ` · ${sizeText(pack.bytes)}` : ""}

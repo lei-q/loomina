@@ -24,6 +24,7 @@ import {
   type RenderOverlay,
   type RenderQuality,
 } from "./render-manifest";
+import type { Frame } from "@loomina/ir";
 import type { LoudnessReport } from "./render-audio";
 import { clipFades, isDefaultFrame, isDefaultGrade } from "./render-effects";
 import { aiLabelRecordFor, badgePlacementOf } from "./ai-label";
@@ -206,6 +207,13 @@ export type RenderOptions = {
   subtitles?: boolean;
   /** 发布目标（G7）：决定角标摆在哪个角；缺省按通用规格 */
   platform?: string;
+  /**
+   * 这一版的画幅（G9）：多平台版本渲染时按平台改形状，不改项目里的设置。
+   * 不传就按项目当前画幅。
+   */
+  frame?: Frame;
+  /** 文件名后缀（G9）：同一标题出好几版时靠它分开，例如「-B站」 */
+  fileNameSuffix?: string;
   /** 任务提交成功、拿到任务号时回调；界面据此显示「取消渲染」 */
   onJob?: (jobId: string) => void;
 };
@@ -233,8 +241,10 @@ export function buildRenderManifest(
   options: RenderOptions = {},
 ): RenderBuild {
   const profile = RENDER_PROFILES[quality];
-  // 画幅（E5 / ADR-0170）：成片尺寸由画幅定，短边固定、长边跟着形状走
-  const size = frameSize(quality, view.frame.aspect);
+  // 画幅（E5 / ADR-0170）：成片尺寸由画幅定，短边固定、长边跟着形状走。
+  // 多平台版本渲染（G9）按平台传一份覆盖，不改项目里的设置。
+  const frame = options.frame ?? view.frame;
+  const size = frameSize(quality, frame.aspect);
   const ordered = [...view.clips].sort((a, b) => a.startMs - b.startMs);
   let placeholders = 0;
   // 转场（E4 / ADR-0169）：接缝上的淡入淡出，按「后一段的 transitionIn」算两侧。
@@ -374,7 +384,7 @@ export function buildRenderManifest(
       // 调色（E4）：默认档不传，清单与以前逐字一致
       ...(isDefaultGrade(view.grade) ? {} : { grade: view.grade }),
       // 画幅（E5）：默认画幅不传，清单与以前逐字一致
-      ...(isDefaultFrame(view.frame) ? {} : { frame: view.frame }),
+      ...(isDefaultFrame(frame) ? {} : { frame }),
     },
     placeholders,
   };
@@ -495,8 +505,12 @@ export async function exportMp4(
   const blob = await file.blob();
   // 无字幕版单独起名，否则两版下到同一个文件夹里分不出来
   const baseName = state.fileName || renderFileName(view.title);
+  // 多平台版本（G9）：后缀加在扩展名之前，否则「-B站」会跑到 .mp4 后面
+  const named = options.fileNameSuffix
+    ? baseName.replace(/\.mp4$/i, "") + options.fileNameSuffix + ".mp4"
+    : baseName;
   const fileName =
-    options.subtitles === false ? noSubtitleFileName(baseName) : baseName;
+    options.subtitles === false ? noSubtitleFileName(named) : named;
   download(blob, fileName);
   return {
     bytes: blob.size,
