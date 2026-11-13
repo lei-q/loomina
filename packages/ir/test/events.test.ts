@@ -213,7 +213,17 @@ describe("project.updated", () => {
     const next = applyEvent(project, {
       type: "project.updated",
       at: AT,
-      grade: { presetId: "thriller", contrast: "punchy", saturation: "muted", temperature: "cool", vignette: true },
+      grade: {
+        presetId: "thriller",
+        contrast: "punchy",
+        saturation: "muted",
+        temperature: "cool",
+        vignette: true,
+        grain: 0,
+        film: "none",
+        lutAssetId: "",
+        lutName: "",
+      },
     });
     expect(next.grade).toEqual({
       presetId: "thriller",
@@ -221,6 +231,10 @@ describe("project.updated", () => {
       saturation: "muted",
       temperature: "cool",
       vignette: true,
+      grain: 0,
+      film: "none",
+      lutAssetId: "",
+      lutName: "",
     });
     // 调色不是风格：look 原样
     expect(next.look).toEqual(project.look);
@@ -230,7 +244,17 @@ describe("project.updated", () => {
     const next = applyEvent(load(), {
       type: "project.updated",
       at: AT,
-      grade: { presetId: "", contrast: "flat", saturation: "natural", temperature: "neutral", vignette: false },
+      grade: {
+        presetId: "",
+        contrast: "flat",
+        saturation: "natural",
+        temperature: "neutral",
+        vignette: false,
+        grain: 0,
+        film: "none",
+        lutAssetId: "",
+        lutName: "",
+      },
     });
     expect(next.grade.contrast).toBe("flat");
     expect(() =>
@@ -2246,6 +2270,159 @@ describe("配乐（C4 / C12）", () => {
         music: [{ ...cue, duckDb: 20 }],
       }),
     ).toThrow(/ducking/);
+  });
+});
+
+describe("音效层与三路平衡（C7 / ADR-0184）", () => {
+  const sfxAsset = {
+    id: "a-sfx-door",
+    kind: "audio" as const,
+    source: "upload" as const,
+    uri: "data:audio/wav;base64,UklGRg==",
+    mime: "audio/wav",
+    durationMs: 900,
+    createdAt: AT,
+  };
+
+  const cue = {
+    id: "sfx-1",
+    assetId: sfxAsset.id,
+    title: "关门",
+    startMs: 1200,
+    durationMs: 900,
+    gainDb: -10,
+    loop: false,
+    role: "foley" as const,
+    licenseRef: "自己录制",
+  };
+
+  function withSfx(): Project {
+    return rebuild([
+      created(load()),
+      { type: "asset.updated", at: AT, asset: sfxAsset },
+    ]);
+  }
+
+  it("整条替换：重放后与写入一致，缺省项补齐", () => {
+    const project = withSfx();
+    const next = applyEvent(project, {
+      type: "timeline.sfx.updated",
+      at: AT,
+      // @ts-expect-error 只给必要项，增益 / 循环 / 类型靠 schema 补默认值
+      sfx: [{ id: cue.id, assetId: cue.assetId, title: cue.title, startMs: cue.startMs, durationMs: cue.durationMs, licenseRef: cue.licenseRef }],
+    });
+    expect(next.timeline.sfx).toEqual([
+      {
+        id: cue.id,
+        assetId: cue.assetId,
+        title: cue.title,
+        startMs: cue.startMs,
+        durationMs: cue.durationMs,
+        gainDb: -12,
+        loop: false,
+        role: "foley",
+        licenseRef: cue.licenseRef,
+      },
+    ]);
+    expect(next.timeline.music).toEqual(project.timeline.music);
+  });
+
+  it("音效与配乐互不覆盖", () => {
+    const project = withSfx();
+    const withCue = applyEvent(project, {
+      type: "timeline.sfx.updated",
+      at: AT,
+      sfx: [cue],
+    });
+    const musicAsset = {
+      id: "a-music-bed-2",
+      kind: "audio" as const,
+      source: "upload" as const,
+      uri: "data:audio/mpeg;base64,SUQz",
+      mime: "audio/mpeg",
+      durationMs: 30_000,
+      createdAt: AT,
+    };
+    const withAsset = applyEvent(withCue, { type: "asset.updated", at: AT, asset: musicAsset });
+    const withMusic = applyEvent(withAsset, {
+      type: "timeline.music.updated",
+      at: AT,
+      music: [
+        {
+          id: "mc-9",
+          assetId: musicAsset.id,
+          title: "床",
+          mood: "",
+          startMs: 0,
+          durationMs: 6000,
+          gainDb: -18,
+          duckDb: 15,
+          ducking: true,
+          loop: true,
+          role: "bed",
+          licenseRef: "自有",
+        },
+      ],
+    });
+    expect(withMusic.timeline.sfx).toEqual([cue]);
+    expect(withMusic.timeline.music).toHaveLength(1);
+  });
+
+  it("挂音频资产、写授权、起点在成片内、增益在 −40–0 dB", () => {
+    const project = withSfx();
+    const imageId = project.assets.find((asset) => asset.kind === "image")!.id;
+    expect(() =>
+      applyEvent(project, {
+        type: "timeline.sfx.updated",
+        at: AT,
+        sfx: [{ ...cue, assetId: imageId }],
+      }),
+    ).toThrow(/没有挂到音频资产/);
+    expect(() =>
+      applyEvent(project, {
+        type: "timeline.sfx.updated",
+        at: AT,
+        sfx: [{ ...cue, licenseRef: " " }],
+      }),
+    ).toThrow(/缺少授权备注/);
+    expect(() =>
+      applyEvent(project, {
+        type: "timeline.sfx.updated",
+        at: AT,
+        sfx: [{ ...cue, startMs: 6000 }],
+      }),
+    ).toThrow(/成片之外/);
+    expect(() =>
+      applyEvent(project, {
+        type: "timeline.sfx.updated",
+        at: AT,
+        sfx: [{ ...cue, gainDb: 2 }],
+      }),
+    ).toThrow(/增益/);
+  });
+
+  it("三路平衡整块替换，越界拒绝", () => {
+    const project = load();
+    const next = applyEvent(project, {
+      type: "timeline.mix.updated",
+      at: AT,
+      mix: { dialogueDb: 2, musicDb: -6, sfxDb: 0 },
+    });
+    expect(next.timeline.mix).toEqual({ dialogueDb: 2, musicDb: -6, sfxDb: 0 });
+    expect(() =>
+      applyEvent(project, {
+        type: "timeline.mix.updated",
+        at: AT,
+        // @ts-expect-error 三路都只有 ±12 dB
+        mix: { dialogueDb: 13, musicDb: 0, sfxDb: 0 },
+      }),
+    ).toThrow(/三路平衡不合法/);
+  });
+
+  it("旧日志重放出来的音效层与平衡是空 / 0", () => {
+    const project = load();
+    expect(project.timeline.sfx).toEqual([]);
+    expect(project.timeline.mix).toEqual({ dialogueDb: 0, musicDb: 0, sfxDb: 0 });
   });
 });
 

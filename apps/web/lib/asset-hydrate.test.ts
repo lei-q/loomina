@@ -65,6 +65,8 @@ function view(uri: string): EditView {
         licenseRef: "自己录",
       },
     ],
+    sfx: [],
+    mix: { dialogueDb: 0, musicDb: 0, sfxDb: 0 },
     cues: [],
     maxChars: 12,
     subtitleStyle: { id: "default", label: "默认", fontSizeCqw: 4.6, bottomPct: 14, strokeCqw: 0.55, speakerColors: true },

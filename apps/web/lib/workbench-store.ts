@@ -26,6 +26,7 @@ import {
   VOICE_PROFILE_MAX,
   type ApprovalTargetType,
   type Asset,
+  type AudioMix,
   type BeatKind,
   type Character,
   type Composition,
@@ -47,6 +48,7 @@ import {
   type RightsRecordInput,
   type Scene,
   type SheetView,
+  type SfxCue,
   type Shot,
   type ShotFocus,
   type ShotPurpose,
@@ -605,6 +607,33 @@ type WorkbenchState = {
   ) => boolean;
   /** 移掉配乐床：不给 id 就全部移掉；写一条 `timeline.music.updated`，资产留在项目里 */
   removeMusic: (cueId?: string) => boolean;
+  /**
+   * 加一条音效（C7 / ADR-0184）：音频文件先落成资产，再写一条
+   * `timeline.sfx.updated`。必须给授权备注；默认只播一遍、不 ducking。
+   */
+  addSfx: (input: {
+    uri: string;
+    mime: string;
+    title: string;
+    durationMs: number;
+    licenseRef: string;
+    startMs?: number;
+    spanMs?: number;
+    role?: SfxCue["role"];
+    loop?: boolean;
+  }) => boolean;
+  /** 调音效：起点 / 长度 / 增益 / 循环 / 类型；写一条 `timeline.sfx.updated` */
+  updateSfx: (
+    patch: Partial<Pick<SfxCue, "gainDb" | "loop" | "role" | "startMs" | "durationMs">>,
+    cueId?: string,
+  ) => boolean;
+  /** 移掉音效：不给 id 就全部移掉；资产留在项目里 */
+  removeSfx: (cueId?: string) => boolean;
+  /**
+   * 三路总线平衡（C7 / ADR-0184）：对白 / 配乐 / 音效各一个 ±12 dB，
+   * 写一条 `timeline.mix.updated`。全为 0 时与以前的混音逐字节同构。
+   */
+  setMix: (patch: Partial<AudioMix>) => boolean;
   /**
    * 按曲线补 cue（C10 / ADR-0125）：给没有配乐覆盖的拍铺上同一条素材，
    * 边界对齐拍的起止，已有 cue 不动。写一条 `timeline.music.updated`（整条替换）。
@@ -3971,6 +4000,202 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       events: [...events, event],
       editError: undefined,
     });
+    return true;
+  },
+
+  addSfx: ({ uri: rawUri, mime, title, durationMs, licenseRef, startMs, spanMs, role, loop }) => {
+    if (get().readOnly) {
+      set({ editError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    const { project, events } = get();
+    if (project.timeline.sfx.length >= 8) {
+      set({ editError: "音效最多 8 条（渲染清单上限）：先移掉一条。" });
+      return false;
+    }
+    const uri = rawUri.trim();
+    if (!/^data:audio\//i.test(uri)) {
+      set({ editError: "音效要先读成本地音频（data:audio/…）。" });
+      return false;
+    }
+    if (uri.length > 24_000_000) {
+      set({ editError: "这条音效太大了（超过约 18 MB）：换一条短一点的。" });
+      return false;
+    }
+    if (!licenseRef.trim()) {
+      set({ editError: "音效必须写授权来源：音效库名、授权书编号或「自己录制」。" });
+      return false;
+    }
+    if (!Number.isFinite(durationMs) || durationMs < 100) {
+      set({ editError: "读不出这条音效的时长：换一个文件再试。" });
+      return false;
+    }
+    const at = stamp();
+    let assetId = `a-sfx-${Date.now().toString(36)}`;
+    while (project.assets.some((asset) => asset.id === assetId)) assetId += "x";
+    const asset: Asset = {
+      id: assetId,
+      kind: "audio",
+      source: "upload",
+      uri,
+      mime: mime || "audio/mpeg",
+      durationMs: Math.round(durationMs),
+      createdAt: at,
+    };
+    let cueId = `sfx-${Date.now().toString(36)}`;
+    while (project.timeline.sfx.some((cue) => cue.id === cueId)) cueId += "x";
+    const timelineMs = project.timeline.items.reduce(
+      (end, item) => Math.max(end, item.startMs + item.durationMs),
+      0,
+    );
+    const start = Math.max(0, Math.round(startMs ?? 0));
+    if (timelineMs > 0 && start >= timelineMs) {
+      set({ editError: "这条音效的起点在成片之外：先把它挪回时间线里。" });
+      return false;
+    }
+    const remaining = timelineMs > start ? timelineMs - start : durationMs;
+    const loopOn = loop === true;
+    // 默认按文件本身的长度放；循环音效默认铺到片尾
+    const span = Math.max(
+      100,
+      Math.round(spanMs ?? (loopOn ? remaining : Math.min(durationMs, remaining))),
+    );
+    const cue: SfxCue = {
+      id: cueId,
+      assetId,
+      title: title.trim().slice(0, 120) || "音效",
+      startMs: start,
+      durationMs: span,
+      gainDb: -12,
+      loop: loopOn,
+      role: role ?? "foley",
+      licenseRef: licenseRef.trim().slice(0, 240),
+    };
+    const written: ProjectEvent[] = [
+      { type: "asset.updated", at, asset },
+      { type: "timeline.sfx.updated", at, sfx: [...project.timeline.sfx, cue] },
+    ];
+    try {
+      set({
+        project: written.reduce(applyEvent, project),
+        events: [...events, ...written],
+        editError: undefined,
+      });
+    } catch (error) {
+      set({ editError: error instanceof Error ? error.message : "音效加不上" });
+      return false;
+    }
+    return true;
+  },
+
+  updateSfx: (patch, cueId) => {
+    if (get().readOnly) {
+      set({ editError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    const { project, events } = get();
+    const cue = cueId
+      ? project.timeline.sfx.find((item) => item.id === cueId)
+      : project.timeline.sfx[0];
+    if (!cue) return false;
+    const timelineEnd = project.timeline.items.reduce(
+      (end, item) => Math.max(end, item.startMs + item.durationMs),
+      0,
+    );
+    if (patch.startMs !== undefined) {
+      const start = Math.round(patch.startMs);
+      if (!Number.isFinite(start) || start < 0 || (timelineEnd > 0 && start >= timelineEnd)) {
+        set({ editError: "这条音效的起点在成片之外：先把它挪回时间线里。" });
+        return false;
+      }
+    }
+    const next: SfxCue = {
+      ...cue,
+      ...(patch.startMs !== undefined ? { startMs: Math.round(patch.startMs) } : {}),
+      ...(patch.durationMs !== undefined
+        ? { durationMs: Math.max(100, Math.round(patch.durationMs)) }
+        : {}),
+      ...(patch.gainDb !== undefined
+        ? { gainDb: Math.max(-40, Math.min(0, Math.round(patch.gainDb))) }
+        : {}),
+      ...(patch.loop !== undefined ? { loop: patch.loop } : {}),
+      ...(patch.role !== undefined ? { role: patch.role } : {}),
+    };
+    const event: ProjectEvent = {
+      type: "timeline.sfx.updated",
+      at: stamp(),
+      sfx: project.timeline.sfx.map((item) => (item.id === cue.id ? next : item)),
+    };
+    try {
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        editError: undefined,
+      });
+    } catch (error) {
+      set({ editError: error instanceof Error ? error.message : "音效改不动" });
+      return false;
+    }
+    return true;
+  },
+
+  removeSfx: (cueId) => {
+    if (get().readOnly) {
+      set({ editError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    const { project, events } = get();
+    if (project.timeline.sfx.length === 0) return false;
+    const sfx = cueId
+      ? project.timeline.sfx.filter((cue) => cue.id !== cueId)
+      : [];
+    if (cueId && sfx.length === project.timeline.sfx.length) return false;
+    const event: ProjectEvent = {
+      type: "timeline.sfx.updated",
+      at: stamp(),
+      sfx,
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      editError: undefined,
+    });
+    return true;
+  },
+
+  setMix: (patch) => {
+    if (get().readOnly) {
+      set({ editError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    const { project, events } = get();
+    const clamp = (value: number | undefined, fallback: number) =>
+      value === undefined || !Number.isFinite(value)
+        ? fallback
+        : Math.max(-12, Math.min(12, Math.round(value)));
+    const mix: AudioMix = {
+      dialogueDb: clamp(patch.dialogueDb, project.timeline.mix.dialogueDb),
+      musicDb: clamp(patch.musicDb, project.timeline.mix.musicDb),
+      sfxDb: clamp(patch.sfxDb, project.timeline.mix.sfxDb),
+    };
+    if (
+      mix.dialogueDb === project.timeline.mix.dialogueDb &&
+      mix.musicDb === project.timeline.mix.musicDb &&
+      mix.sfxDb === project.timeline.mix.sfxDb
+    ) {
+      return true;
+    }
+    const event: ProjectEvent = { type: "timeline.mix.updated", at: stamp(), mix };
+    try {
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        editError: undefined,
+      });
+    } catch (error) {
+      set({ editError: error instanceof Error ? error.message : "三路平衡改不动" });
+      return false;
+    }
     return true;
   },
 

@@ -173,6 +173,26 @@ export type RenderMusic = {
   loop: boolean;
 };
 
+/**
+ * 音效（C7 / ADR-0184）：不 ducking，按自己的增益混进音效总线。
+ * `startMs` / `endMs` 都是成片里的绝对时间。
+ */
+export type RenderSfx = {
+  audio?: string;
+  remote?: string;
+  startMs: number;
+  endMs: number;
+  gainDb: number;
+  loop: boolean;
+};
+
+/** 三路总线平衡（C7 / ADR-0184）：全为 0 时不写进清单 */
+export type RenderMix = {
+  dialogueDb: number;
+  musicDb: number;
+  sfxDb: number;
+};
+
 export type RenderManifest = {
   title: string;
   /** 草稿 / 定稿（H13）：决定分辨率、帧率与编码档位 */
@@ -185,6 +205,10 @@ export type RenderManifest = {
   overlays: RenderOverlay[];
   audio: RenderAudio[];
   music: RenderMusic[];
+  /** 音效层（C7）：没有音效时省略 */
+  sfx?: RenderSfx[];
+  /** 三路总线平衡（C7）：全为 0 时省略，与旧清单同构 */
+  mix?: RenderMix;
   /**
    * AI 标识（H5 / ADR-0138）：显式与隐式必须同时为真，
    * `contentHash` 是这一版剪辑的指纹，服务端会重算一遍再比对。
@@ -636,6 +660,83 @@ export function validateRenderManifest(
     });
   }
 
+  // 音效层（C7 / ADR-0184）：与配乐同一套素材校验，但不带 ducking
+  const sfxRaw = raw.sfx ?? [];
+  if (!Array.isArray(sfxRaw) || sfxRaw.length > 8) {
+    return { ok: false, error: "音效最多 8 条" };
+  }
+  const checkedSfx: RenderSfx[] = [];
+  for (const [index, item] of sfxRaw.entries()) {
+    if (!item || typeof item !== "object") {
+      return { ok: false, error: `音效 ${index + 1} 不是对象` };
+    }
+    const track = item as Record<string, unknown>;
+    const remote = typeof track.remote === "string" ? track.remote.trim() : "";
+    if (remote && !isHttpUrl(remote)) {
+      return { ok: false, error: `音效 ${index + 1} 的远端地址不是 http(s)` };
+    }
+    if (typeof track.audio === "string") {
+      const parts = inspectAsset(track.audio);
+      if (!parts || !isAudioMime(parts.mime)) {
+        return { ok: false, error: `音效 ${index + 1} 必须是音频（data URI 或本机资产库）` };
+      }
+      if (parts.bytes > RENDER_MAX_ASSET_BYTES) {
+        return { ok: false, error: `音效 ${index + 1} 超过 30 MB` };
+      }
+    } else if (!remote) {
+      return { ok: false, error: `音效 ${index + 1} 既没有音频也没有远端地址` };
+    }
+    if (
+      !integer(track.startMs) ||
+      !integer(track.endMs) ||
+      track.endMs <= track.startMs ||
+      track.endMs > raw.totalMs
+    ) {
+      return { ok: false, error: `音效 ${index + 1} 的时间不合法` };
+    }
+    const gainDb = typeof track.gainDb === "number" ? track.gainDb : -12;
+    if (!Number.isFinite(gainDb) || gainDb < -40 || gainDb > 0) {
+      return { ok: false, error: `音效 ${index + 1} 的增益超出 -40–0 dB` };
+    }
+    checkedSfx.push({
+      audio: typeof track.audio === "string" ? track.audio : undefined,
+      remote: remote || undefined,
+      startMs: track.startMs,
+      endMs: track.endMs,
+      gainDb,
+      loop: track.loop === true,
+    });
+  }
+
+  // 三路总线平衡（C7）：省略就是 0 dB；写了就每一项都在 ±12 dB 内
+  let checkedMix: RenderMix | undefined;
+  if (raw.mix !== undefined) {
+    if (!raw.mix || typeof raw.mix !== "object") {
+      return { ok: false, error: "三路平衡不是对象" };
+    }
+    const mixRaw = raw.mix as Record<string, unknown>;
+    const readBus = (key: string, label: string) => {
+      const value = mixRaw[key];
+      if (value === undefined) return 0;
+      if (typeof value !== "number" || !Number.isFinite(value) || value < -12 || value > 12) {
+        throw new Error(`${label}的增益超出 ±12 dB`);
+      }
+      return value;
+    };
+    try {
+      checkedMix = {
+        dialogueDb: readBus("dialogueDb", "对白"),
+        musicDb: readBus("musicDb", "配乐"),
+        sfxDb: readBus("sfxDb", "音效"),
+      };
+    } catch (error) {
+      return { ok: false, error: (error as Error).message };
+    }
+    if (checkedMix.dialogueDb === 0 && checkedMix.musicDb === 0 && checkedMix.sfxDb === 0) {
+      checkedMix = undefined;
+    }
+  }
+
   // 导入的 LUT（I3）：先校验、再算总体积——它的字节也要计入素材总量
   const lutResult = lutOf(raw.lut);
   if ("error" in lutResult) return { ok: false, error: lutResult.error };
@@ -651,6 +752,7 @@ export function validateRenderManifest(
     checkedOverlays.reduce((sum, overlay) => sum + assetBytes(overlay.image), 0) +
     checkedAudio.reduce((sum, track) => sum + (track.audio ? assetBytes(track.audio) : 0), 0) +
     checkedMusic.reduce((sum, track) => sum + (track.audio ? assetBytes(track.audio) : 0), 0) +
+    checkedSfx.reduce((sum, track) => sum + (track.audio ? assetBytes(track.audio) : 0), 0) +
     (lutResult.lut ? assetBytes(lutResult.lut.uri) : 0);
   if (totalBytes > RENDER_MAX_TOTAL_BYTES) {
     return { ok: false, error: "素材总量超过 200 MB，先删掉一些片段再渲染" };
@@ -729,6 +831,8 @@ export function validateRenderManifest(
       overlays: checkedOverlays,
       audio: checkedAudio,
       music: checkedMusic,
+      ...(checkedSfx.length > 0 ? { sfx: checkedSfx } : {}),
+      ...(checkedMix ? { mix: checkedMix } : {}),
       ...(gradeResult.grade ? { grade: gradeResult.grade } : {}),
       ...(lutResult.lut ? { lut: lutResult.lut } : {}),
       ...(isDefaultFrame(frame) ? {} : { frame }),

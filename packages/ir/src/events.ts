@@ -13,6 +13,8 @@ import {
   MODALITY_KEYS,
   RightsRecordSchema,
   MusicCueSchema,
+  AudioMixSchema,
+  SfxCueSchema,
   PerformanceSpecSchema,
   PublishPackageSchema,
   ShotFocusSchema,
@@ -25,6 +27,7 @@ import { blockingProblem, placementProblem, spaceProblem, spaceOfShot } from "./
 import type {
   Approval,
   Asset,
+  AudioMix,
   RightsRecord,
   Character,
   DialogueLine,
@@ -38,6 +41,7 @@ import type {
   MusicCue,
   Motif,
   Project,
+  SfxCue,
   Prop,
   PublishPackage,
   Scene,
@@ -540,6 +544,21 @@ export type ProjectEvent =
     }
   | {
       /**
+       * 音效层整条替换（C7 / ADR-0184）。与配乐分开一条事件：
+       * 加一声关门不该让「配乐改过没有」也跟着变。
+       */
+      type: "timeline.sfx.updated";
+      at: string;
+      sfx: SfxCue[];
+    }
+  | {
+      /** 三路总线平衡（C7 / ADR-0184）：对白 / 配乐 / 音效各一个增益 */
+      type: "timeline.mix.updated";
+      at: string;
+      mix: AudioMix;
+    }
+  | {
+      /**
        * 记一条发布记录（G1）：把这一包对应的平台、档位与成片文件信息写进 IR。
        * 只追加，不覆盖——同一版改过标题再发一次，是两条发布历史（ADR-0102）。
        */
@@ -744,6 +763,46 @@ function checkMusic(cues: MusicCue[], project: Project) {
     }
     if (cue.motifId !== undefined && !motifIds.has(cue.motifId)) {
       throw new Error(`timeline.music.updated 的 ${cue.id} 指向不存在的动机: ${cue.motifId}`);
+    }
+  }
+}
+
+/**
+ * 音效校验（C7 / ADR-0184）。
+ *
+ * 与配乐同一套硬约束（挂音频资产、写授权、起点在成片内），
+ * 但上限是 8 条而不是 4 条：音效本来就多而短，渲染清单按这个数校验。
+ */
+function checkSfx(cues: SfxCue[], project: Project) {
+  if (cues.length > 8) {
+    throw new Error("timeline.sfx.updated 最多 8 条音效");
+  }
+  const ids = new Set<Id>();
+  const timelineEnd = project.timeline.items.reduce(
+    (end, item) => Math.max(end, item.startMs + item.durationMs),
+    0,
+  );
+  for (const cue of cues) {
+    if (ids.has(cue.id)) throw new Error(`timeline.sfx.updated 有重复的音效项: ${cue.id}`);
+    ids.add(cue.id);
+    const asset = project.assets.find((item) => item.id === cue.assetId);
+    if (!asset || asset.kind !== "audio") {
+      throw new Error(`timeline.sfx.updated 的 ${cue.id} 没有挂到音频资产 ${cue.assetId}`);
+    }
+    if (!cue.licenseRef.trim()) {
+      throw new Error(`timeline.sfx.updated 的 ${cue.id} 缺少授权备注`);
+    }
+    if (!Number.isInteger(cue.startMs) || cue.startMs < 0) {
+      throw new Error(`timeline.sfx.updated 的 ${cue.id} 起点不合法`);
+    }
+    if (!Number.isInteger(cue.durationMs) || cue.durationMs <= 0) {
+      throw new Error(`timeline.sfx.updated 的 ${cue.id} 时长不合法`);
+    }
+    if (timelineEnd > 0 && cue.startMs >= timelineEnd) {
+      throw new Error(`timeline.sfx.updated 的 ${cue.id} 起点在成片之外`);
+    }
+    if (cue.gainDb > 0 || cue.gainDb < -40) {
+      throw new Error(`timeline.sfx.updated 的 ${cue.id} 增益超出 -40–0 dB`);
     }
   }
 }
@@ -2041,6 +2100,44 @@ function applyEventCore(
         timeline: {
           ...current.timeline,
           music,
+        },
+      };
+    }
+
+    case "timeline.sfx.updated": {
+      if (!current) throw new Error("timeline.sfx.updated 之前必须有 project.created");
+      checkSfx(event.sfx, current);
+      const sfx = event.sfx.map((cue) => {
+        const parsed = SfxCueSchema.safeParse(cue);
+        if (!parsed.success) {
+          throw new Error(
+            `音效不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`,
+          );
+        }
+        return parsed.data;
+      });
+      return {
+        ...current,
+        timeline: {
+          ...current.timeline,
+          sfx,
+        },
+      };
+    }
+
+    case "timeline.mix.updated": {
+      if (!current) throw new Error("timeline.mix.updated 之前必须有 project.created");
+      const parsed = AudioMixSchema.safeParse(event.mix);
+      if (!parsed.success) {
+        throw new Error(
+          `三路平衡不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`,
+        );
+      }
+      return {
+        ...current,
+        timeline: {
+          ...current.timeline,
+          mix: parsed.data,
         },
       };
     }

@@ -5821,3 +5821,89 @@ describe("多条配乐混排（C4）", () => {
     expect(state().editError).toContain("最多 4 条");
   });
 });
+
+describe("音效层与三路平衡（C7）", () => {
+  beforeEach(() => {
+    state().reset();
+  });
+
+  const add = (
+    startSec: number,
+    extra: { loop?: boolean; durationMs?: number; licenseRef?: string } = {},
+  ) =>
+    state().addSfx({
+      uri: "data:audio/wav;base64,AAAA",
+      mime: "audio/wav",
+      title: "关门",
+      durationMs: extra.durationMs ?? 800,
+      licenseRef: extra.licenseRef ?? "自己录制",
+      startMs: startSec * 1000,
+      role: "foley",
+      loop: extra.loop ?? false,
+    });
+
+  it("默认按文件长度放一遍，增益 −12 dB，不循环", () => {
+    expect(add(1.2)).toBe(true);
+    const cue = state().project.timeline.sfx[0]!;
+    expect(cue.startMs).toBe(1200);
+    expect(cue.durationMs).toBe(800);
+    expect(cue.gainDb).toBe(-12);
+    expect(cue.loop).toBe(false);
+    expect(cue.role).toBe("foley");
+    // 素材同时落成一条音频资产
+    expect(state().project.assets.some((asset) => asset.id === cue.assetId && asset.kind === "audio")).toBe(true);
+  });
+
+  it("循环音效按起点铺到片尾", () => {
+    expect(add(2, { loop: true })).toBe(true);
+    expect(state().project.timeline.sfx[0]!.durationMs).toBe(3500);
+  });
+
+  it("改起点 / 长度 / 增益 / 循环只写一条 timeline.sfx.updated", () => {
+    add(0);
+    const cueId = state().project.timeline.sfx[0]!.id;
+    const before = state().events.length;
+    expect(
+      state().updateSfx({ startMs: 900, durationMs: 1200, gainDb: -6, loop: true }, cueId),
+    ).toBe(true);
+    const cue = state().project.timeline.sfx[0]!;
+    expect(cue).toMatchObject({ startMs: 900, durationMs: 1200, gainDb: -6, loop: true });
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "timeline.sfx.updated" });
+  });
+
+  it("起点在成片之外拒收；授权来源必填", () => {
+    add(0);
+    const cueId = state().project.timeline.sfx[0]!.id;
+    expect(state().updateSfx({ startMs: 6000 }, cueId)).toBe(false);
+    expect(state().editError).toContain("成片之外");
+    expect(add(9)).toBe(false);
+    expect(add(0, { licenseRef: " " })).toBe(false);
+    expect(state().editError).toContain("授权来源");
+  });
+
+  it("最多 8 条；移掉一条只写一条事件", () => {
+    for (let index = 0; index < 8; index += 1) expect(add(index * 0.5)).toBe(true);
+    expect(add(0)).toBe(false);
+    expect(state().editError).toContain("最多 8 条");
+    const cueId = state().project.timeline.sfx[0]!.id;
+    const before = state().events.length;
+    expect(state().removeSfx(cueId)).toBe(true);
+    expect(state().project.timeline.sfx).toHaveLength(7);
+    expect(state().events).toHaveLength(before + 1);
+  });
+
+  it("三路平衡写一条事件；越界夹回 ±12 dB", () => {
+    const before = state().events.length;
+    expect(state().setMix({ dialogueDb: 3, musicDb: -4, sfxDb: 0 })).toBe(true);
+    expect(state().project.timeline.mix).toEqual({ dialogueDb: 3, musicDb: -4, sfxDb: 0 });
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "timeline.mix.updated" });
+    expect(state().setMix({ dialogueDb: 30 })).toBe(true);
+    expect(state().project.timeline.mix.dialogueDb).toBe(12);
+    // 已经在这个值上：不重复写事件
+    const settled = state().events.length;
+    expect(state().setMix({ dialogueDb: 12 })).toBe(true);
+    expect(state().events).toHaveLength(settled);
+  });
+});

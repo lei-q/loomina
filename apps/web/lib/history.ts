@@ -361,6 +361,10 @@ export function describeEvent(before: Project, event: ProjectEvent): string {
     }
     case "timeline.music.updated":
       return `配乐：${event.music.length} 段`;
+    case "timeline.sfx.updated":
+      return `音效：${event.sfx.length} 条`;
+    case "timeline.mix.updated":
+      return `混音平衡：对白 ${event.mix.dialogueDb > 0 ? "+" : ""}${event.mix.dialogueDb} dB · 配乐 ${event.mix.musicDb > 0 ? "+" : ""}${event.mix.musicDb} dB · 音效 ${event.mix.sfxDb > 0 ? "+" : ""}${event.mix.sfxDb} dB`;
     case "motif.updated":
       return `主题动机「${event.motif.label}」`;
     case "motif.removed":

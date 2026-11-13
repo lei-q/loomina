@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { SfxCue } from "@loomina/ir";
 import { StageGate } from "@/components/stage-gate";
 import { ComplianceCheckpoints } from "@/components/compliance-checkpoints";
 import { MusicCurvePanel } from "@/components/music-curve-panel";
@@ -417,6 +418,10 @@ export function EditScreen() {
   const addMusic = useWorkbench((state) => state.addMusic);
   const updateMusic = useWorkbench((state) => state.updateMusic);
   const removeMusic = useWorkbench((state) => state.removeMusic);
+  const addSfx = useWorkbench((state) => state.addSfx);
+  const updateSfx = useWorkbench((state) => state.updateSfx);
+  const removeSfx = useWorkbench((state) => state.removeSfx);
+  const setMix = useWorkbench((state) => state.setMix);
   const fillMusicByCurve = useWorkbench((state) => state.fillMusicByCurve);
   const upsertMotif = useWorkbench((state) => state.upsertMotif);
   const removeMotif = useWorkbench((state) => state.removeMotif);
@@ -512,6 +517,21 @@ export function EditScreen() {
   const [musicBusy, setMusicBusy] = useState(false);
   const [musicError, setMusicError] = useState("");
   const musicPreviewRef = useRef<HTMLAudioElement>(null);
+  /** 音效层（C7 / ADR-0184）：与配乐同一套文件读取，控件更少 */
+  const [sfxFile, setSfxFile] = useState<{
+    name: string;
+    size: number;
+    uri: string;
+    mime: string;
+    durationMs: number;
+  }>();
+  const [sfxLicense, setSfxLicense] = useState("");
+  const [sfxStartSec, setSfxStartSec] = useState("0");
+  const [sfxRole, setSfxRole] = useState<SfxCue["role"]>("foley");
+  const [sfxLoop, setSfxLoop] = useState(false);
+  const [sfxBusy, setSfxBusy] = useState(false);
+  const [sfxError, setSfxError] = useState("");
+  const sfxPreviewRef = useRef<HTMLAudioElement>(null);
   /** 正在拖动的字幕（E1 / ADR-0145）：只在本机预览，松手才写一次事件 */
   const [cueDrag, setCueDrag] = useState<{ lineId: string; deltaMs: number } | null>(null);
   const cueLaneRef = useRef<HTMLDivElement>(null);
@@ -940,6 +960,65 @@ export function EditScreen() {
       element.currentTime = 0;
       element.volume = Math.pow(10, cue.gainDb / 20);
       void element.play().catch(() => setMusicError("浏览器没能播放这条音乐。"));
+    } else {
+      element.pause();
+    }
+  };
+
+  const chooseSfx = async (file: File | undefined) => {
+    if (!file) return;
+    setSfxBusy(true);
+    setSfxError("");
+    try {
+      if (file.size > 18 * 1024 * 1024) {
+        throw new Error("文件超过 18 MB：换一声短一点的音效。");
+      }
+      const result = await readMusicFile(file);
+      setSfxFile({ name: file.name, size: file.size, ...result });
+    } catch (error) {
+      setSfxFile(undefined);
+      setSfxError(error instanceof Error ? error.message : "这条音效读不进来。");
+    } finally {
+      setSfxBusy(false);
+    }
+  };
+
+  const commitSfx = () => {
+    if (!sfxFile) {
+      setSfxError("先选一个音频文件。");
+      return;
+    }
+    if (!sfxLicense.trim()) {
+      setSfxError("写清授权来源：音效库名、授权书编号，或「自己录制」。");
+      return;
+    }
+    const ok = addSfx({
+      uri: sfxFile.uri,
+      mime: sfxFile.mime,
+      title: sfxFile.name.replace(/\.[^.]+$/, ""),
+      durationMs: sfxFile.durationMs,
+      licenseRef: sfxLicense,
+      startMs: Math.max(0, Math.round(Number(sfxStartSec) * 1000) || 0),
+      role: sfxRole,
+      loop: sfxLoop,
+    });
+    if (ok) {
+      setSfxFile(undefined);
+      setSfxLicense("");
+      setSfxError("");
+      setNotice("音效已加入：导出时按自己的起点与增益混进音效总线。");
+    }
+  };
+
+  const toggleSfxPreview = (cue?: { uri?: string; gainDb: number }) => {
+    const element = sfxPreviewRef.current;
+    if (!element || !cue?.uri) return;
+    if (element.paused) {
+      const src = assetHref(cue.uri);
+      if (src && element.getAttribute("src") !== src) element.src = src;
+      element.currentTime = 0;
+      element.volume = Math.pow(10, cue.gainDb / 20);
+      void element.play().catch(() => setSfxError("浏览器没能播放这条音效。"));
     } else {
       element.pause();
     }
@@ -2460,6 +2539,287 @@ export function EditScreen() {
                       )}
                     </div>
                   )}
+                </section>
+
+                <section aria-label="音效" className="mt-5 border-t border-line pt-4">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <h2 className="text-[11px] tracking-[.06em] text-text">音效</h2>
+                    <span className="text-[8.5px] tracking-[.06em] text-muted-2">C7</span>
+                  </div>
+                  <p className="mt-1 text-[9.5px] leading-[1.7] text-muted-2">
+                    短促的效果音：关门、脚步、雨声、转场一记重音。音效不跟着台词压低，
+                    按自己的起点与增益混进音效总线；环境声可以循环铺满一段。
+                  </p>
+
+                  {view.sfx.length > 0 && (
+                    <div className="mt-2 flex flex-col gap-2">
+                      {view.sfx.map((cue) => (
+                        <div key={cue.id} className="rounded-token border border-line p-2.5">
+                          <div className="flex flex-wrap items-baseline justify-between gap-2">
+                            <span className="min-w-0 flex-1 truncate text-[10.5px] text-text">
+                              {cue.title}
+                            </span>
+                            <span className="tnum text-[8.5px] text-muted-2">
+                              {cue.role === "ambience"
+                                ? "环境"
+                                : cue.role === "impact"
+                                  ? "重音"
+                                  : cue.role === "transition"
+                                    ? "转场"
+                                    : "拟音"}{" "}
+                              · {cue.loop ? "循环" : "只播一遍"} · {fmtSec(cue.startMs)} 起 · 长{" "}
+                              {fmtSec(cue.durationMs)}
+                            </span>
+                          </div>
+                          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                            <label className="flex items-center gap-2 text-[9.5px] text-muted-2">
+                              起点（秒）
+                              <input
+                                type="number"
+                                min={0}
+                                max={Math.max(0, view.totalMs / 1000)}
+                                step={0.1}
+                                value={(cue.startMs / 1000).toFixed(1)}
+                                disabled={Boolean(readOnly)}
+                                onChange={(event) =>
+                                  updateSfx(
+                                    {
+                                      startMs: Math.round(
+                                        Math.max(0, Number(event.target.value)) * 1000,
+                                      ),
+                                    },
+                                    cue.id,
+                                  )
+                                }
+                                className="tnum w-full min-w-0 rounded-token border border-line bg-transparent px-1.5 py-0.5 text-[9.5px] text-text focus:border-line-2 focus:outline-none"
+                              />
+                            </label>
+                            <label className="flex items-center gap-2 text-[9.5px] text-muted-2">
+                              这一段多长（秒）
+                              <input
+                                type="number"
+                                min={0.1}
+                                step={0.1}
+                                value={(cue.durationMs / 1000).toFixed(1)}
+                                disabled={Boolean(readOnly)}
+                                onChange={(event) =>
+                                  updateSfx(
+                                    {
+                                      durationMs: Math.round(
+                                        Math.max(0.1, Number(event.target.value)) * 1000,
+                                      ),
+                                    },
+                                    cue.id,
+                                  )
+                                }
+                                className="tnum w-full min-w-0 rounded-token border border-line bg-transparent px-1.5 py-0.5 text-[9.5px] text-text focus:border-line-2 focus:outline-none"
+                              />
+                            </label>
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center gap-3">
+                            <label className="flex flex-1 items-center gap-2 text-[9.5px] text-muted-2">
+                              增益
+                              <input
+                                type="range"
+                                min={-40}
+                                max={0}
+                                step={1}
+                                value={cue.gainDb}
+                                disabled={Boolean(readOnly)}
+                                onChange={(event) =>
+                                  updateSfx({ gainDb: Number(event.target.value) }, cue.id)
+                                }
+                                className="min-w-0 flex-1 accent-[var(--pick)]"
+                              />
+                              <span className="tnum w-[42px] text-right text-[9px] text-muted">
+                                {cue.gainDb} dB
+                              </span>
+                            </label>
+                            <label className="flex cursor-pointer items-center gap-1.5 text-[9.5px] text-muted">
+                              <input
+                                type="checkbox"
+                                checked={cue.loop}
+                                disabled={Boolean(readOnly)}
+                                onChange={(event) =>
+                                  updateSfx({ loop: event.target.checked }, cue.id)
+                                }
+                                className="accent-[var(--pick)]"
+                              />
+                              循环
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => toggleSfxPreview(cue)}
+                              className="rounded-token border border-line px-2 py-0.5 text-[9px] text-muted enabled:hover:border-line-2 enabled:hover:text-text"
+                            >
+                              试听
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeSfx(cue.id)}
+                              disabled={Boolean(readOnly)}
+                              className="text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:text-pick disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              移掉
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {view.sfx.length < 8 ? (
+                    <div
+                      className={
+                        view.sfx.length > 0 ? "mt-3 border-t border-line pt-3" : undefined
+                      }
+                    >
+                      <div className="mt-2 flex flex-wrap items-end gap-2">
+                        <label className="flex min-w-[170px] flex-1 flex-col gap-1 text-[9.5px] text-muted-2">
+                          音效文件
+                          <input
+                            type="file"
+                            accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg"
+                            disabled={Boolean(readOnly) || sfxBusy}
+                            onChange={(event) => {
+                              const file = event.target.files?.[0];
+                              void chooseSfx(file);
+                              event.target.value = "";
+                            }}
+                            className="rounded-token border border-line bg-transparent px-2 py-1 text-[10px] text-muted file:mr-2 file:rounded-token file:border-0 file:bg-line file:px-2 file:py-0.5 file:text-[9.5px] file:text-text"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1 text-[9.5px] text-muted-2">
+                          起点（秒）
+                          <input
+                            type="number"
+                            min={0}
+                            max={Math.max(0, view.totalMs / 1000)}
+                            step={0.1}
+                            value={sfxStartSec}
+                            onChange={(event) => setSfxStartSec(event.target.value)}
+                            className="tnum w-[76px] rounded-token border border-line bg-transparent px-1.5 py-1 text-[10px] text-text focus:border-line-2 focus:outline-none"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1 text-[9.5px] text-muted-2">
+                          类型
+                          <select
+                            value={sfxRole}
+                            onChange={(event) => setSfxRole(event.target.value as SfxCue["role"])}
+                            className="rounded-token border border-line bg-transparent px-1.5 py-1 text-[10px] text-text focus:border-line-2 focus:outline-none"
+                          >
+                            <option value="foley" className="bg-surface">拟音</option>
+                            <option value="ambience" className="bg-surface">环境</option>
+                            <option value="impact" className="bg-surface">重音</option>
+                            <option value="transition" className="bg-surface">转场</option>
+                          </select>
+                        </label>
+                        <label className="mb-[3px] flex cursor-pointer items-center gap-1.5 text-[9.5px] text-muted">
+                          <input
+                            type="checkbox"
+                            checked={sfxLoop}
+                            onChange={(event) => setSfxLoop(event.target.checked)}
+                            className="accent-[var(--pick)]"
+                          />
+                          循环铺满
+                        </label>
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-end gap-2">
+                        <label className="flex min-w-[200px] flex-1 flex-col gap-1 text-[9.5px] text-muted-2">
+                          授权来源（必填）
+                          <input
+                            value={sfxLicense}
+                            onChange={(event) => setSfxLicense(event.target.value)}
+                            placeholder="例如：Freesound 授权 / 授权书 2026-11-01 / 自己录制"
+                            className="rounded-token border border-line bg-transparent px-2 py-1 text-[10px] text-text focus:border-line-2 focus:outline-none"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={commitSfx}
+                          disabled={
+                            Boolean(readOnly) || sfxBusy || !sfxFile || !sfxLicense.trim()
+                          }
+                          className="rounded-token border border-line px-3 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {view.sfx.length === 0 ? "加入音效" : "再加一条"}
+                        </button>
+                      </div>
+                      {sfxFile && (
+                        <p className="mt-1 text-[9px] text-muted">
+                          已读入 {sfxFile.name} · {fmtSec(sfxFile.durationMs)} ·{" "}
+                          {(sfxFile.size / 1024 / 1024).toFixed(1)} MB
+                        </p>
+                      )}
+                      {sfxBusy && (
+                        <p className="mt-1 text-[9px] text-muted-2">正在读音频与时长…</p>
+                      )}
+                      {sfxError && (
+                        <p className="mt-1 text-[9px] leading-[1.6] text-pick">{sfxError}</p>
+                      )}
+                      <p className="mt-1 text-[8.5px] leading-[1.6] text-muted-2">
+                        mp3 / m4a / wav / ogg，≤ 18 MB，最多 8 条。默认按文件长度放一遍；
+                        环境声勾「循环铺满」后铺到片尾。
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="mt-3 border-t border-line pt-3 text-[9px] leading-[1.6] text-muted-2">
+                      已经有 8 条音效（渲染清单上限）：先移掉一条再加。
+                    </p>
+                  )}
+
+                  <audio ref={sfxPreviewRef} className="hidden" />
+                </section>
+
+                <section aria-label="混音平衡" className="mt-5 border-t border-line pt-4">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <h2 className="text-[11px] tracking-[.06em] text-text">混音平衡</h2>
+                    <span className="text-[8.5px] tracking-[.06em] text-muted-2">C7</span>
+                  </div>
+                  <p className="mt-1 text-[9.5px] leading-[1.7] text-muted-2">
+                    三路总线各调一次：对白要更清楚就把对白抬起来，音乐抢戏就压下去。
+                    这是相对平衡，整片随后仍归一到 −14 LUFS；全归 0 与改动前逐字节同构。
+                  </p>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                    {(
+                      [
+                        ["dialogueDb", "对白"],
+                        ["musicDb", "配乐"],
+                        ["sfxDb", "音效"],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <label key={key} className="flex items-center gap-2 text-[9.5px] text-muted-2">
+                        {label}
+                        <input
+                          type="range"
+                          min={-12}
+                          max={12}
+                          step={1}
+                          value={view.mix[key]}
+                          disabled={Boolean(readOnly)}
+                          onChange={(event) => setMix({ [key]: Number(event.target.value) })}
+                          className="min-w-0 flex-1 accent-[var(--pick)]"
+                        />
+                        <span className="tnum w-[40px] text-right text-[9px] text-muted">
+                          {view.mix[key] > 0 ? "+" : ""}
+                          {view.mix[key]} dB
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setMix({ dialogueDb: 0, musicDb: 0, sfxDb: 0 })}
+                    disabled={
+                      Boolean(readOnly) ||
+                      (view.mix.dialogueDb === 0 &&
+                        view.mix.musicDb === 0 &&
+                        view.mix.sfxDb === 0)
+                    }
+                    className="mt-2 rounded-token border border-line px-2 py-0.5 text-[9px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    全部归 0
+                  </button>
                 </section>
 
                 <section aria-label="导出" className="mt-6 border-t border-line pt-4">

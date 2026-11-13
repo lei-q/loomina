@@ -319,3 +319,61 @@ describe("自动二次归一（C12）", () => {
     expect(args).toContain("out-fixed.mp4");
   });
 });
+
+describe("音效层与三路平衡（C7）", () => {
+  it("音效按自己的增益进音效总线，不 ducking", () => {
+    const args = buildAudioMixCommand({
+      dialogue: [],
+      music: [],
+      sfx: [{ path: "/tmp/door.wav", startMs: 1200, endMs: 2100, gainDb: -12, loop: false }],
+      mix: { dialogueDb: 0, musicDb: 0, sfxDb: 6 },
+      totalMs: 5500,
+      outFile: "/tmp/mix.wav",
+    });
+    const filters = args[args.indexOf("-filter_complex") + 1]!;
+    // −12 + 6 = −6 dB → 0.501187
+    expect(filters).toContain(
+      "[0:a]aresample=48000,atrim=duration=0.900,asetpts=PTS-STARTPTS,adelay=1200|1200,volume=0.501187,anull[sfx0]",
+    );
+    expect(filters).toContain("[sfx0]anull[sfxmix]");
+    expect(filters).not.toContain("duck");
+  });
+
+  it("循环音效加 -stream_loop", () => {
+    const args = buildAudioMixCommand({
+      dialogue: [],
+      music: [],
+      sfx: [{ path: "/tmp/rain.wav", startMs: 0, endMs: 5500, gainDb: -20, loop: true }],
+      totalMs: 5500,
+      outFile: "/tmp/mix.wav",
+    });
+    expect(args[args.indexOf("-stream_loop") + 1]).toBe("-1");
+  });
+
+  it("对白与音效两条总线用 amix 合成", () => {
+    const args = buildAudioMixCommand({
+      dialogue: [{ path: "/tmp/a.m4a", startMs: 0, durationMs: 2000 }],
+      music: [],
+      sfx: [{ path: "/tmp/door.wav", startMs: 1200, endMs: 2100, gainDb: -12, loop: false }],
+      mix: { dialogueDb: 3, musicDb: 0, sfxDb: 0 },
+      totalMs: 5500,
+      outFile: "/tmp/mix.wav",
+    });
+    const filters = args[args.indexOf("-filter_complex") + 1]!;
+    // 对白总线 +3 dB 叠到每句上：0 → 1.412538
+    expect(filters).toContain("volume=1.412538");
+    expect(filters).toContain("[dlgmix][sfxmix]amix=inputs=2:duration=longest:normalize=0");
+  });
+
+  it("总线全 0 时命令与以前同构", () => {
+    const args = buildAudioMixCommand({
+      dialogue: [{ path: "/tmp/a.m4a", startMs: 0, durationMs: 2000 }],
+      music: [],
+      mix: { dialogueDb: 0, musicDb: 0, sfxDb: 0 },
+      totalMs: 5500,
+      outFile: "/tmp/mix.wav",
+    });
+    const filters = args[args.indexOf("-filter_complex") + 1]!;
+    expect(filters).not.toContain("volume=");
+  });
+});

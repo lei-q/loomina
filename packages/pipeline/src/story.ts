@@ -611,7 +611,7 @@ export function projectFromStoryDraft(
     assets: characters.flatMap((character) => sheetSlotAssets(character.id, options.at)),
     approvals: [],
     gates: [],
-    timeline: { items: [], music: [] },
+    timeline: { items: [], music: [], sfx: [], mix: { dialogueDb: 0, musicDb: 0, sfxDb: 0 } },
     subtitleOverrides: [],
     subtitleLayout: { preset: "default" },
     subtitleTranslation: { enabled: false, lang: "en", position: "below" },

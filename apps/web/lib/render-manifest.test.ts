@@ -334,6 +334,73 @@ describe("清单里的本机资产库地址（H3 / ADR-0128）", () => {
     expect(ok.error).toContain("标成视频但不是视频格式");
   });
 
+  it("音效层：不带 ducking，最多 8 条，时间落在成片内（C7）", () => {
+    const ok = validateRenderManifest(
+      manifest({
+        sfx: [{ audio: "data:audio/wav;base64,UklGRg==", startMs: 200, endMs: 800 }],
+      }),
+    );
+    expect(ok.ok).toBe(true);
+    if (!ok.ok) return;
+    expect(ok.manifest.sfx).toEqual([
+      { audio: "data:audio/wav;base64,UklGRg==", startMs: 200, endMs: 800, gainDb: -12, loop: false },
+    ]);
+
+    expect(
+      validateRenderManifest(
+        manifest({ sfx: [{ audio: "data:audio/wav;base64,UklGRg==", startMs: 0, endMs: 1200 }] }),
+      ).ok,
+    ).toBe(false);
+    expect(
+      validateRenderManifest(
+        manifest({
+          sfx: [{ audio: "data:audio/wav;base64,UklGRg==", startMs: 0, endMs: 1000, gainDb: 4 }],
+        }),
+      ).ok,
+    ).toBe(false);
+    expect(
+      validateRenderManifest(
+        manifest({ sfx: [{ audio: "data:image/png;base64,AAAA", startMs: 0, endMs: 1000 }] }),
+      ).ok,
+    ).toBe(false);
+    expect(
+      validateRenderManifest(
+        manifest({
+          sfx: Array.from({ length: 9 }, () => ({
+            remote: "https://cdn.example.com/a.wav",
+            startMs: 0,
+            endMs: 1000,
+          })),
+        }),
+      ).ok,
+    ).toBe(false);
+  });
+
+  it("三路平衡：省略与全 0 都不写进清单，越界拒绝（C7）", () => {
+    const without = validateRenderManifest(manifest());
+    expect(without.ok).toBe(true);
+    if (!without.ok) return;
+    expect(without.manifest.mix).toBeUndefined();
+
+    const zero = validateRenderManifest(
+      manifest({ mix: { dialogueDb: 0, musicDb: 0, sfxDb: 0 } }),
+    );
+    expect(zero.ok).toBe(true);
+    if (!zero.ok) return;
+    expect(zero.manifest.mix).toBeUndefined();
+
+    const set = validateRenderManifest(
+      manifest({ mix: { dialogueDb: 2, musicDb: -3, sfxDb: 0 } }),
+    );
+    expect(set.ok).toBe(true);
+    if (!set.ok) return;
+    expect(set.manifest.mix).toEqual({ dialogueDb: 2, musicDb: -3, sfxDb: 0 });
+
+    expect(
+      validateRenderManifest(manifest({ mix: { dialogueDb: 13, musicDb: 0, sfxDb: 0 } })).ok,
+    ).toBe(false);
+  });
+
   it("音轨与配乐也认资产库地址", () => {
     const ok = validateRenderManifest(
       manifest({

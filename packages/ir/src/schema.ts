@@ -831,9 +831,56 @@ export const SubtitleTranslationSchema = z.object({
 });
 export type SubtitleTranslation = z.infer<typeof SubtitleTranslationSchema>;
 
+/**
+ * 音效类型（C7 / ADR-0184）。
+ *
+ * 只用来在界面上分组与复盘，不参与渲染：环境声常常循环铺满，重音只响一下，
+ * 拟音跟着动作，转场垫在两个场景之间。渲染只看起点、长度、增益与循环。
+ */
+export const SFX_ROLES = ["ambience", "impact", "foley", "transition"] as const;
+export type SfxRole = (typeof SFX_ROLES)[number];
+
+/**
+ * 一条音效（C7 / ADR-0184）。
+ *
+ * 与配乐的区别不在数据结构，而在用法：音效**不 ducking**，默认只播一遍，
+ * 增益默认比配乐高（−12 dB），因为它本来就是短促的一下。
+ * 授权来源与配乐同一口径：没有它的音效不许进项目。
+ */
+export const SfxCueSchema = z.object({
+  id: Id,
+  assetId: Id,
+  title: z.string().min(1).max(120),
+  startMs: z.number().int().nonnegative(),
+  durationMs: z.number().int().positive(),
+  /** 相对对白的基准增益；整片仍由 loudnorm 归一 */
+  gainDb: z.number().min(-40).max(0).default(-12),
+  /** 比这一段短时是否循环铺满；环境声常开，重音默认关 */
+  loop: z.boolean().default(false),
+  role: z.enum(SFX_ROLES).default("foley"),
+  /** 授权来源备注：音效库 / 授权书编号 / 自己录制，不允许空 */
+  licenseRef: z.string().min(1).max(240),
+});
+export type SfxCue = z.infer<typeof SfxCueSchema>;
+
+/**
+ * 三路总线平衡（C7 / ADR-0184）：对白 / 配乐 / 音效各一个 ±12 dB。
+ *
+ * 放在 bus 上而不是逐条改 cue：作者想在「对白更清楚一点」上动的是整条总线，
+ * 不是再走一遍每一条配乐与音效。全部为 0 时混音命令与以前逐字节同构。
+ */
+export const AudioMixSchema = z.object({
+  dialogueDb: z.number().min(-12).max(12).default(0),
+  musicDb: z.number().min(-12).max(12).default(0),
+  sfxDb: z.number().min(-12).max(12).default(0),
+});
+export type AudioMix = z.infer<typeof AudioMixSchema>;
+
 export const TimelineSchema = z.object({
   items: z.array(TimelineItemSchema).default([]),
   music: z.array(MusicCueSchema).default([]),
+  sfx: z.array(SfxCueSchema).default([]),
+  mix: AudioMixSchema.default({ dialogueDb: 0, musicDb: 0, sfxDb: 0 }),
 });
 export type Timeline = z.infer<typeof TimelineSchema>;
 

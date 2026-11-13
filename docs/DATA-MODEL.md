@@ -759,12 +759,14 @@ interface Approval {
 
 ### 5.2 时间线的落地（ADR-0086）
 
-IR 里的时间线目前是窄实现：**只有画面轨**，音频与字幕不单独落数据，按片段起点从台词派生。
+IR 里的时间线是窄实现：**画面轨 + 配乐床 + 音效层**；对白音频与字幕不单独落数据，按片段起点从台词派生。
 
 ```ts
 interface Timeline {
   items: TimelineItem[];   // 按 startMs 排；事件里允许乱序，读模型自己排
   music: MusicCue[];       // 配乐床（ADR-0099）；旧日志缺省为 []
+  sfx: SfxCue[];           // 音效层（C7 / ADR-0184）；旧日志缺省为 []
+  mix: AudioMix;           // 三路总线平衡（C7）；旧日志缺省全 0
 }
 
 // 叠加层偏移（E1 / ADR-0131）：挂在 DialogueLine 上，只有作者挪过的句子才有
@@ -860,6 +862,32 @@ interface MusicCue {
 校验：资产存在且是音频、授权备注非空、起点在成片之内、增益与 ducking 深度在范围内；`motifId` 若存在，必须是 `project.motifs` 里的 id（C10）。
 
 **混排语义（C4 / ADR-0182，2026-11-13）**：数组里的每一段是一个时间段，**允许重叠**（铺底 + 重音是常态，不是错误）；起点必须 `0 ≤ startMs < timelineEnd`、`durationMs ≥ 500`，最多 4 段（渲染清单上限）。改起点不连带改长度。界面与 store 都支持事后改 `startMs` / `durationMs`，仍然只写一条 `timeline.music.updated`。
+
+**音效层与三路平衡（C7 / ADR-0184，2026-11-13）**
+
+```ts
+type SfxRole = "ambience" | "impact" | "foley" | "transition";
+
+interface SfxCue {
+  id: ID; assetId: ID; title: string;
+  startMs: number; durationMs: number;
+  gainDb: number;        // −40…0，缺省 −12
+  loop: boolean;         // 缺省 false：只播一遍
+  role: SfxRole;         // 缺省 foley；只用于分组与复盘，不影响渲染
+  licenseRef: string;    // 必填，与配乐同一口径
+}
+
+interface AudioMix {
+  dialogueDb: number;    // 三路各 −12…12，缺省 0
+  musicDb: number;
+  sfxDb: number;
+}
+```
+
+- 事件：`timeline.sfx.updated { sfx }`（整条替换，最多 8 条，校验同配乐：挂音频资产、授权非空、起点在成片内、时长 > 0、增益 −40–0），`timeline.mix.updated { mix }`（整块替换）。
+- 音效**不 ducking**；混音时增益是「cue 自己的 + 音效总线」。配乐总线叠在 cue 基础增益上，但**不改 ducking 深度**。
+- 渲染清单：`sfx?: RenderSfx[]`、`mix?: RenderMix`，没有音效 / 全 0 时两项省略；音效素材计入 200 MB 总量。
+- 日志版本 4：v3 → v4 只靠 zod 默认值补 `sfx: []` 与 `mix: {0,0,0}`，事件形状不变。
 
 **落地细节（C10 第一档，2026-11-12）**
 

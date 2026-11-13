@@ -72,6 +72,13 @@ type ResolvedMusic = {
   ducking: boolean;
   loop: boolean;
 };
+type ResolvedSfx = {
+  path: string;
+  startMs: number;
+  endMs: number;
+  gainDb: number;
+  loop: boolean;
+};
 type JobStatus = "queued" | "running" | "done" | "error";
 
 type RenderJob = {
@@ -654,6 +661,21 @@ async function runJob(job: RenderJob): Promise<void> {
       });
     }
 
+    const sfx: ResolvedSfx[] = [];
+    for (const [index, track] of (job.manifest.sfx ?? []).entries()) {
+      if (track.remote) {
+        const downloaded = await downloadRemote(track.remote, dir, `remote-sfx-${index}`, "audio");
+        if (downloaded) {
+          sfx.push({ ...track, path: downloaded.path });
+        } else remoteSkipped += 1;
+        continue;
+      }
+      sfx.push({
+        ...track,
+        path: await writeAsset(dir, track.audio!, `sfx-${index}`),
+      });
+    }
+
     job.remoteSkipped = remoteSkipped;
     job.placeholders =
       job.manifest.clips.filter((clip) => clip.placeholder === true).length + fallbackClips;
@@ -673,13 +695,15 @@ async function runJob(job: RenderJob): Promise<void> {
         job.progress = Math.min(4, Math.floor(((index + 1) / audio.length) * 4));
       }
     }
-    if (audio.length > 0 || music.length > 0) {
+    if (audio.length > 0 || music.length > 0 || sfx.length > 0) {
       job.stage = "混音与响度";
       job.progress = 0;
       const mixFile = path.join(/* turbopackIgnore: true */ dir, "mix.wav");
       const mixArgs = buildAudioMixCommand({
         dialogue: audio,
         music,
+        sfx,
+        ...(job.manifest.mix ? { mix: job.manifest.mix } : {}),
         totalMs: job.manifest.totalMs,
         outFile: mixFile,
       });

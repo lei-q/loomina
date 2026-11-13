@@ -21,6 +21,8 @@ import {
   type RenderClip,
   type RenderManifest,
   type RenderMusic,
+  type RenderMix,
+  type RenderSfx,
   type RenderOverlay,
   type RenderQuality,
 } from "./render-manifest";
@@ -390,6 +392,44 @@ export function buildRenderManifest(
     music.push({ audio: cue.uri, ...common });
   }
 
+  // 音效层（C7 / ADR-0184）：与配乐同一套地址解析，但不带 ducking 参数
+  const sfx: RenderSfx[] = [];
+  for (const cue of view.sfx) {
+    if (!cue.uri) continue;
+    const endMs = Math.min(view.totalMs, cue.startMs + cue.durationMs);
+    if (endMs <= cue.startMs) continue;
+    const common = {
+      startMs: cue.startMs,
+      endMs,
+      gainDb: cue.gainDb,
+      loop: cue.loop,
+    };
+    if (/^https?:\/\//i.test(cue.uri)) {
+      sfx.push({ remote: cue.uri, ...common });
+      continue;
+    }
+    if (isRemoteAssetUri(cue.uri)) {
+      const mime = mimeForExtension(cue.uri.trim().slice(S3_PREFIX.length).split(".").pop() ?? "");
+      if (!isAudioMime(mime)) continue;
+      sfx.push({ audio: cue.uri, ...common });
+      continue;
+    }
+    if (isStoredAssetUri(cue.uri)) {
+      const mime = mimeForExtension(storedAssetRef(cue.uri)!.extension);
+      if (!isAudioMime(mime)) continue;
+      sfx.push({ audio: cue.uri, ...common });
+      continue;
+    }
+    const parts = parseDataUri(cue.uri);
+    if (!parts || !isAudioMime(parts.mime)) continue;
+    sfx.push({ audio: cue.uri, ...common });
+  }
+
+  const mix: RenderMix | undefined =
+    view.mix.dialogueDb === 0 && view.mix.musicDb === 0 && view.mix.sfxDb === 0
+      ? undefined
+      : { ...view.mix };
+
   // 头尾卡（E9 / ADR-0174）：成片最前 / 最后各一张静帧，占掉各自的时长。
   // 卡是浏览器画好再交给服务端的 PNG；画布不可用时退成占位（服务端出黑帧），
   // 但时长仍然对——时间轴不会因为导出环境不同而错位。
@@ -425,6 +465,8 @@ export function buildRenderManifest(
       overlays,
       audio,
       music,
+      ...(sfx.length > 0 ? { sfx } : {}),
+      ...(mix ? { mix } : {}),
       aiLabel: {
         explicit: true,
         implicit: true,

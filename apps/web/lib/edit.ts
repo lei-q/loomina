@@ -1,9 +1,11 @@
 import type {
+  AudioMix,
   Brand,
   Frame,
   Grade,
   MusicCue,
   Project,
+  SfxCue,
   ShotFocus,
   SubtitleLayout,
   SubtitleTranslation,
@@ -304,6 +306,26 @@ export type EditMusic = {
 };
 
 /**
+ * 一条音效在读模型里的样子（C7 / ADR-0184）。
+ *
+ * 与配乐分开列：它们不 ducking、默认只播一遍，界面上的控件也不一样。
+ */
+export type EditSfx = {
+  id: string;
+  assetId: string;
+  title: string;
+  /** 音效文件地址（data URI / loomina:// 资产 / http(s)）；资产丢了就没有 */
+  uri?: string;
+  assetDurationMs?: number;
+  startMs: number;
+  durationMs: number;
+  gainDb: number;
+  loop: boolean;
+  role: SfxCue["role"];
+  licenseRef: string;
+};
+
+/**
  * 一张头 / 尾卡在读模型里的样子（E9 / ADR-0174）。
  *
  * 它不是 `EditClip`：卡片没有镜头、没有 take、没有台词，塞进片段数组会逼着
@@ -327,8 +349,12 @@ export type EditView = {
   brand: Brand;
   /** 片头卡占掉的时长：画面、字幕、配乐的时间都整体后移这么多 */
   brandOffsetMs: number;
-  /** 配乐床（C4）：目前一条，按台词自动 ducking */
+  /** 配乐床（C4）：多条 cue，台词出现时按 duckDb 自动压低 */
   music: EditMusic[];
+  /** 音效层（C7）：短促的效果音，不 ducking、默认只播一遍 */
+  sfx: EditSfx[];
+  /** 三路总线平衡（C7）：对白 / 配乐 / 音效各一个增益 */
+  mix: AudioMix;
   /** 全部字幕，按时间排好；SRT、预览与导出都用这一份 */
   cues: EditCue[];
   /** 断句用的每行字数 */
@@ -636,6 +662,27 @@ export function toEditView(
     ];
   });
 
+  const sfx: EditSfx[] = project.timeline.sfx.flatMap((cue) => {
+    const asset = assetById.get(cue.assetId);
+    if (!asset || asset.kind !== "audio") return [];
+    return [
+      {
+        id: cue.id,
+        assetId: cue.assetId,
+        title: cue.title,
+        uri: asset.uri,
+        assetDurationMs: asset.durationMs,
+        // 音效与配乐一样跟着片头卡后移
+        startMs: cue.startMs + headMs,
+        durationMs: cue.durationMs,
+        gainDb: cue.gainDb,
+        loop: cue.loop,
+        role: cue.role,
+        licenseRef: cue.licenseRef,
+      },
+    ];
+  });
+
   const lutAsset = project.grade.lutAssetId
     ? project.assets.find(
         (asset) => asset.id === project.grade.lutAssetId && asset.kind === "lut" && asset.uri,
@@ -650,6 +697,8 @@ export function toEditView(
     brand: project.brand,
     brandOffsetMs: headMs,
     music,
+    sfx,
+    mix: project.timeline.mix,
     cues,
     maxChars,
     subtitleStyle,

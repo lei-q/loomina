@@ -41,6 +41,22 @@ export type MixMusic = {
   loop: boolean;
 };
 
+/** 一条音效（C7 / ADR-0184）：不 ducking，按自己的增益进音效总线 */
+export type MixSfx = {
+  path: string;
+  startMs: number;
+  endMs: number;
+  gainDb: number;
+  loop: boolean;
+};
+
+/** 三路总线平衡（C7 / ADR-0184）：缺省就是 0 dB */
+export type MixBus = {
+  dialogueDb: number;
+  musicDb: number;
+  sfxDb: number;
+};
+
 export type LoudnessMeasurement = {
   inputI: number | null;
   inputTp: number | null;
@@ -153,24 +169,34 @@ export function duckVolumeExpression(
 export function buildAudioMixCommand(input: {
   dialogue: MixDialogue[];
   music: MixMusic[];
+  /** 音效层（C7）：不传就是没有，与旧命令同构 */
+  sfx?: MixSfx[];
+  /** 三路总线平衡（C7）：不传就是 0 dB，与旧命令同构 */
+  mix?: MixBus;
   totalMs: number;
   outFile: string;
 }): string[] {
+  const sfxTracks = input.sfx ?? [];
+  const bus = input.mix ?? { dialogueDb: 0, musicDb: 0, sfxDb: 0 };
   const args: string[] = ["-hide_banner", "-y", "-nostats"];
   input.dialogue.forEach((track) => args.push("-i", track.path));
   input.music.forEach((track) => {
     if (track.loop) args.push("-stream_loop", "-1");
     args.push("-i", track.path);
   });
+  sfxTracks.forEach((track) => {
+    if (track.loop) args.push("-stream_loop", "-1");
+    args.push("-i", track.path);
+  });
+
+  const gainStage = (db: number) =>
+    Math.abs(db) >= 0.1 ? `volume=${dbToLinear(db).toFixed(6)},` : "";
 
   const filters: string[] = [];
   const dialogueLabels: string[] = [];
   input.dialogue.forEach((track, index) => {
-    // 分段响度（C12）：每句先拉到自己该在的位置，再进总线
-    const gain =
-      track.gainDb && Math.abs(track.gainDb) >= 0.1
-        ? `volume=${dbToLinear(track.gainDb).toFixed(6)},`
-        : "";
+    // 分段响度（C12）+ 对白总线（C7）：每句先拉到自己该在的位置，再进总线
+    const gain = gainStage((track.gainDb ?? 0) + bus.dialogueDb);
     filters.push(
       `[${index}:a]aresample=48000,` +
         `adelay=${track.startMs}|${track.startMs},` +
@@ -188,9 +214,10 @@ export function buildAudioMixCommand(input: {
   input.music.forEach((track, index) => {
     const inputIndex = input.dialogue.length + index;
     const length = seconds(track.endMs - track.startMs);
+    // 配乐总线叠在每条 cue 的基础增益上；ducking 的深度不跟着总线变
     const expression = duckVolumeExpression(
       duckWindows,
-      track.gainDb,
+      track.gainDb + bus.musicDb,
       track.duckDb,
       track.ducking,
     );
@@ -201,6 +228,22 @@ export function buildAudioMixCommand(input: {
         `volume=volume='${expression}':eval=frame[mus${index}]`,
     );
     musicLabels.push(`[mus${index}]`);
+  });
+
+  const sfxLabels: string[] = [];
+  sfxTracks.forEach((track, index) => {
+    const inputIndex = input.dialogue.length + input.music.length + index;
+    const length = seconds(track.endMs - track.startMs);
+    // 音效不 ducking：长短与增益都是作者定的，总线再统一调一次
+    const gain = gainStage(track.gainDb + bus.sfxDb);
+    filters.push(
+      `[${inputIndex}:a]aresample=48000,` +
+        `atrim=duration=${length},asetpts=PTS-STARTPTS,` +
+        `adelay=${track.startMs}|${track.startMs},` +
+        gain +
+        `anull[sfx${index}]`,
+    );
+    sfxLabels.push(`[sfx${index}]`);
   });
 
   const mix = (labels: string[], name: string) => {
@@ -215,19 +258,19 @@ export function buildAudioMixCommand(input: {
 
   if (dialogueLabels.length > 0) mix(dialogueLabels, "dlgmix");
   if (musicLabels.length > 0) mix(musicLabels, "musmix");
+  if (sfxLabels.length > 0) mix(sfxLabels, "sfxmix");
 
-  if (dialogueLabels.length > 0 && musicLabels.length > 0) {
+  const busLabels: string[] = [];
+  if (dialogueLabels.length > 0) busLabels.push("[dlgmix]");
+  if (musicLabels.length > 0) busLabels.push("[musmix]");
+  if (sfxLabels.length > 0) busLabels.push("[sfxmix]");
+  const finish = `apad,atrim=duration=${seconds(input.totalMs)},asetpts=PTS-STARTPTS[aout]`;
+
+  if (busLabels.length === 1) {
+    filters.push(`${busLabels[0]}${finish}`);
+  } else if (busLabels.length > 1) {
     filters.push(
-      `[dlgmix][musmix]amix=inputs=2:duration=longest:normalize=0,` +
-        `apad,atrim=duration=${seconds(input.totalMs)},asetpts=PTS-STARTPTS[aout]`,
-    );
-  } else if (dialogueLabels.length > 0) {
-    filters.push(
-      `[dlgmix]apad,atrim=duration=${seconds(input.totalMs)},asetpts=PTS-STARTPTS[aout]`,
-    );
-  } else if (musicLabels.length > 0) {
-    filters.push(
-      `[musmix]apad,atrim=duration=${seconds(input.totalMs)},asetpts=PTS-STARTPTS[aout]`,
+      `${busLabels.join("")}amix=inputs=${busLabels.length}:duration=longest:normalize=0,${finish}`,
     );
   } else {
     const silentIndex = 0;

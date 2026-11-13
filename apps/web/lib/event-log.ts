@@ -21,7 +21,7 @@ import {
  * 本地日志的格式版本。**改动事件或项目结构时把它 +1**，并在 `migrateLog` 里补一段。
  * 没有版本号，一次 schema 改动就会让用户存下的项目整份判废。
  */
-export const LOG_VERSION = 3;
+export const LOG_VERSION = 4;
 
 export type StoredLog = {
   version: number;
@@ -81,6 +81,8 @@ const EVENT_TYPES: Record<ProjectEvent["type"], true> = {
   "asset.removed": true,
   "timeline.updated": true,
   "timeline.music.updated": true,
+  "timeline.sfx.updated": true,
+  "timeline.mix.updated": true,
   "motif.updated": true,
   "motif.removed": true,
   "gate.confirmed": true,
@@ -145,6 +147,8 @@ export function migrateLog(stored: StoredLog): ProjectEvent[] | null {
   // 迁移链：
   // 1 → 2：Project 增加 `story`（ADR-0088），zod 默认值会补齐，事件本身不用改。
   // 2 → 3：Project 增加 `subtitleLayout`（D3），同样有默认值，事件不用改形状。
+  // 3 → 4：Project 增加 `timeline.sfx` / `timeline.mix`（C7 / ADR-0184），
+  //        同样有默认值；新事件类型只有新版本才写得出来。
   // 目前没有需要改形状的迁移，链保持空实现。
   if (stored.version < 2) {
     events = v1ToV2(events);
@@ -152,12 +156,20 @@ export function migrateLog(stored: StoredLog): ProjectEvent[] | null {
   if (stored.version < 3) {
     events = v2ToV3(events);
   }
+  if (stored.version < 4) {
+    events = v3ToV4(events);
+  }
 
   return parseEvents(events);
 }
 
 /** v2 → v3 同样只靠 zod 默认值补 `subtitleLayout`（D3），形状不变。 */
 function v2ToV3(events: unknown[]): unknown[] {
+  return events;
+}
+
+/** v3 → v4 靠 zod 默认值补音效层与三路平衡（C7 / ADR-0184），形状不变。 */
+function v3ToV4(events: unknown[]): unknown[] {
   return events;
 }
 

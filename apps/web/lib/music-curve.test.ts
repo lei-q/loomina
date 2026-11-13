@@ -201,7 +201,7 @@ describe("音乐情绪曲线（C10 / ADR-0125）", () => {
     const project = withCue(
       {
         ...base,
-        timeline: { items: base.timeline.items.slice(0, 1), music: [] },
+        timeline: { ...base.timeline, items: base.timeline.items.slice(0, 1), music: [] },
       },
       { durationMs: 4000 },
     );
