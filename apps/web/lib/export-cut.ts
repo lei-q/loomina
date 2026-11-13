@@ -60,14 +60,23 @@ function srtTime(ms: number): string {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")},${String(millis).padStart(3, "0")}`;
 }
 
-/** 字幕轨：断句后的每一条，绝对时间，一条一行 */
+/** 一条字幕的正文：双语开着时第二行是译文（D5 / ADR-0173），上下按作者选的位置 */
+function cueBody(cue: { text: string; translation?: string }, position: "below" | "above"): string {
+  const first = cue.text.trim();
+  const second = cue.translation?.trim();
+  if (!second) return first;
+  return position === "above" ? `${second}\n${first}` : `${first}\n${second}`;
+}
+
+/** 字幕轨：断句后的每一条，绝对时间，一条一行；双语时一条里两行 */
 export function buildSrt(view: EditView): string {
+  const position = view.translation.position;
   const cues = view.cues
     .filter((cue) => cue.text.trim().length > 0)
     .map((cue) => ({
       startMs: cue.startMs,
       endMs: cue.startMs + cue.durationMs,
-      text: cue.text.trim(),
+      text: cueBody(cue, position),
     }));
   cues.sort((a, b) => a.startMs - b.startMs);
   return cues
@@ -109,6 +118,9 @@ export function buildAss(
   const marginV = Math.round((style.bottomPct / 100) * height);
   const outline = Math.max(1, Math.round((style.strokeCqw / 100) * width));
   const marginH = Math.round((SAFE_AREA.sidePct / 100) * width);
+  // 双语（D5 / ADR-0173）：第二行比原文小一号，同一块字幕区里读得出主次
+  const secondSize = Math.max(12, Math.round(fontSize * 0.78));
+  const bilingual = view.translation.enabled;
 
   const cues = view.cues
     .filter((cue) => cue.text.trim().length > 0)
@@ -116,6 +128,7 @@ export function buildAss(
       startMs: cue.startMs,
       endMs: cue.startMs + cue.durationMs,
       text: cue.text.trim(),
+      translation: cue.translation?.trim(),
       // D3：按角色着色时用 ASS 行内覆盖；关掉就只有默认样式
       color: style.speakerColors && cue.speakerColor ? assColorOf(cue.speakerColor) : "",
     }))
@@ -133,17 +146,27 @@ PlayResY: ${height}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,PingFang SC,${fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,-1,0,0,0,100,100,1,0,1,${outline},0,2,${marginH},${marginH},${marginV},1
+Style: Default,PingFang SC,${fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,-1,0,0,0,100,100,1,0,1,${outline},0,2,${marginH},${marginH},${marginV},1${
+    bilingual
+      ? `\nStyle: Second,PingFang SC,${secondSize},&H00E8E8E8,&H00FFFFFF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,${Math.max(1, Math.round(outline * 0.8))},0,2,${marginH},${marginH},${marginV},1`
+      : ""
+  }
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
 
   const events = cues
-    .map(
-      (cue) =>
-        `Dialogue: 0,${assTime(cue.startMs)},${assTime(cue.endMs)},Default,,0,0,0,,${cue.color}${cue.text.replace(/\r?\n/g, "\\N")}`,
-    )
+    .map((cue) => {
+      // 双语（D5）：两行在同一个 Dialogue 里，用 \N 换行；第二行走 Second 样式
+      const body =
+        cue.translation && view.translation.position === "below"
+          ? `${cue.text.replace(/\r?\n/g, "\\N")}\\N{\\rSecond}${cue.translation.replace(/\r?\n/g, "\\N")}`
+          : cue.translation
+            ? `{\\rSecond}${cue.translation.replace(/\r?\n/g, "\\N")}\\N${cue.text.replace(/\r?\n/g, "\\N")}`
+            : cue.text.replace(/\r?\n/g, "\\N");
+      return `Dialogue: 0,${assTime(cue.startMs)},${assTime(cue.endMs)},Default,,0,0,0,,${cue.color}${body}`;
+    })
     .join("\n");
 
   return `${header}${events}${events ? "\n" : ""}`;
@@ -288,6 +311,7 @@ export function previewClips(view: EditView): PreviewClip[] {
           startMs: cue.startMs - clip.startMs,
           endMs: cue.startMs - clip.startMs + cue.durationMs,
           text: cue.text,
+          ...(cue.translation ? { translation: cue.translation } : {}),
           ...(cue.speakerColor ? { color: cue.speakerColor } : {}),
         })),
       ),
@@ -349,7 +373,9 @@ header span { color:var(--muted); font-size:11px; font-variant-numeric:tabular-n
 .dip { position:absolute; inset:0; opacity:0; pointer-events:none; z-index:2; }
 .stage .safe { position:absolute; inset:${SAFE_AREA.topPct}% ${SAFE_AREA.sidePct}% ${SAFE_AREA.bottomPct}%; border:1px dashed rgba(242,242,239,.12); display:none; pointer-events:none; }
 .stage.show-safe .safe { display:block; }
-.subtitle { position:absolute; left:${SAFE_AREA.sidePct}%; right:${SAFE_AREA.sidePct}%; bottom:${style.bottomPct}%; text-align:center; font-size:${style.fontSizeCqw}cqw; line-height:1.38; font-weight:600; color:#fff; text-shadow:0 0 ${style.strokeCqw}cqw #000, 0 0 ${style.strokeCqw}cqw #000, 0 ${style.strokeCqw * 0.5}cqw ${style.strokeCqw * 1.2}cqw #000; letter-spacing:.02em; }
+.subtitle { position:absolute; left:${SAFE_AREA.sidePct}%; right:${SAFE_AREA.sidePct}%; bottom:${style.bottomPct}%; display:flex; flex-direction:column; text-align:center; font-size:${style.fontSizeCqw}cqw; line-height:1.38; font-weight:600; color:#fff; text-shadow:0 0 ${style.strokeCqw}cqw #000, 0 0 ${style.strokeCqw}cqw #000, 0 ${style.strokeCqw * 0.5}cqw ${style.strokeCqw * 1.2}cqw #000; letter-spacing:.02em; }
+.subtitle .translation { display:block; font-size:${(style.fontSizeCqw * 0.78).toFixed(2)}cqw; font-weight:400; color:#e8e8e8; letter-spacing:0; }
+.subtitle.above .translation { order:-1; }
 .ai-badge { position:absolute; ${badgePosition}; z-index:3; padding:3px 6px; border:1px solid rgba(255,255,255,.16); background:rgba(0,0,0,.58); color:rgba(255,255,255,.82); font-size:10px; line-height:1.2; letter-spacing:.08em; pointer-events:none; }
 .controls { width:100%; max-width:420px; display:flex; flex-direction:column; gap:10px; }
 .row { display:flex; align-items:center; gap:10px; }
@@ -373,7 +399,7 @@ input[type=range] { flex:1; accent-color:var(--pick); }
   <div class="placeholder" id="placeholder">这一镜还没有画面</div>
   <div class="dip" id="dip"></div>
   <div class="safe"></div>
-  <div class="subtitle" id="subtitle"></div>
+  <div class="subtitle${view.translation.position === "above" ? " above" : ""}" id="subtitle"><span id="text"></span><span class="translation" id="translation"></span></div>
   <div class="ai-badge" aria-label="AI 生成内容标识" data-corner="${placement.corner}">AI 生成</div>
 </div>
 <div class="controls">
@@ -396,6 +422,8 @@ function applyFocus(el) {
 }
 const placeholder = document.getElementById("placeholder");
 const subtitle = document.getElementById("subtitle");
+const subtitleText = document.getElementById("text");
+const translation = document.getElementById("translation");
 const playBtn = document.getElementById("play");
 const seek = document.getElementById("seek");
 const clock = document.getElementById("clock");
@@ -475,8 +503,12 @@ function render() {
   }
   dip.style.opacity = String(Math.max(0, Math.min(1, dipOpacity)));
   const cue = clip.subtitles.find((s) => inClip >= s.startMs && inClip < s.endMs);
-  subtitle.textContent = cue ? cue.text : "";
-  subtitle.style.color = cue && cue.color ? cue.color : "#fff";
+  subtitleText.textContent = cue ? cue.text : "";
+  subtitleText.style.color = cue && cue.color ? cue.color : "#fff";
+  // 双语（D5 / ADR-0173）：第二行是单独一段，字号小一号，上下按作者选的位置
+  const second = cue && cue.translation ? cue.translation : "";
+  translation.textContent = second;
+  translation.style.display = second ? "block" : "none";
   if (playing) {
     clip.audio.forEach((a, i) => {
       if (!audioFired[i] && inClip >= a.startMs) {

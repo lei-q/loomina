@@ -49,6 +49,7 @@ type StageTool =
   | "doctor"
   | "polish"
   | "silent"
+  | "bilingual"
   | "look"
   | "publish"
   | "rights"
@@ -75,7 +76,17 @@ const STAGE_TOOLS: Record<StageName, StageTool[]> = {
   ],
   关键帧: ["ledger", "budget", "preview"],
   声音: ["ledger", "budget", "preview"],
-  成片: ["ledger", "budget", "export", "silent", "publish", "grade", "frame", "rights"],
+  成片: [
+    "ledger",
+    "budget",
+    "export",
+    "silent",
+    "bilingual",
+    "publish",
+    "grade",
+    "frame",
+    "rights",
+  ],
 };
 
 export type TopBarProps = {
@@ -134,6 +145,10 @@ export type TopBarProps = {
   onPolish?: () => void;
   /** 要压的台词句数，显示在按钮右上 */
   polishCount?: number;
+  /** 打开双语字幕（D5 / ADR-0173）；给了才出现「双语」 */
+  onBilingual?: () => void;
+  /** 还有几句没译文，显示在按钮右上 */
+  untranslatedCount?: number;
   /** 打开静音可懂度检查（C13 / ADR-0164）；给了才出现「静音」 */
   onSilent?: () => void;
   /** 静音时有问题的地方数，显示在按钮右上 */
@@ -199,6 +214,8 @@ export function TopBar({
   doctorCount,
   onPolish,
   polishCount,
+  onBilingual,
+  untranslatedCount,
   onSilent,
   silentCount,
   onLook,
@@ -621,6 +638,19 @@ export function TopBar({
             授权
             {rightsGapCount !== undefined && rightsGapCount > 0 && (
               <span className="tnum text-[9px] text-pick">{rightsGapCount}</span>
+            )}
+          </button>
+        )}
+        {shows("bilingual") && onBilingual && (
+          <button
+            type="button"
+            onClick={onBilingual}
+            title="双语字幕：给每一句写第二行，SRT / ASS / 预览 / 成片一起带；不花钱"
+            className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            双语
+            {untranslatedCount !== undefined && untranslatedCount > 0 && (
+              <span className="tnum text-[9px] text-pick">{untranslatedCount}</span>
             )}
           </button>
         )}

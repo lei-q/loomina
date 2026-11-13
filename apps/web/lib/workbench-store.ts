@@ -636,6 +636,20 @@ type WorkbenchState = {
     speakerColorOverrides?: Record<string, string> | null;
   }) => boolean;
   /**
+   * 双语字幕开关（D5 / ADR-0173）：开不开、第二行语言与位置。
+   * 和当前值一样就不写事件；返回 false 表示没写。
+   */
+  setSubtitleTranslation: (patch: {
+    enabled?: boolean;
+    lang?: string;
+    position?: "below" | "above";
+  }) => boolean;
+  /**
+   * 给一句台词写译文（D5 / ADR-0173）：`null` 清掉。
+   * 空串与 `null` 等价——导出一行看不见的字比不写更糟。
+   */
+  setLineTranslation: (lineId: string, translation: string | null) => boolean;
+  /**
    * 挪一句的配音或字幕（E1 / ADR-0131）：写一条 `dialogue.updated`。
    *
    * 画面轨不能自由拖（渲染清单要求首尾相接），能自由挪的只有这两个叠加层。
@@ -4090,6 +4104,67 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     } catch (error) {
       // 越界由 applyEvent 拒；界面要看见原因，不能静默不动
       set({ editError: error instanceof Error ? error.message : "字幕版式没改成功。" });
+      return false;
+    }
+    return true;
+  },
+
+  setSubtitleTranslation: (patch) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const current = project.subtitleTranslation;
+    const lang = patch.lang === undefined ? undefined : patch.lang.trim();
+    // 和当前值一样就不写事件：开关点两下不该在日志里留两条
+    const same =
+      (patch.enabled === undefined || patch.enabled === current.enabled) &&
+      (lang === undefined || lang === current.lang) &&
+      (patch.position === undefined || patch.position === current.position);
+    if (same) return false;
+    const at = stamp();
+    const event: ProjectEvent = {
+      type: "subtitle.translation.updated",
+      at,
+      patch: {
+        ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
+        ...(lang !== undefined ? { lang } : {}),
+        ...(patch.position !== undefined ? { position: patch.position } : {}),
+      },
+    };
+    try {
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        editError: undefined,
+      });
+    } catch (error) {
+      set({ editError: error instanceof Error ? error.message : "双语字幕没改成功。" });
+      return false;
+    }
+    return true;
+  },
+
+  setLineTranslation: (lineId, translation) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const line = project.dialogue.find((item) => item.id === lineId);
+    if (!line) return false;
+    const next = translation === null ? undefined : translation.trim() || undefined;
+    if (next === (line.translation?.trim() || undefined)) return false;
+    const at = stamp();
+    const event: ProjectEvent = {
+      type: "dialogue.translation.updated",
+      at,
+      lineId,
+      translation: next ?? null,
+    };
+    try {
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        editError: undefined,
+      });
+    } catch (error) {
+      set({ editError: error instanceof Error ? error.message : "译文没写进去。" });
       return false;
     }
     return true;

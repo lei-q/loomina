@@ -5367,3 +5367,53 @@ B16 / B17 之后，表演设计与调度都进了 IR、也都写进了提示词�
 - 道具丢失只在 `propIds` 层面判：换了手、被放下都不算丢失。
 - 跨场连续性与镜头内位置变化不判；轴线仍归 B13 的 `checkAxis`。
 - 只给建议与跳转，不自动改表演或走位——翻面可能是有意的（换边 / 插中性镜）。
+
+## 第一百九十二次 · 2026-11-13 · 双语字幕（D5）
+
+**背景**
+
+D4 之后，断句（D2）与版式（D3）都进了 IR，SRT / ASS 从同一份 `view.cues` 出；FEATURES 里 D4 一直挂着「双语未做（D5）」。出海时第二语言还得在剪辑软件里另铺一条字幕轨，时间轴与断句都要重对一遍。
+
+**决定**
+
+1. **译文挂在台词上，不另建轨**。`DialogueLine.translation`（≤400 字）；`Project.subtitleTranslation = { enabled, lang, position }` 只管开不开、第二行语言与上下位置。断句成多条时每条带同一整句译文——按整句翻的英文硬切开读不通。没翻的句子只出原文，不拿中文再放一遍。
+2. **关掉双语时读模型与单语逐字一样**：一条 `translation` 都不带，存量项目不用迁移、旧测试不变。译文留着，随时能再开。
+3. **四种输出共用一份 cue**：SRT 一条两行按 `position` 排前后；ASS 同一个 `Dialogue` 用 `\N` 换行、第二行套 `Second` 样式（78% 字号、浅灰、非粗体）；预览 HTML 独立 `<span>` + `above` 用 `order:-1`；成片 MP4 的透明 PNG 画两行。**整块底边钉在安全区**，双行只把块往上撑——第二行往下长会压到平台底部操作栏。
+4. **两条事件**：`subtitle.translation.updated` 与 `dialogue.translation.updated`，`null` 与空串都清掉译文、连键一起删。`LOG_VERSION` 不变。
+5. **界面**：成片页顶栏「双语」抽屉，逐句写 / 改 / 清、Enter 保存、跳到那一句；顶栏数字是没译文的句数（只在开着时显示）。不调翻译模型，面板底部照实写。
+
+**过程中发现并修掉的一件事**
+
+实测导出时 SRT 是灰的：项目 16:9、目标平台抖音，`report.ok` 被平台画幅规格一票否决，**所有**导出按钮一起锁死——连与画幅无关的 SRT / ASS / OTIO / 预览 HTML 也导不出来。G9 当时给多平台版本拆过内容侧闸门（`contentGateOpen`），但单版导出没一起改。这次把字幕、OTIO 与预览 HTML 挂到内容侧闸门，成片 / 封面 / 发布包仍看完整闸门；预检下方的说明分开写。修前 SRT 按钮 `disabled`，修后勾上内容确认即可导出，成片仍被抖音规格拦着（`导出草稿 MP4 disabled`）。
+
+**产物**
+
+- `packages/ir/src/schema.ts`（`DialogueLine.translation`、`SubtitleTranslationSchema`、`Project.subtitleTranslation`）、`packages/ir/src/events.ts`（两条新事件 + 校验）、`packages/ir/test/events.test.ts`（+7 条）
+- `apps/web/lib/event-log.ts`（事件白名单）、`apps/web/lib/history.ts`（历史文案）、`apps/web/lib/history.test.ts`（+2 条）
+- `apps/web/lib/edit.ts`（`EditCue.translation`、`EditLine.translation`、`EditView.translation` / `translationCoverage`）、`apps/web/lib/export-cut.ts`（SRT / ASS / 预览 HTML）、`apps/web/lib/render-client.ts`（`drawCue` 双行）
+- `apps/web/lib/workbench-store.ts`（`setSubtitleTranslation` / `setLineTranslation`）
+- `apps/web/components/bilingual-panel.tsx`（抽屉，`aria-label="双语字幕"`）、`apps/web/components/top-bar.tsx`（「双语」工具与未译句数）、`apps/web/components/edit-screen.tsx`（挂载、闸门拆分）
+- `apps/web/lib/edit.test.ts`（+8 条双语导出用例）
+- `docs/adr/0173-bilingual-subtitles.md`、`docs/FEATURES.md`（D5）、`docs/ROADMAP.md`、`docs/DATA-MODEL.md`
+
+**验证**
+
+- `pnpm --filter @loomina/web typecheck` 干净；web 测试 58 个文件、1112 通过 / 4 跳过；ir 测试 242 通过；`pnpm build` 干净。
+- 浏览器（无头 Chrome，`/edit`，端口 3100）：
+  - 顶栏出现「双语」；抽屉 0 / 4 句有译文，开关写出「双语已打开：有译文的句子在预览、SRT、ASS 与成片里都出两行。」，写第一句译文后表头变「1 / 4 句有译文」。
+  - 导出 SRT：`1 / 00:00:00,000 --> 00:00:02,600 / 你早就知道，对吧。 / You knew it all along.`；没翻的第二句只有一行正文（块内 3 行）。
+  - 导出 ASS：多出 `Style: Second,PingFang SC,39,...`（Default 50），事件行 `{\c&HFFD87F&}你早就知道，对吧。\N{\rSecond}You knew it all along.`。
+  - 导出预览 HTML：有 `id="translation"`、`.subtitle .translation { font-size:3.59cqw }`、数据里带译文。
+  - 切「在上面」后 SRT 变成译文在前、预览 HTML 的 `class="subtitle above"` 为真。
+  - 成片：草稿导出 960×540 / 30fps，抽 0.5s 那一帧能看到两行——英文在上、中文在下（按角色色）——与「在上面」一致。
+  - 关掉双语再导 SRT：只有 `你早就知道，对吧。`，全文不含英文。
+  - 闸门对照：修前 SRT/ASS/OTIO/预览都 `disabled`；修后四项 `enabled`、`导出草稿 MP4` 仍 `disabled`，预检下方写「字幕、OTIO 与预览仍然可以导出（它们不看平台画幅）」。
+- 截图 `/tmp/d5-panel.png`、`/tmp/d5-above.png`、`/tmp/d5-gate.png`、`/tmp/d5-frame.png`。
+
+**边界**
+
+- 译文按整句翻：断成三条字幕时三条都显示同一整句译文，读速压力比原文大；长句应先在 D2 里断好再翻。
+- 只有一行第二语言；不做三语、逐词高亮、卡拉 OK 时间轴、按角色给第二行配色。
+- 第二行不会自动折行：超过画面宽度会被裁掉，界面只限 400 字，真正的宽度检查没做。
+- 双语开着但某句没译文时，那条字幕就是单语，导出里可能一行 / 两行交替；面板照实列出「还有 N 句没译文」。
+- 不调翻译模型：自动翻译、译文质量检查、配音与目标语言对齐都没做。

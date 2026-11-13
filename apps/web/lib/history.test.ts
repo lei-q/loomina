@@ -177,3 +177,39 @@ describe("字幕版式的人话（D3）", () => {
     expect(label).toBe("字幕版式：模板「大字」");
   });
 });
+
+describe("历史文案：双语字幕（D5 / ADR-0173）", () => {
+  it("开关说清开 / 关，语言与位置单独一条", () => {
+    const at = "2026-11-13T00:00:00.000Z";
+    const events: ProjectEvent[] = [
+      { type: "subtitle.translation.updated", at, patch: { enabled: true, lang: "ja" } },
+      { type: "subtitle.translation.updated", at, patch: { position: "above" } },
+      { type: "subtitle.translation.updated", at, patch: { enabled: false } },
+    ];
+    expect(events.map((event) => describeEvent(sampleProject, event))).toEqual([
+      "双语字幕：开（第二行 ja）",
+      "双语字幕：第二行放在上面",
+      "双语字幕：关",
+    ]);
+  });
+
+  it("写译文 / 清译文都带上那一句的前 12 个字", () => {
+    const at = "2026-11-13T00:00:00.000Z";
+    const lineId = sampleProject.dialogue[0]!.id;
+    const written = describeEvent(sampleProject, {
+      type: "dialogue.translation.updated",
+      at,
+      lineId,
+      translation: "You knew it.",
+    });
+    const cleared = describeEvent(sampleProject, {
+      type: "dialogue.translation.updated",
+      at,
+      lineId,
+      translation: null,
+    });
+    expect(written).toContain("写译文");
+    expect(written).toContain(sampleProject.dialogue[0]!.text.slice(0, 12));
+    expect(cleared).toContain("清掉译文");
+  });
+});

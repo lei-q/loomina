@@ -241,6 +241,27 @@ export function describeEvent(before: Project, event: ProjectEvent): string {
       }
       return `字幕版式：${touched.join("、") || "没有改动"}`;
     }
+    case "subtitle.translation.updated": {
+      const { patch } = event;
+      if (patch.enabled !== undefined) {
+        return patch.enabled
+          ? `双语字幕：开${patch.lang ? `（第二行 ${patch.lang}）` : ""}`
+          : "双语字幕：关";
+      }
+      const touched: string[] = [];
+      if (patch.lang !== undefined) touched.push(`第二行语言 ${patch.lang}`);
+      if (patch.position !== undefined) {
+        touched.push(`第二行放在${patch.position === "above" ? "上" : "下"}面`);
+      }
+      return `双语字幕：${touched.join("、") || "没有改动"}`;
+    }
+    case "dialogue.translation.updated": {
+      const line = before.dialogue.find((item) => item.id === event.lineId);
+      const preview = line ? `「${line.text.slice(0, 12)}」` : "一句台词";
+      return event.translation === null
+        ? `清掉译文：${preview}`
+        : `写译文：${preview}`;
+    }
     case "voice.take.added": {
       const line = before.dialogue.find((item) => item.id === event.take.lineId);
       return `加一版配音：${line ? `「${line.text.slice(0, 12)}」` : "一句台词"}`;

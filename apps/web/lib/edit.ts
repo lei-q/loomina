@@ -5,6 +5,7 @@ import type {
   Project,
   ShotFocus,
   SubtitleLayout,
+  SubtitleTranslation,
   Take,
   TimelineItem,
   Transition,
@@ -209,6 +210,13 @@ export type EditCue = {
   /** 这一句字幕的颜色（D3）；关掉按角色着色时没有，按白色画 */
   speakerColor?: string;
   text: string;
+  /**
+   * 这一条的第二行译文（D5 / ADR-0173）。
+   *
+   * 只在双语开着、且这一句台词写过译文时才有。断句后每一条都带同一句译文——
+   * 译文按整句翻的，硬切成几条英文反而读不通。
+   */
+  translation?: string;
   /** 绝对时间：从整条片子的 0 点算起 */
   startMs: number;
   durationMs: number;
@@ -234,6 +242,8 @@ export type EditLine = {
   subtitleOffsetMs: number;
   /** 这一句的音轨（data URI 或 http(s)） */
   audioUri?: string;
+  /** 这一句的译文（D5 / ADR-0173）；没写就没有 */
+  translation?: string;
   /** 断句后的显示单元；时间加起来等于整句 */
   cues: EditCue[];
   /** 这一句的断句被作者手改过（D2） */
@@ -306,6 +316,10 @@ export type EditView = {
   subtitleStyle: SubtitleStyle;
   /** 作者调过版式没有：界面据此给「恢复模板」 */
   subtitleCustom: boolean;
+  /** 双语字幕（D5 / ADR-0173）：开不开、第二行语言与位置 */
+  translation: SubtitleTranslation;
+  /** 有译文的句子数 / 总句数：双语开着但有句子没翻时，界面要说清楚 */
+  translationCoverage: { lines: number; translated: number };
   /** 调色（E4 / ADR-0169）：导出时对画面做的色彩调整 */
   grade: Grade;
   /** 画幅与适配（E5 / ADR-0170）：导出时裁成什么形状、多出来的地方怎么补 */
@@ -377,6 +391,8 @@ export function toEditView(
   const maxChars = Math.max(6, Math.round(options.maxChars ?? DEFAULT_SUBTITLE_CHARS));
   const preset = options.style ?? project.subtitleLayout.preset;
   const subtitleStyle = subtitleStyleOf(preset, project.subtitleLayout);
+  // 双语字幕（D5 / ADR-0173）：关着的时候一条译文都不带，读模型与单语完全一样
+  const translationOn = project.subtitleTranslation.enabled;
   const stage = toStageView(project);
   const stageById = new Map(stage.shots.map((shot) => [shot.id, shot]));
   const shotById = new Map(project.shots.map((shot) => [shot.id, shot]));
@@ -440,6 +456,9 @@ export function toEditView(
         const speakerColor = subtitleStyle.speakerColors
           ? (colorByCharacter.get(line.characterId) ?? SPEAKER_DEFAULT_COLOR)
           : undefined;
+        // 译文（D5 / ADR-0173）：只有双语开着、这一句写过译文时才带第二行
+        const translation =
+          translationOn && line.translation?.trim() ? line.translation.trim() : undefined;
         const override = overrideByLine.get(line.id);
         const spans = override ? fitCues(override.cues, line.durationMs) : [];
         const cues: EditCue[] = override
@@ -450,6 +469,7 @@ export function toEditView(
               characterId: line.characterId,
               characterName,
               ...(speakerColor ? { speakerColor } : {}),
+              ...(translation ? { translation } : {}),
               text: cue.text.trim(),
               startMs: cueStartMs + spans[index]!.startMs,
               durationMs: spans[index]!.durationMs,
@@ -467,6 +487,7 @@ export function toEditView(
                     characterId: line.characterId,
                     characterName,
                     ...(speakerColor ? { speakerColor } : {}),
+                    ...(translation ? { translation } : {}),
                     text,
                     startMs: cueStartMs + cue.startMs,
                     durationMs: cue.durationMs,
@@ -487,6 +508,7 @@ export function toEditView(
             voiceOffsetMs,
             subtitleOffsetMs,
             audioUri: voice?.uri,
+            ...(translation ? { translation } : {}),
             cues,
             ...(override ? { manual: true } : {}),
           },
@@ -563,6 +585,11 @@ export function toEditView(
     maxChars,
     subtitleStyle,
     subtitleCustom: isCustomSubtitleLayout(project.subtitleLayout),
+    translation: project.subtitleTranslation,
+    translationCoverage: {
+      lines: project.dialogue.length,
+      translated: project.dialogue.filter((line) => line.translation?.trim()).length,
+    },
     grade: project.grade,
     frame: project.frame,
     totalMs,

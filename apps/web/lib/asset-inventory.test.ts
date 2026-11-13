@@ -59,6 +59,7 @@ function base(): Project {
     timeline: { items: [], music: [] },
     subtitleOverrides: [],
     subtitleLayout: { preset: "default" },
+    subtitleTranslation: { enabled: false, lang: "en", position: "below" },
     publishPackages: [],
     authorizations: [],
   };

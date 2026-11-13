@@ -2954,6 +2954,113 @@ describe("字幕版式（D3）", () => {
   });
 });
 
+describe("双语字幕（D5 / ADR-0173）", () => {
+  it("默认关着，第二行是 en、放在下面", () => {
+    const project = load();
+    expect(project.subtitleTranslation).toEqual({
+      enabled: false,
+      lang: "en",
+      position: "below",
+    });
+    expect(project.dialogue[0]!.translation).toBeUndefined();
+  });
+
+  it("开关、语言、位置各写一次，只改传进来的键", () => {
+    const project = load();
+    const after = rebuild([
+      created(project),
+      { type: "subtitle.translation.updated", at: AT, patch: { enabled: true } },
+      { type: "subtitle.translation.updated", at: AT, patch: { lang: "ja" } },
+      { type: "subtitle.translation.updated", at: AT, patch: { position: "above" } },
+    ]);
+    expect(after.subtitleTranslation).toEqual({
+      enabled: true,
+      lang: "ja",
+      position: "above",
+    });
+  });
+
+  it("没有要改的字段被拒", () => {
+    const project = load();
+    expect(() =>
+      rebuild([created(project), { type: "subtitle.translation.updated", at: AT, patch: {} }]),
+    ).toThrow(/没有要改的字段/);
+  });
+
+  it("语言不能是空的、位置只能是上下", () => {
+    const project = load();
+    expect(() =>
+      rebuild([
+        created(project),
+        { type: "subtitle.translation.updated", at: AT, patch: { lang: "  " } },
+      ]),
+    ).toThrow(/不能是空的/);
+    expect(() =>
+      rebuild([
+        created(project),
+        {
+          type: "subtitle.translation.updated",
+          at: AT,
+          // 故意写一个 schema 之外的值：回放旧日志时也得拒绝
+          patch: { position: "left" as unknown as "below" },
+        },
+      ]),
+    ).toThrow(/below 或 above/);
+  });
+
+  it("译文写在那一句台词上，别的句子不动", () => {
+    const project = load();
+    const [first, second] = project.dialogue;
+    const after = rebuild([
+      created(project),
+      {
+        type: "dialogue.translation.updated",
+        at: AT,
+        lineId: first!.id,
+        translation: "  She doesn't believe it.  ",
+      },
+    ]);
+    const line = after.dialogue.find((item) => item.id === first!.id)!;
+    expect(line.translation).toBe("She doesn't believe it.");
+    expect(after.dialogue.find((item) => item.id === second!.id)!.translation).toBeUndefined();
+  });
+
+  it("`null` 与空串都清掉译文，不留一行空白", () => {
+    const project = load();
+    const lineId = project.dialogue[0]!.id;
+    const cleared = rebuild([
+      created(project),
+      { type: "dialogue.translation.updated", at: AT, lineId, translation: "Hello." },
+      { type: "dialogue.translation.updated", at: AT, lineId, translation: null },
+    ]);
+    expect(cleared.dialogue[0]!.translation).toBeUndefined();
+
+    const blank = rebuild([
+      created(project),
+      { type: "dialogue.translation.updated", at: AT, lineId, translation: "Hello." },
+      { type: "dialogue.translation.updated", at: AT, lineId, translation: "   " },
+    ]);
+    expect(blank.dialogue[0]!.translation).toBeUndefined();
+    // 清掉之后这个键整个不在，回放不会留下 `translation: undefined` 的痕迹
+    expect(Object.keys(blank.dialogue[0]!)).not.toContain("translation");
+  });
+
+  it("指向不存在的台词被拒", () => {
+    const project = load();
+    expect(() =>
+      rebuild([
+        created(project),
+        {
+          type: "dialogue.translation.updated",
+          at: AT,
+          lineId: "no-such-line",
+          translation: "Hello.",
+        },
+      ]),
+    ).toThrow(/不存在的台词/);
+  });
+});
+
 describe("故事层改写（A16）", () => {
   it("只改传进来的字段，hooks 的另一个钩子不动", () => {
     const project = load();

@@ -124,6 +124,46 @@ function drawPlaceholder(clip: EditClip, width: number, height: number): string 
   return el.toDataURL("image/png");
 }
 
+/**
+ * 一条字幕排到画布上：原文一行，双语时第二行（D5 / ADR-0173）。
+ *
+ * 两行从同一个底边往上排：`below` 时第二行在下面（原文整体抬高一行），
+ * `above` 时第二行在上面。返回画完之后的底边，给下一条用不上——每一条都重排。
+ */
+function drawCue(
+  ctx: CanvasRenderingContext2D,
+  cue: { text: string; translation?: string; speakerColor?: string },
+  box: { width: number; fontSize: number; stroke: number; bottom: number },
+  position: "below" | "above",
+): void {
+  const { width, fontSize, stroke } = box;
+  const secondSize = Math.max(12, fontSize * 0.78);
+  const lineGap = fontSize * 0.18;
+  const hasSecond = Boolean(cue.translation?.trim());
+  // 整块字幕的底边钉在版式给的 `bottom`（安全区），第二行只会把块往上撑，
+  // 不会把字幕推出安全区——画布 y 向下增大，所以「上面」是更小的 y
+  const firstLine = hasSecond && position === "below" ? box.bottom - secondSize - lineGap : box.bottom;
+  const secondBottom = position === "above" ? box.bottom - fontSize - lineGap : box.bottom;
+
+  const paint = (text: string, size: number, weight: number, y: number, fill: string) => {
+    ctx.font = `${weight} ${size}px ${FONT_STACK}`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = stroke;
+    ctx.strokeStyle = "#000";
+    ctx.fillStyle = fill;
+    ctx.strokeText(text, width / 2, y);
+    ctx.fillText(text, width / 2, y);
+  };
+
+  // 按角色着色（D3）：读模型关掉时 cue 上没有颜色，回到白色
+  paint(cue.text, fontSize, 600, firstLine, cue.speakerColor ?? "#fff");
+  if (hasSecond) {
+    paint(cue.translation!.trim(), secondSize, 400, secondBottom, "#e8e8e8");
+  }
+}
+
 /** 字幕与角标都画成透明全画幅 PNG：ffmpeg 这台机器没有 drawtext / subtitles */
 function subtitleOverlays(
   view: EditView,
@@ -140,16 +180,7 @@ function subtitleOverlays(
 
   return view.cues.map((cue) => {
     ctx.clearRect(0, 0, width, height);
-    ctx.font = `600 ${fontSize}px ${FONT_STACK}`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "bottom";
-    ctx.lineJoin = "round";
-    ctx.lineWidth = stroke;
-    ctx.strokeStyle = "#000";
-    // 按角色着色（D3）：读模型关掉时 cue 上没有颜色，回到白色
-    ctx.fillStyle = cue.speakerColor ?? "#fff";
-    ctx.strokeText(cue.text, width / 2, bottom);
-    ctx.fillText(cue.text, width / 2, bottom);
+    drawCue(ctx, cue, { width, fontSize, stroke, bottom }, view.translation.position);
     return {
       image: el.toDataURL("image/png"),
       startMs: cue.startMs,

@@ -65,6 +65,8 @@ function view(uri: string): EditView {
     maxChars: 12,
     subtitleStyle: { id: "default", label: "默认", fontSizeCqw: 4.6, bottomPct: 14, strokeCqw: 0.55, speakerColors: true },
     subtitleCustom: false,
+    translation: { enabled: false, lang: "en", position: "below" },
+    translationCoverage: { lines: 1, translated: 0 },
     grade: { presetId: "", contrast: "natural", saturation: "natural", temperature: "neutral", vignette: false },
     frame: { aspect: "9:16", fit: "pad" },
     totalMs: 1000,

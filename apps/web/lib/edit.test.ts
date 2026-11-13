@@ -679,3 +679,113 @@ describe("音轨与字幕轨（E1 / ADR-0131）", () => {
     expect(audio).toBeDefined();
   });
 });
+
+describe("双语字幕（D5 / ADR-0173）", () => {
+  /** 给样片的第一句加上译文，并打开双语 */
+  function bilingual(
+    position: "below" | "above" = "below",
+    enabled = true,
+  ) {
+    const project = ProjectSchema.parse({
+      ...sampleProject,
+      subtitleTranslation: { enabled, lang: "en", position },
+      dialogue: sampleProject.dialogue.map((line) =>
+        line.id === "d-01" ? { ...line, translation: "You knew it all along, didn't you." } : line,
+      ),
+    });
+    return toEditView(project);
+  }
+
+  it("关着的时候读模型与单语完全一样：一条译文都不带", () => {
+    const view = bilingual("below", false);
+    expect(view.cues.every((cue) => cue.translation === undefined)).toBe(true);
+    expect(buildSrt(view)).not.toContain("You knew it");
+    expect(buildAss(view)).not.toContain("You knew it");
+  });
+
+  it("开着时第二行跟在原文下面，SRT 一条里两行", () => {
+    const view = bilingual("below");
+    const srt = buildSrt(view);
+    expect(srt).toContain("你早就知道，对吧。\nYou knew it all along, didn't you.");
+    // 只有翻过的那一句带第二行，其余仍是单行
+    expect(srt.trim().split("\n\n")).toHaveLength(view.cues.length);
+  });
+
+  it("第二行放上面时，SRT 里译文在前", () => {
+    const srt = buildSrt(bilingual("above"));
+    expect(srt).toContain("You knew it all along, didn't you.\n你早就知道，对吧。");
+  });
+
+  it("ASS 多一个 Second 样式，两行用 \\N 接在同一个 Dialogue 里", () => {
+    const ass = buildAss(bilingual("below"));
+    expect(ass).toContain("Style: Second,PingFang SC,");
+    expect(ass).toMatch(/\\N\{\\rSecond\}You knew it all along/);
+    // Second 比 Default 小一号
+    const sizeOf = (name: string) =>
+      Number(new RegExp(`^Style: ${name},PingFang SC,(\\d+),`, "m").exec(ass)![1]);
+    expect(sizeOf("Second")).toBeLessThan(sizeOf("Default"));
+  });
+
+  it("关着双语时 ASS 不多一个样式", () => {
+    const ass = buildAss(bilingual("below", false));
+    expect(ass).not.toContain("Style: Second,");
+  });
+
+  it("预览 HTML 有第二行的容器，位置由项目决定", () => {
+    const below = buildPreviewHtml(bilingual("below"));
+    expect(below).toContain('id="translation"');
+    expect(below).not.toContain('class="subtitle above"');
+    const above = buildPreviewHtml(bilingual("above"));
+    expect(above).toContain('class="subtitle above"');
+  });
+
+  it("没翻的句子只出原文，不拿中文再放一遍", () => {
+    // 样片的时间线只有两镜，把 d-02 那一镜也排进去，才有「翻过的」与「没翻的」可比
+    const base = sampleProject;
+    const project = ProjectSchema.parse({
+      ...base,
+      subtitleTranslation: { enabled: true, lang: "en", position: "below" },
+      dialogue: base.dialogue.map((line) =>
+        line.id === "d-01" ? { ...line, translation: "You knew it all along." } : line,
+      ),
+      timeline: {
+        ...base.timeline,
+        items: [
+          ...base.timeline.items,
+          { id: "tl-03", shotId: "s-03", takeId: "t-03", startMs: 5500, durationMs: 2100 },
+        ],
+      },
+    });
+    const view = toEditView(project);
+    const untranslated = view.cues.filter((cue) => cue.lineId === "d-02");
+    expect(untranslated.length).toBeGreaterThan(0);
+    expect(untranslated.every((cue) => cue.translation === undefined)).toBe(true);
+    // 时间线里有两句，只有一句有译文
+    expect(view.translationCoverage).toEqual({ lines: 4, translated: 1 });
+    // 没翻的那一条在 SRT 里只有一行正文，不跟一行空白
+    const block = buildSrt(view)
+      .trim()
+      .split("\n\n")
+      .find((item) => item.includes("知道了又怎样。"))!;
+    expect(block.split("\n")).toHaveLength(3);
+    const translated = buildSrt(view)
+      .trim()
+      .split("\n\n")
+      .find((item) => item.includes("你早就知道"))!;
+    expect(translated.split("\n")).toHaveLength(4);
+  });
+
+  it("断句成多条时每条都带同一句译文——按整句翻的，不切开", () => {
+    const project = ProjectSchema.parse({
+      ...sampleProject,
+      subtitleTranslation: { enabled: true, lang: "en", position: "below" },
+      dialogue: sampleProject.dialogue.map((line) =>
+        line.id === "d-01" ? { ...line, translation: "You knew it all along." } : line,
+      ),
+    });
+    const view = toEditView(project, { maxChars: 6 });
+    const first = view.cues.filter((cue) => cue.lineId === "d-01");
+    expect(first.length).toBeGreaterThan(1);
+    expect(first.every((cue) => cue.translation === "You knew it all along.")).toBe(true);
+  });
+});

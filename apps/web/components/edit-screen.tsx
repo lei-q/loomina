@@ -7,6 +7,7 @@ import { MusicCurvePanel } from "@/components/music-curve-panel";
 import { PublishLedgerPanel } from "@/components/publish-ledger-panel";
 import { RightsPanel } from "@/components/rights-panel";
 import { SilentWatchPanel } from "@/components/silent-watch-panel";
+import { BilingualPanel } from "@/components/bilingual-panel";
 import { GradePanel, type SeamOption } from "@/components/grade-panel";
 import { TopBar } from "@/components/top-bar";
 import {
@@ -406,6 +407,8 @@ export function EditScreen() {
   const moveTimelineItem = useWorkbench((state) => state.moveTimelineItem);
   const editSubtitles = useWorkbench((state) => state.editSubtitles);
   const setSubtitleLayout = useWorkbench((state) => state.setSubtitleLayout);
+  const setSubtitleTranslation = useWorkbench((state) => state.setSubtitleTranslation);
+  const setLineTranslation = useWorkbench((state) => state.setLineTranslation);
   const shiftLineTrack = useWorkbench((state) => state.shiftLineTrack);
   const reviewAsset = useWorkbench((state) => state.reviewAsset);
   const addMusic = useWorkbench((state) => state.addMusic);
@@ -440,6 +443,8 @@ export function EditScreen() {
   const [maxChars, setMaxChars] = useState<SubtitleChars>(DEFAULT_SUBTITLE_CHARS);
   // 静音可懂度（C13 / ADR-0164）：只查字幕这一侧，全部从当前时间线派生
   const [silentOpen, setSilentOpen] = useState(false);
+  // 双语字幕（D5 / ADR-0173）：逐句写第二行，版式只决定第二行放上还是下
+  const [bilingualOpen, setBilingualOpen] = useState(false);
   // 发布台账（G10）与授权记录（H7）：都是留档，不改成片
   const [publishOpen, setPublishOpen] = useState(false);
   const [rightsOpen, setRightsOpen] = useState(false);
@@ -905,8 +910,10 @@ export function EditScreen() {
   };
 
   const exportPreview = async () => {
-    if (!gateOpen) {
-      setNotice(gateReason);
+    // 预览不是发到平台上的那一版：画幅规格没过也能先看剪辑，
+    // 角标按当前平台摆只是让人提前看见位置（与 G9 的内容侧闸门同一条）
+    if (!contentGateOpen) {
+      setNotice(contentGateReason);
       return;
     }
     // 预览必须自包含（P20）：资产库里的素材先读回字节换成 data URI
@@ -1068,8 +1075,8 @@ export function EditScreen() {
   };
 
   const exportOtio = async () => {
-    if (!gateOpen) {
-      setNotice(gateReason);
+    if (!contentGateOpen) {
+      setNotice(contentGateReason);
       return;
     }
     // OTIO 要能被剪辑软件直接打开：资产库地址先换成内嵌字节（P20 自包含）
@@ -1088,8 +1095,8 @@ export function EditScreen() {
   };
 
   const exportSrt = () => {
-    if (!gateOpen) {
-      setNotice(gateReason);
+    if (!contentGateOpen) {
+      setNotice(contentGateReason);
       return;
     }
     downloadFile(safeFileName(view.title, "字幕.srt"), buildSrt(view), "text/plain");
@@ -1097,8 +1104,8 @@ export function EditScreen() {
   };
 
   const exportAss = () => {
-    if (!gateOpen) {
-      setNotice(gateReason);
+    if (!contentGateOpen) {
+      setNotice(contentGateReason);
       return;
     }
     downloadFile(
@@ -1230,6 +1237,10 @@ export function EditScreen() {
         storageError={storageError}
         readOnly={readOnly}
         onBudgetChange={setBudget}
+        onBilingual={view.clips.length > 0 ? () => setBilingualOpen(true) : undefined}
+        untranslatedCount={
+          view.translation.enabled ? view.translationCoverage.lines - view.translationCoverage.translated : 0
+        }
         onSilent={view.clips.length > 0 ? () => setSilentOpen(true) : undefined}
         silentCount={silentCount}
         onPublishLedger={() => setPublishOpen(true)}
@@ -2655,8 +2666,10 @@ export function EditScreen() {
                       )}
                     >
                       {gateOpen
-                        ? "检查通过：五个导出按钮都可用。"
-                        : `${gateReason}改完文案会自动重新检查，确认状态也会随之失效。`}
+                        ? "检查通过：导出按钮都可用。"
+                        : contentGateOpen
+                          ? `${gateReason}字幕、OTIO 与预览仍然可以导出（它们不看平台画幅）；成片、封面与发布包要等这一项过了。`
+                          : `${gateReason}改完文案会自动重新检查，确认状态也会随之失效。`}
                     </p>
                   </div>
 
@@ -2824,7 +2837,7 @@ export function EditScreen() {
                     <button
                       type="button"
                       onClick={exportPreview}
-                      disabled={!gateOpen}
+                      disabled={!contentGateOpen}
                       className="rounded-token border border-line px-3 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       导出预览 HTML
@@ -2832,7 +2845,7 @@ export function EditScreen() {
                     <button
                       type="button"
                       onClick={exportOtio}
-                      disabled={!gateOpen}
+                      disabled={!contentGateOpen}
                       className="rounded-token border border-line px-3 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       导出 .otio
@@ -2840,7 +2853,7 @@ export function EditScreen() {
                     <button
                       type="button"
                       onClick={exportSrt}
-                      disabled={!gateOpen}
+                      disabled={!contentGateOpen}
                       className="rounded-token border border-line px-3 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       导出字幕 SRT
@@ -2848,7 +2861,7 @@ export function EditScreen() {
                     <button
                       type="button"
                       onClick={exportAss}
-                      disabled={!gateOpen}
+                      disabled={!contentGateOpen}
                       className="rounded-token border border-line px-3 py-1 text-[10.5px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       导出字幕 ASS
@@ -2908,6 +2921,19 @@ export function EditScreen() {
             seekTo(ms);
           }}
           onClose={() => setSilentOpen(false)}
+        />
+      )}
+      {bilingualOpen && (
+        <BilingualPanel
+          view={view}
+          onTranslate={(lineId, translation) => setLineTranslation(lineId, translation)}
+          onSwitch={(patch) => setSubtitleTranslation(patch)}
+          onSeek={(ms) => {
+            setBilingualOpen(false);
+            seekTo(ms);
+          }}
+          readOnly={Boolean(readOnly)}
+          onClose={() => setBilingualOpen(false)}
         />
       )}
       {publishOpen && (

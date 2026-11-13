@@ -612,6 +612,7 @@ export function projectFromStoryDraft(
     timeline: { items: [], music: [] },
     subtitleOverrides: [],
     subtitleLayout: { preset: "default" },
+    subtitleTranslation: { enabled: false, lang: "en", position: "below" },
     publishPackages: [],
     authorizations: [],
   };

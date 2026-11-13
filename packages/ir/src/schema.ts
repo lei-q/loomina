@@ -353,6 +353,14 @@ export const DialogueLineSchema = z.object({
   voiceOffsetMs: z.number().int().optional(),
   /** 这一句的字幕相对本该开始的位置挪了多少毫秒（E1 / ADR-0131） */
   subtitleOffsetMs: z.number().int().optional(),
+  /**
+   * 这一句的译文（D5 / ADR-0173）：双语的第二行。
+   *
+   * 只存人写 / 模型给的那一行，不存语言代码：一部片子的目标语言是
+   * `Project.subtitleTranslation.lang` 一个决定，逐句再记一次只会互相打架。
+   * 缺省表示这句还没翻——双语导出时这一条只出原文，不编一行假的。
+   */
+  translation: z.string().max(400).optional(),
 });
 export type DialogueLine = z.infer<typeof DialogueLineSchema>;
 
@@ -797,6 +805,26 @@ export const SubtitleLayoutSchema = z.object({
 });
 export type SubtitleLayout = z.infer<typeof SubtitleLayoutSchema>;
 
+/**
+ * 双语字幕的开关（D5 / ADR-0173）。
+ *
+ * 只有三件事：开不开、第二行是哪一种语言、第二行放上面还是下面。
+ * 译文本身在 `DialogueLine.translation` 上——译文属于那一句台词，
+ * 换断句、挪位置都跟着它走，不该在版式里再存一份。
+ */
+export const SubtitleTranslationSchema = z.object({
+  /** 关掉就是单语：导出、预览、烧进画面全都回到一行 */
+  enabled: z.boolean().default(false),
+  /**
+   * 第二行的语言名，只用于界面与导出注释（`en` / `ja` / `ko`…）。
+   * 不做语言校验：作者写「English」也照用，这里不是翻译服务的参数。
+   */
+  lang: z.string().max(20).default("en"),
+  /** 第二行的位置：`below` 是第一行下面（默认），`above` 放上面 */
+  position: z.enum(["below", "above"]).default("below"),
+});
+export type SubtitleTranslation = z.infer<typeof SubtitleTranslationSchema>;
+
 export const TimelineSchema = z.object({
   items: z.array(TimelineItemSchema).default([]),
   music: z.array(MusicCueSchema).default([]),
@@ -1049,6 +1077,8 @@ export const ProjectSchema = z.object({
   subtitleOverrides: z.array(SubtitleOverrideSchema).default([]),
   /** 字幕版式（D3）：作者调过的字号 / 位置 / 描边；没调过就用默认档 */
   subtitleLayout: SubtitleLayoutSchema.default({}),
+  /** 双语字幕（D5 / ADR-0173）：开不开、第二行语言与位置；译文在每句台词上 */
+  subtitleTranslation: SubtitleTranslationSchema.default({}),
   publishPackages: z.array(PublishPackageSchema).default([]),
   /**
    * 授权记录（H7 / ADR-0167）：肖像、声音、素材、音乐各一条。

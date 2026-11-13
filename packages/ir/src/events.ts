@@ -374,6 +374,32 @@ export type ProjectEvent =
     }
   | {
       /**
+       * 双语字幕开关（D5 / ADR-0173）：开不开、第二行语言与位置。
+       *
+       * 只收这三个键；译文不在这里——它属于某一句话，走 `dialogue.translation.updated`。
+       */
+      type: "subtitle.translation.updated";
+      at: string;
+      patch: {
+        enabled?: boolean;
+        lang?: string;
+        position?: "below" | "above";
+      };
+    }
+  | {
+      /**
+       * 给一句台词写译文（D5 / ADR-0173）：双语字幕的第二行。
+       *
+       * `translation: null` 表示清掉（回到「这句还没翻」），不是空串——
+       * 空串过 zod 会被当成有一行空白，导出时会多出一行看不见的字。
+       */
+      type: "dialogue.translation.updated";
+      at: string;
+      lineId: Id;
+      translation: string | null;
+    }
+  | {
+      /**
        * 加一版配音（C9 / ADR-0124）：进试听台，不自动采用。
        * 采用某一版 = 一条 `dialogue.updated { audioAssetId }`。
        */
@@ -1652,6 +1678,55 @@ function applyEventCore(
       }
       if (touched === 0) throw new Error("subtitle.layout.updated 没有要改的字段");
       return { ...current, subtitleLayout: next };
+    }
+
+    case "subtitle.translation.updated": {
+      if (!current) {
+        throw new Error("subtitle.translation.updated 之前必须有 project.created");
+      }
+      const { patch } = event;
+      const next: Project["subtitleTranslation"] = { ...current.subtitleTranslation };
+      let touched = 0;
+      if (patch.enabled !== undefined) {
+        next.enabled = patch.enabled;
+        touched += 1;
+      }
+      if (patch.lang !== undefined) {
+        const lang = patch.lang.trim();
+        if (lang.length === 0) throw new Error("第二行语言不能是空的");
+        if (lang.length > 20) throw new Error("第二行语言最多 20 个字符");
+        next.lang = lang;
+        touched += 1;
+      }
+      if (patch.position !== undefined) {
+        if (patch.position !== "below" && patch.position !== "above") {
+          throw new Error(`第二行只能放 below 或 above：${patch.position}`);
+        }
+        next.position = patch.position;
+        touched += 1;
+      }
+      if (touched === 0) throw new Error("subtitle.translation.updated 没有要改的字段");
+      return { ...current, subtitleTranslation: next };
+    }
+
+    case "dialogue.translation.updated": {
+      if (!current) throw new Error("dialogue.translation.updated 之前必须有 project.created");
+      const line = current.dialogue.find((item) => item.id === event.lineId);
+      if (!line) {
+        throw new Error(`dialogue.translation.updated 指向不存在的台词: ${event.lineId}`);
+      }
+      // 空串不写：导出时会被当成「有一行看不见的字」，多出一块空白
+      const translation =
+        event.translation === null ? undefined : event.translation.trim() || undefined;
+      if (translation !== undefined && translation.length > 400) {
+        throw new Error("译文最多 400 个字符");
+      }
+      const dialogue = current.dialogue.map((item) => {
+        if (item.id !== event.lineId) return item;
+        const { translation: _drop, ...rest } = item;
+        return translation === undefined ? rest : { ...rest, translation };
+      });
+      return { ...current, dialogue };
     }
 
     case "take.updated": {
