@@ -5323,3 +5323,47 @@ E5 之后一条片子能按 9:16 / 16:9 / 1:1 导出，但一次只能出一种�
 - 画幅不同的版本，字幕 / 角标排版按同一套 cqw 规则缩放，不做横竖两套版式（与 E5 边界一致）。
 - 版本计划不落库：关掉页面再打开，勾选回到默认（抖音 + B 站）。
 - 不做：服务端批量渲多版、每平台单独设画幅 / 适配、按平台改写标题 / 简介 / 话题、小红书 3:4 这类我们还不做的比例。
+
+## 第一百九十一次 · 2026-11-13 · 表演 QA 与场景空间板（B18 + B11）
+
+**背景**
+
+B16 / B17 之后，表演设计与调度都进了 IR、也都写进了提示词。但写进去不等于写得对：一镜特写只写了「她很难过」、视线写着看一个不在这镜里的人、起转落只写了起、相邻两镜人物从画面左换到画面右——这些都是设计文本内部的矛盾，不用看画面就能发现，而作者一个人写整条片子，最容易漏的正是这一类。B11 在 DATA-MODEL 里原本写成一个 `SceneState` 实体，B13 落地后位置与朝向其实已经有真身（`Shot.blocking` / `Shot.staging`），再存一份必然漂移。
+
+**决定**
+
+1. **B18 查设计，不查画面**。`analyzePerformanceQa` 纯函数、不落库；按景别定判什么（特写看微表情、中景看姿态、全景看调度）；`fail` 只给自相矛盾（看的人不在这镜里、特写没写微表情、表演全空），其余是 `review`；没写表演的镜头是「未写」，不算失败。明确不做抽帧、表情识别、视线检测——那要 VLM，当前仓库没有，用一个算术分数假装看过画面比不做更糟（与 ADR-0097 同一条）。
+2. **B11 不新增 `SceneState`，台账是投影**。`analyzeSceneSpace` 从 `staging` / `blocking` / `propIds` 现算，改完分镜立刻是新的，不需要迁移与同步。只判同一场相邻两镜：左右翻面、前后景跳变、朝向翻转（>120°）、道具丢失，全是 `review`。判不了的（没几何、没写站位）如实写，不猜。
+3. **两个抽屉**：分镜页顶栏「演检」（带待改计数）与「空间」（带问题计数），与既有抽屉互斥。演检能「去改这一镜的表演」，空间能「调这一镜的走位」。
+4. **顺带修掉一个会挡住 B11 的既有 bug**：表演抽屉保存时先检查 `objective`，没写 objective 的镜头连左右位置都存不进去。现在拆开：objective 只决定写不写 `performance`，调度照写，提示语分开说。
+
+**过程中发现并修掉的两件事**
+
+1. B18 的第一版测试断言了一个不存在的 bug：`direction: "right"` 配 `side: "right"` 本来就是一致的，「方向可能写反」正确地没有触发。改测试用 `direction: "left"` 配 `side: "right"`，并补一条一致的情形。
+2. 浏览器实测时发现走位存不进去（SH-02 / SH-03 的 `staging` 写入被静默拒绝），所以台账一开始显示 0 条问题——不是台账判错了，是数据根本没写进去。修掉 objective 闸门后重测才有东西可比。
+
+**产物**
+
+- `apps/web/lib/performance-qa.ts`、`apps/web/lib/performance-qa.test.ts`（18 条）
+- `apps/web/lib/scene-space.ts`、`apps/web/lib/scene-space.test.ts`（11 条）
+- `apps/web/components/performance-qa-panel.tsx`（`aria-label="表演 QA"`）、`apps/web/components/scene-space-panel.tsx`（`aria-label="场景空间板"`）
+- `apps/web/components/top-bar.tsx`（`performanceQa` / `space` 两个工具与计数）、`apps/web/components/workbench.tsx`（两个抽屉状态、互斥、挂载）
+- `apps/web/components/performance-panel.tsx`（objective 只挡表演、不挡调度）
+- `docs/adr/0172-performance-qa-and-scene-space.md`、`docs/FEATURES.md`（B11 / B18）、`docs/ROADMAP.md`、`docs/DATA-MODEL.md`（§4 `SceneState` 标注为投影、§7 不变量 9 改写、§11 与 §11.5 各补落地细节）
+
+**验证**
+
+- `pnpm --filter @loomina/web typecheck` 干净；`pnpm --filter @loomina/web test` 58 个文件、1102 通过 / 4 跳过；`pnpm --filter @loomina/ir test` 235 通过；`pnpm build` 干净。
+- 浏览器（无头 Chrome，`/` 工作台，端口 3100）：
+  - 演检：给 SH-03 填表演（objective「让她相信自己」、表面情绪「极度崩溃」、视线看人 c-lin）后打开「演检」，SH-03 出三条——「景别 SH-03 是特写，却没写微表情」「情绪 SH-03 的表面情绪写成了强度副词（「极度崩溃」）」「动作 SH-03 没有起转落」，汇总「会出问题 1」。
+  - 空间：项目 5 场；第 5 场出「「搪瓷杯」在 SH-09 出现，SH-10 里没了」。
+  - 修完 objective 闸门后：在表演抽屉只改左右位置保存，提示「已写进项目：调度更新了。表演设计还空着：补一句 objective 与视线，提示词才会写到表情和看谁。」，视频提示词末尾出现 `调度：林在画面左（中景）。`
+  - 真实翻面：SH-02 设「左」、SH-03 设「右」，空间表两格分别是「左中—」「右中—」，问题区出现「林从画面左换到了画面右（SH-02 → SH-03）。如果是同一条轴线，把其中一镜的调度改回来；真要换边，中间插一个中性镜。」，并给出「去前一镜 / 去后一镜 / 调这一镜的走位」。截图 `/tmp/b18-qa.png`、`/tmp/b11-space.png`、`/tmp/b11-flip.png`。
+
+**边界**
+
+- 演得僵不僵、视线对不对眼，仍然要人看片；面板底部照实写。
+- 没有 `Location.space` 时只判画面左中右，朝向与真实距离判不了。
+- 道具丢失只在 `propIds` 层面判：换了手、被放下都不算丢失。
+- 跨场连续性与镜头内位置变化不判；轴线仍归 B13 的 `checkAxis`。
+- 只给建议与跳转，不自动改表演或走位——翻面可能是有意的（换边 / 插中性镜）。

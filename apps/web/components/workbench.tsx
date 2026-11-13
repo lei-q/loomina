@@ -5,7 +5,9 @@ import { AnimaticOverlay } from "@/components/animatic";
 import { BlockingPanel } from "@/components/blocking-panel";
 import { ConsistencyPanel } from "@/components/consistency-panel";
 import { PerformancePanel } from "@/components/performance-panel";
+import { PerformanceQaPanel } from "@/components/performance-qa-panel";
 import { ReelBar } from "@/components/reel-bar";
+import { SceneSpacePanel } from "@/components/scene-space-panel";
 import { Stage } from "@/components/stage";
 import { ShotLanguagePanel } from "@/components/shot-language-panel";
 import { StoryboardPanel } from "@/components/storyboard-panel";
@@ -15,6 +17,8 @@ import { TopBar } from "@/components/top-bar";
 import { toAnimaticView, toStageView } from "@/lib/read-model";
 import { fetchPrice } from "@/lib/image-price";
 import { analyzeConsistency } from "@/lib/consistency";
+import { analyzePerformanceQa, performanceQaCount } from "@/lib/performance-qa";
+import { analyzeSceneSpace } from "@/lib/scene-space";
 import { analyzeStoryboard } from "@/lib/storyboard";
 import { matchShotLanguage } from "@loomina/pipeline";
 import { useWorkbench } from "@/lib/workbench-store";
@@ -89,13 +93,19 @@ export function Workbench() {
   );
   // 表演与调度（B16 / B17，ADR-0103）：一镜的表演设计、视线与站位
   const [performanceOpen, setPerformanceOpen] = useState(false);
+  // 表演 QA（B18）：表演设计配不配景别、视线与节拍
+  const [performanceQaOpen, setPerformanceQaOpen] = useState(false);
   // 一致性体检（ADR-0097）：只看结构化锚点与溯源
   const [consistencyOpen, setConsistencyOpen] = useState(false);
   // 走位（B13.1 / ADR-0126）：俯视平面图 + 自动摆位 + 精确越轴
   const [blockingOpen, setBlockingOpen] = useState(false);
+  // 场景空间板 / 走位台账（B11）：跨镜对一遍谁在哪、朝哪、拿什么
+  const [spaceOpen, setSpaceOpen] = useState(false);
   // 镜头语言库（I1）：景别 / 机位 / 运镜 / 焦段收成一套套说法
   const [languageOpen, setLanguageOpen] = useState(false);
   const consistency = useMemo(() => analyzeConsistency(project), [project]);
+  const performanceQa = useMemo(() => analyzePerformanceQa(project), [project]);
+  const sceneSpace = useMemo(() => analyzeSceneSpace(project), [project]);
   // 当前镜是不是正好对上了库里的一套说法（I1）：没对上就在按钮上标一点
   const currentShot = view.shots[view.current];
   const languageMatched = useMemo(() => {
@@ -145,7 +155,9 @@ export function Workbench() {
     checkOpen,
     consistencyOpen,
     performanceOpen,
+    performanceQaOpen,
     blockingOpen,
+    spaceOpen,
     languageOpen,
   ]);
 
@@ -168,6 +180,8 @@ export function Workbench() {
             ? () => {
                 setConsistencyOpen(false);
                 setPerformanceOpen(false);
+                setPerformanceQaOpen(false);
+                setSpaceOpen(false);
                 setBlockingOpen(false);
                 setCheckOpen(true);
               }
@@ -179,6 +193,8 @@ export function Workbench() {
             ? () => {
                 setCheckOpen(false);
                 setConsistencyOpen(false);
+                setPerformanceQaOpen(false);
+                setSpaceOpen(false);
                 setBlockingOpen(false);
                 setPerformanceOpen(true);
               }
@@ -187,11 +203,26 @@ export function Workbench() {
         performanceCount={
           project.shots.filter((shot) => !shot.performance?.objective.trim()).length
         }
+        onPerformanceQa={
+          view.shots.length > 0
+            ? () => {
+                setCheckOpen(false);
+                setPerformanceOpen(false);
+                setConsistencyOpen(false);
+                setBlockingOpen(false);
+                setLanguageOpen(false);
+                setPerformanceQaOpen(true);
+              }
+            : undefined
+        }
+        performanceQaCount={performanceQaCount(performanceQa)}
         onConsistency={
           view.shots.length > 0
             ? () => {
                 setCheckOpen(false);
                 setPerformanceOpen(false);
+                setPerformanceQaOpen(false);
+                setSpaceOpen(false);
                 setBlockingOpen(false);
                 setConsistencyOpen(true);
               }
@@ -202,18 +233,36 @@ export function Workbench() {
             ? () => {
                 setCheckOpen(false);
                 setPerformanceOpen(false);
+                setPerformanceQaOpen(false);
+                setSpaceOpen(false);
                 setConsistencyOpen(false);
                 setBlockingOpen(true);
               }
             : undefined
         }
         blockingCount={storyboard.issues.filter((issue) => issue.rule === "V3").length}
+        onSpace={
+          view.shots.length > 0
+            ? () => {
+                setCheckOpen(false);
+                setPerformanceOpen(false);
+                setPerformanceQaOpen(false);
+                setConsistencyOpen(false);
+                setBlockingOpen(false);
+                setLanguageOpen(false);
+                setSpaceOpen(true);
+              }
+            : undefined
+        }
+        spaceCount={sceneSpace.summary.issues}
         consistencyCount={consistency.summary.review + consistency.summary.fail}
         onLanguage={
           view.shots.length > 0
             ? () => {
                 setCheckOpen(false);
                 setPerformanceOpen(false);
+                setPerformanceQaOpen(false);
+                setSpaceOpen(false);
                 setConsistencyOpen(false);
                 setBlockingOpen(false);
                 setLanguageOpen(true);
@@ -311,6 +360,19 @@ export function Workbench() {
           onClose={() => setPerformanceOpen(false)}
         />
       )}
+      {performanceQaOpen && view.shots.length > 0 && (
+        <PerformanceQaPanel
+          project={project}
+          currentShotId={view.shots[view.current]!.id}
+          onSelect={select}
+          onEdit={(shotId) => {
+            select(shotId);
+            setPerformanceQaOpen(false);
+            setPerformanceOpen(true);
+          }}
+          onClose={() => setPerformanceQaOpen(false)}
+        />
+      )}
       {blockingOpen && view.shots.length > 0 && (
         <BlockingPanel
           project={project}
@@ -319,6 +381,19 @@ export function Workbench() {
           onSelect={select}
           onApply={(shotId, blocking, placement) => setShotBlocking(shotId, blocking, placement)}
           onClose={() => setBlockingOpen(false)}
+        />
+      )}
+      {spaceOpen && view.shots.length > 0 && (
+        <SceneSpacePanel
+          project={project}
+          currentShotId={view.shots[view.current]!.id}
+          onSelect={select}
+          onBlocking={(shotId) => {
+            select(shotId);
+            setSpaceOpen(false);
+            setBlockingOpen(true);
+          }}
+          onClose={() => setSpaceOpen(false)}
         />
       )}
       {languageOpen && view.shots.length > 0 && (

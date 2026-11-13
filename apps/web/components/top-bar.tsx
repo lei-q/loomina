@@ -42,8 +42,10 @@ type StageTool =
   | "preview"
   | "check"
   | "performance"
+  | "performanceQa"
   | "consistency"
   | "blocking"
+  | "space"
   | "doctor"
   | "polish"
   | "silent"
@@ -65,8 +67,10 @@ const STAGE_TOOLS: Record<StageName, StageTool[]> = {
     "preview",
     "check",
     "performance",
+    "performanceQa",
     "consistency",
     "blocking",
+    "space",
     "language",
   ],
   关键帧: ["ledger", "budget", "preview"],
@@ -106,6 +110,10 @@ export type TopBarProps = {
   onPerformance?: () => void;
   /** 还没写表演设计的镜头数，显示在按钮右上 */
   performanceCount?: number;
+  /** 打开表演 QA（B18）；给了才出现「演检」 */
+  onPerformanceQa?: () => void;
+  /** 表演设计要改的镜头数（会出问题 + 建议改），显示在按钮右上 */
+  performanceQaCount?: number;
   /** 打开一致性体检（ADR-0097）；给了才出现「体检」 */
   onConsistency?: () => void;
   /** 待复核 + 不达标的镜头数，显示在按钮右上 */
@@ -114,6 +122,10 @@ export type TopBarProps = {
   onBlocking?: () => void;
   /** 越轴的镜头对数，显示在按钮右上 */
   blockingCount?: number;
+  /** 打开场景空间板 / 走位台账（B11）；给了才出现「空间」 */
+  onSpace?: () => void;
+  /** 相邻镜之间的问题条数，显示在按钮右上 */
+  spaceCount?: number;
   /** 打开剧本医生（A18 / ADR-0123）；给了才出现「医生」 */
   onDoctor?: () => void;
   /** 剧本医生里偏低的项数，显示在按钮右上 */
@@ -175,10 +187,14 @@ export function TopBar({
   checkCount,
   onPerformance,
   performanceCount,
+  onPerformanceQa,
+  performanceQaCount,
   onConsistency,
   consistencyCount,
   onBlocking,
   blockingCount,
+  onSpace,
+  spaceCount,
   onDoctor,
   doctorCount,
   onPolish,
@@ -621,6 +637,19 @@ export function TopBar({
             )}
           </button>
         )}
+        {shows("space") && onSpace && (
+          <button
+            type="button"
+            onClick={onSpace}
+            title="场景空间板：每一镜谁在哪、朝哪、拿什么，跨镜对一遍；不花钱"
+            className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            空间
+            {spaceCount !== undefined && spaceCount > 0 && (
+              <span className="tnum text-[9px] text-pick">{spaceCount}</span>
+            )}
+          </button>
+        )}
         {shows("consistency") && onConsistency && (
           <button
             type="button"
@@ -690,6 +719,19 @@ export function TopBar({
             表演
             {performanceCount !== undefined && performanceCount > 0 && (
               <span className="tnum text-[9px] text-pick">{performanceCount}</span>
+            )}
+          </button>
+        )}
+        {shows("performanceQa") && onPerformanceQa && (
+          <button
+            type="button"
+            onClick={onPerformanceQa}
+            title="查表演设计配不配景别：微表情、视线、起转落、过火与情绪断层；不花钱"
+            className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            演检
+            {performanceQaCount !== undefined && performanceQaCount > 0 && (
+              <span className="tnum text-[9px] text-pick">{performanceQaCount}</span>
             )}
           </button>
         )}

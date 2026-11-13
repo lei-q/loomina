@@ -196,11 +196,11 @@ export function PerformancePanel({
 
   const save = () => {
     if (locked) return;
-    if (!draft.objective.trim()) {
-      setNotice("先写一句 objective：这一镜他要什么。");
-      return;
-    }
+    // 调度与表演是两件事：只改站位时不该被 objective 挡住。
+    // 以前这里先检查 objective，导致没写表演设计的镜头连左右位置都存不进去。
+    const performanceReady = Boolean(draft.objective.trim());
     if (
+      performanceReady &&
       (draft.gazeTarget === "character" || draft.gazeTarget === "prop") &&
       !draft.gazeTargetId
     ) {
@@ -262,7 +262,8 @@ export function PerformancePanel({
       }),
     ];
 
-    const performanceSaved = onSavePerformance(performance);
+    // 没写 objective 就只存调度：表演设计仍然可以空着（存量项目就是这样）
+    const performanceSaved = performanceReady ? onSavePerformance(performance) : false;
     const stagingSaved =
       characters.length + props.length > 0 ? onSaveStaging(staging) : false;
     if (performanceSaved || stagingSaved) {
@@ -271,10 +272,16 @@ export function PerformancePanel({
           ? "已写进项目：表演与调度都更新了，提示词已跟着变。"
           : performanceSaved
             ? "已写进项目：表演更新了；调度没有变，不重复写。"
-            : "已写进项目：调度更新了；表演没有变。",
+            : stagingSaved && !performanceReady
+              ? "已写进项目：调度更新了。表演设计还空着：补一句 objective 与视线，提示词才会写到表情和看谁。"
+              : "已写进项目：调度更新了；表演没有变。",
       );
     } else {
-      setNotice("和项目里的一样，没有要写的。");
+      setNotice(
+        performanceReady
+          ? "和项目里的一样，没有要写的。"
+          : "和项目里的一样，没有要写的。表演设计还空着：补一句 objective 再保存。",
+      );
     }
   };
 

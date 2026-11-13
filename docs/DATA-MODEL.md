@@ -346,7 +346,14 @@ interface ContinuityNote {
   text: string;
 }
 
-/** 场景空间与连续性台账：谁在哪、朝哪、穿什么、拿什么、轴线在哪 */
+/**
+ * 场景空间与连续性台账：谁在哪、朝哪、穿什么、拿什么、轴线在哪
+ *
+ * **未落地为 IR 实体（ADR-0172）**：B11 实现时决定台账是投影而不是真身——
+ * 位置 / 朝向在 `Shot.blocking`（米制坐标）与 `Shot.staging`（画面左中右 × 前中后景），
+ * 道具在 `Shot.propIds`，由 `analyzeSceneSpace()` 现算。下面的形状只表达「台账要回答什么」，
+ * 不作为 schema 字段存在：再存一份必然与分镜漂移。
+ */
 interface SceneState {
   sceneId: ID;
   entries: ContinuityEntry[];
@@ -910,7 +917,7 @@ interface AILabel {
 6. **发布包必须携带 AILabel**，未设置不得进入 published。
 7. 删除资产前检查引用；被引用的资产只能软删除。
 8. **单镜时长不得超过所选模型的安全上限**；超限必须拆 `segments`，且段数受控（准则 P13 / ADR-0012）。
-9. **`SceneState` 必须与同场镜头的走位/服装/道具一致**；不一致时阻断生成并提示。
+9. **同场镜头的走位 / 朝向 / 道具必须自洽**；不一致时提示（ADR-0172：不再是「`SceneState` 与分镜一致」——没有独立的 `SceneState` 可对，改为由 `analyzeSceneSpace()` 在 `Shot.staging` / `Shot.blocking` / `Shot.propIds` 上判同场相邻两镜的翻面 / 跳景 / 转身 / 丢道具）。**目前只提示，不阻断生成**；收紧为硬拦需要先有「这是有意换边」的标记。
 10. **经 `Approval` 锁定的资产不得被自动流程覆盖**；修改必须先解锁并留痕。
 11. **预算超限时不得提交新任务**；降级路径必须显式记录。
 12. 任何镜头状态变化都必须经过单一状态机，不允许直接改 `status`。
@@ -1071,6 +1078,13 @@ interface GazeTarget {
 - 写入走 `shot.updated { performance? , staging? }`，`applyEvent` 做 zod 校验并把默认值补进事件，保证实时与回放逐字段一致。
 - `performance` 是可选的：存量项目不受影响；不变量 21 / 22 目前由分镜检查 V10 warning 提示，不阻断生成（见 ADR-0103 决策 6）。
 
+**落地形态（B18 表演 QA，2026-11-13，ADR-0172）**
+
+- **不加字段、不落库**。`analyzePerformanceQa(project)` 是纯函数，读 `Shot.performance` / `Shot.shotSize` / `Shot.beat` / `Shot.characterIds` / `Shot.propIds`，返回 `{ shots, summary, attention }`，与 B14 的 `analyzeConsistency` 同构。
+- 按景别定判什么：`performanceFocusOf(size)` —— 特写 / 大特写 → 微表情，中景 → 姿态，其余 → 调度。
+- `verdict` 四态：`fail`（自相矛盾：视线看的人 / 道具不在这镜里、特写没写微表情、表演全空）、`review`（建议）、`pass`、`unknown`（没写表演，**不算失败**，存量项目不受影响）。
+- 不变量 21 / 22 仍然只是提示：B18 把它们变成一条条具体的改法，但**没有**升级成硬阻断。收紧的前置条件是存量项目补齐表演设计。
+
 ## 11.5 空间层（B13 / ADR-0126，2026-11-11）
 
 ```ts
@@ -1156,6 +1170,13 @@ interface CameraPlacement {
 **新增不变量**
 
 无。结构参考图只是把已有坐标投到画面上，没有新的可校验事实。
+
+**落地细节（B11 场景空间板 / 走位台账，2026-11-13，ADR-0172）**
+
+- **不新增 `SceneState` 实体**（§4 里那个 `SceneState` / `ContinuityEntry` 只是「台账要回答什么」的形状，不是 schema）。台账由 `analyzeSceneSpace(project)` 从 `Shot.staging`（画面左中右 × 前中后景）/ `Shot.blocking`（米制坐标与 `facingRad`）/ `Shot.propIds` 现算，随改随新。
+- 只判**同一场的相邻两镜**，四类问题全是 `review`：左右翻面（两侧都非居中且换边）、前后景跳变（`DEPTH_ORDER` 差 ≥2）、朝向翻转（有坐标、折到 0–π 后差 >120°）、道具丢失（上一镜有、下一镜没有）。
+- 没有 `Location.space` 时朝向与真实距离判不了，报告里明说；没写 `staging` 的格子留空，不猜。没挂 `sceneId` 的镜头归「未进场次」行。
+- 不写事件、不改分镜；「调这一镜的走位」只是打开走位抽屉，落库仍走 B13 的 `shot.updated { blocking }`。
 
 ## 12. 声音层（ADR-0020 / SOUND.md）
 
