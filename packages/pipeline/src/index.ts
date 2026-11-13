@@ -264,6 +264,11 @@ export type ShotPromptMaterial = {
   lighting?: Lighting;
   /** 构图模板（I4）：主体放在哪；不传就不带这一句 */
   composition?: Composition;
+  /**
+   * 接上一段（C.6）：上一段的收尾描述与要回头的时长。
+   * 由 `shotMaterial` 按时间线顺序补上，调用方不用自己找上一镜。
+   */
+  continuation?: { previous: string; tailMs: number };
 };
 
 export type PerformancePrompt = {
@@ -325,6 +330,29 @@ const BEAT_PHASE_CN: Record<ActionBeat["phase"], string> = {
   after: "落",
 };
 
+/**
+ * 时间线 / 分镜里排在 `shotId` 前一段的那一镜（C.6 / ADR-0192）。
+ *
+ * 以时间线为准（成片的先后才是观众看到的先后）；这一镜还没排进时间线时，
+ * 退回分镜数组的先后。第一段没有上一段，返回 undefined。
+ */
+export function previousShotOf(project: Project, shotId: Id): Shot | undefined {
+  const ordered = [...project.timeline.items]
+    .sort((a, b) => a.startMs - b.startMs)
+    .map((item) => item.shotId);
+  const inTimeline = ordered.indexOf(shotId);
+  // 排进时间线就按时间线算：第一条就是片头，没有上一段，
+  // 不能退回分镜数组去找「排在它前面」的那一镜（成片里它并不在前面）。
+  if (inTimeline === 0) return undefined;
+  if (inTimeline > 0) {
+    const id = ordered[inTimeline - 1]!;
+    return project.shots.find((shot) => shot.id === id);
+  }
+  const inShots = project.shots.findIndex((shot) => shot.id === shotId);
+  if (inShots > 0) return project.shots[inShots - 1];
+  return undefined;
+}
+
 /** 把项目里的 id 解析成提示词原料。 */
 export function shotMaterial(
   project: Project,
@@ -367,6 +395,11 @@ export function shotMaterial(
         : (performance.beats.find((beat) => beat.phase === "after") ?? performance.beats.at(-1))
       : undefined;
 
+  const previous = shot.continuation ? previousShotOf(project, shot.id) : undefined;
+  const continuation =
+    shot.continuation && previous
+      ? { previous: previous.description, tailMs: shot.continuation.tailMs }
+      : undefined;
   return {
     description: shot.description,
     shotSize: shot.shotSize,
@@ -416,6 +449,7 @@ export function shotMaterial(
     ...(project.look ? { look: project.look } : {}),
     ...(shot.lighting ? { lighting: shot.lighting } : {}),
     ...(shot.composition ? { composition: shot.composition } : {}),
+    ...(continuation ? { continuation } : {}),
   };
 }
 
@@ -518,6 +552,14 @@ export function buildShotPrompt(project: Project, shot: Shot): string {
  */
 export function buildVideoPrompt(material: ShotPromptMaterial): string {
   const parts = shotParts(material);
+  // 接上一段（C.6）：先重复上一段结尾的动作，再进入本段，避免直接开新剧情
+  if (material.continuation) {
+    const seconds = Math.round(material.continuation.tailMs / 100) / 10;
+    const previous = material.continuation.previous.trim() || "上一段结尾的动作";
+    parts.push(
+      `接上一段：本段开头先重复上一段最后 ${seconds} 秒的收势动作（上一段：${previous}），再进入本段动作，不要直接切到新剧情`,
+    );
+  }
   // 台词跟着视频走（A5 / ADR-0107）：改了台词，下一次出片的提示词就是新的。
   // 首帧 / 尾帧提示词不加这一句——静帧不烧字幕，也不要求口型。
   if (material.dialogue && material.dialogue.length) {

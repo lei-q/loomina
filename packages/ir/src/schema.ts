@@ -596,6 +596,19 @@ export const ShotFocusSchema = z.object({
 });
 export type ShotFocus = z.infer<typeof ShotFocusSchema>;
 
+/**
+ * 接上一段（用户清单 C.6 / ADR-0192）。
+ *
+ * 分镜切段生成时，下一段的开头最容易「直接开新剧情」，观众听得出画面与声音
+ * 在接缝处断掉。这里记下作者的要求：本段开头先重复上一段最后 N 秒的动作，
+ * 再进入本段。可选字段：没有就是硬接（旧项目行为不变）。
+ */
+export const ContinuationSchema = z.object({
+  /** 回头重复的时长，毫秒；默认 3 秒，0.5–5 秒 */
+  tailMs: z.number().int().min(500).max(5000).default(3000),
+});
+export type Continuation = z.infer<typeof ContinuationSchema>;
+
 export const ShotSchema = z.object({
   id: Id,
   sceneId: Id,
@@ -626,6 +639,11 @@ export const ShotSchema = z.object({
   staging: z.array(StagingMarkSchema).default([]),
   /** 这一镜的走位（B13）：谁在哪、朝哪；坐标是场地局部坐标 */
   blocking: BlockingSchema.optional(),
+  /**
+   * 接上一段（C.6）：本段开头先重复上一段最后 N 秒的动作。
+   * 缺省 = 旧行为；`null` = 作者明确选了硬接（保留记录，方便回看当时的决定）。
+   */
+  continuation: ContinuationSchema.nullable().optional(),
   characterIds: z.array(Id).default([]),
   /** 关键道具：有叙事作用、需要跨镜头保持一致的东西（ADR-0030） */
   propIds: z.array(Id).default([]),

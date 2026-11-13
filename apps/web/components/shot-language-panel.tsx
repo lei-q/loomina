@@ -12,6 +12,7 @@ import {
   compileComposition,
   compileLighting,
   matchShotLanguage,
+  previousShotOf,
   type CompositionTemplate,
   type LightingTemplate,
   type ShotLanguage,
@@ -53,6 +54,8 @@ export type ShotLanguagePanelProps = {
   onLighting: (shotId: string, lighting: Lighting | undefined) => boolean;
   /** 写这一镜的构图模板（I4）；`undefined` 清空 */
   onComposition: (shotId: string, composition: Composition | undefined) => boolean;
+  /** 接上一段（C.6）：`tailMs` 毫秒；`null` 表示硬接 */
+  onContinuation: (shotId: string, tailMs: number | null) => boolean;
   onClose: () => void;
 };
 
@@ -72,6 +75,7 @@ export function ShotLanguagePanel({
   onCamera,
   onLighting,
   onComposition,
+  onContinuation,
   onClose,
 }: ShotLanguagePanelProps) {
   const [flash, setFlash] = useState("");
@@ -86,6 +90,11 @@ export function ShotLanguagePanel({
   const locked = readOnly || shot?.locked === true;
   const lightingLine = compileLighting(shot?.lighting);
   const compositionLine = compileComposition(shot?.composition);
+  const previous = shot ? previousShotOf(project, shot.id) : undefined;
+  const previousNo = previous
+    ? project.shots.filter((item) => item.sceneId === previous.sceneId).findIndex((item) => item.id === previous.id) + 1
+    : 0;
+  const tailMs = shot?.continuation?.tailMs ?? null;
 
   const applyLighting = (template: LightingTemplate) => {
     if (!shot) return;
@@ -127,6 +136,24 @@ export function ShotLanguagePanel({
     if (!Number.isFinite(value) || focalDraft.trim() === "") return;
     applyCamera({ focalMm: value }, `焦段 ${Math.round(value)}mm`);
     setFocalDraft("");
+  };
+
+  const applyContinuation = (seconds: number) => {
+    if (!shot) return;
+    const ok = onContinuation(shot.id, seconds * 1000);
+    setFlash(
+      ok
+        ? `接上一段：开头先重复上一段最后 ${seconds} 秒。`
+        : locked
+          ? "这一镜已锁定或页面只读，先解锁再改。"
+          : "没有变化。",
+    );
+  };
+
+  const clearContinuation = () => {
+    if (!shot) return;
+    const ok = onContinuation(shot.id, null);
+    setFlash(ok ? "改成硬接：下一段直接从新动作开始。" : locked ? "这一镜已锁定或页面只读。" : "本来就是硬接。");
   };
 
   useEffect(() => {
@@ -334,7 +361,63 @@ export function ShotLanguagePanel({
             </p>
           </section>
 
-          {SHOT_LANGUAGE_GROUPS.map((group) => (
+                    <section className="mt-3 border border-line px-3 py-2.5">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="text-[10.5px] tracking-[.06em] text-text">接上一段</h3>
+              <span className="tnum text-[8.5px] text-muted-2">
+                {previous ? `上一段：第 ${previousNo} 镜` : "开头那一镜"}
+              </span>
+            </div>
+            <p className="mt-1 text-[9px] leading-[1.7] text-muted-2">
+              分镜切段出片时，本段开头先重复上一段最后几秒的动作，再进入本段剧情。
+              比用收尾帧硬接更容易接上声音与动作。
+            </p>
+            {previous ? (
+              <>
+                <div className="mt-2 flex flex-wrap items-center gap-1">
+                  {[1, 2, 3, 4, 5].map((seconds) => (
+                    <button
+                      key={seconds}
+                      type="button"
+                      disabled={locked}
+                      onClick={() => applyContinuation(seconds)}
+                      aria-pressed={tailMs === seconds * 1000}
+                      className={cn(
+                        "rounded-token border px-1.5 py-px text-[9px] transition-colors duration-[var(--dur)] disabled:opacity-40",
+                        tailMs === seconds * 1000
+                          ? "border-pick/60 text-pick"
+                          : "border-line text-muted-2 enabled:hover:border-line-2 enabled:hover:text-text",
+                      )}
+                    >
+                      {seconds} 秒
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    disabled={locked || tailMs === null}
+                    onClick={clearContinuation}
+                    className="rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:opacity-40"
+                  >
+                    改成硬接
+                  </button>
+                </div>
+                <p className="mt-1.5 text-[9px] leading-[1.6] text-muted-2">
+                  {tailMs !== null
+                    ? `开头先重复上一段最后 ${Math.round(tailMs / 100) / 10} 秒（视频提示词会写上这一句）。`
+                    : "现在是硬切：本段直接从新动作开始。"}
+                  {previous.description
+                    ? ` 上一段：${previous.description.slice(0, 60)}`
+                    : ""}
+                </p>
+              </>
+            ) : (
+              <p className="mt-1.5 text-[9px] leading-[1.6] text-muted-2">
+                这一镜排在开头，没有上一段可接；先把后面几镜排进时间线，再回到这里。
+              </p>
+            )}
+          </section>
+
+{SHOT_LANGUAGE_GROUPS.map((group) => (
             <section key={group} className="mt-4">
               <h3 className="text-[10.5px] tracking-[.06em] text-text">{group}</h3>
               <div className="mt-1.5 flex flex-col gap-1.5">

@@ -5,6 +5,7 @@ import {
   BlockingSchema,
   CameraSchema,
   CompositionSchema,
+  ContinuationSchema,
   FrameSchema,
   GradeSchema,
   LightingSchema,
@@ -1110,6 +1111,15 @@ function applyEventCore(
         }
         // 补上默认值再落库：回放拿到的结构与新建时一致
         patch = { ...patch, performance: parsed.data };
+      }
+      if (event.patch.continuation !== undefined) {
+        const parsed = ContinuationSchema.nullable().safeParse(event.patch.continuation);
+        if (!parsed.success) {
+          throw new Error(
+            `接上一段的时长不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`,
+          );
+        }
+        patch = { ...patch, continuation: parsed.data };
       }
       if (event.patch.staging !== undefined) {
         const parsed = z.array(StagingMarkSchema).safeParse(event.patch.staging);

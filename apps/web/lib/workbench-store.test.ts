@@ -6212,3 +6212,42 @@ describe("技能（C.5 / ADR-0191）", () => {
     expect(state().addSkill({ name: "有名字", body: "有内容" })).toBeUndefined();
   });
 });
+
+describe("接上一段（C.6 / ADR-0192）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("第二镜可接，写一条 shot.updated；清成 null 表示硬接", () => {
+    const count = state().events.length;
+    expect(state().setShotContinuation("s-02", 3000)).toBe(true);
+    expect(state().events).toHaveLength(count + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.updated",
+      shotId: "s-02",
+      patch: { continuation: { tailMs: 3000 } },
+    });
+    expect(state().project.shots.find((shot) => shot.id === "s-02")?.continuation).toEqual({
+      tailMs: 3000,
+    });
+    expect(state().setShotContinuation("s-02", 3000)).toBe(false);
+    expect(state().setShotContinuation("s-02", null)).toBe(true);
+    expect(
+      state().project.shots.find((shot) => shot.id === "s-02")?.continuation,
+    ).toBeNull();
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("开头那一镜、越界时长与只读都拒绝", () => {
+    const before = state().events.length;
+    expect(state().setShotContinuation("s-01", 3000)).toBe(false);
+    expect(state().castError).toContain("开头");
+    expect(state().setShotContinuation("s-02", 200)).toBe(false);
+    expect(state().setShotContinuation("s-02", 9000)).toBe(false);
+    expect(state().events).toHaveLength(before);
+
+    useWorkbench.setState({ readOnly: true });
+    expect(state().setShotContinuation("s-02", 3000)).toBe(false);
+  });
+});

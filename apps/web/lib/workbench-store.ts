@@ -68,6 +68,7 @@ import {
 } from "@loomina/ir";
 import {
   parseInstruction,
+  previousShotOf,
   projectFromStoryDraft,
   projectFromVerbatimDocument,
   mergeTemplateSpace,
@@ -512,6 +513,11 @@ type WorkbenchState = {
   setShotLighting: (shotId: string, lighting: Lighting | undefined) => boolean;
   /** 写这一镜的构图模板（I4）：一条 `shot.updated { composition }`；`undefined` 清空 */
   setShotComposition: (shotId: string, composition: Composition | undefined) => boolean;
+  /**
+   * 接上一段（C.6 / ADR-0192）：本段开头先重复上一段最后 `tailMs` 毫秒的动作；
+   * `null` 表示明确硬接。开头那一镜没有上一段，拒绝。
+   */
+  setShotContinuation: (shotId: string, tailMs: number | null) => boolean;
   /** 这一镜里谁出场：一条 `shot.updated { characterIds }`（ADR-0065） */
   toggleShotCharacter: (shotId: string, characterId: string) => boolean;
   /** 道具出场：点一下把这件道具加进或移出这一镜（ADR-0066） */
@@ -2412,6 +2418,51 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       return true;
     } catch (error) {
       set({ castError: error instanceof Error ? error.message : "构图没写上。" });
+      return false;
+    }
+  },
+
+  setShotContinuation: (shotId, tailMs) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) {
+      set({ castError: "找不到这一镜。" });
+      return false;
+    }
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定，先解锁再改接续。" });
+      return false;
+    }
+    let next = null as { tailMs: number } | null;
+    if (tailMs !== null) {
+      if (!Number.isInteger(tailMs) || tailMs < 500 || tailMs > 5000) {
+        set({ castError: "回头时长要是 0.5–5 秒的整数毫秒。" });
+        return false;
+      }
+      const previous = previousShotOf(project, shot.id);
+      if (!previous) {
+        set({ castError: "这一镜是开头，没有上一段可接。" });
+        return false;
+      }
+      next = { tailMs };
+    }
+    const current = shot.continuation ?? null;
+    const same =
+      (current === null && next === null) ||
+      (current !== null && next !== null && current.tailMs === next.tailMs);
+    if (same) return false;
+    const event: ProjectEvent = {
+      type: "shot.updated",
+      at: stamp(),
+      shotId: shot.id,
+      patch: { continuation: next },
+    };
+    try {
+      set({ project: applyEvent(project, event), events: [...events, event], castError: undefined });
+      return true;
+    } catch (error) {
+      set({ castError: error instanceof Error ? error.message : "接续没写上。" });
       return false;
     }
   },
