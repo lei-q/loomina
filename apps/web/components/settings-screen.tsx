@@ -978,7 +978,10 @@ export function SettingsScreen() {
           storageConfigured={Boolean(storage?.configured)}
         />
 
-        <AssetStoreSection readOnly={Boolean(readOnly)} />
+        <AssetStoreSection
+          readOnly={Boolean(readOnly)}
+          storageConfigured={Boolean(storage?.configured)}
+        />
 
         <ObjectStorageSection
           readOnly={Boolean(readOnly)}
@@ -1312,7 +1315,7 @@ function LocalProjectSection({
  * 说清三件事：素材现在存在哪、还能不能搬、谁没人引用。
  * 迁移与清理都是显式动作：几十兆的读写、删掉花钱生成的东西，都不该自动发生。
  */
-function AssetStoreSection({ readOnly }: { readOnly: boolean }) {
+function AssetStoreSection({ readOnly, storageConfigured }: { readOnly: boolean; storageConfigured: boolean }) {
   const project = useWorkbench((state) => state.project);
   const events = useWorkbench((state) => state.events);
   const migrateAssets = useWorkbench((state) => state.migrateAssets);
@@ -1324,6 +1327,12 @@ function AssetStoreSection({ readOnly }: { readOnly: boolean }) {
   const [wouldRemove, setWouldRemove] = useState<{ count: number; bytes: number }>();
   const [storeCount, setStoreCount] = useState<number>();
   const [files, setFiles] = useState<{ uri: string; bytes: number }[]>();
+  // 桶里的孤儿（H3 / ADR-0158 的远端那一半）：只有配了对象存储才有
+  const [remoteFiles, setRemoteFiles] = useState<{ uri: string; bytes: number }[]>();
+  const [remoteError, setRemoteError] = useState<string>();
+  const [remoteCleaning, setRemoteCleaning] = useState(false);
+  const [remoteWouldRemove, setRemoteWouldRemove] = useState<{ count: number; bytes: number }>();
+  const [remoteNotice, setRemoteNotice] = useState<string>();
 
   /**
    * 清理的白名单必须是「所有能回放的项目」的并集（H3）。
@@ -1343,6 +1352,10 @@ function AssetStoreSection({ readOnly }: { readOnly: boolean }) {
   const orphans = useMemo(
     () => (files ? orphanAssets(files, scope.keep) : undefined),
     [files, scope.keep],
+  );
+  const remoteOrphans = useMemo(
+    () => (remoteFiles ? orphanAssets(remoteFiles, scope.keep) : undefined),
+    [remoteFiles, scope.keep],
   );
 
   const loadStore = useCallback(async () => {
@@ -1370,6 +1383,31 @@ function AssetStoreSection({ readOnly }: { readOnly: boolean }) {
   useEffect(() => {
     void loadStore();
   }, [loadStore, project]);
+
+  const loadRemote = useCallback(async () => {
+    if (!storageConfigured) return;
+    try {
+      const response = await fetch("/api/asset/remote", { cache: "no-store" });
+      const payload = (await response.json()) as {
+        files?: { uri: string; bytes: number }[];
+        error?: string;
+      };
+      if (!response.ok) throw new Error(payload.error || `列桶失败（${response.status}）`);
+      setRemoteError(undefined);
+      setRemoteFiles(
+        (payload.files ?? []).filter(
+          (file): file is { uri: string; bytes: number } =>
+            typeof file?.uri === "string" && typeof file?.bytes === "number",
+        ),
+      );
+    } catch (caught) {
+      setRemoteError(caught instanceof Error ? caught.message : "列桶失败");
+    }
+  }, [storageConfigured]);
+
+  useEffect(() => {
+    void loadRemote();
+  }, [loadRemote, project]);
 
   const migrate = async () => {
     if (busy) return;
@@ -1452,6 +1490,73 @@ function AssetStoreSection({ readOnly }: { readOnly: boolean }) {
       await loadStore();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "清理失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 桶里的清理：两步确认，确认句里的数字同样由服务端 dryRun 给 */
+  const askRemoteClean = async () => {
+    if (busy) return;
+    if (scope.skipped > 0) {
+      setRemoteError("有日志段回放不了，没法确认它们引用了什么；这次只列孤儿，不清理。");
+      return;
+    }
+    setBusy(true);
+    setRemoteError(undefined);
+    setRemoteNotice(undefined);
+    try {
+      const response = await fetch("/api/asset/remote", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keep: scope.keep, dryRun: true }),
+      });
+      const payload = (await response.json()) as {
+        wouldRemove?: number;
+        bytes?: number;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(payload.error ?? `清点失败（${response.status}）`);
+      setRemoteWouldRemove({ count: payload.wouldRemove ?? 0, bytes: payload.bytes ?? 0 });
+      setRemoteCleaning(true);
+    } catch (caught) {
+      setRemoteError(caught instanceof Error ? caught.message : "清点失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cleanRemote = async () => {
+    setRemoteCleaning(false);
+    if (scope.skipped > 0) {
+      setRemoteError("有日志段回放不了，没法确认它们引用了什么；这次只列孤儿，不清理。");
+      return;
+    }
+    setBusy(true);
+    setRemoteError(undefined);
+    try {
+      const response = await fetch("/api/asset/remote", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keep: scope.keep }),
+      });
+      const payload = (await response.json()) as {
+        removed?: number;
+        bytes?: number;
+        failed?: number;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(payload.error ?? `清理失败（${response.status}）`);
+      setRemoteNotice(
+        payload.removed
+          ? `从桶里清掉 ${payload.removed} 个没人引用的对象（约 ${fmtBytes(payload.bytes ?? 0)}）${
+              payload.failed ? `，${payload.failed} 个没删掉` : ""
+            }。`
+          : "桶里没有没人引用的对象。",
+      );
+      await loadRemote();
+    } catch (caught) {
+      setRemoteError(caught instanceof Error ? caught.message : "清理失败");
     } finally {
       setBusy(false);
     }
@@ -1545,6 +1650,95 @@ function AssetStoreSection({ readOnly }: { readOnly: boolean }) {
           </p>
         )}
       </div>
+
+      {storageConfigured && (
+        <div className="mt-3 rounded-token border border-line px-3 py-2">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="text-[10px] text-text">桶里的孤儿对象</h3>
+            <span className="tnum text-[9px] text-muted-2">
+              {remoteFiles ? `assets/ 前缀 ${remoteFiles.length} 个对象` : "读不到桶清单"}
+            </span>
+          </div>
+          <p className="mt-1 text-[9.5px] leading-[1.7] text-muted-2">
+            只列 <code className="text-muted">assets/</code> 前缀下的对象，白名单与本机库同一个
+            （所有能回放项目的地址并集）。删的是桶里的对象，撤销找不回来。
+          </p>
+          {remoteError && (
+            <p className="mt-1 text-[9.5px] leading-[1.7] text-pick">{remoteError}</p>
+          )}
+          {remoteOrphans ? (
+            <>
+              <p className="mt-1.5 text-[10px] text-text">
+                桶里孤儿：{remoteOrphans.count} 个 · {fmtBytes(remoteOrphans.bytes)}
+              </p>
+              {remoteOrphans.count > 0 && (
+                <ul className="mt-1 space-y-0.5">
+                  {remoteOrphans.orphans.slice(0, 5).map((file) => (
+                    <li
+                      key={file.uri}
+                      className="tnum truncate text-[8.5px] leading-[1.6] text-muted-2"
+                    >
+                      {file.uri.replace(/^s3:\/\//, "")} · {fmtBytes(file.bytes)}
+                    </li>
+                  ))}
+                  {remoteOrphans.count > 5 && (
+                    <li className="text-[8.5px] text-muted-2">还有 {remoteOrphans.count - 5} 个…</li>
+                  )}
+                </ul>
+              )}
+            </>
+          ) : (
+            !remoteError && (
+              <p className="mt-1.5 text-[9px] text-muted-2">正在列桶…</p>
+            )
+          )}
+          {remoteCleaning ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="text-[10px] leading-[1.6] text-pick">
+                {remoteWouldRemove
+                  ? `会从桶里删掉 ${remoteWouldRemove.count} 个对象（约 ${fmtBytes(
+                      remoteWouldRemove.bytes,
+                    )}），撤销找不回来。确定？`
+                  : "正在清点桶…"}
+              </span>
+              <button
+                type="button"
+                onClick={() => void cleanRemote()}
+                className="rounded-token border border-pick px-2.5 py-1 text-[10px] text-pick transition-colors duration-[var(--dur)] hover:bg-pick/10"
+              >
+                确认清理桶
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setRemoteCleaning(false);
+                  setRemoteWouldRemove(undefined);
+                }}
+                className="rounded-token border border-line px-2.5 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+              >
+                算了
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void askRemoteClean()}
+              disabled={readOnly || busy || !remoteFiles || remoteFiles.length === 0 || scope.skipped > 0}
+              title={
+                scope.skipped > 0
+                  ? "有日志段回放不了：只列孤儿，不清理"
+                  : "只删所有能回放的项目都没引用的对象；不自动删"
+              }
+              className="mt-2 rounded-token border border-line px-2.5 py-1 text-[10px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+            >
+              清理桶里没人引用的对象
+            </button>
+          )}
+          {remoteNotice && (
+            <p className="mt-2 text-[9.5px] leading-[1.7] text-muted">{remoteNotice}</p>
+          )}
+        </div>
+      )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <button
