@@ -39,6 +39,7 @@ export function Workbench() {
   const setShotBudget = useWorkbench((state) => state.setShotBudget);
   const setShotPlan = useWorkbench((state) => state.setShotPlan);
   const applyShotLanguage = useWorkbench((state) => state.applyShotLanguage);
+  const setShotCamera = useWorkbench((state) => state.setShotCamera);
   const setShotLighting = useWorkbench((state) => state.setShotLighting);
   const setShotComposition = useWorkbench((state) => state.setShotComposition);
   const setShotPerformance = useWorkbench((state) => state.setShotPerformance);
@@ -403,6 +404,7 @@ export function Workbench() {
           readOnly={readOnly ?? false}
           onSelectShot={select}
           onApply={(shotId, languageId) => applyShotLanguage(shotId, languageId)}
+          onCamera={(shotId, patch) => setShotCamera(shotId, patch)}
           onLighting={(shotId, lighting) => setShotLighting(shotId, lighting)}
           onComposition={(shotId, composition) => setShotComposition(shotId, composition)}
           onClose={() => setLanguageOpen(false)}

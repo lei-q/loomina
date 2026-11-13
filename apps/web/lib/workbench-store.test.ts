@@ -1411,6 +1411,59 @@ describe("镜头语言（I1）", () => {
   });
 });
 
+describe("手调摄影参数（I7）", () => {
+  beforeEach(() => {
+    state().reset();
+  });
+
+  it("改景别只写一条 shot.updated，机位三项原样保留", () => {
+    const shot = state().project.shots[0]!;
+    const before = state().events.length;
+    expect(state().setShotCamera(shot.id, { shotSize: "close" })).toBe(true);
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.updated",
+      shotId: shot.id,
+      patch: { shotSize: "close" },
+    });
+    const after = state().project.shots[0]!;
+    expect(after.shotSize).toBe("close");
+    expect(after.camera).toEqual(shot.camera);
+  });
+
+  it("改一项机位写整份 camera，另两项跟着保留，回放一致", () => {
+    const shot = state().project.shots[0]!;
+    expect(state().setShotCamera(shot.id, { angle: "low" })).toBe(true);
+    expect(state().setShotCamera(shot.id, { focalMm: 85 })).toBe(true);
+    const after = state().project.shots[0]!;
+    expect(after.camera.angle).toBe("low");
+    expect(after.camera.focalMm).toBe(85);
+    expect(after.camera.movement).toBe(shot.camera.movement);
+    expect(rebuild(state().events).shots[0]?.camera).toEqual(after.camera);
+  });
+
+  it("焦段只收 8–300，越界拒绝且不写事件", () => {
+    const shot = state().project.shots[0]!;
+    const before = state().events.length;
+    expect(state().setShotCamera(shot.id, { focalMm: 4 })).toBe(false);
+    expect(state().castError).toContain("8–300");
+    expect(state().setShotCamera(shot.id, { focalMm: 400 })).toBe(false);
+    expect(state().setShotCamera(shot.id, { focalMm: Number.NaN })).toBe(false);
+    expect(state().events).toHaveLength(before);
+  });
+
+  it("已经是这个值 / 锁定 / 找不到镜头都不写", () => {
+    const shot = state().project.shots[0]!;
+    const before = state().events.length;
+    expect(state().setShotCamera(shot.id, { shotSize: shot.shotSize })).toBe(false);
+    const locked = state().project.shots.find((item) => item.locked)!;
+    expect(state().setShotCamera(locked.id, { movement: "push" })).toBe(false);
+    expect(state().castError).toContain("已锁定");
+    expect(state().setShotCamera("sh-nope", { movement: "push" })).toBe(false);
+    expect(state().events).toHaveLength(before);
+  });
+});
+
 describe("光影与构图（I2 / I4）", () => {
   beforeEach(() => {
     state().reset();

@@ -39,6 +39,7 @@ import {
   type Motif,
   type MusicCue,
   type Blocking,
+  type Camera,
   type CameraPlacement,
   type PerformanceSpec,
   type Project,
@@ -452,6 +453,16 @@ type WorkbenchState = {
    * 一条 `shot.updated`。机位坐标（B13）原样保留；已经正好是这套就不写。
    */
   applyShotLanguage: (shotId: string, languageId: string) => boolean;
+  /**
+   * 手调摄影参数（I7）：景别 / 机位 / 运镜 / 焦段逐项改，一条 `shot.updated`。
+   *
+   * 与套说法（I1）是两条路：说法一次换四项，这里一次只改一项，
+   * 给「这套挺好，但焦段想再长一点」的进阶用法。机位坐标（B13）原样保留。
+   */
+  setShotCamera: (
+    shotId: string,
+    patch: { shotSize?: Shot["shotSize"]; angle?: Camera["angle"]; movement?: Camera["movement"]; focalMm?: number },
+  ) => boolean;
   /**
    * 写这一镜的光影模板（I2）：一条 `shot.updated { lighting }`；
    * `undefined` 表示清空（沿用场景与风格给的光）。
@@ -2076,6 +2087,57 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     }
     const patch = shotLanguagePatch(language, shot);
     const event: ProjectEvent = { type: "shot.updated", at: stamp(), shotId: shot.id, patch };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  setShotCamera: (shotId, patch) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) {
+      set({ castError: "找不到这一镜。" });
+      return false;
+    }
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定，先解锁再改摄影参数。" });
+      return false;
+    }
+
+    const next: Partial<Shot> = {};
+    if (patch.shotSize !== undefined && patch.shotSize !== shot.shotSize) {
+      next.shotSize = patch.shotSize;
+    }
+    // 机位是整份写回的：只换点了的那几项，走位摆好的坐标不能让这里洗掉
+    const camera = { ...shot.camera };
+    let cameraChanged = false;
+    if (patch.angle !== undefined && patch.angle !== shot.camera.angle) {
+      camera.angle = patch.angle;
+      cameraChanged = true;
+    }
+    if (patch.movement !== undefined && patch.movement !== shot.camera.movement) {
+      camera.movement = patch.movement;
+      cameraChanged = true;
+    }
+    if (patch.focalMm !== undefined) {
+      if (!Number.isFinite(patch.focalMm) || patch.focalMm < 8 || patch.focalMm > 300) {
+        set({ castError: "焦段要在 8–300mm 之间。" });
+        return false;
+      }
+      const focalMm = Math.round(patch.focalMm);
+      if (focalMm !== shot.camera.focalMm) {
+        camera.focalMm = focalMm;
+        cameraChanged = true;
+      }
+    }
+    if (cameraChanged) next.camera = camera;
+    if (next.shotSize === undefined && next.camera === undefined) return false;
+
+    const event: ProjectEvent = { type: "shot.updated", at: stamp(), shotId: shot.id, patch: next };
     set({
       project: applyEvent(project, event),
       events: [...events, event],

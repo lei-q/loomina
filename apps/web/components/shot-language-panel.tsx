@@ -27,6 +27,19 @@ const MOVE_LABEL: Record<ShotLanguage["movement"], string> = {
   handheld: "手持",
 };
 
+/** 手调参数用的取值表（I7）：与 IR 枚举一一对应，不另造词 */
+const SHOT_SIZES = ["wide", "medium", "close", "extreme-close"] as const;
+const ANGLES = ["eye", "low", "high", "top"] as const;
+const MOVEMENTS = ["static", "push", "pull", "pan", "tilt", "handheld"] as const;
+const FOCAL_STEPS = [14, 24, 35, 50, 85, 135] as const;
+
+export type CameraPatch = {
+  shotSize?: Project["shots"][number]["shotSize"];
+  angle?: Project["shots"][number]["camera"]["angle"];
+  movement?: Project["shots"][number]["camera"]["movement"];
+  focalMm?: number;
+};
+
 export type ShotLanguagePanelProps = {
   project: Project;
   currentShotId: string;
@@ -34,6 +47,8 @@ export type ShotLanguagePanelProps = {
   onSelectShot: (shotId: string) => void;
   /** 套一套说法：写一条 `shot.updated`；返回是否真的写了 */
   onApply: (shotId: string, languageId: string) => boolean;
+  /** 手调一项摄影参数（I7）：同样一条 `shot.updated` */
+  onCamera: (shotId: string, patch: CameraPatch) => boolean;
   /** 写这一镜的光影模板（I2）；`undefined` 清空 */
   onLighting: (shotId: string, lighting: Lighting | undefined) => boolean;
   /** 写这一镜的构图模板（I4）；`undefined` 清空 */
@@ -54,11 +69,14 @@ export function ShotLanguagePanel({
   readOnly = false,
   onSelectShot,
   onApply,
+  onCamera,
   onLighting,
   onComposition,
   onClose,
 }: ShotLanguagePanelProps) {
   const [flash, setFlash] = useState("");
+  /** 自定义焦段的输入草稿：回车 / 失焦才写，边打字边写会把 1 写成 1mm */
+  const [focalDraft, setFocalDraft] = useState("");
   const shot = project.shots.find((item) => item.id === currentShotId);
   const matched = useMemo(() => (shot ? matchShotLanguage(shot) : undefined), [shot]);
   const shotNo = shot
@@ -93,6 +111,22 @@ export function ShotLanguagePanel({
     if (!shot) return;
     const ok = onComposition(shot.id, undefined);
     setFlash(ok ? "构图已清空：让模型自己摆。" : locked ? "这一镜已锁定或页面只读。" : "本来就没写。");
+  };
+
+  /** 手调一项：写一条 `shot.updated`，并把「改了什么」写在一处 */
+  const applyCamera = (patch: CameraPatch, label: string) => {
+    if (!shot) return;
+    const ok = onCamera(shot.id, patch);
+    setFlash(
+      ok ? `改好了：${label}。` : locked ? "这一镜已锁定或页面只读，先解锁再改。" : "没有变化。",
+    );
+  };
+
+  const commitFocal = () => {
+    const value = Number(focalDraft.trim());
+    if (!Number.isFinite(value) || focalDraft.trim() === "") return;
+    applyCamera({ focalMm: value }, `焦段 ${Math.round(value)}mm`);
+    setFocalDraft("");
   };
 
   useEffect(() => {
@@ -171,6 +205,134 @@ export function ShotLanguagePanel({
               {flash && <p className="mt-1 text-[9.5px] text-muted">{flash}</p>}
             </section>
           )}
+
+          <section className="mt-3 border border-line px-3 py-2.5">
+            <div className="flex items-baseline justify-between gap-2">
+              <h3 className="text-[10.5px] tracking-[.06em] text-text">手调参数</h3>
+              <span className="text-[8.5px] text-muted-2">改一项就写一条镜头改动</span>
+            </div>
+
+            <div className="mt-2 flex flex-col gap-2">
+              <div>
+                <p className="text-[8.5px] tracking-[.06em] text-muted-2">景别</p>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {SHOT_SIZES.map((size) => {
+                    const active = shot?.shotSize === size;
+                    return (
+                      <button
+                        key={size}
+                        type="button"
+                        disabled={locked || !shot}
+                        aria-pressed={active}
+                        onClick={() => applyCamera({ shotSize: size }, `景别改成「${SHOT_SIZE_CN[size]}」`)}
+                        className={cn(
+                          "rounded-token border px-1.5 py-0.5 text-[9.5px] transition-colors duration-[var(--dur)] disabled:opacity-40",
+                          active ? "border-pick text-text" : "border-line text-muted-2 hover:border-line-2 hover:text-text",
+                        )}
+                      >
+                        {SHOT_SIZE_CN[size]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <p className="text-[8.5px] tracking-[.06em] text-muted-2">机位</p>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {ANGLES.map((angle) => {
+                    const active = shot?.camera.angle === angle;
+                    return (
+                      <button
+                        key={angle}
+                        type="button"
+                        disabled={locked || !shot}
+                        aria-pressed={active}
+                        onClick={() => applyCamera({ angle }, `机位改成「${SHOT_ANGLE_CN[angle]}」`)}
+                        className={cn(
+                          "rounded-token border px-1.5 py-0.5 text-[9.5px] transition-colors duration-[var(--dur)] disabled:opacity-40",
+                          active ? "border-pick text-text" : "border-line text-muted-2 hover:border-line-2 hover:text-text",
+                        )}
+                      >
+                        {SHOT_ANGLE_CN[angle]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <p className="text-[8.5px] tracking-[.06em] text-muted-2">运镜</p>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {MOVEMENTS.map((movement) => {
+                    const active = shot?.camera.movement === movement;
+                    return (
+                      <button
+                        key={movement}
+                        type="button"
+                        disabled={locked || !shot}
+                        aria-pressed={active}
+                        onClick={() => applyCamera({ movement }, `运镜改成「${MOVE_LABEL[movement]}」`)}
+                        className={cn(
+                          "rounded-token border px-1.5 py-0.5 text-[9.5px] transition-colors duration-[var(--dur)] disabled:opacity-40",
+                          active ? "border-pick text-text" : "border-line text-muted-2 hover:border-line-2 hover:text-text",
+                        )}
+                      >
+                        {MOVE_LABEL[movement]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <p className="text-[8.5px] tracking-[.06em] text-muted-2">焦段</p>
+                <div className="mt-1 flex flex-wrap items-center gap-1">
+                  {FOCAL_STEPS.map((mm) => {
+                    const active = shot?.camera.focalMm === mm;
+                    return (
+                      <button
+                        key={mm}
+                        type="button"
+                        disabled={locked || !shot}
+                        aria-pressed={active}
+                        onClick={() => applyCamera({ focalMm: mm }, `焦段改成 ${mm}mm`)}
+                        className={cn(
+                          "tnum rounded-token border px-1.5 py-0.5 text-[9.5px] transition-colors duration-[var(--dur)] disabled:opacity-40",
+                          active ? "border-pick text-text" : "border-line text-muted-2 hover:border-line-2 hover:text-text",
+                        )}
+                      >
+                        {mm}
+                      </button>
+                    );
+                  })}
+                  <input
+                    type="number"
+                    value={focalDraft}
+                    min={8}
+                    max={300}
+                    step={1}
+                    disabled={locked || !shot}
+                    aria-label="自定义焦段（毫米）"
+                    placeholder="自定义"
+                    onChange={(event) => setFocalDraft(event.target.value)}
+                    onBlur={commitFocal}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        commitFocal();
+                      }
+                    }}
+                    className="tnum w-[64px] rounded-token border border-line-2 bg-surface px-1.5 py-0.5 text-[9.5px] text-text placeholder:text-muted-2 focus:border-pick focus:outline-none disabled:opacity-40"
+                  />
+                  <span className="text-[8.5px] text-muted-2">mm（8–300）</span>
+                </div>
+              </div>
+            </div>
+            <p className="mt-2 text-[9px] leading-[1.6] text-muted-2">
+              说法是整组换，这里是一项一项改：想保留「夜景街头」的机位，只把焦段拉长，用这一块。
+            </p>
+          </section>
 
           {SHOT_LANGUAGE_GROUPS.map((group) => (
             <section key={group} className="mt-4">
