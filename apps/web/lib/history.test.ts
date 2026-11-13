@@ -213,3 +213,25 @@ describe("历史文案：双语字幕（D5 / ADR-0173）", () => {
     expect(cleared).toContain("清掉译文");
   });
 });
+
+describe("历史文案：品牌包与头尾卡（E9 / ADR-0174）", () => {
+  it("开关、文字、时长、落款各有说法", () => {
+    const at = "2026-11-13T00:00:00.000Z";
+    const events: ProjectEvent[] = [
+      { type: "brand.updated", at, patch: { name: "织光机" } },
+      { type: "brand.updated", at, patch: { color: "#2A1D3F" } },
+      {
+        type: "brand.updated",
+        at,
+        patch: { intro: { enabled: true, title: "夜班", durationMs: 2000 } },
+      },
+      { type: "brand.updated", at, patch: { outro: { enabled: false } } },
+    ];
+    expect(events.map((event) => describeEvent(sampleProject, event))).toEqual([
+      "品牌包：落款 织光机",
+      "品牌包：底色 #2A1D3F",
+      "品牌包：片头卡：开、片头卡标题「夜班」、片头卡时长 2 秒",
+      "品牌包：片尾卡：关",
+    ]);
+  });
+});

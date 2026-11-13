@@ -69,6 +69,7 @@ const EVENT_TYPES: Record<ProjectEvent["type"], true> = {
   "subtitle.layout.updated": true,
   "subtitle.translation.updated": true,
   "dialogue.translation.updated": true,
+  "brand.updated": true,
   "voice.take.added": true,
   "voice.take.removed": true,
   "take.added": true,

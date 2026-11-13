@@ -1,4 +1,5 @@
 import type {
+  Brand,
   Frame,
   Grade,
   MusicCue,
@@ -302,10 +303,30 @@ export type EditMusic = {
   licenseRef: string;
 };
 
+/**
+ * 一张头 / 尾卡在读模型里的样子（E9 / ADR-0174）。
+ *
+ * 它不是 `EditClip`：卡片没有镜头、没有 take、没有台词，塞进片段数组会逼着
+ * 时间线、换 take、镜头清单这些地方到处判空。它单独一份，导出时按时间排进去。
+ */
+export type EditCard = {
+  role: "intro" | "outro";
+  startMs: number;
+  durationMs: number;
+  title: string;
+  subtitle: string;
+};
+
 export type EditView = {
   title: string;
   version: number;
   clips: EditClip[];
+  /** 头尾卡（E9 / ADR-0174）：按时间排好，片头在最前、片尾在最后 */
+  cards: EditCard[];
+  /** 品牌包本身：落款、账号说明、底色与两张卡的原文 */
+  brand: Brand;
+  /** 片头卡占掉的时长：画面、字幕、配乐的时间都整体后移这么多 */
+  brandOffsetMs: number;
   /** 配乐床（C4）：目前一条，按台词自动 ducking */
   music: EditMusic[];
   /** 全部字幕，按时间排好；SRT、预览与导出都用这一份 */
@@ -420,6 +441,14 @@ export function toEditView(
     (end, item) => Math.max(end, item.startMs + item.durationMs),
     0,
   );
+  // 头尾卡（E9 / ADR-0174）：卡片本身不在时间线里，但成片最前 / 最后是它，
+  // 所以后面所有绝对时间都整体后移一张片头卡的距离。
+  // 时间线一镜都没有时不插卡——空片插一张两秒的黑卡没有意义。
+  const cardsOn = project.timeline.items.length > 0;
+  const headMs =
+    cardsOn && project.brand.intro.enabled ? project.brand.intro.durationMs : 0;
+  const tailMs =
+    cardsOn && project.brand.outro.enabled ? project.brand.outro.durationMs : 0;
 
   const clips: EditClip[] = [...project.timeline.items]
     .sort((a, b) => a.startMs - b.startMs)
@@ -436,7 +465,9 @@ export function toEditView(
       const keyframe = stageShot.keyframeUri ?? stageShot.lastKeyframeUri;
       const scene = sceneById.get(shot.sceneId);
 
-      let cursor = item.startMs;
+      // 片头卡把整条时间线往后推一张卡的时长（E9 / ADR-0174）：
+      // 画面、配音、字幕、配乐都按同一个偏移走，所以相对位置一处都不变
+      let cursor = item.startMs + headMs;
       const lines: EditLine[] = shot.dialogueIds.flatMap((lineId) => {
         const line = lineById.get(lineId);
         if (!line) return [];
@@ -523,7 +554,7 @@ export function toEditView(
           takeId: item.takeId,
           takeNo: shot.takeIds.indexOf(item.takeId) + 1,
           takeStatus: take.status,
-          startMs: item.startMs,
+          startMs: item.startMs + headMs,
           durationMs: item.durationMs,
           uri,
           stillUri: stillUri ?? keyframe,
@@ -544,10 +575,33 @@ export function toEditView(
       ];
     });
 
-  const totalMs = clips.reduce(
+  const clipsEnd = clips.reduce(
     (end, clip) => Math.max(end, clip.startMs + clip.durationMs),
     0,
   );
+  // 一张卡都没开、或者时间线上没有可播的片段时，成片时长就是画面本身的末尾
+  const totalMs = clips.length === 0 ? 0 : clipsEnd + tailMs;
+  const cards: EditCard[] = [];
+  if (clips.length > 0) {
+    if (headMs > 0) {
+      cards.push({
+        role: "intro",
+        startMs: 0,
+        durationMs: headMs,
+        title: project.brand.intro.title,
+        subtitle: project.brand.intro.subtitle,
+      });
+    }
+    if (tailMs > 0) {
+      cards.push({
+        role: "outro",
+        startMs: clipsEnd,
+        durationMs: tailMs,
+        title: project.brand.outro.title,
+        subtitle: project.brand.outro.subtitle,
+      });
+    }
+  }
   const inTimeline = new Set(clips.map((clip) => clip.shotId));
   const cues = clips
     .flatMap((clip) => clip.lines.flatMap((line) => line.cues))
@@ -563,7 +617,8 @@ export function toEditView(
         mood: cue.mood,
         uri: asset.uri,
         assetDurationMs: asset.durationMs,
-        startMs: cue.startMs,
+        // 配乐也跟着时间线后移：片头卡是静音的，音乐从第一镜进来
+        startMs: cue.startMs + headMs,
         durationMs: cue.durationMs,
         gainDb: cue.gainDb,
         duckDb: cue.duckDb,
@@ -580,6 +635,9 @@ export function toEditView(
     title: project.title,
     version: project.version,
     clips,
+    cards,
+    brand: project.brand,
+    brandOffsetMs: headMs,
     music,
     cues,
     maxChars,

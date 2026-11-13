@@ -650,6 +650,28 @@ type WorkbenchState = {
    */
   setLineTranslation: (lineId: string, translation: string | null) => boolean;
   /**
+   * 品牌包与头尾卡（E9 / ADR-0174）：写一条 `brand.updated`。
+   * 卡片时长会让整条时间线后移，成片、字幕、OTIO 一起跟着走。
+   * 返回是否真的写进去了——和当前值一样就不写事件。
+   */
+  setBrand: (patch: {
+    name?: string;
+    handle?: string;
+    color?: string;
+    intro?: {
+      enabled?: boolean;
+      title?: string;
+      subtitle?: string;
+      durationMs?: number;
+    };
+    outro?: {
+      enabled?: boolean;
+      title?: string;
+      subtitle?: string;
+      durationMs?: number;
+    };
+  }) => boolean;
+  /**
    * 挪一句的配音或字幕（E1 / ADR-0131）：写一条 `dialogue.updated`。
    *
    * 画面轨不能自由拖（渲染清单要求首尾相接），能自由挪的只有这两个叠加层。
@@ -4165,6 +4187,63 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       });
     } catch (error) {
       set({ editError: error instanceof Error ? error.message : "译文没写进去。" });
+      return false;
+    }
+    return true;
+  },
+
+  setBrand: (patch) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const current = project.brand;
+    // 和当前值一样就不写事件：拖一次时长滑块不该在日志里留一串记录
+    const clean = {
+      ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
+      ...(patch.handle !== undefined ? { handle: patch.handle.trim() } : {}),
+      ...(patch.color !== undefined ? { color: patch.color.toUpperCase() } : {}),
+    };
+    const sameTop =
+      (clean.name === undefined || clean.name === current.name) &&
+      (clean.handle === undefined || clean.handle === current.handle) &&
+      (clean.color === undefined || clean.color === current.color);
+    const cardPatchOf = (role: "intro" | "outro") => {
+      const given = patch[role];
+      if (!given) return undefined;
+      const base = current[role];
+      const next = {
+        ...(given.enabled !== undefined ? { enabled: given.enabled } : {}),
+        ...(given.title !== undefined ? { title: given.title.trim() } : {}),
+        ...(given.subtitle !== undefined ? { subtitle: given.subtitle.trim() } : {}),
+        ...(given.durationMs !== undefined ? { durationMs: given.durationMs } : {}),
+      };
+      const same =
+        (next.enabled === undefined || next.enabled === base.enabled) &&
+        (next.title === undefined || next.title === base.title) &&
+        (next.subtitle === undefined || next.subtitle === base.subtitle) &&
+        (next.durationMs === undefined || next.durationMs === base.durationMs);
+      return { next, same };
+    };
+    const intro = cardPatchOf("intro");
+    const outro = cardPatchOf("outro");
+    if (sameTop && intro?.same !== false && outro?.same !== false) return false;
+    const at = stamp();
+    const event: ProjectEvent = {
+      type: "brand.updated",
+      at,
+      patch: {
+        ...clean,
+        ...(intro && !intro.same ? { intro: intro.next } : {}),
+        ...(outro && !outro.same ? { outro: outro.next } : {}),
+      },
+    };
+    try {
+      set({
+        project: applyEvent(project, event),
+        events: [...events, event],
+        editError: undefined,
+      });
+    } catch (error) {
+      set({ editError: error instanceof Error ? error.message : "品牌包没改成功。" });
       return false;
     }
     return true;

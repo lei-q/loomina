@@ -27,7 +27,12 @@ import {
 import type { Frame } from "@loomina/ir";
 import type { LoudnessReport } from "./render-audio";
 import { clipFades, isDefaultFrame, isDefaultGrade } from "./render-effects";
-import { aiLabelRecordFor, badgePlacementOf } from "./ai-label";
+import { brandArtOf, cardImage } from "./card-image";
+import {
+  aiContentHashOf,
+  materialOfManifest,
+  badgePlacementOf,
+} from "./ai-label";
 import {
   S3_PREFIX,
   isRemoteAssetUri,
@@ -282,7 +287,7 @@ export function buildRenderManifest(
   // 编译在 `render-effects` 里，与服务端同一套夹取规则（单侧不超过这一段的一半）。
   const fades = clipFades(ordered);
 
-  const clips: RenderClip[] = ordered.map((clip, index) => {
+  const shotClips: RenderClip[] = ordered.map((clip, index) => {
     const visual = visualOf(clip);
     const label = `SH-${String(clip.shotNo).padStart(2, "0")}`;
     const fade = fades[index]!;
@@ -385,6 +390,22 @@ export function buildRenderManifest(
     music.push({ audio: cue.uri, ...common });
   }
 
+  // 头尾卡（E9 / ADR-0174）：成片最前 / 最后各一张静帧，占掉各自的时长。
+  // 卡是浏览器画好再交给服务端的 PNG；画布不可用时退成占位（服务端出黑帧），
+  // 但时长仍然对——时间轴不会因为导出环境不同而错位。
+  const cardClips: RenderClip[] = view.cards.map((card) => {
+    const label = card.role === "intro" ? "片头卡" : "片尾卡";
+    const media = cardImage(brandArtOf(view.brand, card.role, card), size);
+    return media
+      ? { durationMs: card.durationMs, media, mediaKind: "image" as const, label }
+      : { durationMs: card.durationMs, label };
+  });
+  const allClips: RenderClip[] = [
+    ...cardClips.filter((clip) => clip.label === "片头卡"),
+    ...shotClips,
+    ...cardClips.filter((clip) => clip.label === "片尾卡"),
+  ];
+
   // 角标永远带：AI 生成标识是合规要求，不能跟着字幕一起关
   const overlays = [
     badgeOverlay(view.totalMs, size.width, size.height, options.platform ?? "generic"),
@@ -400,7 +421,7 @@ export function buildRenderManifest(
       height: size.height,
       fps: profile.fps,
       totalMs: view.totalMs,
-      clips,
+      clips: allClips,
       overlays,
       audio,
       music,
@@ -409,7 +430,11 @@ export function buildRenderManifest(
         implicit: true,
         standard: "AI生成",
         version: 1,
-        contentHash: aiLabelRecordFor(view).contentHash,
+        // 指纹按这份清单自己的片段算（E9 / ADR-0174）：头尾卡也是画面，
+        // 加进去之后按读模型算会和服务端重算的结果对不上，清单一律被拒
+        contentHash: aiContentHashOf(
+          materialOfManifest({ title: view.title, totalMs: view.totalMs, clips: allClips }),
+        ),
       },
       compliance,
       // 调色（E4）：默认档不传，清单与以前逐字一致

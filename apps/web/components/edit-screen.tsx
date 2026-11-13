@@ -8,6 +8,8 @@ import { PublishLedgerPanel } from "@/components/publish-ledger-panel";
 import { RightsPanel } from "@/components/rights-panel";
 import { SilentWatchPanel } from "@/components/silent-watch-panel";
 import { BilingualPanel } from "@/components/bilingual-panel";
+import { BrandPanel } from "@/components/brand-panel";
+import { brandArtOf, cardImage } from "@/lib/card-image";
 import { GradePanel, type SeamOption } from "@/components/grade-panel";
 import { TopBar } from "@/components/top-bar";
 import {
@@ -409,6 +411,7 @@ export function EditScreen() {
   const setSubtitleLayout = useWorkbench((state) => state.setSubtitleLayout);
   const setSubtitleTranslation = useWorkbench((state) => state.setSubtitleTranslation);
   const setLineTranslation = useWorkbench((state) => state.setLineTranslation);
+  const setBrand = useWorkbench((state) => state.setBrand);
   const shiftLineTrack = useWorkbench((state) => state.shiftLineTrack);
   const reviewAsset = useWorkbench((state) => state.reviewAsset);
   const addMusic = useWorkbench((state) => state.addMusic);
@@ -445,6 +448,8 @@ export function EditScreen() {
   const [silentOpen, setSilentOpen] = useState(false);
   // 双语字幕（D5 / ADR-0173）：逐句写第二行，版式只决定第二行放上还是下
   const [bilingualOpen, setBilingualOpen] = useState(false);
+  // 品牌包与头尾卡（E9 / ADR-0174）：卡片是导出最前 / 最后的一张静帧
+  const [brandOpen, setBrandOpen] = useState(false);
   // 发布台账（G10）与授权记录（H7）：都是留档，不改成片
   const [publishOpen, setPublishOpen] = useState(false);
   const [rightsOpen, setRightsOpen] = useState(false);
@@ -620,7 +625,23 @@ export function EditScreen() {
     view.clips.find(
       (clip) =>
         elapsed >= clip.startMs && elapsed < clip.startMs + clip.durationMs,
-    ) ?? view.clips.at(-1);
+    ) ??
+    // 片头卡窗口里还没有镜头开始：停在第一镜，不跳到最后一镜
+    (elapsed < (view.clips[0]?.startMs ?? 0) ? view.clips[0] : view.clips.at(-1));
+  // 头尾卡（E9 / ADR-0174）：播放头落在卡上时，舞台上就是那张卡
+  const stageCard = view.cards.find(
+    (card) => elapsed >= card.startMs && elapsed < card.startMs + card.durationMs,
+  );
+  // 舞台上的那张卡：只在播放头落进卡片窗口时用；按品牌与画幅缓存，
+  // 不跟着秒表每秒重画一遍
+  const cardStills = useMemo(
+    () => ({
+      intro: cardImage(brandArtOf(view.brand, "intro", view.brand.intro), frameSize("draft", view.frame.aspect)),
+      outro: cardImage(brandArtOf(view.brand, "outro", view.brand.outro), frameSize("draft", view.frame.aspect)),
+    }),
+    [view.brand, view.frame.aspect],
+  );
+  const stageCardImage = stageCard ? cardStills[stageCard.role] : undefined;
   const selected =
     view.clips.find((clip) => clip.id === selectedId) ?? current ?? view.clips[0];
   const selectedIndex = selected
@@ -1243,6 +1264,8 @@ export function EditScreen() {
         }
         onSilent={view.clips.length > 0 ? () => setSilentOpen(true) : undefined}
         silentCount={silentCount}
+        onBrand={() => setBrandOpen(true)}
+        cardCount={view.cards.length}
         onPublishLedger={() => setPublishOpen(true)}
         unpublishedCount={unpublishedCount}
         onGrade={() => setGradeOpen(true)}
@@ -1335,7 +1358,15 @@ export function EditScreen() {
                       }}
                     />
                   )}
-                  {current?.uri ? (
+                  {stageCardImage ? (
+                    // 片头 / 片尾卡（E9 / ADR-0174）：导出时是同一张图
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={stageCardImage}
+                      alt={`${stageCard?.role === "intro" ? "片头" : "片尾"}卡`}
+                      className="absolute inset-0 h-full w-full object-cover"
+                    />
+                  ) : current?.uri ? (
                     <video
                       key={current.id}
                       ref={videoRef}
@@ -1528,6 +1559,22 @@ export function EditScreen() {
                   </div>
 
                   <div className="mt-2 flex h-[46px] w-full overflow-hidden rounded-token border border-line bg-surface">
+                    {view.cards
+                      .filter((card) => card.role === "intro")
+                      .map((card) => (
+                        <button
+                          key="card-intro"
+                          type="button"
+                          onClick={() => setBrandOpen(true)}
+                          title={`片头卡 · ${fmtSec(card.durationMs)}：点开改标题与时长`}
+                          style={{
+                            width: `${(card.durationMs / Math.max(1, view.totalMs)) * 100}%`,
+                          }}
+                          className="flex min-w-[2px] items-center justify-center overflow-hidden border-r border-bg bg-pick/15 text-[8.5px] text-pick transition-colors duration-[var(--dur)] hover:bg-pick/25"
+                        >
+                          片头
+                        </button>
+                      ))}
                     {view.clips.map((clip) => (
                       <button
                         key={clip.id}
@@ -1552,6 +1599,22 @@ export function EditScreen() {
                         {shotLabel(clip.shotNo)}
                       </button>
                     ))}
+                    {view.cards
+                      .filter((card) => card.role === "outro")
+                      .map((card) => (
+                        <button
+                          key="card-outro"
+                          type="button"
+                          onClick={() => setBrandOpen(true)}
+                          title={`片尾卡 · ${fmtSec(card.durationMs)}：点开改标题与时长`}
+                          style={{
+                            width: `${(card.durationMs / Math.max(1, view.totalMs)) * 100}%`,
+                          }}
+                          className="flex min-w-[2px] items-center justify-center overflow-hidden bg-pick/15 text-[8.5px] text-pick transition-colors duration-[var(--dur)] hover:bg-pick/25"
+                        >
+                          片尾
+                        </button>
+                      ))}
                   </div>
 
                   <div className="mt-1 flex justify-between text-[8.5px] text-muted-2">
@@ -2934,6 +2997,14 @@ export function EditScreen() {
           }}
           readOnly={Boolean(readOnly)}
           onClose={() => setBilingualOpen(false)}
+        />
+      )}
+      {brandOpen && (
+        <BrandPanel
+          view={view}
+          onSave={(patch) => setBrand(patch)}
+          readOnly={Boolean(readOnly)}
+          onClose={() => setBrandOpen(false)}
         />
       )}
       {publishOpen && (

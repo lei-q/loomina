@@ -5417,3 +5417,85 @@ D4 之后，断句（D2）与版式（D3）都进了 IR，SRT / ASS 从同一份
 - 第二行不会自动折行：超过画面宽度会被裁掉，界面只限 400 字，真正的宽度检查没做。
 - 双语开着但某句没译文时，那条字幕就是单语，导出里可能一行 / 两行交替；面板照实列出「还有 N 句没译文」。
 - 不调翻译模型：自动翻译、译文质量检查、配音与目标语言对齐都没做。
+
+## 第一百九十三次 · 2026-11-13 · 片头 / 片尾与品牌包（E9）
+
+**背景**
+
+E9「片头 / 片尾 / 品牌包」还挂在 `待设计`。每集都要补的片名、集号、落款与「下一集」，
+现在只能进剪辑软件手工铺；G9 之后一条片子要出好几个平台版本，手工加的卡每出一版都要重对。
+前面刚做完 D5（双语）、B18 + B11（表演 QA / 空间板）、G9（多平台版本），
+E9 是这条「导出一整块」里最后一个还在等设计的。
+
+**要定的**
+
+1. 卡片放进时间线，还是放在时间线之外？
+2. 放在外面的话，字幕 / 配音 / 配乐 / 平台时长这些按时间排的东西怎么跟着走？
+3. 界面在哪一层：要能一边改字一边看到卡长什么样。
+
+**结论**
+
+- **卡片不是时间线里的镜头**（ADR-0174）。`timeline.items` 与 `EditClip` 一个字段都不加：
+  卡片没有 shotId、take、台词，塞进片段数组会让换 take、镜头清单、锁定、初剪到处判空。
+  读模型单独给一份 `EditView.cards`。
+- **时间偏移只在一个地方算**：`brandOffsetMs` = 开着的片头卡时长，画面、台词、字幕 cue、
+  配乐 cue 的绝对起点一起加这个偏移。时间线本身不动——时间线是事实（P5）。
+  `totalMs` = 画面末尾 + 片尾卡；时间线一镜都没有时不插卡。
+- **一张图走遍四路**：`drawBrandCard` 画在 Canvas 2D 上，`cardImage()` 出 PNG data URI，
+  成片清单、预览 HTML、OTIO、界面预览与舞台共用同一张。字色按底色亮度自动取，
+  不让人挑第二个颜色（挑错了就是看不见的字）。
+- **一条事件 `brand.updated { patch }`**，嵌套字段逐个合并；关掉卡片不删字。
+- **顺手修 H5 的内容指纹**：客户端原来按读模型算指纹，服务端按清单重算；
+  两张卡进了清单却不在读模型里，`POST /api/render` 直接 400「内容指纹与清单对不上」。
+  改成按清单自己的片段算，两边规则对齐。
+
+**踩到的**
+
+- 第一次点「导出草稿 MP4」就吃到 400，原因正是上面那条指纹不一致——这不是新功能没接通，
+  是「清单的取材更宽了，而算指纹的地方还按读模型取」。修法不是放宽校验，是让算的地方跟着清单走。
+- 平台时长校验把两张卡算进去了：5.5 秒的示例加两张卡变 9.5 秒，抖音下限 15 秒那一项仍按 9.5 秒判。
+  卡片能帮忙够到下限，也能把片子推过上限，这一版只在「全长」里体现，不做专门提示。
+
+**改了哪些文件**
+
+- `packages/ir/src/schema.ts`（`BrandSchema` / `BrandCardSchema` / `DEFAULT_BRAND`，`Project.brand`）、
+  `packages/ir/src/events.ts`（`brand.updated` 与合并规则）、`packages/ir/test/events.test.ts`（+8 条）
+- `apps/web/lib/card-image.ts`（新：`drawBrandCard` / `cardImage` / `brandArtOf` / 折行与亮度）
+- `apps/web/lib/edit.ts`（`EditView.cards` / `brand` / `brandOffsetMs`，绝对时间统一后移）
+- `apps/web/lib/export-cut.ts`（OTIO 画面轨加两张卡、预览 HTML 的卡静帧）
+- `apps/web/lib/render-client.ts`（清单里加卡片段、内容指纹改按清单算）
+- `apps/web/lib/event-log.ts`、`apps/web/lib/history.ts`（白名单与历史文案）、
+  `apps/web/lib/workbench-store.ts`（`setBrand`）
+- `apps/web/components/brand-panel.tsx`（新抽屉）、`top-bar.tsx`（「品牌」工具）、
+  `edit-screen.tsx`（挂载、时间线首尾格子、舞台显示卡片）
+- 测试：`apps/web/lib/card-image.test.ts`（新 7 条）、`edit.test.ts`（+7）、
+  `history.test.ts`（+1）、`workbench-store.test.ts`（+4）
+- `docs/adr/0174-brand-cards.md`、`docs/FEATURES.md`（E9）、`docs/ROADMAP.md`、`docs/DATA-MODEL.md`
+
+**验证**
+
+- `app tsconfig` typecheck 干净；ir 250 通过；pipeline 134 通过；web 59 个文件 / 1131 通过 / 4 跳过；`pnpm build` 干净。
+- 浏览器（无头 Chrome，`/edit`，端口 3100）：
+  - 顶栏「品牌」打开抽屉，写落款「织光机」、账号「@zhiguang · 第 03 集」、底色 `#2a1d3f`，
+    提示「品牌信息已写进项目：头尾卡都用这个落款与底色。」
+  - 开片头卡（夜班 / 第一集 / 2.5 秒）、片尾卡（下一集 20:00 / 关注不迷路 / 1.5 秒），
+    抽屉头从「0 张出片 · 成片 5.5 秒」变「2 张出片 · 成片 9.5 秒」。
+  - 时间线变成 `片头 · SH-01 · SH-02 · 片尾`，两段卡点开就是品牌抽屉。
+  - 播放头拖到 0.5s，舞台 `img[alt="片头卡"]`；拖到 9.1s，`img[alt="片尾卡"]`。
+  - 导出 SRT 首条 `00:00:02,500 --> 00:00:05,100`（原来 `00:00:00,000`）。
+  - 导出 OTIO：画面轨 `片头卡（intro，真实 PNG）→ SH-01 → SH-02 → 片尾卡（outro，真实 PNG）`，
+    `metadata.loom.totalMs = 9500`。
+  - 导出预览 HTML：片段 `片头卡 / SH-01 / SH-02 / 片尾卡`，`totalMs 9500`，内嵌两张卡图。
+  - 渲染清单：4 段、`540×960`、`totalMs 9500`，首段 `2500ms / image / 片头卡`、末段 `1500ms / 片尾卡`。
+  - 草稿 MP4（`夜班-成片 (9).mp4`，540×960 / 9.5 秒 / h264+aac，83 KB）抽帧：
+    0.5s 是紫底「夜班 / 第一集 / 织光机 / @zhiguang · 第 03 集」，
+    9.0s 是「下一集 20:00 / 关注不迷路」，两张都带「AI 生成」角标。
+- 截图 `/tmp/e9-panel-cards.png`、`/tmp/e9-timeline.png`、`/tmp/e9-frame-intro.png`、`/tmp/e9-frame-outro.png`。
+
+**边界**
+
+- 只有上下两张、数量固定；不做动态 logo、卡内图片 / 视频、模板市场（动效归 E8）。
+- 片头卡静音：配乐整体后移，从第一镜进来；要在卡上铺音乐得让配乐相对成片起点落，这一版没做。
+- 卡片计入平台时长，但没有「这张卡让你超了」的专门提示。
+- 预览 HTML 与 OTIO 里的卡是同一张 PNG，但 OTIO 的 `target_url` 是 data URI，整份文件会变大。
+- 拿导出的 SRT 去和「没有卡片的版本」对表会差一个片头时长——这是对的，抽屉里写明了。

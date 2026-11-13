@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   assertValidProject,
+  DEFAULT_BRAND,
   DEFAULT_FRAME,
   DEFAULT_GRADE,
   DEFAULT_LOOK,
@@ -572,6 +573,7 @@ export function projectFromStoryDraft(
     look: DEFAULT_LOOK,
     grade: DEFAULT_GRADE,
     frame: DEFAULT_FRAME,
+    brand: DEFAULT_BRAND,
     budgetCny: options.budgetCny ?? 60,
     maxAttemptsPerShot: 3,
     onBudgetExceed: "block",

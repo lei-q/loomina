@@ -17,6 +17,7 @@ import {
   type PlatformId,
 } from "./platforms";
 import { assColorOf } from "./speaker-color";
+import { brandArtOf, cardImage } from "./card-image";
 import { clipFades } from "./render-effects";
 import { frameSize } from "./render-manifest";
 import {
@@ -198,34 +199,62 @@ function timeRange(durationMs: number) {
  * 视频轨一条、对白音轨一条；素材地址原样带出（data URI 也能读，只是文件会大）。
  */
 export function buildOtio(view: EditView): object {
+  // 头尾卡（E9 / ADR-0174）也是画面轨上的片段：它们是静帧，
+  // 用生成好的 PNG 当外部素材，剪辑软件里能直接看到卡的样子
+  const size = frameSize("final", view.frame.aspect);
+  const cardClips = view.cards.map((card) => ({
+    OTIO_SCHEMA: "Clip.2",
+    name: card.role === "intro" ? "片头卡" : "片尾卡",
+    source_range: timeRange(card.durationMs),
+    media_reference: {
+      OTIO_SCHEMA: "ExternalReference.1",
+      target_url:
+        cardImage(brandArtOf(view.brand, card.role, card), size) ?? "",
+      available_range: timeRange(card.durationMs),
+    },
+    metadata: {
+      loom: {
+        card: card.role,
+        startMs: card.startMs,
+        durationMs: card.durationMs,
+        title: card.title,
+        subtitle: card.subtitle,
+        brand: view.brand.name,
+      },
+    },
+  }));
   const videoTrack = {
     OTIO_SCHEMA: "Track.1",
     name: "V1 画面",
     kind: "Video",
-    children: view.clips.map((clip) => ({
-      OTIO_SCHEMA: "Clip.2",
-      name: `SH-${String(clip.shotNo).padStart(2, "0")} · take ${clip.takeNo}`,
-      source_range: timeRange(clip.durationMs),
-      media_reference: {
-        OTIO_SCHEMA: "ExternalReference.1",
-        target_url: clip.uri ?? clip.stillUri ?? "",
-        available_range: timeRange(clip.durationMs),
-        metadata: {
-          loom: {
-            shotId: clip.shotId,
-            takeId: clip.takeId,
-            still: clip.uri ? undefined : clip.stillUri,
+    children: [
+      ...cardClips.filter((clip) => clip.metadata.loom.card === "intro"),
+      ...view.clips.map((clip) => ({
+        OTIO_SCHEMA: "Clip.2",
+        name: `SH-${String(clip.shotNo).padStart(2, "0")} · take ${clip.takeNo}`,
+        source_range: timeRange(clip.durationMs),
+        media_reference: {
+          OTIO_SCHEMA: "ExternalReference.1",
+          target_url: clip.uri ?? clip.stillUri ?? "",
+          available_range: timeRange(clip.durationMs),
+          metadata: {
+            loom: {
+              shotId: clip.shotId,
+              takeId: clip.takeId,
+              still: clip.uri ? undefined : clip.stillUri,
+            },
           },
         },
-      },
-      metadata: {
-        loom: {
-          startMs: clip.startMs,
-          durationMs: clip.durationMs,
-          takeStatus: clip.takeStatus,
+        metadata: {
+          loom: {
+            startMs: clip.startMs,
+            durationMs: clip.durationMs,
+            takeStatus: clip.takeStatus,
+          },
         },
-      },
-    })),
+      })),
+      ...cardClips.filter((clip) => clip.metadata.loom.card === "outro"),
+    ],
   };
 
   const audioTrack = {
@@ -290,7 +319,18 @@ export type PreviewClip = {
 
 export function previewClips(view: EditView): PreviewClip[] {
   const fades = clipFades(view.clips);
-  return view.clips.map((clip, index) => {
+  const size = frameSize("final", view.frame.aspect);
+  // 头尾卡（E9 / ADR-0174）：预览里也是一张静帧，跟成片用的是同一张图
+  const cards: PreviewClip[] = view.cards.map((card) => ({
+    id: `card-${card.role}`,
+    label: card.role === "intro" ? "片头卡" : "片尾卡",
+    startMs: card.startMs,
+    durationMs: card.durationMs,
+    still: cardImage(brandArtOf(view.brand, card.role, card), size),
+    subtitles: [],
+    audio: [],
+  }));
+  const shots = view.clips.map((clip, index) => {
     const fade = fades[index]!;
     return {
       id: clip.id,
@@ -322,6 +362,11 @@ export function previewClips(view: EditView): PreviewClip[] {
       ),
     };
   });
+  return [
+    ...cards.filter((card) => card.id === "card-intro"),
+    ...shots,
+    ...cards.filter((card) => card.id === "card-outro"),
+  ];
 }
 
 /** 把读模型变成一页能直接双击打开的播放页；素材全部内嵌，不依赖服务器 */

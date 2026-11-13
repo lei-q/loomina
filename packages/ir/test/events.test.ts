@@ -3699,3 +3699,133 @@ describe("逐字原文槽位（F6 / ADR-0154）", () => {
     expect(next.story.sourceDocument).toBeUndefined();
   });
 });
+
+describe("品牌包与头尾卡（E9 / ADR-0174）", () => {
+  it("默认没有落款、两张卡都关着、时长各 2 秒", () => {
+    const project = load();
+    expect(project.brand).toEqual({
+      name: "",
+      handle: "",
+      color: "#121215",
+      intro: { enabled: false, title: "", subtitle: "", durationMs: 2000 },
+      outro: { enabled: false, title: "", subtitle: "", durationMs: 2000 },
+    });
+  });
+
+  it("落款、账号说明、底色各写一次，只改传进来的键", () => {
+    const project = load();
+    const after = rebuild([
+      created(project),
+      { type: "brand.updated", at: AT, patch: { name: "织光机" } },
+      { type: "brand.updated", at: AT, patch: { handle: "@zhiguang" } },
+      { type: "brand.updated", at: AT, patch: { color: "#2a1d3f" } },
+    ]);
+    expect(after.brand.name).toBe("织光机");
+    expect(after.brand.handle).toBe("@zhiguang");
+    expect(after.brand.color).toBe("#2A1D3F");
+    // 两张卡没碰过
+    expect(after.brand.intro.enabled).toBe(false);
+  });
+
+  it("改卡片的时长不会把标题清掉", () => {
+    const project = load();
+    const after = rebuild([
+      created(project),
+      {
+        type: "brand.updated",
+        at: AT,
+        patch: { intro: { enabled: true, title: "夜班", subtitle: "第一集" } },
+      },
+      { type: "brand.updated", at: AT, patch: { intro: { durationMs: 3200 } } },
+    ]);
+    expect(after.brand.intro).toEqual({
+      enabled: true,
+      title: "夜班",
+      subtitle: "第一集",
+      durationMs: 3200,
+    });
+  });
+
+  it("关掉卡片不会丢字：再打开还是同一张卡", () => {
+    const project = load();
+    const after = rebuild([
+      created(project),
+      {
+        type: "brand.updated",
+        at: AT,
+        patch: { outro: { enabled: true, title: "下一集 20:00", subtitle: "关注不迷路" } },
+      },
+      { type: "brand.updated", at: AT, patch: { outro: { enabled: false } } },
+    ]);
+    expect(after.brand.outro).toEqual({
+      enabled: false,
+      title: "下一集 20:00",
+      subtitle: "关注不迷路",
+      durationMs: 2000,
+    });
+  });
+
+  it("空 patch、空卡片 patch 与坏颜色都被拒", () => {
+    const project = load();
+    expect(() =>
+      rebuild([created(project), { type: "brand.updated", at: AT, patch: {} }]),
+    ).toThrow(/没有要改的字段/);
+    expect(() =>
+      rebuild([
+        created(project),
+        { type: "brand.updated", at: AT, patch: { intro: {} } },
+      ]),
+    ).toThrow(/intro 没有要改的字段/);
+    expect(() =>
+      rebuild([
+        created(project),
+        { type: "brand.updated", at: AT, patch: { color: "红色" } },
+      ]),
+    ).toThrow(/#RRGGBB/);
+  });
+
+  it("卡片时长必须在 0.5–10 秒之间，且是整数毫秒", () => {
+    const project = load();
+    for (const durationMs of [200, 12_000, 1500.5]) {
+      expect(() =>
+        rebuild([
+          created(project),
+          { type: "brand.updated", at: AT, patch: { outro: { durationMs } } },
+        ]),
+      ).toThrow(/500–10000/);
+    }
+  });
+
+  it("文字上限 60 字", () => {
+    const project = load();
+    expect(() =>
+      rebuild([
+        created(project),
+        {
+          type: "brand.updated",
+          at: AT,
+          patch: { intro: { title: "字".repeat(61) } },
+        },
+      ]),
+    ).toThrow(/最多 60 个字符/);
+  });
+
+  it("回放之后仍然是同一份品牌包", () => {
+    const project = load();
+    const events: ProjectEvent[] = [
+      created(project),
+      {
+        type: "brand.updated",
+        at: AT,
+        patch: {
+          name: "织光机",
+          color: "#000000",
+          intro: { enabled: true, title: "夜班", durationMs: 1500 },
+          outro: { enabled: true, title: "下一集" },
+        },
+      },
+    ];
+    const states = rebuildStates(events);
+    expect(states.at(-1)!.brand).toEqual(rebuild(events).brand);
+  });
+});

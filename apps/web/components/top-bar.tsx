@@ -50,6 +50,7 @@ type StageTool =
   | "polish"
   | "silent"
   | "bilingual"
+  | "brand"
   | "look"
   | "publish"
   | "rights"
@@ -82,6 +83,7 @@ const STAGE_TOOLS: Record<StageName, StageTool[]> = {
     "export",
     "silent",
     "bilingual",
+    "brand",
     "publish",
     "grade",
     "frame",
@@ -149,6 +151,10 @@ export type TopBarProps = {
   onBilingual?: () => void;
   /** 还有几句没译文，显示在按钮右上 */
   untranslatedCount?: number;
+  /** 打开品牌包与头尾卡（E9 / ADR-0174）；给了才出现「品牌」 */
+  onBrand?: () => void;
+  /** 头尾卡开了几张，显示在按钮右上 */
+  cardCount?: number;
   /** 打开静音可懂度检查（C13 / ADR-0164）；给了才出现「静音」 */
   onSilent?: () => void;
   /** 静音时有问题的地方数，显示在按钮右上 */
@@ -216,6 +222,8 @@ export function TopBar({
   polishCount,
   onBilingual,
   untranslatedCount,
+  onBrand,
+  cardCount,
   onSilent,
   silentCount,
   onLook,
@@ -651,6 +659,19 @@ export function TopBar({
             双语
             {untranslatedCount !== undefined && untranslatedCount > 0 && (
               <span className="tnum text-[9px] text-pick">{untranslatedCount}</span>
+            )}
+          </button>
+        )}
+        {shows("brand") && onBrand && (
+          <button
+            type="button"
+            onClick={onBrand}
+            title="品牌包与头尾卡：片名卡、下一集卡、落款与底色；成片、预览、SRT 一起跟着走，不花钱"
+            className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            品牌
+            {cardCount !== undefined && cardCount > 0 && (
+              <span className="tnum text-[9px] text-muted-2">{cardCount}</span>
             )}
           </button>
         )}

@@ -8,6 +8,7 @@ import {
   buildPublishPackage,
   buildAss,
   buildSrt,
+  previewClips,
   safeFileName,
 } from "./export-cut";
 import { sampleProject } from "./sample-project";
@@ -787,5 +788,123 @@ describe("双语字幕（D5 / ADR-0173）", () => {
     const first = view.cues.filter((cue) => cue.lineId === "d-01");
     expect(first.length).toBeGreaterThan(1);
     expect(first.every((cue) => cue.translation === "You knew it all along.")).toBe(true);
+  });
+});
+
+describe("品牌包与头尾卡（E9 / ADR-0174）", () => {
+  /** 只换品牌包，别的一个字段都不动 */
+  function withBrand(brand: unknown) {
+    return ProjectSchema.parse({ ...sampleProject, brand });
+  }
+
+  const both = {
+    name: "织光机",
+    handle: "@zhiguang",
+    color: "#2a1d3f",
+    intro: { enabled: true, title: "夜班", subtitle: "第一集", durationMs: 2000 },
+    outro: { enabled: true, title: "下一集 20:00", subtitle: "", durationMs: 1500 },
+  };
+
+  it("两张卡都关着时读模型与以前逐字一样", () => {
+    const base = toEditView(sampleProject);
+    const off = toEditView(withBrand({ name: "织光机" }));
+    expect(off.cards).toEqual([]);
+    expect(off.brandOffsetMs).toBe(0);
+    expect(off.totalMs).toBe(base.totalMs);
+    expect(off.clips).toEqual(base.clips);
+    expect(off.cues).toEqual(base.cues);
+    expect(buildSrt(off)).toBe(buildSrt(base));
+  });
+
+  it("片头卡把画面、台词、字幕与配乐整体后移一张卡的时长", () => {
+    const view = toEditView(
+      withBrand({ ...both, outro: { ...both.outro, enabled: false } }),
+    );
+    expect(view.brandOffsetMs).toBe(2000);
+    expect(view.cards).toEqual([
+      {
+        role: "intro",
+        startMs: 0,
+        durationMs: 2000,
+        title: "夜班",
+        subtitle: "第一集",
+      },
+    ]);
+    expect(view.clips[0]!.startMs).toBe(2000);
+    expect(view.clips[0]!.lines[0]!.startMs).toBe(2000);
+    expect(view.clips[0]!.lines[0]!.cueStartMs).toBe(2000);
+    expect(view.cues[0]!.startMs).toBe(2000);
+    expect(view.totalMs).toBe(7500);
+    // 字幕文件也跟着后移：拿 SRT 去对成片，时间是对的
+    expect(buildSrt(view)).toContain("00:00:02,000 --> 00:00:04,600");
+  });
+
+  it("片尾卡接在最后一镜之后，成片时长再加上它", () => {
+    const view = toEditView(
+      withBrand({ ...both, intro: { ...both.intro, enabled: false } }),
+    );
+    expect(view.brandOffsetMs).toBe(0);
+    expect(view.cards).toEqual([
+      {
+        role: "outro",
+        startMs: 5500,
+        durationMs: 1500,
+        title: "下一集 20:00",
+        subtitle: "",
+      },
+    ]);
+    expect(view.totalMs).toBe(7000);
+  });
+
+  it("两张一起开：片头 0 起、片尾接在画面末尾", () => {
+    const view = toEditView(withBrand(both));
+    expect(view.brandOffsetMs).toBe(2000);
+    expect(view.cards.map((card) => [card.role, card.startMs, card.durationMs])).toEqual([
+      ["intro", 0, 2000],
+      ["outro", 7500, 1500],
+    ]);
+    expect(view.totalMs).toBe(9000);
+    expect(view.totalSec).toBe(9);
+  });
+
+  it("时间线一镜都没有时不插卡：空片不该多出两秒的黑屏", () => {
+    const empty = ProjectSchema.parse({
+      ...sampleProject,
+      timeline: { items: [], music: [] },
+      brand: both,
+    });
+    const view = toEditView(empty);
+    expect(view.clips).toHaveLength(0);
+    expect(view.cards).toEqual([]);
+    expect(view.totalMs).toBe(0);
+  });
+
+  it("OTIO 的画面轨把两张卡排在镜头前后", () => {
+    const otio = buildOtio(toEditView(withBrand(both))) as {
+      tracks: { children: { children: { name: string; metadata?: { loom?: { card?: string } } }[] }[] };
+    };
+    const video = otio.tracks.children[0]!;
+    expect(video.children.map((clip) => clip.name)).toEqual([
+      "片头卡",
+      "SH-01 · take 1",
+      "SH-02 · take 1",
+      "片尾卡",
+    ]);
+    expect(video.children[0]!.metadata?.loom?.card).toBe("intro");
+    expect(video.children[3]!.metadata?.loom?.card).toBe("outro");
+  });
+
+  it("预览里有头尾两张卡，时间对得上；卡上没有字幕", () => {
+    const clips = previewClips(toEditView(withBrand(both)));
+    expect(clips.map((clip) => clip.label)).toEqual([
+      "片头卡",
+      "SH-01 · 1 版",
+      "SH-02 · 1 版",
+      "片尾卡",
+    ]);
+    expect(clips[0]).toMatchObject({ startMs: 0, durationMs: 2000, subtitles: [], audio: [] });
+    expect(clips.at(-1)).toMatchObject({ startMs: 7500, durationMs: 1500 });
+    // 镜头里的字幕时间仍是相对这一段的起点：挪了卡也不会错位
+    expect(clips[1]!.subtitles[0]!.startMs).toBe(0);
   });
 });

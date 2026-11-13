@@ -5633,3 +5633,52 @@ describe("参考图真的发出去（B2 / ADR-0162）", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("品牌包与头尾卡（E9 / ADR-0174）", () => {
+  beforeEach(() => {
+    state().reset();
+  });
+
+  it("写一条 brand.updated，读模型里的卡片跟着出来", () => {
+    const before = state().events.length;
+    expect(state().setBrand({ name: "织光机" })).toBe(true);
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "brand.updated",
+      patch: { name: "织光机" },
+    });
+    expect(state().project.brand.name).toBe("织光机");
+  });
+
+  it("和当前值一样就不写事件：拖两次同样的时长只留一条", () => {
+    state().setBrand({ outro: { enabled: true, title: "下一集", durationMs: 1500 } });
+    const after = state().events.length;
+    expect(state().setBrand({ outro: { enabled: true, title: "下一集", durationMs: 1500 } })).toBe(
+      false,
+    );
+    expect(state().events).toHaveLength(after);
+    // 只改时长：标题不会被一起清掉
+    expect(state().setBrand({ outro: { durationMs: 2500 } })).toBe(true);
+    expect(state().project.brand.outro).toMatchObject({
+      enabled: true,
+      title: "下一集",
+      durationMs: 2500,
+    });
+  });
+
+  it("卡片时长让成片变长，时间线上的镜头整体后移", () => {
+    const before = toEditView(state().project);
+    state().setBrand({ intro: { enabled: true, title: "夜班", durationMs: 2000 } });
+    const after = toEditView(state().project);
+    expect(after.totalMs).toBe(before.totalMs + 2000);
+    expect(after.clips[0]!.startMs).toBe(before.clips[0]!.startMs + 2000);
+    expect(after.cards).toHaveLength(1);
+  });
+
+  it("越界的时长被拒，项目不动", () => {
+    const before = state().project.brand.outro;
+    expect(state().setBrand({ outro: { durationMs: 30_000 } })).toBe(false);
+    expect(state().project.brand.outro).toEqual(before);
+    expect(state().editError).toMatch(/500–10000/);
+  });
+});

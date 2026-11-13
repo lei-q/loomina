@@ -400,6 +400,34 @@ export type ProjectEvent =
     }
   | {
       /**
+       * 品牌包与头尾卡（E9 / ADR-0174）。
+       *
+       * 只收给的键；`intro` / `outro` 里没给的字段保持原样——
+       * 改时长不该把标题一起清掉。关掉卡片不是删字：`enabled: false` 之后
+       * 标题还留着，再打开就是同一张卡。
+       */
+      type: "brand.updated";
+      at: string;
+      patch: {
+        name?: string;
+        handle?: string;
+        color?: string;
+        intro?: {
+          enabled?: boolean;
+          title?: string;
+          subtitle?: string;
+          durationMs?: number;
+        };
+        outro?: {
+          enabled?: boolean;
+          title?: string;
+          subtitle?: string;
+          durationMs?: number;
+        };
+      };
+    }
+  | {
+      /**
        * 加一版配音（C9 / ADR-0124）：进试听台，不自动采用。
        * 采用某一版 = 一条 `dialogue.updated { audioAssetId }`。
        */
@@ -1727,6 +1755,67 @@ function applyEventCore(
         return translation === undefined ? rest : { ...rest, translation };
       });
       return { ...current, dialogue };
+    }
+
+    case "brand.updated": {
+      if (!current) throw new Error("brand.updated 之前必须有 project.created");
+      const { patch } = event;
+      const next = { ...current.brand };
+      let touched = 0;
+      if (patch.name !== undefined) {
+        const name = patch.name.trim();
+        if (name.length > 40) throw new Error("落款名最多 40 个字符");
+        next.name = name;
+        touched += 1;
+      }
+      if (patch.handle !== undefined) {
+        const handle = patch.handle.trim();
+        if (handle.length > 60) throw new Error("账号说明最多 60 个字符");
+        next.handle = handle;
+        touched += 1;
+      }
+      if (patch.color !== undefined) {
+        if (!/^#[0-9a-fA-F]{6}$/.test(patch.color)) {
+          throw new Error(`卡片底色必须是 #RRGGBB：${patch.color}`);
+        }
+        next.color = patch.color.toUpperCase();
+        touched += 1;
+      }
+      for (const role of ["intro", "outro"] as const) {
+        const cardPatch = patch[role];
+        if (!cardPatch) continue;
+        const card = { ...next[role] };
+        let cardTouched = 0;
+        if (cardPatch.enabled !== undefined) {
+          card.enabled = cardPatch.enabled;
+          cardTouched += 1;
+        }
+        for (const key of ["title", "subtitle"] as const) {
+          const value = cardPatch[key];
+          if (value === undefined) continue;
+          const text = value.trim();
+          if (text.length > 60) {
+            throw new Error(`${role === "intro" ? "片头卡" : "片尾卡"}的文字最多 60 个字符`);
+          }
+          card[key] = text;
+          cardTouched += 1;
+        }
+        if (cardPatch.durationMs !== undefined) {
+          const durationMs = cardPatch.durationMs;
+          if (!Number.isInteger(durationMs) || durationMs < 500 || durationMs > 10000) {
+            throw new Error("头尾卡时长必须是 500–10000 毫秒的整数");
+          }
+          card.durationMs = durationMs;
+          cardTouched += 1;
+        }
+        if (cardTouched === 0) {
+          throw new Error(`brand.updated 的 ${role} 没有要改的字段`);
+        }
+        next[role] = card;
+        touched += 1;
+      }
+      if (touched === 0) throw new Error("brand.updated 没有要改的字段");
+      return { ...current, brand: next };
     }
 
     case "take.updated": {

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_BRAND } from "@loomina/ir";
 import type { EditView } from "./edit";
 import { hydrateView } from "./asset-hydrate";
 
@@ -9,6 +10,9 @@ function view(uri: string): EditView {
   return {
     title: "测试",
     version: 1,
+    cards: [],
+    brand: DEFAULT_BRAND,
+    brandOffsetMs: 0,
     clips: [
       {
         id: "c1",

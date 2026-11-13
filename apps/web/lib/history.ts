@@ -262,6 +262,25 @@ export function describeEvent(before: Project, event: ProjectEvent): string {
         ? `清掉译文：${preview}`
         : `写译文：${preview}`;
     }
+    case "brand.updated": {
+      const { patch } = event;
+      const parts: string[] = [];
+      if (patch.name !== undefined) parts.push(patch.name ? `落款 ${patch.name}` : "清掉落款");
+      if (patch.handle !== undefined) parts.push(patch.handle ? `账号说明 ${patch.handle}` : "清掉账号说明");
+      if (patch.color !== undefined) parts.push(`底色 ${patch.color}`);
+      for (const role of ["intro", "outro"] as const) {
+        const card = patch[role];
+        if (!card) continue;
+        const name = role === "intro" ? "片头卡" : "片尾卡";
+        if (card.enabled !== undefined) parts.push(card.enabled ? `${name}：开` : `${name}：关`);
+        if (card.title !== undefined) parts.push(`${name}标题「${card.title}」`);
+        if (card.subtitle !== undefined) parts.push(`${name}副标题「${card.subtitle}」`);
+        if (card.durationMs !== undefined) {
+          parts.push(`${name}时长 ${Math.round(card.durationMs / 100) / 10} 秒`);
+        }
+      }
+      return `品牌包：${parts.join("、") || "没有改动"}`;
+    }
     case "voice.take.added": {
       const line = before.dialogue.find((item) => item.id === event.take.lineId);
       return `加一版配音：${line ? `「${line.text.slice(0, 12)}」` : "一句台词"}`;

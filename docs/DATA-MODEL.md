@@ -31,6 +31,7 @@ interface Project {
   look: Look;                             // 画面风格与摄影参数（B7 / I5 / ADR-0165）
   grade: Grade;                           // 调色：导出时对画面的色彩调整（E4 / ADR-0169）
   frame: Frame;                           // 输出画幅与适配方式（E5 / ADR-0170）
+  brand: Brand;                           // 品牌包与头尾卡（E9 / ADR-0174）
   publishPackages: PublishPackage[];      // 发布台账：发布包 + 回执（G10 / ADR-0166）
   authorizations: RightsRecord[];         // 授权留档：肖像 / 声音 / 素材 / 音乐（H7 / ADR-0167）
 
@@ -654,6 +655,22 @@ interface Timeline {
   durationMs: number;
 }
 
+// 品牌包与头尾卡（E9 / ADR-0174）：卡片不进时间线，是导出时加在成片首尾的静帧
+interface Brand {
+  name: string;            // 落款名，≤40 字；空着就不落款
+  handle: string;          // 账号 / 期数说明，≤60 字；空着不写
+  color: string;           // 卡片底色 #RRGGBB（默认 #121215），字色按亮度自动取
+  intro: BrandCard;
+  outro: BrandCard;
+}
+
+interface BrandCard {
+  enabled: boolean;        // 这张卡出不出片；关掉不删字，再打开还是同一张
+  title: string;           // ≤60 字
+  subtitle: string;        // ≤60 字
+  durationMs: number;      // 500–10000 毫秒整数，默认 2000
+}
+
 interface TimelineItem {
   id: ID;
   shotId: ID;
@@ -850,9 +867,10 @@ interface MusicCue {
 - 手改断句（D2 / ADR-0117）：作者改过的那一句以 `subtitleOverrides` 为准，没改过的仍走自动断句。覆盖按**整句**存，不按单条 cue 存——单条 cue 的 id 是「第几段」，改了每行字数就会错位。覆盖里的 `durationMs` 是相对权重，读模型按比例缩放到整句时长，舍入误差落在最后一条，所以时间总和永远等于 `line.durationMs`。改字数档位不影响已覆盖的句子。
 - 版式（D3 / ADR-0130）：`Project.subtitleLayout` 只存作者**改过**的项——`preset`（default / large）、`fontSizeCqw`、`bottomPct`、`strokeCqw`。没写的项跟着 `preset` 那档模板走，所以换模板时调过的字号留着、没调过的位置跟着换。读模型把两者合成 `EditView.subtitleStyle`，预览 HTML、ASS 与成片叠加层都用这同一份；`subtitleCustom` 只用来在界面上显示「已调」与「恢复模板」。越界（字号 2–12、离底边 2–45、描边 0–3）在 `applyEvent` 里拒绝而不夹取：夹取会把「填错了」悄悄改成另一个数。清空某一项写 `null`，不写 `undefined`（后者过 JSON 会消失）。
 - 双语字幕（D5 / ADR-0173）：译文挂在 `DialogueLine.translation`（≤400 字）上，不另建字幕轨——断句（D2）与字幕挪位（E1）都是围绕 `DialogueLine` 的，独立的双语轨会与它们漂移。`Project.subtitleTranslation` 只管开不开、第二行语言与上下位置。读模型在双语关着时一条 `translation` 都不带，`EditView` 与单语逐字相同；开着时每条 cue 都带上那一句的整句译文（不按断句切）。两条事件：`subtitle.translation.updated { patch }` 与 `dialogue.translation.updated { lineId, translation }`，后者的 `null` 与空串都清掉译文、连键一起删。清空写 `null`——空串会让导出多出一块看不见的字。
+- 头尾卡（E9 / ADR-0174）：`Project.brand.intro` / `outro` 是**成片首尾的静帧**，不进 `timeline.items`，也**不进 `EditClip`**——它们没有镜头、没有 take、没有台词，塞进片段数组会逼着换 take、镜头清单、锁定、初剪到处判空。读模型单独给一份 `EditView.cards`，并且只在一个地方算时间偏移：`brandOffsetMs` = 开着的片头卡时长，画面片段、台词、字幕 cue、配乐 cue 的绝对起点**一起**加这个偏移，相对位置一处不变；`totalMs` = 画面末尾 + 片尾卡时长，时间线一镜都没有时不插卡。卡片本身只有一张 PNG（`drawBrandCard` 画在 Canvas 2D 上），成片清单、预览 HTML、OTIO 与界面共用同一张。一条事件 `brand.updated { patch }`，`intro` / `outro` 里给的字段逐个合并（只改时长不清标题）；空 patch、坏颜色、越界时长与超长文字在 `applyEvent` 里拒绝。
 - 按角色着色（D3 / ADR-0140）：`Project.subtitleLayout.speakerColors` 只存**开关**（缺省开、`false` 全白、`null` 清掉覆盖）；颜色本身不进 IR，读模型按 `project.characters` 的顺序从六色板取（前六个角色一定不撞色，之后轮回），没有说话人的句子用白色。`EditCue.speakerColor` 由读模型派生，编辑页、预览 HTML、ASS 行内覆盖与成片叠加层共用这一份。
 - 叠加层偏移（E1 / ADR-0131）：`DialogueLine.voiceOffsetMs` / `subtitleOffsetMs` 是**作者把这一句的配音 / 字幕相对「本该开始」的位置挪了多少毫秒**，可正可负，缺省 0。画面轨必须首尾相接（渲染清单要求片段时长之和严格等于成片全长），所以能自由挪的只有叠加层，而且**按句**挪而不是按轨挪——一条独立的「音频轨」需要另一套与画面解耦的时间轴，当前没有转场与叠画，做了也是空转。写入走既有 `dialogue.updated` 的 patch：`undefined` 不改、数字覆盖、`null` 归零；非整数或超过 ±30 秒在 `applyEvent` 里拒绝。读模型算出 `audioStartMs` / `cueStartMs`，并把起点夹进 `[0, totalMs - durationMs]`：IR 里留着作者填的原值，只在读模型夹，因为「填了 30 秒」是作者的事实，夹取发生在渲染边界。断句后的每一条 cue 的绝对起点都从 `cueStartMs` 起算。
-- 总数：全长 = 最晚片段终点；`missing` = 没进时间线的镜头数。
+- 总数：全长 = 最晚片段终点 + 片尾卡（有的话）；`missing` = 没进时间线的镜头数。
 
 > **落地情况（ADR-0102，2026-11-11）**：实际进 IR 的 `PublishPackage` 是精简的发布记录，只回答「什么时候、往哪个平台、发了哪一版成片」：
 

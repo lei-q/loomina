@@ -1023,6 +1023,49 @@ export type Frame = z.infer<typeof FrameSchema>;
 
 export const DEFAULT_FRAME: Frame = FrameSchema.parse({});
 
+/**
+ * 一张头 / 尾卡（E9 / ADR-0174）。
+ *
+ * 头尾卡不是时间线里的镜头：它们没有镜头、没有 take，只有一段时长和几行字。
+ * 存进 IR 是因为卡片内容本身是创作决定——换设备、重放事件日志之后
+ * 还得是同一张卡、同一个时长。
+ */
+export const BrandCardSchema = z.object({
+  /** 这张卡出不出现在成片里；关掉时字都留着，随时能再开 */
+  enabled: z.boolean().default(false),
+  /** 主标题（头卡一般是片名，尾卡一般是「下一集」之类） */
+  title: z.string().max(60).default(""),
+  /** 副标题：头卡放集数 / 类型，尾卡放时间 / 关注提示 */
+  subtitle: z.string().max(60).default(""),
+  /** 这张卡多长，毫秒；0.5–10 秒 */
+  durationMs: z.number().int().min(500).max(10000).default(2000),
+});
+export type BrandCard = z.infer<typeof BrandCardSchema>;
+
+/**
+ * 品牌包（E9 / ADR-0174）：落款名、账号说明、卡片的底子颜色，以及头尾两张卡。
+ *
+ * 只做「静态卡」这一层：不做动态 logo、不做贴片广告、不接模板市场。
+ */
+export const BrandSchema = z.object({
+  /** 落款名（片名 / 工作室）；空着就不落款 */
+  name: z.string().max(40).default(""),
+  /** 账号或期数说明，如 `@织光机` `第 03 集`；空着不写 */
+  handle: z.string().max(60).default(""),
+  /**
+   * 卡片底色，六位十六进制。字色按明暗自动取——深底配浅字，
+   * 不让作者手动挑第二个颜色（挑错了就是看不见的字）。
+   */
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#121215"),
+  /** 片头卡：开篇的字幕板 */
+  intro: BrandCardSchema.default({}),
+  /** 片尾卡：收尾的下一集 / 关注提示 */
+  outro: BrandCardSchema.default({}),
+});
+export type Brand = z.infer<typeof BrandSchema>;
+
+export const DEFAULT_BRAND: Brand = BrandSchema.parse({});
+
 export const ProjectSchema = z.object({
   id: Id,
   title: z.string().min(1),
@@ -1046,6 +1089,11 @@ export const ProjectSchema = z.object({
    * 输出画幅（E5 / ADR-0170）：导出时裁成什么形状、裁切不够时怎么补。
    */
   frame: FrameSchema.default({}),
+  /**
+   * 品牌包与头尾卡（E9 / ADR-0174）：落款、账号说明、卡片底色、两张卡。
+   * 卡片时长进 IR，成片、预览、SRT 与 OTIO 的时间都按它整体后移。
+   */
+  brand: BrandSchema.default({}),
   /**
    * 这条片子的预算上限（元）。写进项目而不是写进界面：预算是项目自己的约束，
    * 换设备、刷新、重放事件日志之后还得是同一个数（准则 P14 / H10）。
