@@ -118,6 +118,8 @@ export function describeEvent(before: Project, event: ProjectEvent): string {
       if (event.onBudgetExceed !== undefined) {
         touched.push(`超预算${event.onBudgetExceed === "block" ? "阻断" : "保留"}`);
       }
+      if (event.look !== undefined) touched.push("画面风格");
+      if (event.grade !== undefined) touched.push("调色");
       return `项目设置：${touched.join("、")}`;
     }
     case "shot.updated":
@@ -278,8 +280,25 @@ export function describeEvent(before: Project, event: ProjectEvent): string {
       const kind = asset ? (asset.kind === "image" ? "图片" : asset.kind === "video" ? "视频" : "音频") : "资产";
       return `删掉没人用的${kind} ${event.assetId}`;
     }
-    case "timeline.updated":
+    case "timeline.updated": {
+      // 接缝改了（E4）：段数与素材都没动，只改了转场——如实说改的是接法
+      const previous = before.timeline.items;
+      const sameItems =
+        previous.length === event.items.length &&
+        previous.every((item, index) => {
+          const next = event.items[index]!;
+          return (
+            item.id === next.id &&
+            item.startMs === next.startMs &&
+            item.durationMs === next.durationMs
+          );
+        });
+      const transitions = event.items.filter(
+        (item, index) => index > 0 && item.transitionIn !== undefined,
+      ).length;
+      if (sameItems && transitions > 0) return `接法：${transitions} 处转场`;
       return `初剪：${event.items.length} 段`;
+    }
     case "timeline.music.updated":
       return `配乐：${event.music.length} 段`;
     case "motif.updated":

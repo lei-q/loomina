@@ -7,6 +7,13 @@
  */
 
 import {
+  DEFAULT_GRADE,
+  GradeSchema,
+  TRANSITION_KINDS,
+  type Grade,
+  type TransitionKind,
+} from "@loomina/ir";
+import {
   S3_PREFIX,
   isRemoteAssetUri,
   isStoredAssetUri,
@@ -78,6 +85,19 @@ export type RenderClip = {
   placeholder?: boolean;
   /** 占位图的文案，例如「SH-01 还没有画面」 */
   label?: string;
+  /**
+   * 接缝上的淡入（E4 / ADR-0169）：从这一段开头淡进来。
+   * 不改变时长——上一段在这里已经结束，两段不重叠。
+   */
+  fadeIn?: RenderFade;
+  /** 接缝上的淡出：到这一段末尾淡出去 */
+  fadeOut?: RenderFade;
+};
+
+/** 一次淡入 / 淡出：多久、淡到什么颜色 */
+export type RenderFade = {
+  durationMs: number;
+  kind: TransitionKind;
 };
 
 export type RenderOverlay = {
@@ -136,6 +156,11 @@ export type RenderManifest = {
   };
   /** 成片页的合规预检证据（G8）；服务端会再扫一遍清单文案 */
   compliance: RenderCompliance;
+  /**
+   * 调色（E4 / ADR-0169）：作用在拼好的画面上、字幕与角标之前。
+   * 不传就是不调色，成片与以前的渲染逐字节同构。
+   */
+  grade?: Grade;
 };
 
 export type DataUriParts = { mime: string; base64: string; bytes: number };
@@ -190,6 +215,49 @@ function isHttpUrl(value: string): boolean {
 
 function assetBytes(uri: string): number {
   return parseDataUri(uri)?.bytes ?? 0;
+}
+
+/**
+ * 一段的淡入 / 淡出（E4）。
+ *
+ * 转场是画面事实，不合法就拒收而不是悄悄丢掉：作者设了淡到黑、成片却是硬切，
+ * 这种「看着成功其实不一样」比一次失败更难发现。
+ * 单侧不能超过这一段的一半——两侧加起来会超过整段时长，画面就一直在淡。
+ */
+function fadeOf(
+  value: unknown,
+  key: "fadeIn" | "fadeOut",
+  index: number,
+  durationMs: number,
+): { fadeIn?: RenderFade } | { fadeOut?: RenderFade } | { error: string } {
+  if (value === undefined) return {};
+  const fade = value as Record<string, unknown> | null;
+  const label = `第 ${index + 1} 段的${key === "fadeIn" ? "淡入" : "淡出"}`;
+  if (!fade || typeof fade !== "object") return { error: `${label}不是对象` };
+  if (!(TRANSITION_KINDS as readonly string[]).includes(String(fade.kind))) {
+    return { error: `${label}颜色不合法` };
+  }
+  if (!integer(fade.durationMs) || fade.durationMs < 100 || fade.durationMs > durationMs / 2) {
+    return { error: `${label}时长不合法（100ms 到这一段的一半）` };
+  }
+  const parsed: RenderFade = {
+    durationMs: fade.durationMs,
+    kind: fade.kind as TransitionKind,
+  };
+  return key === "fadeIn" ? { fadeIn: parsed } : { fadeOut: parsed };
+}
+
+/**
+ * 调色（E4）：整块按 `GradeSchema` 解析，不合法就拒收。
+ * 不传就是不调色——旧客户端送来的清单没有这个字段，行为与以前一致。
+ */
+function gradeOf(value: unknown): { grade?: Grade } | { error: string } {
+  if (value === undefined) return {};
+  const parsed = GradeSchema.safeParse(value);
+  if (!parsed.success) {
+    return { error: `调色不合法：${parsed.error.issues[0]?.message ?? "未知原因"}` };
+  }
+  return { grade: parsed.data };
 }
 
 /**
@@ -311,6 +379,11 @@ export function validateRenderManifest(
       return { ok: false, error: `第 ${index + 1} 段既没有媒体也没有远端地址` };
     }
 
+    const fadeIn = fadeOf(clip.fadeIn, "fadeIn", index, clip.durationMs);
+    if ("error" in fadeIn) return { ok: false, error: fadeIn.error };
+    const fadeOut = fadeOf(clip.fadeOut, "fadeOut", index, clip.durationMs);
+    if ("error" in fadeOut) return { ok: false, error: fadeOut.error };
+
     checkedClips.push({
       durationMs: clip.durationMs,
       media: typeof clip.media === "string" ? clip.media : undefined,
@@ -319,6 +392,8 @@ export function validateRenderManifest(
       fallback: typeof clip.fallback === "string" ? clip.fallback : undefined,
       placeholder: clip.placeholder === true,
       label: typeof clip.label === "string" ? clip.label.slice(0, 60) : undefined,
+      ...fadeIn,
+      ...fadeOut,
     });
     cursor += clip.durationMs;
     if (cursor > raw.totalMs) return { ok: false, error: "片段总时长超过全长" };
@@ -520,6 +595,10 @@ export function validateRenderManifest(
     return { ok: false, error: "成片清单里有需要人工确认的内容：回成片页预检并勾选确认" };
   }
 
+  // 调色（E4）：整块校验；不传就是不调色
+  const gradeResult = gradeOf(raw.grade);
+  if ("error" in gradeResult) return { ok: false, error: gradeResult.error };
+
   return {
     ok: true,
     manifest: {
@@ -533,6 +612,7 @@ export function validateRenderManifest(
       overlays: checkedOverlays,
       audio: checkedAudio,
       music: checkedMusic,
+      ...(gradeResult.grade ? { grade: gradeResult.grade } : {}),
       aiLabel: {
         explicit: true,
         implicit: true,

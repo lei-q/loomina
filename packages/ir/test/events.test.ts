@@ -208,6 +208,41 @@ describe("project.updated", () => {
     expect(next.shots).toEqual(project.shots);
   });
 
+  it("调色整块替换，不动画面风格与提示词（E4 / ADR-0169）", () => {
+    const project = load();
+    const next = applyEvent(project, {
+      type: "project.updated",
+      at: AT,
+      grade: { presetId: "thriller", contrast: "punchy", saturation: "muted", temperature: "cool", vignette: true },
+    });
+    expect(next.grade).toEqual({
+      presetId: "thriller",
+      contrast: "punchy",
+      saturation: "muted",
+      temperature: "cool",
+      vignette: true,
+    });
+    // 调色不是风格：look 原样
+    expect(next.look).toEqual(project.look);
+  });
+
+  it("调色缺省项补齐默认值，越界项拒绝", () => {
+    const next = applyEvent(load(), {
+      type: "project.updated",
+      at: AT,
+      grade: { presetId: "", contrast: "flat", saturation: "natural", temperature: "neutral", vignette: false },
+    });
+    expect(next.grade.contrast).toBe("flat");
+    expect(() =>
+      applyEvent(load(), {
+        type: "project.updated",
+        at: AT,
+        // @ts-expect-error 对比只有三档
+        grade: { contrast: "insane" },
+      }),
+    ).toThrow(/调色不合法/);
+  });
+
   it("重试上限越界或不是整数就拒绝", () => {
     for (const bad of [0, 6, 2.5]) {
       expect(() =>
@@ -1922,6 +1957,67 @@ describe("时间线（ADR-0086）", () => {
         ],
       }),
     ).toThrow(/重复/);
+  });
+
+  it("转场挂在后一段上，重放后逐项一致（E4 / ADR-0169）", () => {
+    const project = load();
+    const next = applyEvent(project, {
+      type: "timeline.updated",
+      at: AT,
+      items: [
+        { id: "ti-1", shotId: "sh-1", takeId: "take-1", startMs: 0, durationMs: 2500 },
+        {
+          id: "ti-2",
+          shotId: "sh-2",
+          takeId: "take-2",
+          startMs: 2500,
+          durationMs: 3500,
+          transitionIn: { kind: "white", durationMs: 300 },
+        },
+      ],
+    });
+    expect(next.timeline.items[1]!.transitionIn).toEqual({ kind: "white", durationMs: 300 });
+    expect(next.timeline.items[0]!.transitionIn).toBeUndefined();
+  });
+
+  it("转场颜色不认识、或比这一段的一半还长，都拒绝", () => {
+    const project = load();
+    expect(() =>
+      applyEvent(project, {
+        type: "timeline.updated",
+        at: AT,
+        items: [
+          { id: "ti-1", shotId: "sh-1", takeId: "take-1", startMs: 0, durationMs: 2500 },
+          {
+            id: "ti-2",
+            shotId: "sh-2",
+            takeId: "take-2",
+            startMs: 2500,
+            durationMs: 3500,
+            // @ts-expect-error 颜色只有黑白两种
+            transitionIn: { kind: "rainbow", durationMs: 300 },
+          },
+        ],
+      }),
+    ).toThrow(/转场不合法/);
+
+    expect(() =>
+      applyEvent(project, {
+        type: "timeline.updated",
+        at: AT,
+        items: [
+          { id: "ti-1", shotId: "sh-1", takeId: "take-1", startMs: 0, durationMs: 2500 },
+          {
+            id: "ti-2",
+            shotId: "sh-2",
+            takeId: "take-2",
+            startMs: 2500,
+            durationMs: 500,
+            transitionIn: { kind: "black", durationMs: 400 },
+          },
+        ],
+      }),
+    ).toThrow(/一半/);
   });
 
   it("时长必须为正、起点不得为负", () => {

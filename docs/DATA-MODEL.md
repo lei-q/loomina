@@ -28,6 +28,7 @@ interface Project {
   subtitleOverrides: SubtitleOverride[];  // 手改断句（D2 / ADR-0117），默认 []
   subtitleLayout: SubtitleLayout;         // 字幕版式（D3 / ADR-0130），默认 { preset: "default" }
   look: Look;                             // 画面风格与摄影参数（B7 / I5 / ADR-0165）
+  grade: Grade;                           // 调色：导出时对画面的色彩调整（E4 / ADR-0169）
   publishPackages: PublishPackage[];      // 发布台账：发布包 + 回执（G10 / ADR-0166）
   authorizations: RightsRecord[];         // 授权留档：肖像 / 声音 / 素材 / 音乐（H7 / ADR-0167）
 
@@ -761,10 +762,28 @@ interface TimelineItem {
   takeId: string;          // 必须存在，且 take.shotId === shotId
   startMs: number;         // 非负整数
   durationMs: number;      // 正整数；初剪取 shot.durationMs
+  transitionIn?: Transition;  // 接进上一段的转场（E4 / ADR-0169）；缺省是硬切
+}
+
+// 转场只做不改变时长的淡入淡出：上一段末尾淡到黑（或白），下一段开头淡回来
+interface Transition {
+  kind: "black" | "white";
+  durationMs: number;      // 100–600，且不超过这一段的一半
+}
+
+// 调色（E4 / ADR-0169）：与 look 分工——look 管生成时的提示词，grade 管导出
+interface Grade {
+  presetId: string;        // 空串表示没选预设
+  contrast: "flat" | "natural" | "punchy";
+  saturation: "muted" | "natural" | "rich";
+  temperature: "cool" | "neutral" | "warm";
+  vignette: boolean;
 }
 ```
 
-**写入方式**：画面轨只有一种事件 `timeline.updated { items }`，整条替换；配乐只有一种事件 `timeline.music.updated { music }`，同样整条替换。两条事件分开，换 take 不该顺手重写音乐。applyEvent 当场校验与 `validateProject` 同口径：id 不重复、镜头存在、take 存在且属于该镜、起点 / 时长合法、片段不重叠。`timeline.updated` 与 `shot.removed` 都保留现有 `music`。
+**写入方式**：画面轨只有一种事件 `timeline.updated { items }`，整条替换；配乐只有一种事件 `timeline.music.updated { music }`，同样整条替换。两条事件分开，换 take 不该顺手重写音乐。applyEvent 当场校验与 `validateProject` 同口径：id 不重复、镜头存在、take 存在且属于该镜、起点 / 时长合法、片段不重叠、转场颜色与时长合法（单侧不超过这一段的一半）。`timeline.updated` 与 `shot.removed` 都保留现有 `music`。
+
+> **转场与调色（E4 / ADR-0169，2026-11-13）**：`TimelineItem.transitionIn?: { kind: "black" | "white"; durationMs }` 挂在**后一段**上，缺省是硬切；第一段上的值没有意义，渲染时忽略。只做不改变时长的淡入淡出——`xfade` 会让两段重叠、成片比时间线短，字幕与配音整体错位（准则 P5）。`Project.grade` 是导出时对拼好画面的色彩调整（三档对比 / 饱和 / 色温 + 暗角），默认档不产生任何滤镜；与 `Project.look` 分工：`look` 进提示词（改它要重出图），`grade` 只进渲染（改它只重渲一遍）。两项都走既有事件：转场走 `timeline.updated` 整条替换，调色走 `project.updated { grade }` 整块替换。
 
 `MusicCue`（ADR-0099）当前形状：
 

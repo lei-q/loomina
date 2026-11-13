@@ -7,6 +7,7 @@ import { MusicCurvePanel } from "@/components/music-curve-panel";
 import { PublishLedgerPanel } from "@/components/publish-ledger-panel";
 import { RightsPanel } from "@/components/rights-panel";
 import { SilentWatchPanel } from "@/components/silent-watch-panel";
+import { GradePanel, type SeamOption } from "@/components/grade-panel";
 import { TopBar } from "@/components/top-bar";
 import {
   DEFAULT_SUBTITLE_CHARS,
@@ -72,6 +73,7 @@ import {
 } from "@/lib/cover";
 import { canPreviewFrames } from "@/lib/preview-frame";
 import { silentWatchOfEdit } from "@/lib/silent-watch";
+import { clipFades, gradeCssFilter, isDefaultGrade } from "@/lib/render-effects";
 import { rightsReport } from "@/lib/rights";
 import { useWorkbench } from "@/lib/workbench-store";
 import { cn } from "@/lib/utils";
@@ -408,6 +410,8 @@ export function EditScreen() {
   const recordPublishReceipt = useWorkbench((state) => state.recordPublishReceipt);
   const upsertRights = useWorkbench((state) => state.upsertRights);
   const removeRights = useWorkbench((state) => state.removeRights);
+  const setGrade = useWorkbench((state) => state.setGrade);
+  const setTimelineTransition = useWorkbench((state) => state.setTimelineTransition);
 
   useEffect(() => {
     void hydrate();
@@ -428,6 +432,8 @@ export function EditScreen() {
   // 发布台账（G10）与授权记录（H7）：都是留档，不改成片
   const [publishOpen, setPublishOpen] = useState(false);
   const [rightsOpen, setRightsOpen] = useState(false);
+  // 调色与转场（E4 / ADR-0169）：只影响导出，不改时间线与提示词
+  const [gradeOpen, setGradeOpen] = useState(false);
   const [title, setTitle] = useState(project.title);
   const [description, setDescription] = useState("");
   const [topics, setTopics] = useState("短剧,AI创作");
@@ -501,6 +507,18 @@ export function EditScreen() {
   const unpublishedCount = project.publishPackages.filter(
     (pack) => !pack.publishedAt?.trim(),
   ).length;
+  // 接缝（E4）：第一段前面没有画面，从第二段起每一段都是一处接缝
+  const seams: SeamOption[] = useMemo(
+    () =>
+      view.clips.slice(1).map((clip) => ({
+        itemId: clip.id,
+        label: shotLabel(clip.shotNo),
+        atMs: clip.startMs,
+        durationMs: clip.durationMs,
+        ...(clip.transitionIn ? { transition: clip.transitionIn } : {}),
+      })),
+    [view.clips],
+  );
   const stage = useMemo(() => toStageView(project), [project]);
   const spend = useMemo(() => spendOf(project), [project]);
 
@@ -580,6 +598,37 @@ export function EditScreen() {
       elapsed >= cue.startMs && elapsed < cue.startMs + cue.durationMs,
   );
   const progress = view.totalMs > 0 ? (elapsed / view.totalMs) * 100 : 0;
+
+  /**
+   * 转场（E4）在预览里的近似：接缝处盖一层黑 / 白遮罩。
+   * 与导出同一套规则（`clipFades` 的单侧夹取），只是这里画在 DOM 上——
+   * 真正的淡变由 ffmpeg 做，预览只求看得出接法。
+   */
+  const dip = (() => {
+    if (!current) return { opacity: 0, kind: "black" as const };
+    const fades = clipFades(view.clips)[view.clips.indexOf(current)];
+    if (!fades) return { opacity: 0, kind: "black" as const };
+    const inClip = elapsed - current.startMs;
+    let opacity = 0;
+    let kind: "black" | "white" = "black";
+    if (fades.fadeInMs > 0 && inClip < fades.fadeInMs) {
+      opacity = 1 - inClip / fades.fadeInMs;
+      kind = fades.fadeInKind;
+    }
+    if (fades.fadeOutMs > 0) {
+      const outStart = current.durationMs - fades.fadeOutMs;
+      if (inClip > outStart) {
+        const value = (inClip - outStart) / fades.fadeOutMs;
+        if (value > opacity) {
+          opacity = value;
+          kind = fades.fadeOutKind;
+        }
+      }
+    }
+    return { opacity: Math.max(0, Math.min(1, opacity)), kind };
+  })();
+  /** 调色（E4）在预览里的近似：CSS 滤镜对上三档对比 / 饱和 / 色温 */
+  const gradeCss = gradeCssFilter(project.grade);
 
   useEffect(() => {
     if (view.clips.length === 0) return;
@@ -1040,6 +1089,8 @@ export function EditScreen() {
         silentCount={silentCount}
         onPublishLedger={() => setPublishOpen(true)}
         unpublishedCount={unpublishedCount}
+        onGrade={() => setGradeOpen(true)}
+        gradeCustomized={!isDefaultGrade(project.grade)}
         onRights={() => setRightsOpen(true)}
         rightsGapCount={rightsGapCount}
       />
@@ -1130,6 +1181,7 @@ export function EditScreen() {
                         }
                       }}
                       className="absolute inset-0 h-full w-full object-cover"
+                      style={gradeCss ? { filter: gradeCss } : undefined}
                     />
                   ) : current?.stillUri ? (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -1137,9 +1189,13 @@ export function EditScreen() {
                       src={assetHref(current.stillUri)}
                       alt={`${shotLabel(current.shotNo)} 的画面`}
                       className="absolute inset-0 h-full w-full object-cover"
+                      style={gradeCss ? { filter: gradeCss } : undefined}
                     />
                   ) : (
-                    <div className="absolute inset-0 flex items-center justify-center bg-[repeating-linear-gradient(45deg,#111,#111_12px,#151515_12px,#151515_24px)] text-[10.5px] text-muted-2">
+                    <div
+                      className="absolute inset-0 flex items-center justify-center bg-[repeating-linear-gradient(45deg,#111,#111_12px,#151515_12px,#151515_24px)] text-[10.5px] text-muted-2"
+                      style={gradeCss ? { filter: gradeCss } : undefined}
+                    >
                       {shotLabel(current?.shotNo ?? 0)} 还没有画面
                     </div>
                   )}
@@ -1158,6 +1214,17 @@ export function EditScreen() {
                         安全区
                       </span>
                     </div>
+                  )}
+
+                  {dip.opacity > 0.01 && (
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-0"
+                      style={{
+                        background: dip.kind === "white" ? "#fff" : "#000",
+                        opacity: dip.opacity,
+                      }}
+                    />
                   )}
 
                   {currentCue && (
@@ -1308,6 +1375,36 @@ export function EditScreen() {
                     <span>0s</span>
                     <span className="tnum">{view.totalSec.toFixed(1)}s</span>
                   </div>
+
+                  {/* 接缝（E4）：每两段之间一格，点开调色与转场抽屉 */}
+                  {seams.length > 0 && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1">
+                      <span className="text-[8.5px] tracking-[.08em] text-muted-2">接缝</span>
+                      {seams.map((seam) => (
+                        <button
+                          key={seam.itemId}
+                          type="button"
+                          onClick={() => setGradeOpen(true)}
+                          title={
+                            seam.transition
+                              ? `${seam.label} 前面：${seam.transition.kind === "black" ? "淡到黑" : "淡到白"} ${seam.transition.durationMs}ms`
+                              : `${seam.label} 前面是硬切：点开改成淡入淡出`
+                          }
+                          className={cn(
+                            "tnum rounded-token border px-1.5 py-px text-[8.5px] transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text",
+                            seam.transition
+                              ? "border-pick/60 text-text"
+                              : "border-line text-muted-2",
+                          )}
+                        >
+                          {seam.label}
+                          {seam.transition
+                            ? ` ${seam.transition.kind === "black" ? "黑" : "白"}${seam.transition.durationMs}`
+                            : " 硬切"}
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
                   <div className="mt-4 flex flex-wrap items-baseline justify-between gap-2">
                     <h2 className="text-[11px] tracking-[.06em] text-text">字幕</h2>
@@ -2598,6 +2695,16 @@ export function EditScreen() {
           onSave={(packageId, patch) => recordPublishReceipt(packageId, patch)}
           readOnly={Boolean(readOnly)}
           onClose={() => setPublishOpen(false)}
+        />
+      )}
+      {gradeOpen && (
+        <GradePanel
+          grade={project.grade}
+          onSave={(next) => setGrade(next)}
+          seams={seams}
+          onTransition={(itemId, transition) => setTimelineTransition(itemId, transition)}
+          readOnly={Boolean(readOnly)}
+          onClose={() => setGradeOpen(false)}
         />
       )}
       {rightsOpen && (

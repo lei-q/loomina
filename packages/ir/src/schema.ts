@@ -627,12 +627,39 @@ export const TakeSchema = z.object({
 });
 export type Take = z.infer<typeof TakeSchema>;
 
+/**
+ * 转场（E4 / ADR-0169）。
+ *
+ * 只做**不改变时长**的过渡：上一段末尾淡到黑（或白），下一段开头从黑（或白）淡入。
+ * 叠化（两段画面同时存在）需要两段重叠，会让成片比时间线短，
+ * 后面的字幕与配音跟着整体错位——时长是音轨定的（准则 P5），不为一个转场让步。
+ */
+export const TRANSITION_KINDS = ["black", "white"] as const;
+export type TransitionKind = (typeof TRANSITION_KINDS)[number];
+
+/**
+ * 一段怎么接进上一段。挂在**后一段**上（`transitionIn`）：删掉前一段时，
+ * 后面那段的接法跟着它一起走，不用去改别人的字段。
+ *
+ * 时长 100–600ms：再长就变成两个画面都停着不动，短剧的节奏经不起。
+ */
+export const TransitionSchema = z.object({
+  kind: z.enum(TRANSITION_KINDS),
+  durationMs: z.number().int().min(100).max(600).default(300),
+});
+export type Transition = z.infer<typeof TransitionSchema>;
+
 export const TimelineItemSchema = z.object({
   id: Id,
   shotId: Id,
   takeId: Id,
   startMs: z.number().int().nonnegative(),
   durationMs: z.number().int().positive(),
+  /**
+   * 这一段怎么接进上一段（E4）；不写就是硬切。
+   * 第一段上的值没有意义（它前面没有东西），渲染时忽略。
+   */
+  transitionIn: TransitionSchema.optional(),
 });
 export type TimelineItem = z.infer<typeof TimelineItemSchema>;
 
@@ -882,6 +909,37 @@ export type Look = z.infer<typeof LookSchema>;
 /** 一项都没改的 look：`ProjectSchema` 的默认值就是它 */
 export const DEFAULT_LOOK: Look = LookSchema.parse({});
 
+export const GRADE_CONTRASTS = ["flat", "natural", "punchy"] as const;
+export const GRADE_SATURATIONS = ["muted", "natural", "rich"] as const;
+export const GRADE_TEMPERATURES = ["cool", "neutral", "warm"] as const;
+
+/**
+ * 调色（E4 / ADR-0169）：整条片子的色彩倾向，在渲染时作用在拼好的画面上。
+ *
+ * 与 `Project.look` 分工：`look` 决定**生成时**提示词里的质感（模型画成什么样），
+ * `grade` 决定**导出时**对已拍好的画面做多少色彩调整。改 `look` 要重出图，
+ * 改 `grade` 只重渲一遍——两者都不是同一种成本，不该合成一个旋钮。
+ *
+ * 只收三档对比 / 饱和 / 色温加一个暗角：短剧的调色是「统一」，不是「创作」。
+ * 真正的 LUT（.cube 文件）属于 I3，这里不做（见 ADR-0169 的「不做」）。
+ */
+export const GradeSchema = z.object({
+  /** 调色预设 id（`apps/web/lib/render-effects.ts` 的 `GRADE_PRESETS`）；空串表示没选 */
+  presetId: z.string().max(40).default(""),
+  /** 对比：`flat` 压平 / `natural` 原样 / `punchy` 加对比 */
+  contrast: z.enum(GRADE_CONTRASTS).default("natural"),
+  /** 饱和：`muted` 退色 / `natural` 原样 / `rich` 加饱和 */
+  saturation: z.enum(GRADE_SATURATIONS).default("natural"),
+  /** 色温：`cool` 偏蓝 / `neutral` 原样 / `warm` 偏橙 */
+  temperature: z.enum(GRADE_TEMPERATURES).default("neutral"),
+  /** 暗角：压住画面四角，把视线收到中间 */
+  vignette: z.boolean().default(false),
+});
+export type Grade = z.infer<typeof GradeSchema>;
+
+/** 一项都没改的 grade：渲染时不加任何滤镜，成片与以前逐字节同构 */
+export const DEFAULT_GRADE: Grade = GradeSchema.parse({});
+
 export const ProjectSchema = z.object({
   id: Id,
   title: z.string().min(1),
@@ -897,6 +955,10 @@ export const ProjectSchema = z.object({
    * 画面风格与摄影参数（B7 / I5，ADR-0165）：所有出图提示词的最后一句由它编译。
    */
   look: LookSchema.default({}),
+  /**
+   * 调色（E4 / ADR-0169）：导出时对画面做的色彩调整，只影响渲染，不影响提示词。
+   */
+  grade: GradeSchema.default({}),
   /**
    * 这条片子的预算上限（元）。写进项目而不是写进界面：预算是项目自己的约束，
    * 换设备、刷新、重放事件日志之后还得是同一个数（准则 P14 / H10）。

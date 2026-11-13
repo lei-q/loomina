@@ -6,6 +6,7 @@ import {
   BlockingSchema,
   blockingProblem,
   CompositionSchema,
+  GradeSchema,
   LightingSchema,
   LookSchema,
   PerformanceSpecSchema,
@@ -19,6 +20,7 @@ import {
   SHEET_LABELS,
   shotAnchors,
   StagingMarkSchema,
+  TransitionSchema,
   VOICE_PROFILE_MAX,
   type ApprovalTargetType,
   type Asset,
@@ -26,6 +28,7 @@ import {
   type Character,
   type Composition,
   type GateStage,
+  type Grade,
   type Lighting,
   type Location,
   type Look,
@@ -47,6 +50,7 @@ import {
   type StoryArc,
   type StoryRelationship,
   type TimelineItem,
+  type Transition,
   type VoicePerformance,
   type VoiceTake,
   type SourceDocument,
@@ -328,6 +332,11 @@ type WorkbenchState = {
    */
   setLook: (look: Look) => boolean;
   /**
+   * 改调色（E4 / ADR-0169）：整块写一条 `project.updated { grade }`。
+   * 只影响导出，不影响提示词——已出的图不用重做。
+   */
+  setGrade: (grade: Grade) => boolean;
+  /**
    * 新增或改一条授权记录（H7 / ADR-0167）：整条写一条 `rights.updated`，按 id 幂等。
    * 只留档，不拦生成；缺哪一条由合规预检提示。
    */
@@ -526,6 +535,11 @@ type WorkbenchState = {
   removeTimelineItem: (itemId: string) => boolean;
   /** 把一段往前 / 往后挪一位（E1）：与相邻段交换位置，起点重新排，不留空隙 */
   moveTimelineItem: (itemId: string, delta: -1 | 1) => boolean;
+  /**
+   * 给一段设接法（E4 / ADR-0169）：一条 `timeline.updated`。
+   * `undefined` 表示恢复硬切；第一段不接受——它前面没有画面。
+   */
+  setTimelineTransition: (itemId: string, transition: Transition | undefined) => boolean;
   /**
    * 加一条配乐床（C4）：音频文件先落成资产，再写一条 `timeline.music.updated`。
    * 必须给授权备注；没有备注的音乐不进项目。
@@ -1328,6 +1342,76 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     if (same) return false;
     const event: ProjectEvent = { type: "project.updated", at: stamp(), look: next };
     set({ project: applyEvent(project, event), events: [...events, event], castError: undefined });
+    return true;
+  },
+
+  setGrade: (grade) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const parsed = GradeSchema.safeParse(grade);
+    if (!parsed.success) {
+      set({ editError: `调色不合法：${parsed.error.issues[0]?.message ?? "未知原因"}` });
+      return false;
+    }
+    const next = parsed.data;
+    const current = project.grade;
+    if (
+      current.presetId === next.presetId &&
+      current.contrast === next.contrast &&
+      current.saturation === next.saturation &&
+      current.temperature === next.temperature &&
+      current.vignette === next.vignette
+    ) {
+      return false;
+    }
+    const event: ProjectEvent = { type: "project.updated", at: stamp(), grade: next };
+    set({ project: applyEvent(project, event), events: [...events, event], editError: undefined });
+    return true;
+  },
+
+  setTimelineTransition: (itemId, transition) => {
+    if (get().readOnly) {
+      set({ editError: "另一个标签页正在编辑：这里只读。" });
+      return false;
+    }
+    const { project, events } = get();
+    const ordered = [...project.timeline.items].sort((a, b) => a.startMs - b.startMs);
+    const index = ordered.findIndex((entry) => entry.id === itemId);
+    if (index < 0) {
+      set({ editError: "找不到这个片段。" });
+      return false;
+    }
+    if (index === 0) {
+      set({ editError: "第一段前面没有画面，接法只对第二段之后有意义。" });
+      return false;
+    }
+    const item = ordered[index]!;
+    const next = transition
+      ? TransitionSchema.safeParse(transition)
+      : ({ success: true, data: undefined } as const);
+    if (!next.success) {
+      set({ editError: `转场不合法：${next.error.issues[0]?.message ?? "未知原因"}` });
+      return false;
+    }
+    if (next.data && next.data.durationMs > item.durationMs / 2) {
+      set({ editError: "转场不能超过这一段的一半：再短一点，或先拉长这一镜。" });
+      return false;
+    }
+    if (JSON.stringify(item.transitionIn ?? null) === JSON.stringify(next.data ?? null)) {
+      return false;
+    }
+    const items = ordered.map((entry) =>
+      entry.id === itemId
+        ? { ...entry, ...(next.data ? { transitionIn: next.data } : { transitionIn: undefined }) }
+        : entry,
+    );
+    const event: ProjectEvent = { type: "timeline.updated", at: stamp(), items };
+    try {
+      set({ project: applyEvent(project, event), events: [...events, event], editError: undefined });
+    } catch (error) {
+      set({ editError: error instanceof Error ? error.message : "改转场失败" });
+      return false;
+    }
     return true;
   },
 

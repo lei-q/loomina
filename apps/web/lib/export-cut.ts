@@ -17,6 +17,7 @@ import {
   type PlatformId,
 } from "./platforms";
 import { assColorOf } from "./speaker-color";
+import { clipFades } from "./render-effects";
 import {
   SAFE_AREA,
   resolveSubtitleStyle,
@@ -257,30 +258,43 @@ export type PreviewClip = {
   subtitles: { startMs: number; endMs: number; text: string; color?: string }[];
   /** 相对这一片段的起点 */
   audio: { startMs: number; uri: string; text: string }[];
+  /** 接缝上的淡入（E4）：预览里用一层遮罩近似 */
+  fadeIn?: { durationMs: number; kind: "black" | "white" };
+  fadeOut?: { durationMs: number; kind: "black" | "white" };
 };
 
 export function previewClips(view: EditView): PreviewClip[] {
-  return view.clips.map((clip) => ({
-    id: clip.id,
-    label: `SH-${String(clip.shotNo).padStart(2, "0")} · ${clip.takeNo} 版`,
-    startMs: clip.startMs,
-    durationMs: clip.durationMs,
-    video: clip.uri,
-    still: clip.stillUri,
-    subtitles: clip.lines.flatMap((line) =>
-      line.cues.map((cue) => ({
-        startMs: cue.startMs - clip.startMs,
-        endMs: cue.startMs - clip.startMs + cue.durationMs,
-        text: cue.text,
-        ...(cue.speakerColor ? { color: cue.speakerColor } : {}),
-      })),
-    ),
-    audio: clip.lines.flatMap((line) =>
-      line.audioUri
-        ? [{ startMs: line.audioStartMs - clip.startMs, uri: line.audioUri, text: line.text }]
-        : [],
-    ),
-  }));
+  const fades = clipFades(view.clips);
+  return view.clips.map((clip, index) => {
+    const fade = fades[index]!;
+    return {
+      id: clip.id,
+      label: `SH-${String(clip.shotNo).padStart(2, "0")} · ${clip.takeNo} 版`,
+      startMs: clip.startMs,
+      durationMs: clip.durationMs,
+      video: clip.uri,
+      still: clip.stillUri,
+      ...(fade.fadeInMs > 0
+        ? { fadeIn: { durationMs: fade.fadeInMs, kind: fade.fadeInKind } }
+        : {}),
+      ...(fade.fadeOutMs > 0
+        ? { fadeOut: { durationMs: fade.fadeOutMs, kind: fade.fadeOutKind } }
+        : {}),
+      subtitles: clip.lines.flatMap((line) =>
+        line.cues.map((cue) => ({
+          startMs: cue.startMs - clip.startMs,
+          endMs: cue.startMs - clip.startMs + cue.durationMs,
+          text: cue.text,
+          ...(cue.speakerColor ? { color: cue.speakerColor } : {}),
+        })),
+      ),
+      audio: clip.lines.flatMap((line) =>
+        line.audioUri
+          ? [{ startMs: line.audioStartMs - clip.startMs, uri: line.audioUri, text: line.text }]
+          : [],
+      ),
+    };
+  });
 }
 
 /** 把读模型变成一页能直接双击打开的播放页；素材全部内嵌，不依赖服务器 */
@@ -325,6 +339,7 @@ header span { color:var(--muted); font-size:11px; font-variant-numeric:tabular-n
 .stage video { width:100%; height:100%; object-fit:cover; display:none; }
 .stage img { width:100%; height:100%; object-fit:cover; display:none; }
 .placeholder { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:12px; background:repeating-linear-gradient(45deg,#111,#111 12px,#151515 12px,#151515 24px); }
+.dip { position:absolute; inset:0; opacity:0; pointer-events:none; z-index:2; }
 .stage .safe { position:absolute; inset:${SAFE_AREA.topPct}% ${SAFE_AREA.sidePct}% ${SAFE_AREA.bottomPct}%; border:1px dashed rgba(242,242,239,.12); display:none; pointer-events:none; }
 .stage.show-safe .safe { display:block; }
 .subtitle { position:absolute; left:${SAFE_AREA.sidePct}%; right:${SAFE_AREA.sidePct}%; bottom:${style.bottomPct}%; text-align:center; font-size:${style.fontSizeCqw}cqw; line-height:1.38; font-weight:600; color:#fff; text-shadow:0 0 ${style.strokeCqw}cqw #000, 0 0 ${style.strokeCqw}cqw #000, 0 ${style.strokeCqw * 0.5}cqw ${style.strokeCqw * 1.2}cqw #000; letter-spacing:.02em; }
@@ -348,6 +363,7 @@ input[type=range] { flex:1; accent-color:var(--pick); }
   <video id="video" playsinline></video>
   <img id="still" alt="">
   <div class="placeholder" id="placeholder">这一镜还没有画面</div>
+  <div class="dip" id="dip"></div>
   <div class="safe"></div>
   <div class="subtitle" id="subtitle"></div>
   <div class="ai-badge" aria-label="AI 生成内容标识" data-corner="${placement.corner}">AI 生成</div>
@@ -367,6 +383,7 @@ const playBtn = document.getElementById("play");
 const seek = document.getElementById("seek");
 const clock = document.getElementById("clock");
 const clipLabel = document.getElementById("clip");
+const dip = document.getElementById("dip");
 let elapsed = 0;
 let playing = false;
 let current = -1;
@@ -416,6 +433,24 @@ function render() {
     clipLabel.textContent = clip.label;
   }
   const inClip = elapsed - clip.startMs;
+  // 转场（E4）：接缝处盖一层黑（或白）遮罩，淡入淡出与成片一致。
+  // 预览只是近似——真正的淡变由 ffmpeg 做，这里只是让人看得出接法。
+  let dipOpacity = 0;
+  if (clip.fadeIn && inClip < clip.fadeIn.durationMs) {
+    dipOpacity = 1 - inClip / clip.fadeIn.durationMs;
+    dip.style.background = clip.fadeIn.kind === "white" ? "#fff" : "#000";
+  }
+  if (clip.fadeOut) {
+    const outStart = clip.durationMs - clip.fadeOut.durationMs;
+    if (inClip > outStart) {
+      const value = (inClip - outStart) / clip.fadeOut.durationMs;
+      if (value > dipOpacity) {
+        dipOpacity = value;
+        dip.style.background = clip.fadeOut.kind === "white" ? "#fff" : "#000";
+      }
+    }
+  }
+  dip.style.opacity = String(Math.max(0, Math.min(1, dipOpacity)));
   const cue = clip.subtitles.find((s) => inClip >= s.startMs && inClip < s.endMs);
   subtitle.textContent = cue ? cue.text : "";
   subtitle.style.color = cue && cue.color ? cue.color : "#fff";

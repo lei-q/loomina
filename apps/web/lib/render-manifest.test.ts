@@ -422,3 +422,74 @@ describe("清单里的对象存储地址（H3 / s3://）", () => {
     expect(ok.ok).toBe(false);
   });
 });
+
+describe("清单里的转场与调色（E4 / ADR-0169）", () => {
+  it("淡入淡出原样通过校验", () => {
+    const ok = validateRenderManifest(
+      manifest({
+        clips: [
+          { durationMs: 500, media: PNG, mediaKind: "image", fadeOut: { durationMs: 250, kind: "black" } },
+          { durationMs: 500, media: PNG, mediaKind: "image", fadeIn: { durationMs: 250, kind: "black" } },
+        ],
+      }),
+    );
+    expect(ok.ok).toBe(true);
+    if (!ok.ok) return;
+    expect(ok.manifest.clips[0]!.fadeOut).toEqual({ durationMs: 250, kind: "black" });
+    expect(ok.manifest.clips[1]!.fadeIn).toEqual({ durationMs: 250, kind: "black" });
+    expect(ok.manifest.clips[0]!.fadeIn).toBeUndefined();
+  });
+
+  it("淡变比这一段的一半还长就拒收，不悄悄截短", () => {
+    const ok = validateRenderManifest(
+      manifest({
+        clips: [
+          { durationMs: 500, media: PNG, mediaKind: "image" },
+          { durationMs: 500, media: PNG, mediaKind: "image", fadeIn: { durationMs: 400, kind: "black" } },
+        ],
+      }),
+    );
+    expect(ok.ok).toBe(false);
+    if (ok.ok) return;
+    expect(ok.error).toContain("淡入");
+  });
+
+  it("不认识的转场颜色拒收", () => {
+    const ok = validateRenderManifest(
+      manifest({
+        clips: [
+          { durationMs: 500, media: PNG, mediaKind: "image" },
+          { durationMs: 500, media: PNG, mediaKind: "image", fadeIn: { durationMs: 200, kind: "rainbow" } },
+        ],
+      }),
+    );
+    expect(ok.ok).toBe(false);
+  });
+
+  it("调色整块透传；不传就没有", () => {
+    const plain = validateRenderManifest(manifest());
+    expect(plain.ok && plain.manifest.grade).toBeFalsy();
+
+    const graded = validateRenderManifest(
+      manifest({
+        grade: { presetId: "cinema", contrast: "punchy", saturation: "muted", temperature: "cool", vignette: true },
+      }),
+    );
+    expect(graded.ok).toBe(true);
+    if (!graded.ok) return;
+    expect(graded.manifest.grade).toEqual({
+      presetId: "cinema",
+      contrast: "punchy",
+      saturation: "muted",
+      temperature: "cool",
+      vignette: true,
+    });
+  });
+
+  it("调色不合法拒收", () => {
+    const ok = validateRenderManifest(manifest({ grade: { contrast: "insane" } }));
+    expect(ok.ok).toBe(false);
+    if (ok.ok) return;
+    expect(ok.error).toContain("调色");
+  });
+});

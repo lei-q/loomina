@@ -1200,6 +1200,31 @@ describe("预算（ADR-0035）", () => {
     expect(state().events).toHaveLength(before);
   });
 
+  it("改调色写一条 project.updated，不动画面风格（E4 / ADR-0169）", () => {
+    const lookBefore = state().project.look;
+    const before = state().events.length;
+    expect(
+      state().setGrade({
+        presetId: "thriller",
+        contrast: "punchy",
+        saturation: "muted",
+        temperature: "cool",
+        vignette: true,
+      }),
+    ).toBe(true);
+    expect(state().events).toHaveLength(before + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "project.updated" });
+    expect(state().project.grade.presetId).toBe("thriller");
+    expect(state().project.look).toEqual(lookBefore);
+    expect(rebuild(state().events).grade).toEqual(state().project.grade);
+  });
+
+  it("调色没变就不写日志", () => {
+    const before = state().events.length;
+    expect(state().setGrade(state().project.grade)).toBe(false);
+    expect(state().events).toHaveLength(before);
+  });
+
   it("重试上限越界或没变就不写日志", () => {
     const before = state().events.length;
     state().setRetryLimit(0);
@@ -3984,6 +4009,46 @@ describe("成片（ADR-0086）", () => {
     state().decide("rejected");
     expect(state().setTimelineTake("tl-s-02", added.id)).toBe(false);
     expect(state().editError).toContain("淘汰");
+  });
+
+  it("给一处接缝设转场：只改这一项，第一段拒绝（E4 / ADR-0169）", () => {
+    state().autoCutTimeline();
+    const first = state().project.timeline.items[0]!;
+    const second = state().project.timeline.items[1]!;
+    expect(second.transitionIn).toBeUndefined();
+
+    expect(state().setTimelineTransition(second.id, { kind: "black", durationMs: 300 })).toBe(true);
+    const after = state().project.timeline.items.find((item) => item.id === second.id)!;
+    expect(after.transitionIn).toEqual({ kind: "black", durationMs: 300 });
+    expect(after.startMs).toBe(second.startMs);
+    expect(after.durationMs).toBe(second.durationMs);
+    expect(state().events.at(-1)?.type).toBe("timeline.updated");
+    expect(rebuild(state().events)).toEqual(state().project);
+
+    // 第一段前面没有画面
+    expect(state().setTimelineTransition(first.id, { kind: "black", durationMs: 300 })).toBe(false);
+    expect(state().editError).toContain("第一段");
+  });
+
+  it("转场可以改回硬切，同一个值不写重复事件", () => {
+    state().autoCutTimeline();
+    const id = state().project.timeline.items[1]!.id;
+    state().setTimelineTransition(id, { kind: "white", durationMs: 250 });
+    const count = state().events.length;
+    expect(state().setTimelineTransition(id, { kind: "white", durationMs: 250 })).toBe(false);
+    expect(state().events).toHaveLength(count);
+
+    expect(state().setTimelineTransition(id, undefined)).toBe(true);
+    expect(state().project.timeline.items.find((item) => item.id === id)?.transitionIn).toBeUndefined();
+  });
+
+  it("转场时长越界就拒绝，不悄悄夹到合法值", () => {
+    state().autoCutTimeline();
+    const id = state().project.timeline.items[1]!.id;
+    expect(state().setTimelineTransition(id, { kind: "black", durationMs: 50 })).toBe(false);
+    expect(state().editError).toContain("转场不合法");
+    expect(state().setTimelineTransition(id, { kind: "black", durationMs: 900 })).toBe(false);
+    expect(state().editError).toContain("转场不合法");
   });
 
   it("只读时初剪与换 take 都不写", () => {

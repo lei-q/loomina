@@ -24,6 +24,7 @@ import {
   type RenderQuality,
 } from "./render-manifest";
 import type { LoudnessReport } from "./render-audio";
+import { clipFades, isDefaultGrade } from "./render-effects";
 import { aiLabelRecordFor, badgePlacementOf } from "./ai-label";
 import {
   S3_PREFIX,
@@ -233,10 +234,22 @@ export function buildRenderManifest(
   const profile = RENDER_PROFILES[quality];
   const ordered = [...view.clips].sort((a, b) => a.startMs - b.startMs);
   let placeholders = 0;
+  // 转场（E4 / ADR-0169）：接缝上的淡入淡出，按「后一段的 transitionIn」算两侧。
+  // 编译在 `render-effects` 里，与服务端同一套夹取规则（单侧不超过这一段的一半）。
+  const fades = clipFades(ordered);
 
-  const clips: RenderClip[] = ordered.map((clip) => {
+  const clips: RenderClip[] = ordered.map((clip, index) => {
     const visual = visualOf(clip);
     const label = `SH-${String(clip.shotNo).padStart(2, "0")}`;
+    const fade = fades[index]!;
+    const fadeFields = {
+      ...(fade.fadeInMs > 0
+        ? { fadeIn: { durationMs: fade.fadeInMs, kind: fade.fadeInKind } }
+        : {}),
+      ...(fade.fadeOutMs > 0
+        ? { fadeOut: { durationMs: fade.fadeOutMs, kind: fade.fadeOutKind } }
+        : {}),
+    };
     if (visual.remote) {
       return {
         durationMs: clip.durationMs,
@@ -244,10 +257,16 @@ export function buildRenderManifest(
         mediaKind: visual.mediaKind ?? "video",
         fallback: drawPlaceholder(clip, profile.width, profile.height),
         label,
+        ...fadeFields,
       };
     }
     if (visual.media) {
-      return { durationMs: clip.durationMs, media: visual.media, mediaKind: visual.mediaKind };
+      return {
+        durationMs: clip.durationMs,
+        media: visual.media,
+        mediaKind: visual.mediaKind,
+        ...fadeFields,
+      };
     }
     placeholders += 1;
     return {
@@ -256,6 +275,7 @@ export function buildRenderManifest(
       mediaKind: "image" as const,
       placeholder: true,
       label,
+      ...fadeFields,
     };
   });
 
@@ -347,6 +367,8 @@ export function buildRenderManifest(
         contentHash: aiLabelRecordFor(view).contentHash,
       },
       compliance,
+      // 调色（E4）：默认档不传，清单与以前逐字一致
+      ...(isDefaultGrade(view.grade) ? {} : { grade: view.grade }),
     },
     placeholders,
   };

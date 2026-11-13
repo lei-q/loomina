@@ -5216,3 +5216,36 @@ ADR-0029 定的是「图片接口不收参考图，只记进溯源」。用户�
 - 构图只到「说法」这一层，没有九宫格位置与占比。
 - 说法库是代码里的表，不能自定义存进项目；也不能按场批量套用。
 - `CameraSchema` 里没有荷兰角，I1 也就给不出来。
+
+## 第一百八十八次 · 2026-11-13 · 转场与调色（E4）
+
+**问题**
+成片到现在是硬切到底：`buildCommand` 把每段规整成同一尺寸、同一帧率，`concat` 首尾相接，接缝处没有任何过渡。整条片子的色彩也只有出图时模型给的那一份——`Project.look` 编译的是提示词，不是对已拍好的画面做的调整。两个缺口都在导出这一层：场与场之间硬切会「跳一下」；各镜来自不同批次、不同模型，色温与饱和度天然不齐，`CONSISTENCY.md` 早就把「调色统一」列为手段，却没有任何地方能调。
+
+**决定**
+- 转场挂在**后一段**上：`TimelineItem.transitionIn?: { kind: "black" | "white"; durationMs }`，只做**不改变时长**的淡入淡出——上一段末尾淡到黑（或白），下一段开头淡回来。不用 `xfade`：它让两段重叠，成片比时间线短一个转场时长，后面的字幕与配音整体错位；时长是音轨定的（准则 P5）。时长 100–600ms，且单侧不超过这一段的一半；夹完不足 100ms 就不做（40ms 的闪黑是故障不是转场）。
+- 调色是 `Project.grade = { presetId, contrast, saturation, temperature, vignette }`，与 `Project.look` 分工：`look` 进提示词、改它要重出图；`grade` 只进渲染、改它只重渲一遍。五个预设（原样 / 电影 / 暖忆 / 冷峻 / 明亮日常），默认档**不产生任何滤镜**，旧项目重渲逐字节同构。真正的 LUT 拆到 I3。
+- 编译位置：`fade` 排在 `setpts=PTS-STARTPTS` 之后（`fade` 按时间戳算起止）；调色接在拼好画面之后、字幕与角标之前（反过来白字被染黄、角标变暗，H5 要求两样都不能变）。
+- 两头都校验：`checkTimeline` 管颜色、时长与一半上限，`timeline.updated` 落库前按 `TimelineItemSchema` 解析；`validateRenderManifest` 校验 `fadeIn` / `fadeOut` / `grade`，不合法**拒收**而不是悄悄丢掉——「看着成功其实不一样」比一次失败更难发现。
+- 界面：成片页顶栏「调色」抽屉（预设 + 逐项三档 + 暗角 + 会送进渲染的滤镜原文 + 每处接缝一张卡）、时间线下多一排接缝 chip（`SH-03 黑300` / `SH-04 硬切`）、播放器与预览 HTML 用同一套 `clipFades` 近似（遮罩 + CSS 滤镜，非逐像素等价，界面如实说明）。
+
+**产物**
+- `packages/ir/src/schema.ts`（`TransitionSchema` / `GradeSchema` / 枚举、`TimelineItem.transitionIn`、`Project.grade`、`DEFAULT_GRADE`）、`packages/ir/src/events.ts`（`project.updated { grade }`、`checkTimeline` 转场校验、`timeline.updated` 按 schema 解析）
+- `apps/web/lib/render-effects.ts`（`clipFades` / `fadeFilters` / `gradeFilters` / `gradeCssFilter` / `gradeLine` / 五个预设）、`apps/web/lib/render-manifest.ts`（`RenderClip.fadeIn` / `fadeOut`、`RenderManifest.grade`、`validateRenderManifest` 校验）、`apps/web/lib/render-client.ts`（从剪辑读模型带出转场与调色）、`apps/web/app/api/render/route.ts`（`fade` 进每段的滤镜链、调色插在 concat 与 overlay 之间）
+- `apps/web/lib/edit.ts`（`EditClip.transitionIn`、`EditView.grade`）、`apps/web/lib/export-cut.ts`（预览 HTML 的 `.dip` 遮罩与预览数据）、`apps/web/lib/history.ts`（「项目设置：调色」「接法：N 处转场」）、`apps/web/lib/workbench-store.ts`（`setGrade` / `setTimelineTransition`）
+- `apps/web/components/grade-panel.tsx`（抽屉）、`top-bar.tsx`（「调色」工具 + 点）、`edit-screen.tsx`（接缝条、预览遮罩与 CSS 调色）
+- 测试：`render-effects.test.ts`（10）、`render-manifest.test.ts`（+5）、`workbench-store.test.ts`（+5）、`edit.test.ts`（+1）、`packages/ir/test/events.test.ts`（+4）
+- `docs/adr/0169-transitions-and-grade.md`、`docs/FEATURES.md`、`docs/ROADMAP.md`、`docs/DATA-MODEL.md`
+
+**验证**
+- 全仓测试通过（apps/web 1049、pipeline 134、ir 232、gateway 32，4 条跳过），四个 tsconfig 与 `pnpm build` 干净。
+- 浏览器 `/edit`：时间线下出现九处接缝 chip；顶栏「调色」抽屉打开，选「冷峻」→ 滤镜原文 `eq=contrast=1.16:saturation=0.85,colorbalance=rs=-0.05:bs=0.05,vignette=PI/4`，存调色后顶栏出现「调色·」；给 `SH-03` 前面设「淡到黑」→ chip 变成 `SH-03 黑300`，刷新后两项都还在。截图 `/tmp/e4-panel-set.png`、`/tmp/e4-timeline-set.png`。
+- 播放器预览：跳到接缝前 0.05s，黑遮罩不透明度 1；跳到片中，画面套上 CSS 调色。截图 `/tmp/e4-preview-dip.png`、`/tmp/e4-preview-grade.png`。
+- 真实渲染：用 `/api/render` 送两段占位图（中间一处 300ms 淡到黑）+ 冷峻调色，任务 `done`，成片 2.417s（与时间线同长）；逐帧取像素，接缝前 `1.15s` 纯黑、`1.35s` 半暗、`1.5s` 恢复，不调色版本同一时刻是纯红——转场与调色都真的进了画面，且时长没变。
+
+**边界**
+- 没有叠化 / 溶解：需要时间线支持重叠，那是另一条路。
+- 转场只能挨个接缝设，不能全片统一「每处都淡 300ms」。
+- 调色是 `eq` + `colorbalance` + `vignette` 的组合，不是真正的 LUT；「柯达 2383」那种颜色映射做不到（I3）。
+- 预览是近似：CSS 滤镜与 ffmpeg 滤镜不是同一个公式，抽屉与预览都写了「以导出为准」。
+- 服务端对不认识的清单字段保持宽容（旧客户端照样能渲），也就意味着「没带转场」与「转场被忽略」在服务端看来一样。

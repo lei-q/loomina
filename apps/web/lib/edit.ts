@@ -1,9 +1,11 @@
 import type {
+  Grade,
   MusicCue,
   Project,
   SubtitleLayout,
   Take,
   TimelineItem,
+  Transition,
 } from "@loomina/ir";
 import { toStageView, type SceneKind } from "./read-model";
 import { SPEAKER_DEFAULT_COLOR, speakerPaletteOf } from "./speaker-color";
@@ -257,6 +259,11 @@ export type EditClip = {
   takes: EditTakeOption[];
   /** 这一镜的台词，已换算成整条片子的绝对时间 */
   lines: EditLine[];
+  /**
+   * 接进上一段的转场（E4 / ADR-0169）；`undefined` 是硬切。
+   * 第一段恒为 `undefined`——它前面没有画面。
+   */
+  transitionIn?: Transition;
 };
 
 export type EditMusic = {
@@ -295,6 +302,8 @@ export type EditView = {
   subtitleStyle: SubtitleStyle;
   /** 作者调过版式没有：界面据此给「恢复模板」 */
   subtitleCustom: boolean;
+  /** 调色（E4 / ADR-0169）：导出时对画面做的色彩调整 */
+  grade: Grade;
   totalMs: number;
   totalSec: number;
   /** 时间线里有几镜完全没有画面 */
@@ -494,6 +503,7 @@ export function toEditView(
           art: stageShot.art,
           sceneCode: scene?.code || `S${(scene?.index ?? 0) + 1}`,
           locked: stageShot.locked,
+          ...(item.transitionIn ? { transitionIn: item.transitionIn } : {}),
           takes: stageShot.takes.map((option) => ({
             id: option.id,
             no: option.no,
@@ -546,6 +556,7 @@ export function toEditView(
     maxChars,
     subtitleStyle,
     subtitleCustom: isCustomSubtitleLayout(project.subtitleLayout),
+    grade: project.grade,
     totalMs,
     totalSec: Math.round(totalMs / 100) / 10,
     noPicture: clips.filter((clip) => !clip.hasPicture).length,

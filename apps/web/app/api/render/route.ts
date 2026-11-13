@@ -28,6 +28,10 @@ import {
   type LoudnessReport,
 } from "@/lib/render-audio";
 import {
+  fadeFilters,
+  gradeFilters,
+} from "@/lib/render-effects";
+import {
   loadRenderJobs,
   saveRenderJobs,
   type PersistedRenderJob,
@@ -330,17 +334,31 @@ function buildCommand(
   const filters: string[] = [];
 
   clips.forEach((clip, index) => {
-    const duration = seconds(manifest.clips[index]!.durationMs);
+    const manifestClip = manifest.clips[index]!;
+    const duration = seconds(manifestClip.durationMs);
     if (clip.mediaKind === "video") {
       args.push("-i", clip.path);
     } else {
       args.push("-loop", "1", "-framerate", String(manifest.fps), "-t", duration, "-i", clip.path);
     }
+    // 淡入淡出（E4 / ADR-0169）必须排在 setpts 之后：fade 按时间戳算起止，
+    // 时间戳没归零就会淡在错误的帧上。淡出在 trim 之后、格式转换之前。
+    const fades = fadeFilters(
+      {
+        fadeInMs: manifestClip.fadeIn?.durationMs ?? 0,
+        fadeInKind: manifestClip.fadeIn?.kind ?? "black",
+        fadeOutMs: manifestClip.fadeOut?.durationMs ?? 0,
+        fadeOutKind: manifestClip.fadeOut?.kind ?? "black",
+      },
+      manifestClip.durationMs,
+    );
     const tail = `fps=${manifest.fps},setsar=1,${
       clip.mediaKind === "video"
         ? `tpad=stop_mode=clone:stop_duration=${duration},`
         : ""
-    }trim=duration=${duration},setpts=PTS-STARTPTS,format=yuv420p[v${index}]`;
+    }trim=duration=${duration},setpts=PTS-STARTPTS${
+      fades.length ? `,${fades.join(",")}` : ""
+    },format=yuv420p[v${index}]`;
     filters.push(
       `[${index}:v]scale=${manifest.width}:${manifest.height}:force_original_aspect_ratio=decrease,` +
         `pad=${manifest.width}:${manifest.height}:(ow-iw)/2:(oh-ih)/2:color=0x0C0C0D,${tail}`,
@@ -358,7 +376,16 @@ function buildCommand(
     filters.push(`${labels}concat=n=${clips.length}:v=1:a=0[vbase]`);
   }
 
+  // 调色（E4 / ADR-0169）：接在拼好的画面之后、字幕与角标之前。
+  // 字幕压完再调色，白字会变米黄、角标会跟着暗下去——两样都有合规要求（H5）。
+  // 不调色时不插这一段，滤镜图与以前逐字一致。
   let videoLabel = "vbase";
+  const grade = gradeFilters(manifest.grade);
+  if (grade.length) {
+    filters.push(`[vbase]${grade.join(",")}[vgraded]`);
+    videoLabel = "vgraded";
+  }
+
   manifest.overlays.forEach((overlay, index) => {
     const inputIndex = clips.length + index;
     const next = index === manifest.overlays.length - 1 ? "vout" : `vov${index}`;
@@ -368,7 +395,7 @@ function buildCommand(
     );
     videoLabel = next;
   });
-  if (!manifest.overlays.length) filters.push(`[vbase]null[vout]`);
+  if (!manifest.overlays.length) filters.push(`[${videoLabel}]null[vout]`);
 
   if (audio.mixPath) {
     const mixIndex = clips.length + overlays.length;

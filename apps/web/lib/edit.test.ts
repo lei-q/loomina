@@ -264,6 +264,28 @@ describe("导出（E6 / D3 / G1）", () => {
     expect(audio.children).toHaveLength(1);
   });
 
+  it("时间线带转场时，剪辑读模型与预览都带上（E4 / ADR-0169）", () => {
+    const project = ProjectSchema.parse({
+      ...sampleProject,
+      timeline: {
+        ...sampleProject.timeline,
+        items: sampleProject.timeline.items.map((item, index) =>
+          index === 1 ? { ...item, transitionIn: { kind: "black", durationMs: 300 } } : item,
+        ),
+      },
+    });
+    const view = toEditView(project);
+    expect(view.clips[0]!.transitionIn).toBeUndefined();
+    expect(view.clips[1]!.transitionIn).toEqual({ kind: "black", durationMs: 300 });
+    // 转场不改时长：时间线的段与起点照旧
+    expect(view.totalMs).toBe(toEditView(sampleProject).totalMs);
+
+    const html = buildPreviewHtml(view, "default");
+    expect(html).toContain('"fadeIn":{"durationMs":300,"kind":"black"}');
+    expect(html).toContain('"fadeOut":{"durationMs":300,"kind":"black"}');
+    expect(html).toContain('id="dip"');
+  });
+
   it("预览 HTML 带不可关掉的 AI 生成标识与元数据（H5）", () => {
     const html = buildPreviewHtml(toEditView(sampleProject), "default");
     expect(html).toContain('<meta name="ai-generated" content="true">');

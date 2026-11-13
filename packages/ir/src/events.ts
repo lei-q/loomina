@@ -5,6 +5,7 @@ import {
   BlockingSchema,
   CameraSchema,
   CompositionSchema,
+  GradeSchema,
   LightingSchema,
   LocationSpaceSchema,
   LookSchema,
@@ -14,6 +15,8 @@ import {
   PerformanceSpecSchema,
   PublishPackageSchema,
   StagingMarkSchema,
+  TimelineItemSchema,
+  TransitionSchema,
   VoicePerformanceSchema,
 } from "./schema";
 import { blockingProblem, placementProblem, spaceProblem, spaceOfShot } from "./geometry";
@@ -24,6 +27,7 @@ import type {
   Character,
   DialogueLine,
   GateStage,
+  Grade,
   Id,
   Location,
   LocationSpace,
@@ -105,6 +109,11 @@ export type ProjectEvent =
        * 提示词最后一句，分开改会让中间态读起来自相矛盾。
        */
       look?: Look;
+      /**
+       * 调色（E4 / ADR-0169）。整块替换：只影响渲染，不影响提示词，
+       * 所以与 `look` 分开写——改调色不该让已出图的溯源失效。
+       */
+      grade?: Grade;
     }
   | {
       /**
@@ -560,6 +569,21 @@ function checkTimeline(items: TimelineItem[], project: Project) {
     if (!Number.isInteger(item.durationMs) || item.durationMs <= 0) {
       throw new Error(`timeline.updated 的时长不合法: ${item.durationMs}`);
     }
+    // 转场（E4 / ADR-0169）：颜色只有黑白两种，单侧不超过这一段的一半——
+    // 两侧加起来超过整段时长，画面会一直在淡
+    if (item.transitionIn !== undefined) {
+      const parsed = TransitionSchema.safeParse(item.transitionIn);
+      if (!parsed.success) {
+        throw new Error(
+          `timeline.updated 的转场不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`,
+        );
+      }
+      if (parsed.data.durationMs > item.durationMs / 2) {
+        throw new Error(
+          `timeline.updated 的转场比这一段的一半还长：${parsed.data.durationMs}ms`,
+        );
+      }
+    }
   }
   const ordered = [...items].sort((a, b) => a.startMs - b.startMs);
   let previousEnd = -1;
@@ -815,6 +839,17 @@ function applyEventCore(
           );
         }
         next.look = parsed.data;
+        touched += 1;
+      }
+      if (event.grade !== undefined) {
+        // 整块替换（E4 / ADR-0169）：越界项在进日志前就被挡掉
+        const parsed = GradeSchema.safeParse(event.grade);
+        if (!parsed.success) {
+          throw new Error(
+            `调色不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`,
+          );
+        }
+        next.grade = parsed.data;
         touched += 1;
       }
       if (touched === 0) throw new Error("project.updated 没有要改的字段");
@@ -1782,7 +1817,18 @@ function applyEventCore(
       checkTimeline(event.items, current);
       return {
         ...current,
-        timeline: { ...current.timeline, items: event.items.map((item) => ({ ...item })) },
+        timeline: {
+          ...current.timeline,
+          items: event.items.map((item) => {
+            const parsed = TimelineItemSchema.safeParse(item);
+            if (!parsed.success) {
+              throw new Error(
+                `timeline.updated 的 ${item.id} 不合法：${parsed.error.issues[0]?.message ?? "未知原因"}`,
+              );
+            }
+            return parsed.data;
+          }),
+        },
       };
     }
 

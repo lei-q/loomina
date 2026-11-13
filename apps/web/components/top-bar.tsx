@@ -50,6 +50,7 @@ type StageTool =
   | "look"
   | "publish"
   | "rights"
+  | "grade"
   | "language";
 
 const STAGE_TOOLS: Record<StageName, StageTool[]> = {
@@ -69,7 +70,7 @@ const STAGE_TOOLS: Record<StageName, StageTool[]> = {
   ],
   关键帧: ["ledger", "budget", "preview"],
   声音: ["ledger", "budget", "preview"],
-  成片: ["ledger", "budget", "export", "silent", "publish", "rights"],
+  成片: ["ledger", "budget", "export", "silent", "publish", "grade", "rights"],
 };
 
 export type TopBarProps = {
@@ -136,6 +137,10 @@ export type TopBarProps = {
   onRights?: () => void;
   /** 缺几条授权（含已过期），显示在按钮右上 */
   rightsGapCount?: number;
+  /** 打开调色（E4 / ADR-0169）；给了才出现「调色」 */
+  onGrade?: () => void;
+  /** 调色调过没有：调过就在按钮上标一下 */
+  gradeCustomized?: boolean;
   /** 打开镜头语言库（I1）；给了才出现「语言」 */
   onLanguage?: () => void;
   /** 当前镜有没有对上库里的说法：对上了就不标点 */
@@ -181,6 +186,8 @@ export function TopBar({
   unpublishedCount,
   onRights,
   rightsGapCount,
+  onGrade,
+  gradeCustomized,
   onLanguage,
   languageMatched,
 }: TopBarProps) {
@@ -618,6 +625,17 @@ export function TopBar({
             {consistencyCount !== undefined && consistencyCount > 0 && (
               <span className="tnum text-[9px] text-pick">{consistencyCount}</span>
             )}
+          </button>
+        )}
+        {shows("grade") && onGrade && (
+          <button
+            type="button"
+            onClick={onGrade}
+            title="调色与转场：整条片子的色彩倾向、每处接缝的淡入淡出；只影响导出，不花钱"
+            className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            调色
+            {gradeCustomized && <span className="text-[9px] text-pick">·</span>}
           </button>
         )}
         {shows("language") && onLanguage && (
