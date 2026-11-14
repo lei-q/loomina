@@ -1,6 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  BPM_MAX,
+  BPM_MIN,
+  DIVISION_LABEL,
+  beatGridOf,
+  beatSnapText,
+  cutsOfClips,
+  snapCuts,
+  type BeatDivision,
+} from "@/lib/beat-snap";
 import type { SfxCue } from "@loomina/ir";
 import { StageGate } from "@/components/stage-gate";
 import { ComplianceCheckpoints } from "@/components/compliance-checkpoints";
@@ -476,6 +486,9 @@ export function EditScreen() {
   const [description, setDescription] = useState("");
   const [topics, setTopics] = useState("短剧,AI创作");
   const [platform, setPlatform] = useState<PlatformId>("douyin");
+  /** 节拍卡点（C5）：配乐多快，用来算建议切点 */
+  const [bpm, setBpm] = useState(120);
+  const [division, setDivision] = useState<BeatDivision>(1);
   const [notice, setNotice] = useState("");
   const [rendering, setRendering] = useState(false);
   const [renderStage, setRenderStage] = useState("");
@@ -600,6 +613,18 @@ export function EditScreen() {
   );
   // 生成结果复核（H6）：会进成片的每一条，逐条给作者看
   const review = useMemo(() => reviewSummaryOf(project), [project]);
+  /** 节拍卡点（C5）：BPM 与切点都是只读派生，不改时间线 */
+  const beatPlan = useMemo(() => {
+    const grid = beatGridOf({ bpm, division });
+    const cuts = cutsOfClips(
+      view.clips.map((clip) => ({
+        startMs: clip.startMs,
+        shotId: clip.shotId,
+        label: `SH-${String(clip.shotNo).padStart(2, "0")}`,
+      })),
+    );
+    return snapCuts(cuts, grid);
+  }, [bpm, division, view.clips]);
   const platformValidation = useMemo(
     () =>
       validatePlatform(platformSpecOf(platform), {
@@ -2552,6 +2577,80 @@ export function EditScreen() {
                         </p>
                       )}
                     </div>
+                  )}
+                </section>
+
+                {/* 节拍卡点（C5）：只给建议，不改时间线 */}
+                <section aria-label="节拍卡点" className="mt-5 border-t border-line pt-4">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <h2 className="text-[11px] tracking-[.06em] text-text">节拍卡点</h2>
+                    <span className="text-[8.5px] tracking-[.06em] text-muted-2">C5</span>
+                  </div>
+                  <p className="mt-1 text-[9.5px] leading-[1.7] text-muted-2">
+                    填这一版配乐的 BPM，看现有切点踩没踩上。只给建议，不会动时间线——
+                    卡点服务剪辑，别为了卡点把表演切碎。
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-end gap-2">
+                    <label className="flex items-center gap-2 text-[9.5px] text-muted-2">
+                      BPM
+                      <input
+                        type="number"
+                        min={BPM_MIN}
+                        max={BPM_MAX}
+                        value={bpm}
+                        onChange={(event) => {
+                          const next = Number.parseInt(event.target.value, 10);
+                          if (Number.isFinite(next)) setBpm(next);
+                        }}
+                        className="tnum w-[64px] rounded-token border border-line bg-transparent px-1.5 py-0.5 text-[10.5px] text-text focus:border-line-2 focus:outline-none"
+                      />
+                    </label>
+                    <label className="flex items-center gap-2 text-[9.5px] text-muted-2">
+                      细分
+                      <select
+                        value={division}
+                        onChange={(event) => setDivision(Number(event.target.value) as BeatDivision)}
+                        className="rounded-token border border-line bg-transparent px-1.5 py-0.5 text-[10.5px] text-text focus:border-line-2 focus:outline-none"
+                      >
+                        {([1, 2, 4] as BeatDivision[]).map((value) => (
+                          <option key={value} value={value} className="bg-surface">
+                            {DIVISION_LABEL[value]}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <p className="tnum mt-2 text-[9px] leading-[1.65] text-muted-2">
+                    {beatSnapText(beatPlan)}
+                  </p>
+                  {beatPlan.drifting.length > 0 && (
+                    <ul className="mt-1.5 border-t border-line">
+                      {beatPlan.drifting.slice(0, 8).map((item) => (
+                        <li
+                          key={`${item.cut.atMs}-${item.cut.shotId ?? ""}`}
+                          className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line py-1 text-[9px]"
+                        >
+                          <span className="text-muted">
+                            {item.cut.label ?? "切点"} · {fmtSec(item.cut.atMs)}
+                          </span>
+                          <span className="tnum text-muted-2">
+                            {item.offsetMs > 0 ? "晚" : "早"} {Math.abs(item.offsetMs)} 毫秒 ·
+                            最近一拍 {fmtSec(item.nearestMs)}
+                          </span>
+                        </li>
+                      ))}
+                      {beatPlan.drifting.length > 8 && (
+                        <li className="py-1 text-[9px] text-muted-2">
+                          还有 {beatPlan.drifting.length - 8} 个没列出来。
+                        </li>
+                      )}
+                    </ul>
+                  )}
+                  {beatPlan.suggestions.length > 0 && (
+                    <p className="tnum mt-1.5 text-[8.5px] leading-[1.6] text-muted-2">
+                      可以补切的位置：{beatPlan.suggestions.map((at) => fmtSec(at)).join(" / ")}
+                      （跨度够大、中间没有切点的地方）
+                    </p>
                   )}
                 </section>
 

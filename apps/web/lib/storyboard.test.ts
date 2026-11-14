@@ -772,6 +772,7 @@ describe("表演语法接进 V10（I11 / ADR-0220）", () => {
       {
         performance: {
           objective: "压抑的愤怒",
+          emotion: { surface: "", subtext: "" },
           intensity: 5,
           beats: [
             { phase: "during", micro: "", body: "她大喊着扑过去", startMs: 0, endMs: 1000 },
@@ -780,7 +781,7 @@ describe("表演语法接进 V10（I11 / ADR-0220）", () => {
           avoid: ["大吼"],
         },
       },
-      { performance: { objective: "别的事", intensity: 2, gaze: { target: "camera", direction: "center" } } },
+      { performance: { objective: "别的事", emotion: { surface: "", subtext: "" }, intensity: 2, beats: [], gaze: { target: "camera", direction: "center" }, avoid: [] } },
     ]);
     const issues = analyzeStoryboard(project).issues.filter((issue) => issue.rule === "V10");
     expect(issues.some((issue) => issue.message.includes("情绪越强动作越小"))).toBe(true);
@@ -791,13 +792,14 @@ describe("表演语法接进 V10（I11 / ADR-0220）", () => {
       {
         performance: {
           objective: "心虚",
+          emotion: { surface: "", subtext: "" },
           intensity: 3,
-          beats: [{ phase: "during", micro: "视线下移", startMs: 0, endMs: 800 }],
+          beats: [{ phase: "during", micro: "视线下移", body: "", startMs: 0, endMs: 800 }],
           gaze: { target: "off-screen", direction: "down" },
           avoid: [],
         },
       },
-      { performance: { objective: "别的事", intensity: 2, gaze: { target: "camera", direction: "center" } } },
+      { performance: { objective: "别的事", emotion: { surface: "", subtext: "" }, intensity: 2, beats: [], gaze: { target: "camera", direction: "center" }, avoid: [] } },
     ]);
     const issues = analyzeStoryboard(project).issues.filter((issue) => issue.rule === "V10");
     expect(issues.some((issue) => issue.message.includes("没写"))).toBe(true);
@@ -808,13 +810,14 @@ describe("表演语法接进 V10（I11 / ADR-0220）", () => {
       {
         performance: {
           objective: "心虚",
+          emotion: { surface: "", subtext: "" },
           intensity: 3,
-          beats: [{ phase: "during", micro: "视线下移", startMs: 0, endMs: 800 }],
+          beats: [{ phase: "during", micro: "视线下移", body: "", startMs: 0, endMs: 800 }],
           gaze: { target: "off-screen", direction: "down" },
           avoid: ["复杂手部动作"],
         },
       },
-      { performance: { objective: "别的事", intensity: 2, gaze: { target: "camera", direction: "center" } } },
+      { performance: { objective: "别的事", emotion: { surface: "", subtext: "" }, intensity: 2, beats: [], gaze: { target: "camera", direction: "center" }, avoid: [] } },
     ]);
     const issues = analyzeStoryboard(project).issues.filter((issue) => issue.rule === "V10");
     expect(issues).toEqual([]);
