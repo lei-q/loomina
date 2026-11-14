@@ -105,7 +105,7 @@ import { autoCut, timelineEquals } from "@/lib/edit";
 import { planMusicFill } from "@/lib/music-curve";
 import { instructionsOf, performanceOf } from "@/lib/voice-performance";
 import { buildHistory, historyPosition, nextUndo } from "@/lib/history";
-import { sceneImportEvents, sceneReadiness } from "@/lib/shared-scenes";
+import { sceneBatchOf, sceneImportEvents, sceneReadiness } from "@/lib/shared-scenes";
 import { storyImportPatch } from "@/lib/shared-stories";
 import type { CastImageRequest } from "@/lib/generate-image";
 import { findCachedAsset, referenceHashesOf, reuseAssetEvents } from "@/lib/generation-cache";
@@ -1055,6 +1055,17 @@ type WorkbenchState = {
    * 同一批事件共用一个 `at`，撤销一步就能整场退回。不调模型、不花钱。
    */
   adoptSharedScene: (source: Project, sceneId: string, fromWorkspaceName: string) => boolean;
+  /**
+   * 整本剧本一起取（C24 / ADR-0212）：按场序串行、一次写一批事件。
+   *
+   * 缺人 / 缺地点的场跳过并计数，其余照取；同一批共用一个 `at`，撤销一步整本退回。
+   * 一场都没取成时不写事件。不调模型、不花钱。
+   */
+  adoptSharedScenes: (
+    source: Project,
+    sceneIds: string[],
+    fromWorkspaceName: string,
+  ) => { scenes: number; shots: number; lines: number; skipped: number } | undefined;
   /**
    * 采用剧本医生的一条改写（A18 / ADR-0123）：台词走 `editDialogue`、
    * 动作走 `editAction`、故事层走 `editStory`——同一个决定只用一套写入口。
@@ -6726,6 +6737,46 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     } catch (error) {
       set({ castError: error instanceof Error ? error.message : "这一场没取成。" });
       return false;
+    }
+  },
+
+  adoptSharedScenes: (source, sceneIds, fromWorkspaceName) => {
+    if (get().readOnly) return undefined;
+    const { project, events } = get();
+    const at = stamp();
+    const batch = sceneBatchOf(source, project, Date.now().toString(36), at, sceneIds);
+    if (batch.events.length === 0) {
+      const reasons = batch.skipped
+        .slice(0, 4)
+        .map((item) => `${item.label}缺${item.missing.join("、")}`)
+        .join("；");
+      set({
+        castError: reasons
+          ? `一场都没取过来：${reasons}${batch.skipped.length > 4 ? " 等" : ""}。`
+          : "没有可取的场。",
+      });
+      return undefined;
+    }
+
+    try {
+      // 先在草稿上整批回放：任何一条不合法都不落半本剧本
+      let nextProject = project;
+      for (const event of batch.events) nextProject = applyEvent(nextProject, event);
+      set({
+        project: nextProject,
+        events: [...events, ...batch.events],
+        castError: undefined,
+        generationNotice: undefined,
+      });
+      return {
+        scenes: batch.scenes,
+        shots: batch.shots,
+        lines: batch.lines,
+        skipped: batch.skipped.length,
+      };
+    } catch (error) {
+      set({ castError: error instanceof Error ? error.message : "整本没取成。" });
+      return undefined;
     }
   },
 

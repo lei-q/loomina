@@ -1,7 +1,7 @@
 import { applyEvent, type Project } from "@loomina/ir";
 import { describe, expect, it } from "vitest";
 import { sampleProject } from "./sample-project";
-import { sceneImportEvents, sceneReadiness, sharedScenesOf } from "./shared-scenes";
+import { sceneBatchOf, sceneImportEvents, sceneReadiness, sharedScenesOf } from "./shared-scenes";
 
 const clone = (): Project => structuredClone(sampleProject);
 
@@ -102,5 +102,56 @@ describe("跨空间取一场剧本（C1）", () => {
     expect(list[0]!.readiness.ready).toBe(true);
     expect(list.at(-1)!.readiness.ready).toBe(false);
     expect(list.find((item) => item.scene.id === "sc-1")!.brief).toBe("走廊尽头，灯管闪了一下");
+  });
+});
+
+describe("整本剧本一起取（C24 / ADR-0212）", () => {
+  it("按场序整本取过来：场 / 镜 / 句计数与回放一致，同一批同一个 at", () => {
+    const source = clone();
+    const current = clone();
+    const batch = sceneBatchOf(source, current, "b1", "2026-11-14T00:00:00Z");
+    expect(batch.scenes).toBe(source.scenes.length);
+    expect(batch.shots).toBe(source.shots.length);
+    expect(batch.lines).toBe(source.dialogue.length);
+    expect(batch.skipped).toEqual([]);
+    expect(new Set(batch.events.map((event) => event.at)).size).toBe(1);
+
+    let next = current;
+    for (const event of batch.events) next = applyEvent(next, event);
+    expect(next.scenes).toHaveLength(current.scenes.length + source.scenes.length);
+    expect(next.shots).toHaveLength(current.shots.length + source.shots.length);
+    // 追加在末尾：原有场次原样不动
+    expect(next.scenes.slice(0, current.scenes.length).map((scene) => scene.id)).toEqual(
+      current.scenes.map((scene) => scene.id),
+    );
+  });
+
+  it("缺人的场跳过并记原因，其余照取", () => {
+    const source = clone();
+    const current = clone();
+    // 去掉 c-zhou：用到他的场（sc-1 的台词、sc-2 / sc-4 / sc-5 的出场）取不过来
+    current.characters = current.characters.filter((character) => character.id !== "c-zhou");
+    const batch = sceneBatchOf(source, current, "b2", "2026-11-14T00:00:00Z");
+    expect(batch.skipped.length).toBeGreaterThan(0);
+    expect(batch.skipped[0]!.missing.join(" ")).toContain("周");
+    expect(batch.scenes).toBeLessThan(source.scenes.length);
+    expect(batch.events.length).toBeGreaterThan(0);
+
+    let next = current;
+    for (const event of batch.events) next = applyEvent(next, event);
+    expect(next.scenes.length).toBe(current.scenes.length + batch.scenes);
+  });
+
+  it("只取指定的几场；id 不撞车", () => {
+    const source = clone();
+    const current = clone();
+    const batch = sceneBatchOf(source, current, "b3", "2026-11-14T00:00:00Z", ["sc-1", "sc-3"]);
+    expect(batch.scenes).toBe(2);
+    let next = current;
+    for (const event of batch.events) next = applyEvent(next, event);
+    const added = next.scenes.slice(current.scenes.length);
+    expect(added).toHaveLength(2);
+    const ids = new Set([...next.scenes, ...next.shots, ...next.dialogue].map((item) => item.id));
+    expect(ids.size).toBe(next.scenes.length + next.shots.length + next.dialogue.length);
   });
 });

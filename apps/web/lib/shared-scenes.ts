@@ -217,3 +217,97 @@ export function sceneImportEvents(
     sceneId: nextSceneId,
   };
 }
+
+export type SceneBatch = {
+  events: ProjectEvent[];
+  /** 取过来的场数 / 镜数 / 句数 */
+  scenes: number;
+  shots: number;
+  lines: number;
+  /** 取不过来被跳过的场（缺人 / 缺地点），带原因 */
+  skipped: { sceneId: string; label: string; missing: string[] }[];
+  /** 道具对不上、只摘了引用的名字（去重） */
+  missingProps: string[];
+};
+
+/**
+ * 整本剧本一起取（C24 第二档 / ADR-0212）。
+ *
+ * 按来源场序**串行**推进：第 2 场是在「第 1 场已经取过来」的项目上算 id 与就绪度，
+ * 同一批里不会撞 id。取不过来的场跳过并记原因，其余照取——
+ * 缺一个配角就整本拿不到，比「拿到 7 场、明确说第 8 场缺谁」更糟。
+ *
+ * 所有事件共用同一个 `at`：整本取用是一次操作，撤销一步整本退回。
+ */
+export function sceneBatchOf(
+  source: Project,
+  current: Project,
+  tag: string,
+  at: string,
+  sceneIds?: string[],
+): SceneBatch {
+  const batch: SceneBatch = { events: [], scenes: 0, shots: 0, lines: 0, skipped: [], missingProps: [] };
+  const wanted = new Set(sceneIds ?? source.scenes.map((scene) => scene.id));
+  const props = new Set(batch.missingProps);
+  let working = current;
+
+  const ordered = [...source.scenes].sort((a, b) => a.index - b.index);
+  for (const scene of ordered) {
+    if (!wanted.has(scene.id)) continue;
+    const imported = sceneImportEvents(source, working, scene.id, tag, at);
+    if (!imported) {
+      const readiness = sceneReadiness(source, working, scene);
+      batch.skipped.push({
+        sceneId: scene.id,
+        label: `第 ${scene.index + 1} 场`,
+        missing: readiness.missing,
+      });
+      continue;
+    }
+    // 串行推进：后面的场要看见前面取过来的结构
+    for (const event of imported.events) working = applySceneEvent(working, event);
+    batch.events.push(...imported.events);
+    batch.scenes += 1;
+    batch.shots += imported.shots;
+    batch.lines += imported.lines;
+    for (const name of imported.missingProps) props.add(name);
+  }
+  batch.missingProps = [...props];
+  return batch;
+}
+
+/**
+ * 只用来推进「工作副本」的最小回放：整批写进日志前还要过一次 `applyEvent`，
+ * 这里只需要把新加的结构记进去，好让下一场算 id 与就绪度。
+ */
+function applySceneEvent(project: Project, event: ProjectEvent): Project {
+  if (event.type === "scene.added") {
+    return {
+      ...project,
+      scenes: [...project.scenes, { ...event.scene, index: project.scenes.length }],
+    };
+  }
+  if (event.type === "shot.added") {
+    return {
+      ...project,
+      shots: [...project.shots, event.shot],
+      scenes: project.scenes.map((scene) =>
+        scene.id === event.shot.sceneId
+          ? { ...scene, shotIds: [...scene.shotIds, event.shot.id] }
+          : scene,
+      ),
+    };
+  }
+  if (event.type === "dialogue.added") {
+    return {
+      ...project,
+      dialogue: [...project.dialogue, event.line],
+      shots: project.shots.map((shot) =>
+        shot.id === event.shotId
+          ? { ...shot, dialogueIds: [...shot.dialogueIds, event.line.id] }
+          : shot,
+      ),
+    };
+  }
+  return project;
+}
