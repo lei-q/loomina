@@ -2,6 +2,7 @@
 
 import { openDb } from "@/lib/event-log";
 import type { ProjectTemplate } from "@/lib/project-template";
+import { looksLikeShotTemplate, type ShotTemplate } from "@/lib/shot-template";
 
 /**
  * 项目模板的本地仓（F3 / ADR-0180）。
@@ -68,6 +69,47 @@ export async function listTemplates(): Promise<ProjectTemplate[]> {
   } catch {
     // 没有模板仓（第一次打开、或别的标签页还在旧版本）时当空的处理
     return [];
+  } finally {
+    db.close();
+  }
+}
+
+/** 镜头模板（F3 / ADR-0207）：与班底模板同一个仓，靠 `format` 区分 */
+export async function saveShotTemplate(template: ShotTemplate): Promise<void> {
+  const db = await openDb();
+  try {
+    const tx = db.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).put(template);
+    await committed(tx);
+  } finally {
+    db.close();
+  }
+}
+
+/** 列出镜头模板，最近存的在前；班底模板与坏数据都跳过 */
+export async function listShotTemplates(): Promise<ShotTemplate[]> {
+  const db = await openDb();
+  try {
+    const rows = await settle(
+      db.transaction(STORE, "readonly").objectStore(STORE).getAll() as IDBRequest<unknown[]>,
+    );
+    return rows
+      .filter(looksLikeShotTemplate)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  } catch {
+    // 没有模板仓时当空的处理，与班底模板同一口径
+    return [];
+  } finally {
+    db.close();
+  }
+}
+
+export async function removeShotTemplate(id: string): Promise<void> {
+  const db = await openDb();
+  try {
+    const tx = db.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).delete(id);
+    await committed(tx);
   } finally {
     db.close();
   }

@@ -6742,3 +6742,61 @@ describe("剧本版本库写回（C14 / ADR-0204）", () => {
     useWorkbench.setState({ readOnly: false });
   });
 });
+
+describe("镜头模板套用（F3 / ADR-0207）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  const template = (over: Partial<import("./shot-template").ShotTemplate> = {}) => ({
+    format: "loomina.shot-template" as const,
+    version: 1 as const,
+    id: "st-1",
+    name: "低机位推近",
+    createdAt: "2026-11-14T00:00:00Z",
+    from: { projectId: "p", title: "夜班", shotId: "s-01", shotLabel: "第 1 镜" },
+    shotSize: "close" as const,
+    angle: "low" as const,
+    movement: "push" as const,
+    focalMm: 85,
+    ...over,
+  });
+
+  it("只换摄影四项：动作、台词、时长、出场人物与道具不动", () => {
+    const before = structuredClone(state().project.shots.find((shot) => shot.id === "s-03")!);
+    const snapshot = state().events.length;
+    expect(state().applyShotTemplate("s-03", template())).toBe(true);
+
+    const after = state().project.shots.find((shot) => shot.id === "s-03")!;
+    expect(after.shotSize).toBe("close");
+    expect(after.camera).toMatchObject({ angle: "low", movement: "push", focalMm: 85 });
+    expect(after.description).toBe(before.description);
+    expect(after.durationMs).toBe(before.durationMs);
+    expect(after.characterIds).toEqual(before.characterIds);
+    expect(after.propIds).toEqual(before.propIds);
+    expect(after.dialogueIds).toEqual(before.dialogueIds);
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "shot.updated", shotId: "s-03" });
+    expect(rebuild(state().events).shots.find((shot) => shot.id === "s-03")!.shotSize).toBe("close");
+  });
+
+  it("模板没有光影 / 构图时不清空这一镜原来的；锁定拒绝", () => {
+    expect(
+      state().setShotLighting("s-04", { source: "window", position: "side", mood: "modeled", note: "台灯" }),
+    ).toBe(true);
+    expect(state().applyShotTemplate("s-04", template())).toBe(true);
+    expect(state().project.shots.find((shot) => shot.id === "s-04")!.lighting?.note).toBe("台灯");
+
+    expect(state().applyShotTemplate("s-08", template())).toBe(false); // s-08 在示例里是锁的
+    expect(state().castError).toContain("锁定");
+  });
+
+  it("只读拒绝", () => {
+    useWorkbench.setState({ readOnly: true });
+    const snapshot = state().events.length;
+    expect(state().applyShotTemplate("s-03", template())).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+    useWorkbench.setState({ readOnly: false });
+  });
+});
