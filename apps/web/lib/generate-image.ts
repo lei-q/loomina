@@ -6,14 +6,11 @@ import {
   type ImageReference,
 } from "@loomina/gateway";
 import {
-  buildKeyframePrompt,
-  buildMasterPrompt,
-  buildPropPrompt,
-  buildSheetPrompt,
   type ShotPromptMaterial,
 } from "@loomina/pipeline";
 import type { Character, Id, Location, Look, ProjectSkill, Prop, SheetView } from "@loomina/ir";
 import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
+import { imagePlanOf } from "@/lib/image-plan";
 import { readAssetBytes } from "@/lib/asset-store";
 import { assertPromptAllowed, type PromptModeration } from "@/lib/moderation";
 import { fitReferenceBytes } from "@/lib/reference-compress";
@@ -76,33 +73,6 @@ export type GeneratedImage = {
 };
 
 /** 提示词与占位 shotId 都按资产语义走，不按"这一格是哪个角色的"走。 */
-function plan(request: CastImageRequest): { prompt: string; label: string } {
-  if (request.kind === "sheet") {
-    return {
-      prompt: buildSheetPrompt(request.character, request.angle, request.look, request.skills),
-      label: `sheet-${request.character.name}-${request.angle}`,
-    };
-  }
-  if (request.kind === "master") {
-    return {
-      prompt: buildMasterPrompt(request.location, request.look, request.skills),
-      label: `master-${request.location.name}`,
-    };
-  }
-  if (request.kind === "prop") {
-    return {
-      prompt: buildPropPrompt(request.prop, request.look, request.skills),
-      label: `prop-${request.prop.name}`,
-    };
-  }
-  // 关键帧是某一镜的静帧：用描述当标签，方便在溯源里认出是哪一格（ADR-0038 起分首尾）
-  const frame = request.frame ?? "first";
-  return {
-    prompt: buildKeyframePrompt(request.shot, frame, request.skills),
-    label: `${frame === "last" ? "lastframe" : "keyframe"}-${request.shot.description.slice(0, 16) || "shot"}`,
-  };
-}
-
 export type ImagePrice = {
   model: string;
   /** 价目表里的单价（元 / 张）；没有这个模型就不给 */
@@ -174,7 +144,7 @@ export async function generateCastImage(
   const client = new TreecloudClient({ ...config, timeoutMs: 170_000 });
   const adapter = new TreecloudImageAdapter(client);
 
-  const built = plan(request);
+  const built = imagePlanOf(request);
   const prompt = promptOverride ?? built.prompt;
   // H6：硬阻断的提示词在这里就停，供应商一次请求都不发
   const moderation = assertPromptAllowed(prompt, "image");

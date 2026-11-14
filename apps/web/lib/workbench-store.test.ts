@@ -1,5 +1,7 @@
 import { DEFAULT_GRADE, ProjectSchema, applyEvent, rebuild, type ProjectEvent } from "@loomina/ir";
 import { parseStoryDraft } from "@loomina/pipeline";
+import type { CastImageRequest } from "./generate-image";
+import { imagePlanOf } from "./image-plan";
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 import { setEventLog, type EventLog } from "./event-log";
 import { claimWriter, releaseWriter } from "./writer-lock";
@@ -6798,5 +6800,81 @@ describe("镜头模板套用（F3 / ADR-0207）", () => {
     expect(state().applyShotTemplate("s-03", template())).toBe(false);
     expect(state().events).toHaveLength(snapshot);
     useWorkbench.setState({ readOnly: false });
+  });
+});
+
+describe("结果缓存与复用（H14 / ADR-0208）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false, reuseCache: true });
+    state().setImagePrice({ model: "gpt-image-2-c", cny: 0.12 });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  type Body = { kind: string; frame?: string };
+
+  /** 每次请求给一个不同的地址：能看出第二次到底有没有真发请求 */
+  const stub = () => {
+    const calls: Body[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as Body;
+        calls.push(body);
+        return new Response(
+          JSON.stringify({
+            uri: `data:image/png;base64,${btoa(String(calls.length))}`,
+            model: "gpt-image-2-c",
+            // 真实服务端返回的就是它实际发出去的那段提示词（imagePlanOf 的结果）
+            prompt: imagePlanOf(body as unknown as CastImageRequest).prompt,
+            cny: 0.12,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+    return calls;
+  };
+
+  it("同一套输入第二次命中：不发请求、不花钱、资产记 library", async () => {
+    const calls = stub();
+    await state().generateKeyframe("s-03");
+    expect(calls).toHaveLength(1);
+    const first = state().project.assets.find((item) => item.id === "a-keyframe-s-03")!;
+    expect(first.source).toBe("generated");
+    expect(first.costCny).toBe(0.12);
+
+    // 把提示词覆盖清掉后重新生成同一镜：输入完全一样
+    const before = state().events.length;
+    await state().generateKeyframe("s-03");
+    expect(calls).toHaveLength(1); // 没有第二次请求
+    expect(state().events.length).toBeGreaterThan(before); // 但仍写了资产事件
+    expect(state().generationNotice).toContain("复用");
+    const reused = state().project.assets.find((item) => item.id === "a-keyframe-s-03")!;
+    expect(reused.uri).toBe(first.uri);
+    expect(reused.source).toBe("library");
+    // 花费不抹：那是这一格当初真花过的钱（浅合并保留原值）
+    expect(reused.costCny).toBe(0.12);
+    expect(rebuild(state().events)).toEqual(state().project);
+  });
+
+  it("关掉结果复用就真去生成", async () => {
+    const calls = stub();
+    await state().generateKeyframe("s-03");
+    useWorkbench.setState({ reuseCache: false });
+    await state().generateKeyframe("s-03");
+    expect(calls).toHaveLength(2);
+    expect(state().project.assets.find((item) => item.id === "a-keyframe-s-03")!.source).toBe("generated");
+  });
+
+  it("提示词变了不再命中", async () => {
+    const calls = stub();
+    await state().generateKeyframe("s-03");
+    state().setPromptOverride("keyframe:s-03:first", "换一段提示词");
+    await state().generateKeyframe("s-03");
+    expect(calls).toHaveLength(2);
   });
 });
