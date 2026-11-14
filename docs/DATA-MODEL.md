@@ -1387,6 +1387,10 @@ interface PlatformSpec {
   resolution: { width: number; height: number };
   durationMs: { min?: number; max?: number };
   maxFileBytes?: number;
+  // 逐条核验过的上限必须带出处（G2 / ADR-0214）：url + 复核日期 + 原文
+  maxFileSource?: { url: string; checkedAt: string; quote: string };
+  // 上限适用的场景（手机投稿 / web 投稿 / 账号等级），界面照实写
+  maxFileNote?: string;
   codec: "H.264";
   fps: number;
   coverRatio: string;

@@ -12,6 +12,7 @@ import { SpendLedger } from "@/components/spend-ledger";
 import type { Modality } from "@/lib/config-types";
 import { nextOpenStage, stageStates } from "@/lib/stage-flow";
 import { rememberWorkspace } from "@/lib/event-log";
+import { setupSourcesOf } from "@/lib/workspace-template";
 import { useWorkbench } from "@/lib/workbench-store";
 
 /** 阶段是一列；还没做出来的阶段 href 为 null，点了不跳。 */
@@ -269,6 +270,8 @@ export function TopBar({
   const deleteWorkspace = useWorkbench((state) => state.deleteWorkspace);
   const archiveWorkspace = useWorkbench((state) => state.archiveWorkspace);
   const currentWorkspace = workspaces.find((item) => item.id === workspaceId);
+  /** 能当来源的空间：归档的不能（C15 / ADR-0210 与 C22 / ADR-0213 共用一份判断） */
+  const sourceOptions = setupSourcesOf(workspaces);
 
   useEffect(() => {
     void refreshWorkspaces();
@@ -552,12 +555,19 @@ export function TopBar({
                     className="w-full rounded-token border border-line bg-surface px-1.5 py-0.5 text-[9.5px] text-text focus:border-pick focus:outline-none"
                   >
                     <option value="">示例项目（从零开工）</option>
-                    {workspaces.map((item) => (
+                    {sourceOptions.map((item) => (
                       <option key={item.id} value={item.id}>
-                        照「{item.name}」的设定开工（带故事 / 演员 / 场景 / 道具，不带成片）
+                        照「{item.name}」的设定开工
+                        {item.episodeNo !== undefined ? `（第 ${item.episodeNo} 集）` : ""}
                       </option>
                     ))}
                   </select>
+                  <span className="text-[8.5px] leading-[1.6] text-muted-2">
+                    照设定开工只带故事 / 演员 / 场景 / 道具 / 技能 / 风格，不带成片。
+                    {sourceOptions.length === 0
+                      ? "现在没有可当来源的空间。"
+                      : `可选 ${sourceOptions.length} 个；归档的空间不在里面。`}
+                  </span>
                 </label>
 
                 <form

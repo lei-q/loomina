@@ -152,7 +152,7 @@ import {
 import { modelIdFor } from "@/lib/model-choice";
 import type { Modality } from "@/lib/config-types";
 import { sampleProject } from "@/lib/sample-project";
-import { projectFromSetup } from "@/lib/workspace-template";
+import { projectFromSetup, setupSourceProblem } from "@/lib/workspace-template";
 import { stageMetaOf, stageSignature } from "@/lib/stage-flow";
 import {
   stageLockOf,
@@ -6411,10 +6411,19 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       const id = `w-${Date.now().toString(36)}`;
       const now = new Date().toISOString();
       let seed: Project;
+      let source: WorkspaceMeta | undefined;
       if (fromWorkspaceId) {
         // 照别的空间的设定开新一集：读它的日志、回放，再只搬设定（ADR-0197）
+        source = list.find((item) => item.id === fromWorkspaceId);
+        // 找不到 / 归档了都不建空间（C22 / ADR-0213）：判定与顶栏下拉共用一份
+        const problem = setupSourceProblem(list, fromWorkspaceId);
+        if (!source || problem) throw new Error(problem ?? "找不到这个来源空间。");
         const stored = migrateLog(await indexedDbLogFor(fromWorkspaceId).load());
         if (!stored) throw new Error("来源空间的日志读不出来。");
+        // 空日志没有 project.created，rebuild 会抛「事件日志为空」——那句话对作者没有意义
+        if (stored.length === 0) {
+          throw new Error(`「${source.name}」还没有任何内容，没有设定可以照。`);
+        }
         seed = ProjectSchema.parse(
           projectFromSetup(rebuild(stored), { id: `p-${id}`, title: name }),
         );
@@ -6425,9 +6434,6 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       await indexedDbLogFor(id).replace(bootstrap(seed));
       // 连载（A6 / ADR-0209）：照来源空间开工就继承它的系列并排到下一集；
       // 从零开工则自成一部剧的第一集。集序只是本机编排，不进事件日志。
-      const source = fromWorkspaceId
-        ? list.find((item) => item.id === fromWorkspaceId)
-        : undefined;
       const seriesId = source?.seriesId ?? source?.id ?? id;
       const episodeNo = fromWorkspaceId
         ? nextEpisodeNo(list, seriesId)

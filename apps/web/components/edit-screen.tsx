@@ -3066,6 +3066,11 @@ export function EditScreen() {
                         <PlatformRow key={check.id} check={check} />
                       ))}
                     </ul>
+                    {platformValidation.spec.maxFileNote && (
+                      <p className="mt-1.5 text-[8.5px] leading-[1.6] text-muted-2">
+                        文件上限的口径：{platformValidation.spec.maxFileNote}。
+                      </p>
+                    )}
                     <p className="mt-1.5 text-[8.5px] leading-[1.6] text-muted-2">
                       {platformValidation.spec.note} 只有画幅、时长上限、编码与已知上限的文件大小会硬拦；
                       帧率、码率、标题字数、话题数量与封面是参考值，平台随时会改。
