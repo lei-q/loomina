@@ -6705,6 +6705,13 @@ describe("删工作空间（C15 / ADR-0201）", () => {
     expect(await state().deleteWorkspace("w-somewhere-else")).toBeUndefined();
     expect(state().workspaceError).toContain("不支持多工作空间");
   });
+
+  it("没有 IndexedDB 时导出与批量清理都如实拒绝（C15 / ADR-0234）", async () => {
+    expect(await state().exportWorkspace("w-any")).toBeUndefined();
+    expect(state().workspaceError).toContain("不支持多工作空间");
+    expect(await state().deleteArchivedWorkspaces()).toBe(0);
+    expect(state().workspaceError).toContain("不支持多工作空间");
+  });
 });
 
 describe("跨空间取技能（C.5 / ADR-0202）", () => {

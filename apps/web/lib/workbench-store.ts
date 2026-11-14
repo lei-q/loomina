@@ -157,6 +157,10 @@ import type { Modality } from "@/lib/config-types";
 import { sampleProject } from "@/lib/sample-project";
 import { projectFromSetup, setupSourceProblem } from "@/lib/workspace-template";
 import { batchPlanOf, type BatchPatch } from "@/lib/shot-batch";
+import {
+  workspaceExportFileName,
+  workspaceExportOf,
+} from "@/lib/workspace-export";
 import { stageMetaOf, stageSignature } from "@/lib/stage-flow";
 import {
   stageLockOf,
@@ -1046,6 +1050,23 @@ type WorkbenchState = {
    * 返回删掉了几条事件；失败写 `workspaceError`。
    */
   deleteWorkspace: (id: string) => Promise<number | undefined>;
+  /**
+   * 导出某个空间的完整事件日志（C15 / 删除前导出）。
+   *
+   * 删空间不可恢复，删之前至少能留个底。返回文件名与 JSON 文本，
+   * **下载由组件做**——store 不碰 DOM，这样这段逻辑可测。
+   * 空间不存在或读不出来时写 `workspaceError` 并返回 undefined。
+   */
+  exportWorkspace: (
+    id: string,
+  ) => Promise<{ fileName: string; json: string } | undefined>;
+  /**
+   * 一次删掉所有已归档的空间（C15 批量删除）。
+   *
+   * 只删归档的：正在打开的那个不可能归档，所以不会被误删。
+   * 返回删掉的空间数；一个都没有时返回 0 且不报错。
+   */
+  deleteArchivedWorkspaces: () => Promise<number>;
   /**
    * 归档 / 取消归档一个工作空间（C15 / ADR-0210）：只改登记表里的 `archivedAt`。
    *
@@ -6582,6 +6603,49 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     } catch (error) {
       set({ workspaceError: error instanceof Error ? error.message : "工作空间没删掉。" });
       return undefined;
+    }
+  },
+
+  exportWorkspace: async (id) => {
+    if (!hasWorkspaces()) {
+      set({ workspaceError: "这个浏览器不支持多工作空间。" });
+      return undefined;
+    }
+    try {
+      const metas = await listWorkspaces();
+      const meta = metas.find((item) => item.id === id);
+      if (!meta) {
+        set({ workspaceError: "找不到这个工作空间。" });
+        return undefined;
+      }
+      const stored = await indexedDbLogFor(id).load();
+      const exportedAt = new Date().toISOString();
+      const pack = workspaceExportOf({ meta, log: stored, exportedAt });
+      set({ workspaceError: undefined });
+      return {
+        fileName: workspaceExportFileName(meta.name, exportedAt),
+        json: JSON.stringify(pack, null, 2),
+      };
+    } catch (error) {
+      set({ workspaceError: error instanceof Error ? error.message : "导出没做成。" });
+      return undefined;
+    }
+  },
+
+  deleteArchivedWorkspaces: async () => {
+    if (!hasWorkspaces()) {
+      set({ workspaceError: "这个浏览器不支持多工作空间。" });
+      return 0;
+    }
+    try {
+      const metas = await listWorkspaces();
+      const archived = metas.filter((item) => item.archivedAt && item.id !== get().workspaceId);
+      for (const item of archived) await deleteWorkspaceRows(item.id);
+      set({ workspaces: await listWorkspaces(), workspaceError: undefined });
+      return archived.length;
+    } catch (error) {
+      set({ workspaceError: error instanceof Error ? error.message : "清理没做成。" });
+      return 0;
     }
   },
 
