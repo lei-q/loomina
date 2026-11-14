@@ -7987,3 +7987,32 @@ IR 260 / gateway 32 / pipeline 158 / web 1465（4 skipped）全过；`pnpm -r ty
 - 只减了 154 行（约 2%）。真正的量在 6000 行的 action 区。
 - 抽出的函数依赖 `toStageView`（web.logic），所以 `workbench-helpers` 留在 web.state。
 - action 区拆分未开始，store 依然是枢纽。
+
+## 第二百五十七次 · 2026-11-15 · store 拆分第二步：action 切片（ADR-0237）
+
+**问题**
+
+ADR-0236 抽纯函数只减了 2%。真正的量在 6000 行的 `create` 回调里。难点是每个 action
+都要 `get()` 读最新状态、用 store 的 `set`（带阶段硬锁闸口）——简单拆文件会拿到多份。
+
+**结论**
+
+1. **类型先行**：`WorkbenchState` 等类型移到 `workbench-types.ts`，切片只 import 类型，
+   避免循环；store 用 `import type` + `export type` 转出，对外路径不变。
+2. **切片写成工厂函数**：`workspaceActions({ get, set }, stamp)`，store 展开它——
+   拿到同一份 `get`/`set`，阶段硬锁不会被绕过。
+3. **切片自带 `Pick<WorkbenchState, ...>` 返回类型**：签名与主接口逐字一致。
+4. 第一批只拆 workspace 组七个动作（最独立：不读项目内容、不写事件）。
+5. `bootstrap` / `registerWorkspace` 一并移到 helpers（切片与主 store 共用）。
+
+**验证**
+
+`workbench-store.ts` 7956 → **6690** 行（−1266，约 16%）。
+IR 260 / gateway 32 / pipeline 158 / web 1465（4 skipped）全过；`pnpm -r typecheck` 全过；
+`scout check` 全绿。行为零变化——所有测试原样通过。
+
+**边界**
+
+- store 相关文件变成四个（store / types / helpers / 一个切片）。
+- 还有 154 个 action 在 store 里；keyframe / script / cast 那几块耦合深得多。
+- `workbench-types.ts` 948 行，本身也不小。

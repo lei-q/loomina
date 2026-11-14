@@ -9,6 +9,12 @@
  */
 
 import type { ApprovalTargetType, Project, ProjectEvent, TimelineItem } from "@loomina/ir";
+import {
+  hasWorkspaces,
+  listWorkspaces,
+  saveWorkspace,
+  type WorkspaceMeta,
+} from "./event-log";
 import { toStageView, type RemovalKind } from "./read-model";
 
 /**
@@ -173,4 +179,41 @@ export function removalUndoEvents(
   }
 
   return focusShotId ? { written, focusShotId } : { written };
+}
+
+/** 新项目的第一条事件：一条 `project.created`，日期固定以便回放稳定 */
+export function bootstrap(project: Project): ProjectEvent[] {
+  return [
+    {
+      type: "project.created",
+      at: "2026-11-10T00:00:00+08:00",
+      project,
+    },
+  ];
+}
+
+/**
+ * 把当前工作空间登记进本机的列表（第一次打开老日志时也走这里）。
+ *
+ * 收 `set` 而不是直接 import store：hydrate 与 createWorkspace 都要用，
+ * 而它们分处两个文件，传进来才不会形成循环。
+ */
+export async function registerWorkspace(
+  id: string,
+  name: string,
+  set: (partial: { workspaces: WorkspaceMeta[] }) => void,
+): Promise<void> {
+  if (!hasWorkspaces()) return;
+  try {
+    const now = new Date().toISOString();
+    const existing = (await listWorkspaces()).find((item) => item.id === id);
+    await saveWorkspace(
+      existing
+        ? { ...existing, name: existing.name || name, lastOpenedAt: now }
+        : { id, name, createdAt: now, lastOpenedAt: now },
+    );
+    set({ workspaces: await listWorkspaces() });
+  } catch {
+    // 列表读不到不影响编辑：顶栏最多显示不出别的空间
+  }
 }
