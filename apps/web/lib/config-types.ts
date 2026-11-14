@@ -33,7 +33,12 @@ export const SEED_MODELS: Record<Modality, string | undefined> = {
   asr: undefined,
 };
 
-export type VideoApiName = "treecloud" | "litellm";
+/**
+ * 视频接口族（model_adapter 概念）：**类型本身归 gateway**，这里只转出去。
+ * web 的配置层要用它，但重复定义一份迟早会与 gateway 的实际适配器分叉。
+ */
+import type { VideoApiName } from "@loomina/gateway";
+export type { VideoApiName };
 
 export type ProviderRecord = {
   id: string;

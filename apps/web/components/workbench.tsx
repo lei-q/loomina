@@ -68,7 +68,7 @@ export function Workbench() {
   useEffect(() => {
     void hydrate();
     // 首帧与视频的价目同样来自服务端：进页面问一次，用来标价并在提交前拦超预算
-    void fetchPrice().then((price) => {
+    void fetchPrice(project.models).then((price) => {
       if (!price) return;
       setImagePrice(price);
       if (price.video) setVideoPrice(price.video);

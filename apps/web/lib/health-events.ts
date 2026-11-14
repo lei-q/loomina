@@ -1,6 +1,6 @@
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { projectRoot } from "./app-config";
+import { projectRoot } from "./project-root";
 import type { HealthAlert } from "./alerts";
 import { MODALITIES, MODALITY_LABEL, type Modality } from "./config-types";
 

@@ -18,6 +18,7 @@ import {
   type StorageRecord,
   type VideoApiName,
 } from "@/lib/config-types";
+import { projectRoot } from "@/lib/project-root";
 import { envPath } from "@/lib/server-env";
 import { publicStorageOf, resolveStorage } from "@/lib/storage-config";
 
@@ -29,17 +30,12 @@ import { publicStorageOf, resolveStorage } from "@/lib/storage-config";
  * 没有配置文件时从 secrity.env 生成一个临时视图，第一次保存才落盘。
  */
 
+// 路径判断单独放一个纯模块：assets / render 只为拿一个路径，不该引整个配置
+export { projectRoot };
+
 const MAX_PROVIDERS = 20;
 const MAX_MODELS = 100;
 const MAX_KEY = 500;
-
-export function projectRoot(): string {
-  const cwd = process.cwd();
-  if (existsSync(path.join(/* turbopackIgnore: true */ cwd, "apps", "web"))) return cwd;
-  const up = path.resolve(/* turbopackIgnore: true */ cwd, "..", "..");
-  if (existsSync(path.join(/* turbopackIgnore: true */ up, "apps", "web"))) return up;
-  return cwd;
-}
 
 export function configFilePath(): string {
   const override = process.env.LOOMINA_CONFIG?.trim();

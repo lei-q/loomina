@@ -1,11 +1,11 @@
 "use client";
 
-import type { ImagePrice } from "@/lib/generate-image";
+import type { ImageQuote } from "@/lib/generate-image";
+import type { ModelPins } from "@loomina/ir";
 import type { VideoPriceInfo } from "@/lib/generate-video";
 import { modelIdFor } from "@/lib/model-choice";
-import { useWorkbench } from "@/lib/workbench-store";
 
-export type PriceInfo = ImagePrice & {
+export type PriceInfo = ImageQuote & {
   /** 出视频的价目（ADR-0083）；服务端没给这一层就当作不知道 */
   video?: VideoPriceInfo;
 };
@@ -18,9 +18,15 @@ export type PriceInfo = ImagePrice & {
  */
 const pending = new Map<string, Promise<PriceInfo | null>>();
 
-export function fetchPrice(): Promise<PriceInfo | null> {
+/**
+ * 问一次服务端的价目。
+ *
+ * `pins` 由调用方传进来（项目固定的模型，H22）——这个模块不该反向依赖工作台 store：
+ * 它是叶子，读一个字段就够，把整个 store 拉进来会让 assets / governance / models
+ * 之间的依赖绕成环（M4）。
+ */
+export function fetchPrice(pins?: ModelPins): Promise<PriceInfo | null> {
   // 项目固定了模型就用固定的（H22）；没固定才看这台浏览器的选择
-  const pins = useWorkbench.getState().project.models;
   const imageModelId = modelIdFor("image", pins) ?? "";
   const videoModelId = modelIdFor("video", pins) ?? "";
   const key = `${imageModelId}|${videoModelId}`;
@@ -44,6 +50,6 @@ export function fetchPrice(): Promise<PriceInfo | null> {
   return request;
 }
 
-export function fetchImagePrice(): Promise<ImagePrice | null> {
-  return fetchPrice();
+export function fetchImagePrice(pins?: ModelPins): Promise<ImageQuote | null> {
+  return fetchPrice(pins);
 }

@@ -9,7 +9,7 @@
  * 不需要把编译结果存进 IR。
  */
 
-import type { Look } from "@loomina/ir";
+import { DEFAULT_LOOK, type Look } from "@loomina/ir";
 
 /** 风格预设：一条片子的整体质感取向 */
 export type LookPreset = {
@@ -86,15 +86,7 @@ const TEXTURE_CN: Record<Look["texture"], string> = {
 /** 没有选预设时的兜底：与 ADR-0029 以来每一份提示词的最后一句一致 */
 export const DEFAULT_LOOK_LINE = "竖屏 9:16，实拍电影质感，自然光，轻微胶片颗粒";
 
-/** 一项都没改的 look：`ProjectSchema` 的默认值就是它 */
-const DEFAULT_LOOK: Look = {
-  presetId: "",
-  contrast: "balanced",
-  temperature: "neutral",
-  texture: "grain",
-  aspect: "9:16",
-  note: "",
-};
+/** 一项都没改的 look：直接用 IR 的默认值，不在两个包里各写一份 */
 
 /**
  * 参数 → 提示词最后一句。

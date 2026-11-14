@@ -1,6 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { projectRoot } from "./app-config";
+import { projectRoot } from "./project-root";
 
 /**
  * S1 能力测绘报告（H16）。

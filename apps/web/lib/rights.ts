@@ -21,8 +21,6 @@ export const RIGHTS_KIND_LABEL: Record<RightsRecord["kind"], string> = {
   other: "其他",
 };
 
-export const RIGHTS_KINDS = ["portrait", "voice", "asset", "music", "other"] as const;
-
 /** 一条授权是不是已经过期（到期日为空表示不限期） */
 export function isExpired(record: RightsRecord, today: string): boolean {
   const expiry = record.expiresAt.trim();

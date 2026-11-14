@@ -1694,7 +1694,7 @@ export function CastScreen() {
   useEffect(() => {
     void hydrate();
     // 单价在服务端：进页面问一次，用来显示"这一格多少钱"并在提交前拦超预算
-    void fetchImagePrice().then((price) => {
+    void fetchImagePrice(project.models).then((price) => {
       if (price) setImagePrice(price);
     });
   }, [hydrate, setImagePrice, project.models?.image]);

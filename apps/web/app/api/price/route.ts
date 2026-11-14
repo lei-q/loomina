@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { ConfigError } from "@loomina/gateway";
-import { imagePrice } from "@/lib/generate-image";
+import { imageQuoteOf } from "@/lib/generate-image";
 import { videoPriceInfo } from "@/lib/generate-video";
 
 /**
@@ -19,7 +19,7 @@ export async function GET(request: Request) {
   const videoModelId = url.searchParams.get("videoModelId") ?? undefined;
   try {
     return NextResponse.json({
-      ...(await imagePrice(imageModelId)),
+      ...(await imageQuoteOf(imageModelId)),
       video: await videoPriceInfo(videoModelId),
     });
   } catch (error) {

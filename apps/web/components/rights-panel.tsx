@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { Project, RightsRecord, RightsRecordInput } from "@loomina/ir";
+import { RIGHTS_KINDS, type Project, type RightsRecord, type RightsRecordInput } from "@loomina/ir";
 import {
-  RIGHTS_KINDS,
   RIGHTS_KIND_LABEL,
   isExpired,
   rightsReport,

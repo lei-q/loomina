@@ -72,8 +72,14 @@ export type GeneratedImage = {
   };
 };
 
-/** 提示词与占位 shotId 都按资产语义走，不按"这一格是哪个角色的"走。 */
-export type ImagePrice = {
+/**
+ * 出图报价（H4）：读本机配置后给出的「这个模型现在多少钱一张」。
+ *
+ * 与 gateway 的 `imagePrice(model)` 不是同一件事：那边只查静态价目表，
+ * 这里先解析当前配置（可能带作者填的自定义单价），所以是异步的、带 `modelId`。
+ * 名字里带 `Quote` 是为了不与 gateway 那个纯查表函数混为一谈。
+ */
+export type ImageQuote = {
   model: string;
   /** 价目表里的单价（元 / 张）；没有这个模型就不给 */
   cny?: number;
@@ -85,7 +91,7 @@ export type ImagePrice = {
  * 当前出图模型的价目（元 / 张），给"提交前报价"用：只读配置与价目表，
  * 不调接口、不花钱。价目表里没有这个模型时 `cny` 缺省——报不出的价不编造。
  */
-export async function imagePrice(modelId?: string): Promise<ImagePrice> {
+export async function imageQuoteOf(modelId?: string): Promise<ImageQuote> {
   const { model } = await resolveModel("image", modelId);
   return {
     model: model.model,

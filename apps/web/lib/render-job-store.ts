@@ -2,7 +2,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { RenderManifest } from "@/lib/render-manifest";
 import type { LoudnessReport } from "@/lib/render-audio";
-import { projectRoot } from "@/lib/app-config";
+import { projectRoot } from "@/lib/project-root";
 
 /**
  * 渲染队列的落盘（H2）。

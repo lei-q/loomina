@@ -43,7 +43,14 @@ const IDEAS = [
   "新来的保洁阿姨，一眼看出豪门太太的玉镯是假的。",
 ] as const;
 
-const MOVE_CN: Record<StoryDraft["scenes"][number]["shots"][number]["movement"], string> = {
+/**
+ * 剧本页表格里用的**短词**机位运动名。
+ *
+ * 与 `packages/pipeline` 的 `MOVE_CN`（提示词里的长说法：「缓缓推近」）不是同一份：
+ * 这里是表格单元格，要短；那边是拼进提示词的一句话，要自然。
+ * 共用同一个名字会被当成重复实现，所以叫 `MOVE_SHORT_CN`。
+ */
+const MOVE_SHORT_CN: Record<StoryDraft["scenes"][number]["shots"][number]["movement"], string> = {
   static: "固定",
   push: "推近",
   pull: "拉远",
@@ -1176,7 +1183,7 @@ export function StoryScreen() {
                                 </p>
                                 <p className="tnum mt-1 text-[9px] tracking-[.03em] text-muted-2">
                                   {SHOT_SIZE_CN[shot.shotSize]} · {SHOT_ANGLE_CN[shot.angle]} ·{" "}
-                                  {MOVE_CN[shot.movement]} · {shot.focalMm}mm ·{" "}
+                                  {MOVE_SHORT_CN[shot.movement]} · {shot.focalMm}mm ·{" "}
                                   {(durationMs / 1000).toFixed(1)}s
                                   {shot.characterNames.length > 0 &&
                                     ` · ${shot.characterNames.join("、")}`}

@@ -10,6 +10,8 @@ import {
   GradeSchema,
   LightingSchema,
   LookSchema,
+  MUST_NOT_CHANGE_COUNT_MAX,
+  MUST_NOT_CHANGE_MAX,
   PerformanceSpecSchema,
   placementProblem,
   ProjectSchema,
@@ -1174,12 +1176,6 @@ const CHARACTER_APPEARANCE_MAX = 200;
 
 /** 道具描述的上限：同样会整句进提示词（ADR-0072） */
 const PROP_DESCRIPTION_MAX = 200;
-
-/** 「不许变」单条上限：整句进提示词，太长会把镜头指令挤掉（ADR-0074） */
-const MUST_NOT_CHANGE_MAX = 60;
-
-/** 「不许变」条数上限：同上（ADR-0074） */
-const MUST_NOT_CHANGE_COUNT_MAX = 20;
 
 /** 手挂参考图的地址上限：data URI 可能很长，留到 400 KB（ADR-0079） */
 const REFERENCE_URI_MAX = 400_000;
