@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { HealthPanel } from "@/components/health-panel";
 import { Logomark } from "@/components/icons";
 import { SharedSkillPicker } from "@/components/shared-skill-picker";
+import { ShotTemplateSection } from "@/components/shot-template-section";
 import {
   MODALITIES,
   MODALITY_HINT,
@@ -982,6 +983,7 @@ export function SettingsScreen() {
         />
 
         <TemplateSection readOnly={Boolean(readOnly)} />
+        <ShotTemplateSection readOnly={Boolean(readOnly)} />
         <SkillsSection readOnly={Boolean(readOnly)} />
 
         <DataSection

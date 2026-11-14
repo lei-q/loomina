@@ -107,6 +107,11 @@ import { buildHistory, historyPosition, nextUndo } from "@/lib/history";
 import { sceneImportEvents, sceneReadiness } from "@/lib/shared-scenes";
 import { storyImportPatch } from "@/lib/shared-stories";
 import { replayRestore, scriptRestoreEvents, scriptVersionsOf } from "@/lib/script-versions";
+import {
+  sanitizeShotTemplate,
+  shotTemplatePatch,
+  type ShotTemplate,
+} from "@/lib/shot-template";
 import { storyRestorePatch, storyVersionsOf } from "@/lib/story-versions";
 import { takeFromLog, voiceTakeFromLog } from "@/lib/trash";
 import { sharedEntityImport, type SharedEntity } from "@/lib/shared-entities";
@@ -537,6 +542,13 @@ type WorkbenchState = {
    * `null` 表示明确硬接。开头那一镜没有上一段，拒绝。
    */
   setShotContinuation: (shotId: string, tailMs: number | null) => boolean;
+  /**
+   * 套一份镜头模板（F3 / ADR-0207）：一条 `shot.updated`，只换摄影做法。
+   *
+   * 写景别 / 机位三参数 / 可选光影与构图；动作、台词、时长、出场人物与道具不动。
+   * 锁定的镜头拒绝；模板里没有的光影 / 构图不清空这一镜原来的。
+   */
+  applyShotTemplate: (shotId: string, template: ShotTemplate) => boolean;
   /** 这一镜里谁出场：一条 `shot.updated { characterIds }`（ADR-0065） */
   toggleShotCharacter: (shotId: string, characterId: string) => boolean;
   /** 道具出场：点一下把这件道具加进或移出这一镜（ADR-0066） */
@@ -2473,6 +2485,35 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       return false;
     }
     const patch = shotLanguagePatch(language, shot);
+    const event: ProjectEvent = { type: "shot.updated", at: stamp(), shotId: shot.id, patch };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  applyShotTemplate: (shotId, template) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const shot = project.shots.find((item) => item.id === shotId);
+    if (!shot) {
+      set({ castError: "找不到这一镜。" });
+      return false;
+    }
+    if (shot.locked) {
+      set({ castError: "这一镜已锁定，先解锁再套模板。" });
+      return false;
+    }
+    // 机位坐标（B13）不跟着模板走：那是摆位事实，不是拍法
+    const patch: Partial<Shot> = {
+      ...shotTemplatePatch(sanitizeShotTemplate(template)),
+      camera: {
+        ...shot.camera,
+        ...shotTemplatePatch(sanitizeShotTemplate(template)).camera!,
+      },
+    };
     const event: ProjectEvent = { type: "shot.updated", at: stamp(), shotId: shot.id, patch };
     set({
       project: applyEvent(project, event),
