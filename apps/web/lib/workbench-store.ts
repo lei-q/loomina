@@ -106,6 +106,9 @@ import { instructionsOf, performanceOf } from "@/lib/voice-performance";
 import { buildHistory, historyPosition, nextUndo } from "@/lib/history";
 import { sceneImportEvents, sceneReadiness } from "@/lib/shared-scenes";
 import { storyImportPatch } from "@/lib/shared-stories";
+import type { CastImageRequest } from "@/lib/generate-image";
+import { findCachedAsset, referenceHashesOf, reuseAssetEvents } from "@/lib/generation-cache";
+import { imagePlanOf } from "@/lib/image-plan";
 import { replayRestore, scriptRestoreEvents, scriptVersionsOf } from "@/lib/script-versions";
 import {
   sanitizeShotTemplate,
@@ -177,6 +180,27 @@ function persistMode(mode: WorkbenchMode): void {
   }
 }
 
+/** 结果缓存开关（H14 / ADR-0208）：默认开着；关掉就每次都真去生成 */
+const CACHE_KEY = "loomina.reuseCache";
+
+function storedReuseCache(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    return window.localStorage.getItem(CACHE_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+
+function persistReuseCache(on: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(CACHE_KEY, on ? "on" : "off");
+  } catch {
+    // 隐私模式写不进就不记：这次切换照常生效
+  }
+}
+
 export type Decision = "approved" | "rejected";
 
 /** 故事层可改的字段（A16）；与 `story.updated` 的 patch 同一形状 */
@@ -200,6 +224,18 @@ function withPromptOverride(
 ): { prompt?: string } {
   const prompt = get().promptOverrides[key]?.trim();
   return prompt ? { prompt } : {};
+}
+
+/** 这次生成的提示词覆盖键（H14）：与各生成动作传给 `withPromptOverride` 的键一一对应 */
+function promptKeyOf(input: { key: string; job: GenerateJob }): string {
+  if (input.job.kind === "sheet") return `sheet:${input.key}:${input.job.angle}`;
+  if (input.job.kind === "master") return `master:${input.key}`;
+  if (input.job.kind === "prop") return `prop:${input.key}`;
+  if (input.job.kind === "keyframe") {
+    // 关键帧的进度键是 `${shotId}:${frame}`，提示词键是 `keyframe:${shotId}:${frame}`
+    return `keyframe:${input.key}`;
+  }
+  return `other:${input.key}`;
 }
 
 /**
@@ -347,6 +383,13 @@ type WorkbenchState = {
   setPromptOverride: (key: string, value: string | null) => void;
   /** 当前出图模型的单价（元 / 张）。由服务端价目接口给，不知道就不拦（ADR-0035） */
   imageCny?: number;
+  /**
+   * 结果缓存（H14 / ADR-0208）：同一套输入已经出过的图，直接复用不再花钱。
+   * 存在 localStorage，跨页面生效；关掉之后每次都真去生成。
+   */
+  reuseCache: boolean;
+  /** 开关结果缓存；关掉时界面上要能看出「这次会真花钱」 */
+  setReuseCache: (on: boolean) => void;
   /** 当前出视频模型的单价（元 / 秒）。同上：不知道就不拦（ADR-0083） */
   videoCnyPerSecond?: number;
   /**
@@ -1262,7 +1305,7 @@ async function generateOne(
      * 只传地址与标签：字节由服务端从资产库读，浏览器不重复上传。
      * 不传就是纯文生图——这和以前一样，不改任何已有路径的行为。
      */
-    references?: { assetId: string; uri: string; label: string }[];
+    references?: { assetId: string; uri?: string; label: string }[];
   },
 ): Promise<boolean> {
   const setJob = (value: GenerateJob | undefined) =>
@@ -1298,6 +1341,53 @@ async function generateOne(
         });
         return false;
       }
+    }
+  }
+
+  // 结果缓存（H14 / ADR-0208）：同一套输入（模型 + 最终提示词 + 参考图内容）
+  // 已经出过，就直接把那张图接到这一格的资产位上——不发请求、不花钱。
+  // 提示词用与服务端同一个 `imagePlanOf`：两边各写一遍就会漂。
+  if (get().reuseCache) {
+    const plan = imagePlanOf(input.body as unknown as CastImageRequest);
+    const prompt = withPromptOverride(get, promptKeyOf(input)).prompt ?? plan.prompt;
+    // 参考图按内容指纹比，id 列表与出处里记的 `referenceAssetIds` 完全一致：
+    // 两侧用不同的列表，等于把「同一套输入」判成两套（这里踩过一次）
+    const referenceHashes = referenceHashesOf(
+      get().project,
+      input.referenceAssetIds ?? [],
+    );
+    // 模型可能没被固定 / 选定（服务端会用该模态的默认模型）。
+    // 这种情况下键里用空串占位：只要两次都是「没选模型」，用的就是同一个默认模型。
+    const imageModel = modelIdFor("image", get().project.models) ?? "";
+    // 不排除这一格自己：重生成时「这一格上一次出的图」正是要复用的对象，
+    // 输入没变就该命中它（排除自己会让缓存永不命中）
+    const hit = findCachedAsset(get().project, {
+      modelId: imageModel,
+      prompt,
+      referenceHashes,
+    });
+    if (hit) {
+      const at = stamp();
+      const events = reuseAssetEvents({
+        assetId: input.assetId,
+        hit,
+        at,
+        referenceAssetIds: input.referenceAssetIds ?? [],
+      });
+      const extra = input.after?.(input.assetId, at);
+      const appended = [
+        ...events,
+        ...(extra === undefined ? [] : Array.isArray(extra) ? extra : [extra]),
+      ];
+      let project = get().project;
+      for (const item of appended) project = applyEvent(project, item);
+      set({
+        project,
+        events: [...get().events, ...appended],
+        castError: undefined,
+        generationNotice: `复用了同一套输入已经出过的那张图（模型 ${hit.modelId}）：没有重新生成，也没花钱。想换一张就关掉「结果复用」再生成。`,
+      });
+      return true;
     }
   }
 
@@ -1628,6 +1718,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
   currentShotId: initialShotId,
   jobs: {},
   mode: storedMode(),
+  reuseCache: storedReuseCache(),
   promptOverrides: {},
 
   hydrate: async () => {
@@ -1667,6 +1758,11 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       set({ storageError: storageMessage(error) });
     }
     ready = true;
+  },
+
+  setReuseCache: (on) => {
+    persistReuseCache(on);
+    set({ reuseCache: on });
   },
 
   setImagePrice: ({ cny }) => {

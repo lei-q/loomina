@@ -984,6 +984,7 @@ export function SettingsScreen() {
 
         <TemplateSection readOnly={Boolean(readOnly)} />
         <ShotTemplateSection readOnly={Boolean(readOnly)} />
+        <ReuseCacheSection />
         <SkillsSection readOnly={Boolean(readOnly)} />
 
         <DataSection
@@ -1244,6 +1245,45 @@ function fmtBytes(bytes: number): string {
 
 function modelIdValid(model: ModelDraft): boolean {
   return Boolean(model.providerId && model.model.trim());
+}
+
+/**
+ * 结果缓存（H14 / ADR-0208）。
+ *
+ * 同一套输入（模型 + 最终提示词 + 参考图内容）已经出过的图，默认直接复用，
+ * 不再花钱。关掉之后每次都真去生成——换一张、抽卡时要关。
+ */
+function ReuseCacheSection() {
+  const reuseCache = useWorkbench((state) => state.reuseCache);
+  const setReuseCache = useWorkbench((state) => state.setReuseCache);
+  return (
+    <section className="mt-9 border-t border-line pt-5" aria-label="结果缓存">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-[12px] tracking-[.04em]">结果缓存</h2>
+          <span className="tnum text-[9px] text-muted-2">H14</span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setReuseCache(!reuseCache)}
+          className={cn(
+            "rounded-token border px-2 py-0.5 text-[9.5px] transition-colors duration-[var(--dur)]",
+            reuseCache
+              ? "border-pick/60 text-pick"
+              : "border-line text-muted-2 hover:border-line-2 hover:text-text",
+          )}
+        >
+          {reuseCache ? "开着：输入没变就复用" : "关着：每次都真去生成"}
+        </button>
+      </div>
+      <p className="mt-1 max-w-[640px] text-[9.5px] leading-[1.7] text-muted-2">
+        同一套输入（模型 + 最终提示词 + 参考图内容）已经出过的图，生成时直接用那一张：
+        不重新生成、不花钱，资产记「素材库」来源并保留当初的溯源。
+        想换一张、抽卡，或改了参考图但提示词没变时，把它关掉再生成。
+        这个开关只存在这台浏览器，不进项目日志。
+      </p>
+    </section>
+  );
 }
 
 /**
