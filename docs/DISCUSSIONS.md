@@ -7711,3 +7711,32 @@ IR 260 / gateway 32 / pipeline 150 / web 1418（4 skipped）全过；`pnpm -r ty
 - 每条对白一个 aecho 实例，渲染 CPU 略增。
 - 仍是 `aecho` 近似，不是真实房间脉冲响应。
 - 片尾混响尾巴会被统一 atrim 截断。
+
+## 第二百四十八次 · 2026-11-14 · 评测集补齐 should 规则（I9 第二档 / ADR-0228）
+
+**问题**
+
+评测集只覆盖 6 条 must 规则。should 规则不拦导出，但**方向写反会让作者被误报淹没**——
+「狼来了」几次之后整张检查表就没人看了。V8 / V9 还需要 `analyzeStoryboard` 的外部参数
+（报价、模型是否收尾帧），原来的 `EvalCase` 没传 options 的口子。
+
+**结论**
+
+1. `EvalCase` 增加 `options?: StoryboardOptions`，`runCase` 透传。
+2. 六条 should 规则各配一正一反，用例从 12 涨到 24，**12 条规则全覆盖**。
+3. 报告增加 `optionalMissing`：should / may 缺用例单独列、不阻塞。
+4. 补用例时踩到一个隐含约束——**首镜目的恒为 `hook`**，所以钩子拍要有信息镜，
+   得再放一个非首镜的全景（推断为 establish）才行。
+
+**验证**
+
+`pnpm eval:rules`：24 条用例全过，覆盖 12 条规则，违规率 33.33 / 100 镜，
+景别熵 1.556 bit（共 74 镜）。`rule-eval.test.ts` 断言从「6 条 must 覆盖」
+改成「12 条全覆盖 + optionalMissing 为空」。
+IR 260 / gateway 32 / pipeline 150 / web 1418（4 skipped）全过；`pnpm -r typecheck` 全过。
+
+**边界**
+
+- 仍只验方向、不验阈值：V7 的「3.5 秒」「1.6 倍」没有标定。
+- V12 只覆盖「书架正好挡在视线上」一种情形。
+- 用例都是构造的小样本，不代表真实片子分布。

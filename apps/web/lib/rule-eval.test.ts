@@ -42,16 +42,13 @@ describe("规则评测集（I9 / ADR-0224）", () => {
     }
   });
 
-  it("must 规则都有用例覆盖", () => {
+  it("12 条规则（must + should）全部有用例", () => {
     const report = runEvalSuite(EVAL_CASES);
-    const mustRules = DIRECTOR_RULES.filter((rule) => rule.priority === "must").map(
-      (rule) => rule.id,
-    );
-    // 六条 must（V1/V2/V3/V4/V6/V11）都有正反例；缺口为空
-    expect(report.summary.rulesCovered).toBe(6);
+    const allRules = DIRECTOR_RULES.map((rule) => rule.id);
+    expect(report.summary.rulesCovered).toBe(allRules.length);
     expect(report.summary.rulesMissing).toEqual([]);
-    // 覆盖数不超过 must 总数
-    expect(report.summary.rulesCovered).toBeLessThanOrEqual(mustRules.length);
+    // should / may 也不再缺席
+    expect(report.summary.optionalMissing).toEqual([]);
   });
 
   it("指标算得出来：违规率、景别熵、镜头总数", () => {
@@ -91,7 +88,7 @@ describe("规则评测集（I9 / ADR-0224）", () => {
     expect(text).toContain("评测集");
     expect(text).toContain("条用例");
     // 全覆盖时不写缺口那句
-    expect(text).not.toContain("must 但还没有用例");
+    expect(text).not.toContain("还没有用例");
     expect(text).toContain("景别熵");
   });
 });

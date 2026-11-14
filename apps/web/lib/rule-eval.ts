@@ -16,7 +16,12 @@
  */
 
 import { ProjectSchema, type Project } from "@loomina/ir";
-import { analyzeStoryboard, type StoryboardIssue, type StoryboardRule } from "./storyboard";
+import {
+  analyzeStoryboard,
+  type StoryboardIssue,
+  type StoryboardOptions,
+  type StoryboardRule,
+} from "./storyboard";
 import { DIRECTOR_RULES } from "./director-grammar";
 
 export const EVAL_SET_VERSION = "2026-11";
@@ -35,6 +40,8 @@ export type EvalCase = {
   expect?: StoryboardRule[];
   /** 额外期望：这些规则不该出现在结果里 */
   forbid?: StoryboardRule[];
+  /** 有些规则要外部输入才判（V8 预算、V9 尾帧能力） */
+  options?: StoryboardOptions;
 };
 
 export type EvalCaseResult = {
@@ -59,6 +66,8 @@ export type EvalReport = {
     rulesCovered: number;
     /** 有 must 规则但一条用例都没有的 */
     rulesMissing: StoryboardRule[];
+    /** should / may 规则里还没有用例的（不阻塞，但值得补） */
+    optionalMissing: StoryboardRule[];
   };
   /** 指标（DIRECTOR-GRAMMAR.md §十一） */
   metrics: {
@@ -75,9 +84,13 @@ const MUST_RULES: StoryboardRule[] = DIRECTOR_RULES.filter(
   (rule) => rule.priority === "must",
 ).map((rule) => rule.id as StoryboardRule);
 
+const OPTIONAL_RULES: StoryboardRule[] = DIRECTOR_RULES.filter(
+  (rule) => rule.priority !== "must",
+).map((rule) => rule.id as StoryboardRule);
+
 /** 跑一条用例 */
 export function runCase(testCase: EvalCase): EvalCaseResult {
-  const report = analyzeStoryboard(testCase.project);
+  const report = analyzeStoryboard(testCase.project, testCase.options ?? {});
   const hit = [...new Set(report.issues.map((issue: StoryboardIssue) => issue.rule))];
   const problems: string[] = [];
 
@@ -138,6 +151,7 @@ export function runEvalSuite(cases: EvalCase[]): EvalReport {
   const results = cases.map(runCase);
   const covered = new Set(results.map((result) => result.rule));
   const rulesMissing = MUST_RULES.filter((rule) => !covered.has(rule));
+  const optionalMissing = OPTIONAL_RULES.filter((rule) => !covered.has(rule));
   const shots = cases.reduce((sum, testCase) => sum + testCase.project.shots.length, 0);
 
   // 违规率：反例用例里该规则命中数 / 总镜头数 × 100
@@ -159,6 +173,7 @@ export function runEvalSuite(cases: EvalCase[]): EvalReport {
       failed: results.filter((result) => !result.passed).length,
       rulesCovered: covered.size,
       rulesMissing,
+      optionalMissing,
     },
     metrics: {
       violationRatePer100,
@@ -172,11 +187,17 @@ export function runEvalSuite(cases: EvalCase[]): EvalReport {
 export function evalText(report: EvalReport): string {
   const { summary, metrics } = report;
   const base = `评测集 ${report.version}：${summary.cases} 条用例，${summary.passed} 过 ${summary.failed} 失败；覆盖 ${summary.rulesCovered} 条规则`;
-  const gaps =
+  const gaps = [
     summary.rulesMissing.length > 0
-      ? `；${summary.rulesMissing.join(" / ")} 是 must 但还没有用例`
-      : "";
-  return `${base}${gaps}。违规率 ${metrics.violationRatePer100} / 100 镜，景别熵 ${metrics.shotSizeEntropy} bit（共 ${metrics.shots} 镜）。`;
+      ? `${summary.rulesMissing.join(" / ")} 是 must 但还没有用例`
+      : "",
+    summary.optionalMissing.length > 0
+      ? `${summary.optionalMissing.join(" / ")} 是 should / may，还没有用例`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("；");
+  return `${base}${gaps ? `；${gaps}` : ""}。违规率 ${metrics.violationRatePer100} / 100 镜，景别熵 ${metrics.shotSizeEntropy} bit（共 ${metrics.shots} 镜）。`;
 }
 
 type ShotPatch = Partial<Project["shots"][number]>;
@@ -363,6 +384,228 @@ export const EVAL_CASES: EvalCase[] = [
     ]),
   },
 ];
+
+// 以下六条是 should 规则（V5 / V7 / V8 / V9 / V10 / V12）：同样一正一反。
+// 它们不拦导出，但方向写反会让作者被误报淹没。
+{
+  // 共用的表演字段：V10 只查有没有 objective，给了就不报
+  const performed = {
+    performance: {
+      objective: "要她留下",
+      emotion: { surface: "", subtext: "" },
+      beats: [],
+      gaze: { target: "character" as const, targetId: "c-b", direction: "left" as const },
+      intensity: 3,
+      avoid: [],
+    },
+  };
+
+  EVAL_CASES.push(
+    // V5 每拍信息 + 情绪：同一拍里要有信息镜与情绪镜
+    {
+      id: "V5-positive",
+      what: "每一拍里都既有信息镜（中景台词）也有情绪镜（特写）",
+      rule: "V5",
+      kind: "positive",
+      project: makeProject(
+        [
+          // 首镜恒为 hook 目的，所以要靠后两镜凑出「信息 + 情绪」
+          { shotSize: "wide", beat: "hook", ...performed },
+          { shotSize: "medium", beat: "hook", dialogueIds: ["d-1"], ...performed },
+          { shotSize: "close", beat: "hook", dialogueIds: ["d-2"], ...performed },
+          { shotSize: "medium", beat: "endHook", dialogueIds: ["d-3"], ...performed },
+          { shotSize: "close", beat: "endHook", dialogueIds: ["d-4"], ...performed },
+        ],
+        [
+          line("d-1", "c-a", "你走吧"),
+          line("d-2", "c-a", "我不走"),
+          line("d-3", "c-a", "门没关"),
+          line("d-4", "c-a", "留着吧"),
+        ],
+      ),
+    },
+    {
+      id: "V5-negative",
+      what: "钩子这一拍只有情绪镜、没有信息镜",
+      rule: "V5",
+      kind: "negative",
+      project: makeProject(
+        [
+          // 首镜 wide 让 V1 不报；钩子拍只有「hook 目的 + 特写情绪」→ 缺信息
+          { shotSize: "wide", beat: "hook", ...performed },
+          { shotSize: "close", beat: "hook", dialogueIds: ["d-1"], ...performed },
+          { shotSize: "medium", beat: "endHook", dialogueIds: ["d-2"], ...performed },
+          { shotSize: "close", beat: "endHook", dialogueIds: ["d-3"], ...performed },
+        ],
+        [
+          line("d-1", "c-a", "你走吧"),
+          line("d-2", "c-a", "门没关"),
+          line("d-3", "c-a", "留着吧"),
+        ],
+      ),
+    },
+
+    // V7 切率曲线：该碎的拍不能太长
+    {
+      id: "V7-positive",
+      what: "钩子拍平均两秒一镜：够碎，不报",
+      rule: "V7",
+      kind: "positive",
+      project: makeProject([
+        { shotSize: "wide", beat: "hook", durationMs: 2000, ...performed },
+        { shotSize: "medium", beat: "hook", durationMs: 2000, ...performed },
+        { shotSize: "close", beat: "hook", durationMs: 2000, ...performed },
+        { shotSize: "wide", beat: "endHook", durationMs: 2000, ...performed },
+      ]),
+    },
+    {
+      id: "V7-negative",
+      what: "钩子拍只有一镜、五秒：该碎不碎",
+      rule: "V7",
+      kind: "negative",
+      project: makeProject([
+        { shotSize: "wide", beat: "hook", durationMs: 5000, ...performed },
+        { shotSize: "close", beat: "endHook", durationMs: 2000, ...performed },
+      ]),
+    },
+
+    // V8 预算：整片重做一遍超过预算
+    {
+      id: "V8-positive",
+      what: "重做报价在预算内：不报",
+      rule: "V8",
+      kind: "positive",
+      project: makeProject([
+        { shotSize: "wide", beat: "hook", ...performed },
+        { shotSize: "close", beat: "endHook", ...performed },
+      ]),
+      options: { requoteCny: 20, budgetCny: 60 },
+    },
+    {
+      id: "V8-negative",
+      what: "重做报价超过预算：该报",
+      rule: "V8",
+      kind: "negative",
+      project: makeProject([
+        { shotSize: "wide", beat: "hook", ...performed },
+        { shotSize: "close", beat: "endHook", ...performed },
+      ]),
+      options: { requoteCny: 80, budgetCny: 60 },
+    },
+
+    // V9 尾帧能力：画了尾帧但模型只吃首帧
+    {
+      id: "V9-positive",
+      what: "模型收尾帧：画了尾帧也不报",
+      rule: "V9",
+      kind: "positive",
+      project: makeProject([
+        { shotSize: "wide", beat: "hook", ...performed },
+        {
+          shotSize: "close",
+          beat: "endHook",
+          keyframes: { lastAssetId: "a-last" },
+          ...performed,
+        },
+      ]),
+      options: { videoAcceptsLastFrame: true },
+    },
+    {
+      id: "V9-negative",
+      what: "模型只吃首帧、这一镜却画了尾帧：该报",
+      rule: "V9",
+      kind: "negative",
+      project: makeProject([
+        { shotSize: "wide", beat: "hook", ...performed },
+        {
+          shotSize: "close",
+          beat: "endHook",
+          keyframes: { lastAssetId: "a-last" },
+          ...performed,
+        },
+      ]),
+      options: { videoAcceptsLastFrame: false },
+    },
+
+    // V10 表演设计：有没有写 objective
+    {
+      id: "V10-positive",
+      what: "每镜都写了表演目标：不报",
+      rule: "V10",
+      kind: "positive",
+      project: makeProject([
+        { shotSize: "wide", beat: "hook", ...performed },
+        { shotSize: "close", beat: "endHook", ...performed },
+      ]),
+    },
+    {
+      id: "V10-negative",
+      what: "整片没有表演设计：该报",
+      rule: "V10",
+      kind: "negative",
+      project: makeProject([
+        { shotSize: "wide", beat: "hook" },
+        { shotSize: "close", beat: "endHook" },
+      ]),
+    },
+  );
+
+  // V12 需要地点几何与机位坐标，单独构造
+  const withGeometry = (
+    shots: Parameters<typeof makeProject>[0],
+    anchors: unknown[],
+  ) => {
+    const project = makeProject(shots);
+    project.locations[0]!.space = {
+      dimensions: [5, 4, 2.8],
+      anchors,
+    } as never;
+    return project;
+  };
+  const placed = (position: [number, number, number], target: [number, number, number]) => ({
+    angle: "eye" as const,
+    movement: "static" as const,
+    focalMm: 35,
+    placement: { position, target },
+  });
+  EVAL_CASES.push(
+    {
+      id: "V12-positive",
+      what: "视线没被挡住：不报",
+      rule: "V12",
+      kind: "positive",
+      project: withGeometry(
+        [
+          { shotSize: "wide", beat: "hook", ...performed },
+          { shotSize: "close", beat: "endHook", camera: placed([-2, 1.2, 0], [2, 1.2, 0]), ...performed },
+        ],
+        [],
+      ),
+    },
+    {
+      id: "V12-negative",
+      what: "书架正好挡在机位与目标之间：该报",
+      rule: "V12",
+      kind: "negative",
+      project: withGeometry(
+        [
+          { shotSize: "wide", beat: "hook", ...performed },
+          { shotSize: "close", beat: "endHook", camera: placed([-2, 1.2, 0], [2, 1.2, 0]), ...performed },
+        ],
+        [
+          {
+            id: "shelf",
+            kind: "furniture",
+            label: "书架",
+            position: [0, 1.8, 0],
+            facingRad: 0,
+            capacity: 0,
+          },
+        ],
+      ),
+    },
+  );
+}
 
 // V3 需要两个角色的走位数据，单独追加（数组字面量里塞不下这么多嵌套）
 {
