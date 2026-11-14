@@ -34,6 +34,7 @@ export function Workbench() {
   const setBudget = useWorkbench((state) => state.setBudget);
   const generateKeyframe = useWorkbench((state) => state.generateKeyframe);
   const instruct = useWorkbench((state) => state.instruct);
+  const instructScope = useWorkbench((state) => state.instructScope);
   const removeNote = useWorkbench((state) => state.removeNote);
   const setShotLock = useWorkbench((state) => state.setShotLock);
   const setShotBudget = useWorkbench((state) => state.setShotBudget);
@@ -43,6 +44,7 @@ export function Workbench() {
   const setShotLighting = useWorkbench((state) => state.setShotLighting);
   const setShotComposition = useWorkbench((state) => state.setShotComposition);
   const setShotContinuation = useWorkbench((state) => state.setShotContinuation);
+  const applyShotBatch = useWorkbench((state) => state.applyShotBatch);
   const setShotPerformance = useWorkbench((state) => state.setShotPerformance);
   const setShotStaging = useWorkbench((state) => state.setShotStaging);
   const setShotBlocking = useWorkbench((state) => state.setShotBlocking);
@@ -68,7 +70,7 @@ export function Workbench() {
   useEffect(() => {
     void hydrate();
     // 首帧与视频的价目同样来自服务端：进页面问一次，用来标价并在提交前拦超预算
-    void fetchPrice().then((price) => {
+    void fetchPrice(project.models).then((price) => {
       if (!price) return;
       setImagePrice(price);
       if (price.video) setVideoPrice(price.video);
@@ -326,6 +328,7 @@ export function Workbench() {
             onSelect={select}
             onDecide={decide}
             onInstruct={instruct}
+            onInstructScope={instructScope}
             onInstructWithModel={instructWithModel}
             instructBusy={instructionBusy}
             onSetLock={(locked) => setShotLock(view.shots[view.current]!.id, locked)}
@@ -412,6 +415,7 @@ export function Workbench() {
           onLighting={(shotId, lighting) => setShotLighting(shotId, lighting)}
           onComposition={(shotId, composition) => setShotComposition(shotId, composition)}
           onContinuation={(shotId, tailMs) => setShotContinuation(shotId, tailMs)}
+          onBatch={(sceneId, patch) => applyShotBatch(sceneId, patch)}
           onClose={() => setLanguageOpen(false)}
         />
       )}

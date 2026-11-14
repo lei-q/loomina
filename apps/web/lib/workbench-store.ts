@@ -10,6 +10,8 @@ import {
   GradeSchema,
   LightingSchema,
   LookSchema,
+  MUST_NOT_CHANGE_COUNT_MAX,
+  MUST_NOT_CHANGE_MAX,
   PerformanceSpecSchema,
   placementProblem,
   ProjectSchema,
@@ -68,6 +70,7 @@ import {
 } from "@loomina/ir";
 import {
   parseInstruction,
+  parseInstructionScope,
   previousShotOf,
   projectFromStoryDraft,
   projectFromVerbatimDocument,
@@ -152,7 +155,12 @@ import {
 import { modelIdFor } from "@/lib/model-choice";
 import type { Modality } from "@/lib/config-types";
 import { sampleProject } from "@/lib/sample-project";
-import { projectFromSetup } from "@/lib/workspace-template";
+import { projectFromSetup, setupSourceProblem } from "@/lib/workspace-template";
+import { batchPlanOf, type BatchPatch } from "@/lib/shot-batch";
+import {
+  workspaceExportFileName,
+  workspaceExportOf,
+} from "@/lib/workspace-export";
 import { stageMetaOf, stageSignature } from "@/lib/stage-flow";
 import {
   stageLockOf,
@@ -583,6 +591,13 @@ type WorkbenchState = {
     patch: { shotSize?: Shot["shotSize"]; angle?: Camera["angle"]; movement?: Camera["movement"]; focalMm?: number },
   ) => boolean;
   /**
+   * 按场批量套用摄影参数（I7 第三档）：一场一条事件一条事件地写。
+   *
+   * 锁定的镜跳过、已经是这样的镜不写。返回实际写了几条事件。
+   * 所有事件共用一个 `at`：整批是一次操作，撤销一步整批退回。
+   */
+  applyShotBatch: (sceneId: string, patch: BatchPatch) => number;
+  /**
    * 写这一镜的光影模板（I2）：一条 `shot.updated { lighting }`；
    * `undefined` 表示清空（沿用场景与风格给的光）。
    */
@@ -760,7 +775,19 @@ type WorkbenchState = {
    */
   updateMusic: (
     patch: Partial<
-      Pick<MusicCue, "gainDb" | "duckDb" | "ducking" | "mood" | "role" | "motifId" | "startMs" | "durationMs">
+      Pick<
+        MusicCue,
+        | "gainDb"
+        | "duckDb"
+        | "ducking"
+        | "mood"
+        | "role"
+        | "motifId"
+        | "startMs"
+        | "durationMs"
+        | "fadeInMs"
+        | "fadeOutMs"
+      >
     >,
     cueId?: string,
   ) => boolean;
@@ -783,7 +810,9 @@ type WorkbenchState = {
   }) => boolean;
   /** 调音效：起点 / 长度 / 增益 / 循环 / 类型；写一条 `timeline.sfx.updated` */
   updateSfx: (
-    patch: Partial<Pick<SfxCue, "gainDb" | "loop" | "role" | "startMs" | "durationMs">>,
+    patch: Partial<
+      Pick<SfxCue, "gainDb" | "loop" | "role" | "startMs" | "durationMs" | "fadeInMs" | "fadeOutMs">
+    >,
     cueId?: string,
   ) => boolean;
   /** 移掉音效：不给 id 就全部移掉；资产留在项目里 */
@@ -813,6 +842,14 @@ type WorkbenchState = {
   stopBatch: () => void;
   /** 一句话指令：查表翻成镜头补丁，写一条 shot.updated；没听懂返回 false（ADR-0039） */
   instruct: (text: string) => boolean;
+  /**
+   * 按作用域改（E11）：一句话可以落在这一镜 / 这一场 / 整片。
+   *
+   * 作用域从话里认（`parseInstructionScope`），认不出就按当前这一镜。
+   * 锁定的镜跳过；每镜各自算补丁（同一句话在不同镜上可能改不同的东西）。
+   * 整批共用一个 `at`：撤销一步整批退回。返回写了几条事件。
+   */
+  instructScope: (text: string) => number;
   /**
    * 规则表没听懂时，显式让文本模型再读一遍（H19 / ADR-0141）。
    * 只回一个补丁、只写一条事件；模型也读不出来就返回 false，不动 IR。
@@ -1014,6 +1051,23 @@ type WorkbenchState = {
    */
   deleteWorkspace: (id: string) => Promise<number | undefined>;
   /**
+   * 导出某个空间的完整事件日志（C15 / 删除前导出）。
+   *
+   * 删空间不可恢复，删之前至少能留个底。返回文件名与 JSON 文本，
+   * **下载由组件做**——store 不碰 DOM，这样这段逻辑可测。
+   * 空间不存在或读不出来时写 `workspaceError` 并返回 undefined。
+   */
+  exportWorkspace: (
+    id: string,
+  ) => Promise<{ fileName: string; json: string } | undefined>;
+  /**
+   * 一次删掉所有已归档的空间（C15 批量删除）。
+   *
+   * 只删归档的：正在打开的那个不可能归档，所以不会被误删。
+   * 返回删掉的空间数；一个都没有时返回 0 且不报错。
+   */
+  deleteArchivedWorkspaces: () => Promise<number>;
+  /**
    * 归档 / 取消归档一个工作空间（C15 / ADR-0210）：只改登记表里的 `archivedAt`。
    *
    * 归档 = 从主列表与跨空间取用清单里隐藏；日志、素材、连载归属都不动。
@@ -1174,12 +1228,6 @@ const CHARACTER_APPEARANCE_MAX = 200;
 
 /** 道具描述的上限：同样会整句进提示词（ADR-0072） */
 const PROP_DESCRIPTION_MAX = 200;
-
-/** 「不许变」单条上限：整句进提示词，太长会把镜头指令挤掉（ADR-0074） */
-const MUST_NOT_CHANGE_MAX = 60;
-
-/** 「不许变」条数上限：同上（ADR-0074） */
-const MUST_NOT_CHANGE_COUNT_MAX = 20;
 
 /** 手挂参考图的地址上限：data URI 可能很长，留到 400 KB（ADR-0079） */
 const REFERENCE_URI_MAX = 400_000;
@@ -2748,6 +2796,30 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       castError: undefined,
     });
     return true;
+  },
+
+  applyShotBatch: (sceneId, patch) => {
+    if (get().readOnly) return 0;
+    const plan = batchPlanOf(get().project, sceneId, patch);
+    if ("error" in plan || plan.changes.length === 0) {
+      if ("error" in plan) set({ castError: plan.error });
+      return 0;
+    }
+    const at = stamp();
+    let project = get().project;
+    const appended: ProjectEvent[] = [];
+    for (const change of plan.changes) {
+      const event: ProjectEvent = {
+        type: "shot.updated",
+        at,
+        shotId: change.shotId,
+        patch: change.next,
+      };
+      project = applyEvent(project, event);
+      appended.push(event);
+    }
+    set({ project, events: [...get().events, ...appended], castError: undefined });
+    return appended.length;
   },
 
   setShotLighting: (shotId, lighting) => {
@@ -4783,7 +4855,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       gainDb: -18,
       duckDb: 15,
       ducking: true,
-      loop: true,
+      loop: true, fadeInMs: 0, fadeOutMs: 0,
       role: "bed",
       licenseRef: licenseRef.trim().slice(0, 240),
     };
@@ -4952,7 +5024,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       startMs: start,
       durationMs: span,
       gainDb: -12,
-      loop: loopOn,
+      loop: loopOn, fadeInMs: 0, fadeOutMs: 0,
       role: role ?? "foley",
       licenseRef: licenseRef.trim().slice(0, 240),
     };
@@ -6411,10 +6483,19 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       const id = `w-${Date.now().toString(36)}`;
       const now = new Date().toISOString();
       let seed: Project;
+      let source: WorkspaceMeta | undefined;
       if (fromWorkspaceId) {
         // 照别的空间的设定开新一集：读它的日志、回放，再只搬设定（ADR-0197）
+        source = list.find((item) => item.id === fromWorkspaceId);
+        // 找不到 / 归档了都不建空间（C22 / ADR-0213）：判定与顶栏下拉共用一份
+        const problem = setupSourceProblem(list, fromWorkspaceId);
+        if (!source || problem) throw new Error(problem ?? "找不到这个来源空间。");
         const stored = migrateLog(await indexedDbLogFor(fromWorkspaceId).load());
         if (!stored) throw new Error("来源空间的日志读不出来。");
+        // 空日志没有 project.created，rebuild 会抛「事件日志为空」——那句话对作者没有意义
+        if (stored.length === 0) {
+          throw new Error(`「${source.name}」还没有任何内容，没有设定可以照。`);
+        }
         seed = ProjectSchema.parse(
           projectFromSetup(rebuild(stored), { id: `p-${id}`, title: name }),
         );
@@ -6425,9 +6506,6 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       await indexedDbLogFor(id).replace(bootstrap(seed));
       // 连载（A6 / ADR-0209）：照来源空间开工就继承它的系列并排到下一集；
       // 从零开工则自成一部剧的第一集。集序只是本机编排，不进事件日志。
-      const source = fromWorkspaceId
-        ? list.find((item) => item.id === fromWorkspaceId)
-        : undefined;
       const seriesId = source?.seriesId ?? source?.id ?? id;
       const episodeNo = fromWorkspaceId
         ? nextEpisodeNo(list, seriesId)
@@ -6525,6 +6603,49 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     } catch (error) {
       set({ workspaceError: error instanceof Error ? error.message : "工作空间没删掉。" });
       return undefined;
+    }
+  },
+
+  exportWorkspace: async (id) => {
+    if (!hasWorkspaces()) {
+      set({ workspaceError: "这个浏览器不支持多工作空间。" });
+      return undefined;
+    }
+    try {
+      const metas = await listWorkspaces();
+      const meta = metas.find((item) => item.id === id);
+      if (!meta) {
+        set({ workspaceError: "找不到这个工作空间。" });
+        return undefined;
+      }
+      const stored = await indexedDbLogFor(id).load();
+      const exportedAt = new Date().toISOString();
+      const pack = workspaceExportOf({ meta, log: stored, exportedAt });
+      set({ workspaceError: undefined });
+      return {
+        fileName: workspaceExportFileName(meta.name, exportedAt),
+        json: JSON.stringify(pack, null, 2),
+      };
+    } catch (error) {
+      set({ workspaceError: error instanceof Error ? error.message : "导出没做成。" });
+      return undefined;
+    }
+  },
+
+  deleteArchivedWorkspaces: async () => {
+    if (!hasWorkspaces()) {
+      set({ workspaceError: "这个浏览器不支持多工作空间。" });
+      return 0;
+    }
+    try {
+      const metas = await listWorkspaces();
+      const archived = metas.filter((item) => item.archivedAt && item.id !== get().workspaceId);
+      for (const item of archived) await deleteWorkspaceRows(item.id);
+      set({ workspaces: await listWorkspaces(), workspaceError: undefined });
+      return archived.length;
+    } catch (error) {
+      set({ workspaceError: error instanceof Error ? error.message : "清理没做成。" });
+      return 0;
     }
   },
 
@@ -7491,7 +7612,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     if (!parsed) {
       set({
         castError:
-          "没听懂这句。现在认得：太暗了 / 太亮 / 换个角度 / 靠近一点 / 拉远 / 手持 / 稳住 / 快一点 / 慢一点。",
+          "没听懂这句。现在认得：太暗了 / 太亮 / 换个角度 / 靠近一点 / 拉远 / 手持 / 稳住 / 快一点 / 慢一点 / 压抑一点 / 柔和一点。",
       });
       return false;
     }
@@ -7501,6 +7622,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     if (parsed.shotSize) patch.shotSize = parsed.shotSize;
     if (parsed.camera) patch.camera = parsed.camera;
     if (parsed.durationMs) patch.durationMs = parsed.durationMs;
+    if (parsed.lighting) patch.lighting = parsed.lighting;
     if (parsed.note && !shot.promptNotes.includes(parsed.note)) {
       patch.promptNotes = [...shot.promptNotes, parsed.note];
     }
@@ -7521,6 +7643,59 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       castError: undefined,
     });
     return true;
+  },
+
+  instructScope: (text) => {
+    if (get().readOnly) return 0;
+    const { project, currentShotId } = get();
+    const current = project.shots.find((item) => item.id === currentShotId);
+    if (!current) return 0;
+
+    const scope = parseInstructionScope(text);
+    // 作用域里的镜：整片 = 全部，这一场 = 同场，这一镜 = 当前
+    const inScope =
+      scope === "film"
+        ? project.shots
+        : scope === "scene"
+          ? project.shots.filter((item) => item.sceneId === current.sceneId)
+          : [current];
+
+    const at = stamp();
+    let next = project;
+    const appended: ProjectEvent[] = [];
+    let understood = false;
+    for (const shot of inScope) {
+      if (shot.locked) continue;
+      const parsed = parseInstruction(text, shot);
+      if (!parsed) continue;
+      understood = true;
+      const patch: Partial<Shot> = {};
+      if (parsed.shotSize) patch.shotSize = parsed.shotSize;
+      if (parsed.camera) patch.camera = parsed.camera;
+      if (parsed.durationMs) patch.durationMs = parsed.durationMs;
+      if (parsed.lighting) patch.lighting = parsed.lighting;
+      if (parsed.note && !shot.promptNotes.includes(parsed.note)) {
+        patch.promptNotes = [...shot.promptNotes, parsed.note];
+      }
+      if (Object.keys(patch).length === 0) continue;
+      const event: ProjectEvent = { type: "shot.updated", at, shotId: shot.id, patch };
+      next = applyEvent(next, event);
+      appended.push(event);
+    }
+
+    if (!understood) {
+      set({
+        castError:
+          "没听懂这句。现在认得：太暗了 / 太亮 / 换个角度 / 靠近一点 / 拉远 / 手持 / 稳住 / 快一点 / 慢一点 / 压抑一点 / 柔和一点。前面还可以说「这一场」「整片」。",
+      });
+      return 0;
+    }
+    if (appended.length === 0) {
+      set({ castError: "这句没改动什么：范围内的镜头已经是这样了。" });
+      return 0;
+    }
+    set({ project: next, events: [...get().events, ...appended], castError: undefined });
+    return appended.length;
   },
 
   instructWithModel: async (text) => {

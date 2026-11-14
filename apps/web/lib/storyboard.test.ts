@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ProjectSchema, type Project } from "@loomina/ir";
 import {
@@ -8,6 +9,7 @@ import {
   inferPurpose,
   planShots,
 } from "./storyboard";
+import { DIRECTOR_RULES } from "./director-grammar";
 
 type ShotPatch = Partial<Project["shots"][number]>;
 
@@ -738,5 +740,130 @@ describe("V11 节拍顺序（A11 / ADR-0108）", () => {
   it("只有一个镜头时不查首尾顺序", () => {
     const project = makeProject([{ beat: "setup", purpose: "information" }]);
     expect(analyzeStoryboard(project).issues.some((issue) => issue.rule === "V11")).toBe(false);
+  });
+});
+
+describe("规则目录与实现一致（I8 / ADR-0216）", () => {
+  it("storyboard.ts 里写出的每个规则编号都在目录里登记了", () => {
+    // 从源码里扫 rule: "Vx"，比手工维护一份清单可靠：
+    // 以后有人加一条判定却忘了登记目录，这条会拦住
+    const source = readFileSync(new URL("./storyboard.ts", import.meta.url), "utf8");
+    const used = new Set(
+      [...source.matchAll(/rule: "(V\d+)"/g)].map((match) => match[1]!),
+    );
+    const registered = new Set(DIRECTOR_RULES.map((rule) => rule.id));
+    for (const id of used) {
+      expect(registered.has(id), `${id} 在 storyboard.ts 里用了，但目录没登记`).toBe(true);
+    }
+    expect(used.size).toBe(registered.size);
+  });
+
+  it("目录里的每条规则都真的会被检查到", () => {
+    const source = readFileSync(new URL("./storyboard.ts", import.meta.url), "utf8");
+    for (const rule of DIRECTOR_RULES) {
+      expect(source.includes(`rule: "${rule.id}"`), `${rule.id} 登记了但没实现`).toBe(true);
+    }
+  });
+});
+
+describe("表演语法接进 V10（I11 / ADR-0220）", () => {
+  it("强度 5 却写了大喊：点名这一镜", () => {
+    const project = makeProject([
+      {
+        performance: {
+          objective: "压抑的愤怒",
+          emotion: { surface: "", subtext: "" },
+          intensity: 5,
+          beats: [
+            { phase: "during", micro: "", body: "她大喊着扑过去", startMs: 0, endMs: 1000 },
+          ],
+          gaze: { target: "off-screen", direction: "left" },
+          avoid: ["大吼"],
+        },
+      },
+      { performance: { objective: "别的事", emotion: { surface: "", subtext: "" }, intensity: 2, beats: [], gaze: { target: "camera", direction: "center" }, avoid: [] } },
+    ]);
+    const issues = analyzeStoryboard(project).issues.filter((issue) => issue.rule === "V10");
+    expect(issues.some((issue) => issue.message.includes("情绪越强动作越小"))).toBe(true);
+  });
+
+  it("认出意图却没写 avoid：点名并说清为什么要写", () => {
+    const project = makeProject([
+      {
+        performance: {
+          objective: "心虚",
+          emotion: { surface: "", subtext: "" },
+          intensity: 3,
+          beats: [{ phase: "during", micro: "视线下移", body: "", startMs: 0, endMs: 800 }],
+          gaze: { target: "off-screen", direction: "down" },
+          avoid: [],
+        },
+      },
+      { performance: { objective: "别的事", emotion: { surface: "", subtext: "" }, intensity: 2, beats: [], gaze: { target: "camera", direction: "center" }, avoid: [] } },
+    ]);
+    const issues = analyzeStoryboard(project).issues.filter((issue) => issue.rule === "V10");
+    expect(issues.some((issue) => issue.message.includes("没写"))).toBe(true);
+  });
+
+  it("表演参数与语法对得上时不报", () => {
+    const project = makeProject([
+      {
+        performance: {
+          objective: "心虚",
+          emotion: { surface: "", subtext: "" },
+          intensity: 3,
+          beats: [{ phase: "during", micro: "视线下移", body: "", startMs: 0, endMs: 800 }],
+          gaze: { target: "off-screen", direction: "down" },
+          avoid: ["复杂手部动作"],
+        },
+      },
+      { performance: { objective: "别的事", emotion: { surface: "", subtext: "" }, intensity: 2, beats: [], gaze: { target: "camera", direction: "center" }, avoid: [] } },
+    ]);
+    const issues = analyzeStoryboard(project).issues.filter((issue) => issue.rule === "V10");
+    expect(issues).toEqual([]);
+  });
+});
+
+describe("V13 手持单场 ≤ 2（M4 / ADR-0229）", () => {
+  const handheld = {
+    camera: { angle: "eye" as const, movement: "handheld" as const, focalMm: 35 },
+  };
+
+  it("一场两个手持镜：不报", () => {
+    const project = makeProject([
+      { shotSize: "wide", beat: "hook" },
+      { shotSize: "medium", beat: "hook", ...handheld },
+      { shotSize: "close", beat: "endHook", ...handheld },
+    ]);
+    expect(analyzeStoryboard(project).issues.some((issue) => issue.rule === "V13")).toBe(false);
+  });
+
+  it("一场三个手持镜：报一条，点名三个镜", () => {
+    const project = makeProject([
+      { shotSize: "wide", beat: "hook" },
+      { shotSize: "medium", beat: "hook", ...handheld },
+      { shotSize: "close", beat: "hook", ...handheld },
+      { shotSize: "medium", beat: "endHook", ...handheld },
+    ]);
+    const issues = analyzeStoryboard(project).issues.filter((issue) => issue.rule === "V13");
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.message).toContain("手持过量会晕");
+    expect(issues[0]!.shotIds).toHaveLength(3);
+  });
+
+  it("不同场各两个手持：跨场不累计", () => {
+    const project = ProjectSchema.parse({
+      ...makeProject([{}, {}, {}, {}]),
+      scenes: [
+        { id: "sc-1", index: 0, locationId: "loc-1", shotIds: ["s-1", "s-2"] },
+        { id: "sc-2", index: 1, locationId: "loc-1", shotIds: ["s-3", "s-4"] },
+      ],
+      shots: makeProject([{}, {}, {}, {}]).shots.map((shot, index) => ({
+        ...shot,
+        sceneId: index < 2 ? "sc-1" : "sc-2",
+        camera: { angle: "eye" as const, movement: "handheld" as const, focalMm: 35 },
+      })),
+    });
+    expect(analyzeStoryboard(project).issues.some((issue) => issue.rule === "V13")).toBe(false);
   });
 });

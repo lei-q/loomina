@@ -33,7 +33,12 @@ export const SEED_MODELS: Record<Modality, string | undefined> = {
   asr: undefined,
 };
 
-export type VideoApiName = "treecloud" | "litellm";
+/**
+ * 视频接口族（model_adapter 概念）：**类型本身归 gateway**，这里只转出去。
+ * web 的配置层要用它，但重复定义一份迟早会与 gateway 的实际适配器分叉。
+ */
+import type { VideoApiName } from "@loomina/gateway";
+export type { VideoApiName };
 
 export type ProviderRecord = {
   id: string;
@@ -169,3 +174,19 @@ export function modalityOf(value: unknown): Modality | null {
 export function isModelId(value: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(value);
 }
+
+/**
+ * 对象存储的连接参数（H3）。
+ *
+ * 形状放在这里而不是 `s3-store.ts`：`storage-config` 属于纯计算层，
+ * 它要构造这个类型，不该为此反向依赖 assets（M4）。
+ */
+export type S3Config = {
+  endpoint: string;
+  bucket: string;
+  region: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  pathStyle: boolean;
+  sessionToken?: string;
+};

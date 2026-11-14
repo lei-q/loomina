@@ -24,9 +24,12 @@ import {
   parsePhaseMeter,
   secondPassAudioArgs,
   segmentGainDb,
+  sfxGainDb,
   type LoudnessMeasurement,
   type LoudnessReport,
+  type MixSfxRole,
 } from "@/lib/render-audio";
+import { presetById, reverbFilterOf } from "@/lib/reverb";
 import {
   fadeFilters,
   frameChain,
@@ -78,6 +81,7 @@ type ResolvedSfx = {
   endMs: number;
   gainDb: number;
   loop: boolean;
+  role?: MixSfxRole;
 };
 type JobStatus = "queued" | "running" | "done" | "error";
 
@@ -638,6 +642,10 @@ async function runJob(job: RenderJob): Promise<void> {
         path: await writeAsset(dir, track.audio!, `audio-${index}`),
         startMs: track.startMs,
         durationMs,
+        // 混响（C11）：id 已在清单校验过白名单，这里解析成滤镜串
+        ...(track.reverb
+          ? { reverb: reverbFilterOf(presetById(track.reverb)) || undefined }
+          : {}),
       });
     }
 
@@ -673,6 +681,10 @@ async function runJob(job: RenderJob): Promise<void> {
       sfx.push({
         ...track,
         path: await writeAsset(dir, track.audio!, `sfx-${index}`),
+        // 混响（C11）：id 已在清单校验过白名单，这里解析成滤镜串
+        ...(track.reverb
+          ? { reverb: reverbFilterOf(presetById(track.reverb)) || undefined }
+          : {}),
       });
     }
 
@@ -693,6 +705,20 @@ async function runJob(job: RenderJob): Promise<void> {
         dialogueGains.push(gain);
         if (gain !== 0) track.gainDb = gain;
         job.progress = Math.min(4, Math.floor(((index + 1) / audio.length) * 4));
+      }
+    }
+    // 音效自动响度归一（C7）：按角色把每条拉到各自的目标位，
+    // 增益**叠加**在作者写的 gainDb 之上——手动压过的那一档仍然有效
+    let sfxGains: number[] = [];
+    if (sfx.length > 0) {
+      job.stage = "按条测音效响度";
+      job.progress = 0;
+      for (const [index, track] of sfx.entries()) {
+        const segment = await measureLoudness(track.path, track.endMs - track.startMs);
+        const gain = sfxGainDb(segment?.inputI, track.role ?? "foley");
+        sfxGains.push(gain);
+        if (gain !== 0) track.gainDb = Math.max(-40, Math.min(0, track.gainDb + gain));
+        job.progress = Math.min(4, Math.floor(((index + 1) / sfx.length) * 4));
       }
     }
     if (audio.length > 0 || music.length > 0 || sfx.length > 0) {
@@ -808,6 +834,7 @@ async function runJob(job: RenderJob): Promise<void> {
       outOfPhaseMs: phase.outOfPhaseMs,
       monoMs: phase.monoMs,
       ...(dialogueGains.length > 0 ? { dialogueGainsDb: dialogueGains } : {}),
+      ...(sfxGains.length > 0 ? { sfxGainsDb: sfxGains } : {}),
       passes,
       checkedAt: new Date().toISOString(),
       verdict: verdict.status,

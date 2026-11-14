@@ -16,6 +16,7 @@ import type {
 import { toStageView, type SceneKind } from "./read-model";
 import { SPEAKER_DEFAULT_COLOR, speakerPaletteOf } from "./speaker-color";
 import { subtitleCues } from "./subtitle";
+import { reverbPresetOf } from "./reverb";
 
 // ── 字幕样式（D3）───────────────────────────────────────────────
 
@@ -269,6 +270,11 @@ export type EditClip = {
   hasPicture: boolean;
   art: SceneKind;
   sceneCode: string;
+  /**
+   * 这一镜所在场的混响预设 id（C11 / ADR-0226）。
+   * 只传 id，滤镜串由服务端从固定表解析——不把裸滤镜传进渲染命令。
+   */
+  reverbId?: string;
   locked: boolean;
   /** 这一镜可选的全部 take：换 take 用 */
   takes: EditTakeOption[];
@@ -302,6 +308,9 @@ export type EditMusic = {
   role: MusicCue["role"];
   /** 指向的主题动机（C10）；没挂就是 undefined */
   motifId?: string;
+  /** 淡入 / 淡出（C7）：毫秒，0 表示不淡 */
+  fadeInMs: number;
+  fadeOutMs: number;
   licenseRef: string;
 };
 
@@ -322,6 +331,16 @@ export type EditSfx = {
   gainDb: number;
   loop: boolean;
   role: SfxCue["role"];
+  /** 淡入 / 淡出（C7）：毫秒，0 表示不淡 */
+  fadeInMs: number;
+  fadeOutMs: number;
+  /**
+   * 这一条音效所在场的混响预设（C11 / ADR-0233）。
+   *
+   * 按**起点落在哪一镜**算：音效通常很短，跨场的多是环境声，
+   * 环境声跟着起点那一场走，比按长度切段更好听也更简单。
+   */
+  reverbId?: string;
   licenseRef: string;
 };
 
@@ -592,6 +611,14 @@ export function toEditView(
           hasPicture: Boolean(uri ?? stillUri ?? keyframe),
           art: stageShot.art,
           sceneCode: scene?.code || `S${(scene?.index ?? 0) + 1}`,
+          ...(scene
+            ? {
+                reverbId: reverbPresetOf(
+                  project.locations.find((item) => item.id === scene.locationId),
+                  scene.space,
+                ).preset.id,
+              }
+            : {}),
           locked: stageShot.locked,
           ...(item.transitionIn ? { transitionIn: item.transitionIn } : {}),
           ...(shot.focus ? { focus: shot.focus } : {}),
@@ -637,6 +664,15 @@ export function toEditView(
   const cues = clips
     .flatMap((clip) => clip.lines.flatMap((line) => line.cues))
     .sort((a, b) => a.startMs - b.startMs);
+  /**
+   * 某一时刻落在哪一镜的混响（C11 / ADR-0233）。
+   * 音效按起点算：跨场的环境声跟着起点那一场走。
+   */
+  const reverbAt = (atMs: number): string | undefined =>
+    clips.find(
+      (clip) => atMs >= clip.startMs && atMs < clip.startMs + clip.durationMs,
+    )?.reverbId;
+
   const music: EditMusic[] = project.timeline.music.flatMap((cue) => {
     const asset = assetById.get(cue.assetId);
     if (!asset || asset.kind !== "audio") return [];
@@ -656,6 +692,8 @@ export function toEditView(
         ducking: cue.ducking,
         loop: cue.loop,
         role: cue.role,
+        fadeInMs: cue.fadeInMs,
+        fadeOutMs: cue.fadeOutMs,
         ...(cue.motifId ? { motifId: cue.motifId } : {}),
         licenseRef: cue.licenseRef,
       },
@@ -678,6 +716,11 @@ export function toEditView(
         gainDb: cue.gainDb,
         loop: cue.loop,
         role: cue.role,
+        fadeInMs: cue.fadeInMs,
+        fadeOutMs: cue.fadeOutMs,
+        ...(reverbAt(cue.startMs + headMs)
+          ? { reverbId: reverbAt(cue.startMs + headMs)! }
+          : {}),
         licenseRef: cue.licenseRef,
       },
     ];

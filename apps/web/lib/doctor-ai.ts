@@ -1,6 +1,24 @@
 import { z } from "zod";
 import type { Project } from "@loomina/ir";
-import type { ScriptView } from "@/lib/read-model";
+/**
+ * 剧本快照只需要「每场每镜的动作与台词」这一层形状。
+ *
+ * 不直接引用 `@/lib/read-model` 的 `ScriptView`：那是 state 子模块的读模型，
+ * 只为取一个字段就反向依赖，会让 models ⇄ state 绕成环（M4）。
+ */
+export type DoctorScriptView = {
+  scenes: {
+    label: string;
+    place: string;
+    shots: {
+      id: string;
+      no: number;
+      size: string;
+      action: string;
+      lines: { id: string; character: string; text: string }[];
+    }[];
+  }[];
+};
 import {
   DOCTOR_MODE_LABEL,
   type DoctorMode,
@@ -136,7 +154,7 @@ const clamp = (text: string, max: number) =>
 /** 把当前剧本压成发给模型的快照；台词与动作过长时截断并留省略号 */
 export function doctorSnapshotOf(
   project: Project,
-  view: ScriptView,
+  view: DoctorScriptView,
   report: ScriptDoctorReport,
   mode: DoctorMode,
 ): DoctorSnapshot {

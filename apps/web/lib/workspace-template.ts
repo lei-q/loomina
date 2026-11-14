@@ -1,4 +1,5 @@
 import type { Asset, Project } from "@loomina/ir";
+import type { WorkspaceMeta } from "@/lib/event-log";
 
 /**
  * 照一个工作空间的「设定」开新一集（C.1 / ADR-0197）。
@@ -39,6 +40,28 @@ function reusedAsset(asset: Asset): Asset {
     ...rest,
     source: asset.source === "generated" ? "library" : asset.source,
   };
+}
+
+/**
+ * 哪些空间能当「照设定开工」的来源（C22 / ADR-0213）。
+ *
+ * 归档的空间不收：ADR-0210 说归档就是从复用清单里收起，它的设定同样不该
+ * 还能被拿来开工。顺序沿用登记表（最近打开在前）。
+ */
+export function setupSourcesOf(metas: WorkspaceMeta[]): WorkspaceMeta[] {
+  return metas.filter((meta) => !meta.archivedAt);
+}
+
+/** 选中来源之后的拒绝理由；能当来源时返回 undefined（调用方据此提前报错） */
+export function setupSourceProblem(
+  metas: WorkspaceMeta[],
+  fromWorkspaceId: string | undefined,
+): string | undefined {
+  if (!fromWorkspaceId) return undefined;
+  const source = metas.find((meta) => meta.id === fromWorkspaceId);
+  if (!source) return "找不到这个来源空间。";
+  if (source.archivedAt) return `「${source.name}」归档了，先取消归档再照它开工。`;
+  return undefined;
 }
 
 export function projectFromSetup(

@@ -26,6 +26,8 @@ export type ShotTemplate = {
   version: 1;
   id: string;
   name: string;
+  /** 说明（F3 第二档）：这套拍法什么时候用；空就是没有 */
+  note?: string;
   createdAt: string;
   /** 从哪一镜存下来的：界面上写「来自「夜班」第 2 场 · 第 3 镜」 */
   from: { projectId: string; title: string; shotId: string; shotLabel: string };

@@ -8,7 +8,8 @@
     "build": "pnpm --filter @loomina/web build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "probe:s1": "tsx packages/pipeline/src/cli/s1-probe.ts"
+    "probe:s1": "tsx packages/pipeline/src/cli/s1-probe.ts",
+    "eval:rules": "tsx apps/web/scripts/eval-rules.ts"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",

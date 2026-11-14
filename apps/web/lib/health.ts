@@ -6,7 +6,6 @@ import {
   failureAlerts,
   type FailureGroup,
 } from "./health-events";
-import { loadRenderJobs } from "./render-job-store";
 import { longJobSnapshot, LONG_JOB_LABEL, type LongJobKind } from "./long-job";
 
 /**
@@ -108,7 +107,19 @@ function alertsOf(providers: ProviderHealth[], failures: FailureGroup[]): Health
   return [...alerts, ...failureAlerts(failures)];
 }
 
-export async function buildHealthReport(force = false): Promise<HealthReport> {
+/**
+ * 渲染队列的读取器由调用方注入。
+ *
+ * health 只关心「队列里有几条在排队 / 在跑 / 失败」，不该为此反向依赖
+ * render 子模块（M4）。服务端路由把 `loadRenderJobs` 传进来即可。
+ */
+export type RenderJobStatus = "queued" | "running" | "done" | "error";
+export type LoadRenderJobs = () => Promise<{ status: RenderJobStatus }[]>;
+
+export async function buildHealthReport(
+  force = false,
+  loadJobs: LoadRenderJobs = async () => [],
+): Promise<HealthReport> {
   const loaded = await loadConfig();
   const providers = loaded.config.providers.map((provider) => ({ id: provider.id, name: provider.name }));
   const now = Date.now();
@@ -122,7 +133,7 @@ export async function buildHealthReport(force = false): Promise<HealthReport> {
   if (!useCache) cache = { at: now, providers: probed };
 
   const failures = summarizeFailures(await loadHealthEvents(), now);
-  const jobs = await loadRenderJobs();
+  const jobs = await loadJobs();
   const render = { queued: 0, running: 0, error: 0, done: 0 };
   for (const job of jobs) render[job.status] += 1;
   const long = longJobSnapshot(now);

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { buildHealthReport } from "@/lib/health";
+import { loadRenderJobs } from "@/lib/render-job-store";
 
 /**
  * 健康检查（H11）。
@@ -14,7 +15,7 @@ export const maxDuration = 60;
 export async function GET(request: Request) {
   const force = new URL(request.url).searchParams.get("probe") === "1";
   try {
-    return NextResponse.json(await buildHealthReport(force), {
+    return NextResponse.json(await buildHealthReport(force, loadRenderJobs), {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {

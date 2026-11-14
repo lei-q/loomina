@@ -218,7 +218,8 @@ export const SHOT_ANGLE_CN: Record<Shot["camera"]["angle"], string> = {
   top: "顶拍",
 };
 
-const MOVE_CN: Record<Shot["camera"]["movement"], string> = {
+/** 运镜的中文长说法（进提示词）；表格里的短词在 web 侧另有一份 */
+export const MOVE_CN: Record<Shot["camera"]["movement"], string> = {
   static: "固定机位",
   push: "缓缓推近",
   pull: "缓缓拉远",
@@ -613,6 +614,8 @@ export type ShotPatch = {
   camera?: Shot["camera"];
   /** 快一点 / 慢一点：改镜头时长，重做报价跟着变 */
   durationMs?: number;
+  /** 光影（I2 / F7）：压抑、柔和、神秘这类话落到结构字段，而不是只写进 promptNotes */
+  lighting?: Shot["lighting"];
   /** 落不到结构字段的补充要求，追加进 `promptNotes` */
   note?: string;
 };
@@ -636,7 +639,7 @@ const NOTE_BRIGHT = "压暗一档，高光不过曝";
  */
 export function parseInstruction(
   text: string,
-  shot: Pick<Shot, "shotSize" | "camera" | "durationMs">,
+  shot: Pick<Shot, "shotSize" | "camera" | "durationMs" | "lighting">,
 ): ShotPatch | null {
   const said = text.trim();
   if (!said) return null;
@@ -682,7 +685,68 @@ export function parseInstruction(
     patch.camera = { ...(patch.camera ?? camera), movement: "handheld" };
   }
 
+  // 光影（I2 / F7）：「压抑一点」这类话落到结构字段，而不是只写进 promptNotes。
+  // 情绪词与光影模板的对应来自 DIRECTOR-GRAMMAR.md 的 L 组（L5 主光方向决定情绪）。
+  // 只改情绪的维度，不改光源：光源是"这个房间里有什么灯"，情绪词说不到那么具体。
+  const mood = lightingOf(said, shot.lighting);
+  if (mood) patch.lighting = mood;
+
   return Object.keys(patch).length ? patch : null;
+}
+
+/**
+ * 一句话的作用域（E11 / 意图层语义编辑）。
+ *
+ * 同一句话可以落在三个层级上：这一镜 / 这一场 / 整片。
+ * 只认**明确说了**的：说「都」「整片」才是整片，说「这一场」才是整场，
+ * 没提就按当前这一镜——宁可少改，不可多改。
+ *
+ * 顺序有讲究：「整片」优先于「整场」，否则「整片每一场」会被判成整场。
+ */
+export type InstructionScope = "shot" | "scene" | "film";
+
+export function parseInstructionScope(
+  text: string,
+  fallback: InstructionScope = "shot",
+): InstructionScope {
+  const said = text.trim();
+  if (!said) return fallback;
+  if (/整片|全片|整条片|整部|所有镜头|全部的镜|每一镜|每一场都|全都|都改/.test(said)) {
+    return "film";
+  }
+  if (/这一场|整场|这场|当前的场/.test(said)) return "scene";
+  if (/这一镜|这镜|当前镜|这一个镜头/.test(said)) return "shot";
+  return fallback;
+}
+
+/**
+ * 情绪词 → 光影模板（F7 / I2）。
+ *
+ * 只认能明确落到「主光方向 + 塑形」的说法：压抑 / 神秘 / 柔和 / 硬朗。
+ * 「再压抑一点」是 F7 原文里的例子——以前它只能进 promptNotes，
+ * 现在落成 `Shot.lighting`，走位台账与提示词编译都能读到。
+ *
+ * 没说光源就沿用原来那个；原来没写就留空，由 `LightingSchema` 的默认值补。
+ */
+function lightingOf(said: string, current?: Shot["lighting"]): Shot["lighting"] | undefined {
+  const base = current ?? { source: "window" as const, position: "side" as const, mood: "modeled" as const, note: "" };
+  // 压抑 / 悬疑：顶光压 + 剪影（L5「顶光压迫」）
+  if (/压抑|沉重|压迫|悬疑|紧张/.test(said)) {
+    return { ...base, position: "top", mood: "silhouette" };
+  }
+  // 神秘 / 暧昧：侧逆光（L5「侧逆光神秘」）
+  if (/神秘|暧昧|看不透|阴森/.test(said)) {
+    return { ...base, position: "back", mood: "modeled" };
+  }
+  // 柔和 / 温情：正面平光（L2 低光比）
+  if (/柔和|温情|温柔|暖一点|软一点/.test(said)) {
+    return { ...base, position: "front", mood: "flat" };
+  }
+  // 硬朗 / 冷峻：侧面强塑形（L1 高光比）
+  if (/硬朗|冷峻|凌厉|锐利/.test(said)) {
+    return { ...base, position: "side", mood: "modeled" };
+  }
+  return undefined;
 }
 
 function round2(value: number): number {

@@ -30,6 +30,8 @@ export type ProjectTemplate = {
   id: string;
   /** 作者起的名字，例如「夜班 · 班底」 */
   name: string;
+  /** 说明（F3 第二档）：这套班底适合什么戏；空就是没有 */
+  note?: string;
   createdAt: string;
   /** 从哪个项目存下来的：界面上说明「这套人从哪儿来」 */
   from: { projectId: string; title: string };

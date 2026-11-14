@@ -34,6 +34,15 @@ import { inlinePayloadsOf } from "@/lib/log-compact";
 import { canProxy } from "@/lib/preview-proxy";
 import { templateNameOf, templateOf, type ProjectTemplate } from "@/lib/project-template";
 import { listTemplates, removeTemplate, saveTemplate } from "@/lib/template-store";
+import {
+  TEMPLATE_NAME_MAX,
+  TEMPLATE_NOTE_MAX,
+  findSameProjectTemplate,
+  renameProjectTemplate,
+  templateNameProblem,
+  templateNoteProblem,
+  withProjectTemplateNote,
+} from "@/lib/template-edit";
 import { projectSegments } from "@/lib/spend-report";
 import { cn } from "@/lib/utils";
 
@@ -1656,6 +1665,8 @@ function TemplateSection({ readOnly }: { readOnly: boolean }) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string>();
   const [error, setError] = useState<string>();
+  /** 正在编辑的模板（改名 + 说明）：id → 草稿 */
+  const [editing, setEditing] = useState<{ id: string; name: string; note: string }>();
 
   const suggested = templateNameOf(project.title, new Date().toISOString().slice(0, 10));
 
@@ -1683,6 +1694,12 @@ function TemplateSection({ readOnly }: { readOnly: boolean }) {
         name: (name ?? suggested).trim() || suggested,
         at,
       });
+      // 同一套参数已经存过就不重复存（F3 第二档）：重复的模板只会让列表变长
+      const same = findSameProjectTemplate(templates ?? [], template);
+      if (same) {
+        setNotice(`这套班底已经存过了：「${same.name}」。改名字或删掉旧的那份都行。`);
+        return;
+      }
       await saveTemplate(template);
       setName(undefined);
       setNotice(
@@ -1715,6 +1732,29 @@ function TemplateSection({ readOnly }: { readOnly: boolean }) {
       await load();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "删不掉这个模板");
+    }
+  };
+
+  /** 存回改名 / 说明：只动这两个字段，createdAt 与 from 保留 */
+  const commitEdit = async (template: ProjectTemplate) => {
+    if (!editing || editing.id !== template.id) return;
+    const problem = templateNameProblem(editing.name) ?? templateNoteProblem(editing.note);
+    if (problem) {
+      setError(problem);
+      return;
+    }
+    setError(undefined);
+    try {
+      const renamed = withProjectTemplateNote(
+        renameProjectTemplate(template, editing.name),
+        editing.note,
+      );
+      await saveTemplate(renamed);
+      setEditing(undefined);
+      setNotice(`改好了：「${renamed.name}」。`);
+      await load();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "改不了这个模板");
     }
   };
 
@@ -1789,14 +1829,77 @@ function TemplateSection({ readOnly }: { readOnly: boolean }) {
               key={template.id}
               className="flex flex-wrap items-baseline justify-between gap-2 border-t border-line/60 pt-1.5 first:border-t-0 first:pt-0"
             >
-              <span className="min-w-0">
-                <span className="text-[10px] text-text">{template.name}</span>
-                <span className="tnum ml-2 text-[9px] text-muted-2">
-                  {template.cast.length} 人 / {template.locations.length} 地点 / {template.props.length}{" "}
-                  道具 · 从「{template.from.title}」· {template.createdAt.slice(0, 10)}
+              {editing?.id === template.id ? (
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    <input
+                      value={editing.name}
+                      maxLength={TEMPLATE_NAME_MAX}
+                      aria-label="模板名字"
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setEditing((prev) => (prev ? { ...prev, name: value } : prev));
+                      }}
+                      className="w-[160px] rounded-token border border-line-2 bg-surface px-1.5 py-0.5 text-[10px] text-text focus:border-pick focus:outline-none"
+                    />
+                    <input
+                      value={editing.note}
+                      maxLength={TEMPLATE_NOTE_MAX}
+                      aria-label="模板说明"
+                      placeholder="说明（可选）"
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setEditing((prev) => (prev ? { ...prev, note: value } : prev));
+                      }}
+                      className="min-w-0 flex-1 rounded-token border border-line bg-surface px-1.5 py-0.5 text-[9.5px] text-text placeholder:text-muted-2 focus:border-pick focus:outline-none"
+                    />
+                  </span>
                 </span>
-              </span>
+              ) : (
+                <span className="min-w-0">
+                  <span className="text-[10px] text-text">{template.name}</span>
+                  <span className="tnum ml-2 text-[9px] text-muted-2">
+                    {template.cast.length} 人 / {template.locations.length} 地点 /{" "}
+                    {template.props.length} 道具 · 从「{template.from.title}」·{" "}
+                    {template.createdAt.slice(0, 10)}
+                  </span>
+                  {template.note && (
+                    <span className="mt-0.5 block text-[9px] text-muted-2">{template.note}</span>
+                  )}
+                </span>
+              )}
               <span className="flex items-center gap-2">
+                {editing?.id === template.id ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void commitEdit(template)}
+                      disabled={readOnly}
+                      className="rounded-token border border-line-2 px-2 py-0.5 text-[9.5px] text-text transition-colors duration-[var(--dur)] hover:bg-text/10 disabled:opacity-40"
+                    >
+                      存
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditing(undefined)}
+                      className="text-[9px] text-muted-2 hover:text-text"
+                    >
+                      算了
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setEditing({ id: template.id, name: template.name, note: template.note ?? "" })
+                    }
+                    disabled={readOnly}
+                    title="改名字或加说明：不会重置保存时间与来历"
+                    className="text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text disabled:opacity-40"
+                  >
+                    改
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => open(template)}

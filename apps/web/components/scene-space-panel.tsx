@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { Project, StagingMark } from "@loomina/ir";
+import type { Lighting, Project, StagingMark } from "@loomina/ir";
 import { analyzeSceneSpace, type SceneStateEntry } from "@/lib/scene-space";
 import { cn } from "@/lib/utils";
 
@@ -15,6 +15,23 @@ const DEPTH_CN: Record<StagingMark["depth"], string> = {
   foreground: "前",
   midground: "中",
   background: "后",
+};
+
+/** 光影（B4 / ADR-0215）：逐镜对照用，与 scene-space.ts 的判定表保持一致 */
+const LIGHT_SOURCE_CN: Record<Lighting["source"], string> = {
+  window: "窗光",
+  lamp: "台灯",
+  overhead: "顶灯",
+  practical: "实用光",
+  moon: "月光",
+};
+
+const LIGHT_POSITION_CN: Record<Lighting["position"], string> = {
+  front: "正面",
+  side: "侧面",
+  back: "逆光",
+  top: "顶光",
+  under: "底光",
 };
 
 /** 朝向角 → 八方位；只在有坐标时显示 */
@@ -215,6 +232,29 @@ export function SceneSpacePanel({
                         ))}
                       </tr>
                     ))}
+                    {row.entries.some((entry) => entry.lighting) && (
+                      <tr className="border-t border-line">
+                        <th className="sticky left-0 z-10 bg-bg px-1.5 py-1 text-left font-normal text-muted">
+                          光影
+                        </th>
+                        {row.entries.map((entry) => (
+                          <td key={entry.shotId} className="px-1.5 py-1 text-center">
+                            {entry.lighting ? (
+                              <span className="inline-flex flex-col items-center gap-0.5">
+                                <span className="text-[9px] text-text">
+                                  {LIGHT_SOURCE_CN[entry.lighting.source]}
+                                </span>
+                                <span className="text-[8px] text-muted-2">
+                                  {LIGHT_POSITION_CN[entry.lighting.position]}
+                                </span>
+                              </span>
+                            ) : (
+                              <span className="text-muted-2/50">·</span>
+                            )}
+                          </td>
+                        ))}
+                      </tr>
+                    )}
                     {characters.length === 0 && props.length === 0 && (
                       <tr className="border-t border-line">
                         <td
@@ -241,7 +281,7 @@ export function SceneSpacePanel({
                 </div>
                 {row.issues.length === 0 ? (
                   <p className="mt-1 text-[9.5px] leading-[1.7] text-muted-2">
-                    相邻镜之间没有翻面、跳景、转身或道具丢失。
+                    相邻镜之间没有翻面、跳景、转身、道具丢失或光影突变。
                   </p>
                 ) : (
                   <ul className="mt-1 border-t border-line">
@@ -264,7 +304,7 @@ export function SceneSpacePanel({
                           >
                             去后一镜
                           </button>
-                          {onBlocking && issue.kind !== "prop" && (
+                          {onBlocking && issue.kind !== "prop" && issue.kind !== "lighting" && (
                             <button
                               type="button"
                               onClick={() => onBlocking(issue.shotIds[1])}

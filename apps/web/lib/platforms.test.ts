@@ -200,6 +200,67 @@ describe("码率与文件大小（G7 补全）", () => {
   });
 });
 
+describe("文件上限逐条核验（G2 / ADR-0214）", () => {
+  const check = (platform: "bilibili" | "kuaishou", fileBytes?: number) =>
+    validatePlatform(platformSpecOf(platform), {
+      durationMs: 60_000,
+      width: 1920,
+      height: 1080,
+      fps: 30,
+      codec: "H.264",
+      title: "夜班",
+      topics: [],
+      ...(fileBytes !== undefined ? { fileBytes } : {}),
+    }).checks.find((item) => item.id === "file-size")!;
+
+  it("核过的上限带出处与复核日期，不再是「未核验」", () => {
+    const bilibili = check("bilibili");
+    expect(bilibili.reference).toBeUndefined();
+    expect(bilibili.detail).toContain("16.0 GB");
+    expect(bilibili.detail).toContain("2026-11-14 核");
+    expect(bilibili.detail).toContain("64G");
+    expect(bilibili.detail).not.toContain("未核验");
+  });
+
+  it("超过已核上限就硬拦，并写出实测体积", () => {
+    const over = check("bilibili", 20 * 1024 ** 3);
+    expect(over.status).toBe("block");
+    expect(over.detail).toContain("20.0 GB");
+    expect(over.detail).toContain("16.0 GB");
+  });
+
+  it("没导出过也把上限与出处写出来，不假装要等导出才知道", () => {
+    const kuaishou = check("kuaishou");
+    expect(kuaishou.status).toBe("pass");
+    expect(kuaishou.detail).toContain("2.0 GB");
+    expect(kuaishou.detail).toContain("导出后按实际体积核对");
+  });
+
+  it("没核过的平台照旧写「未核验」，不拿别的平台的数顶替", () => {
+    const douyin = validatePlatform(platformSpecOf("douyin"), {
+      durationMs: 60_000,
+      width: 1080,
+      height: 1920,
+      fps: 30,
+      title: "夜班",
+      topics: [],
+      fileBytes: 42 * 1024 * 1024,
+    }).checks.find((item) => item.id === "file-size")!;
+    expect(douyin.reference).toBe(true);
+    expect(douyin.detail).toContain("未核验");
+  });
+
+  it("每个填了上限的平台都必须给出处：数字不许凭空来", () => {
+    for (const spec of PLATFORM_SPECS) {
+      if (spec.maxFileBytes === undefined) continue;
+      expect(spec.maxFileSource, spec.id).toBeTruthy();
+      expect(spec.maxFileSource!.url).toMatch(/^https:\/\//);
+      expect(spec.maxFileSource!.checkedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(spec.maxFileSource!.quote.length).toBeGreaterThan(4);
+    }
+  });
+});
+
 describe("体积写法", () => {
   it("不到 1 MB 用 KB，别把 48 KB 写成 0.0 MB", () => {
     expect(formatSize(48 * 1024)).toBe("48 KB");

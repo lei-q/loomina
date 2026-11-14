@@ -22,6 +22,7 @@ import type {
   ShotPurpose,
 } from "@loomina/ir";
 import { SHOT_ANGLE_CN, SHOT_SIZE_CN, checkAxis, elevationOf, occlusionsOf } from "@loomina/pipeline";
+import { performanceAdvice } from "./performance-grammar";
 
 export const BEAT_ORDER: BeatKind[] = [
   "hook",
@@ -184,7 +185,8 @@ export type StoryboardRule =
   | "V9"
   | "V10"
   | "V11"
-  | "V12";
+  | "V12"
+  | "V13";
 
 export type StoryboardIssue = {
   rule: StoryboardRule;
@@ -583,6 +585,32 @@ export function validateStoryboard(
     });
   }
 
+  // V10 续（I11 / ADR-0220）：有了表演设计之后，再查它与表演语法对不对得上。
+  // 只判两条能确定的：强度 4–5 却写了大动作、认出意图却没写 avoid。
+  for (const plan of plans) {
+    const shot = shotById.get(plan.shotId);
+    const performance = shot?.performance;
+    if (!performance || !performance.objective.trim()) continue;
+    const advice = performanceAdvice({
+      objective: performance.objective,
+      intensity: performance.intensity,
+      beats: performance.beats.map((beat) => ({
+        micro: beat.micro,
+        body: beat.body,
+        action: beat.action,
+      })),
+      avoid: performance.avoid,
+    });
+    for (const problem of advice.problems) {
+      issues.push({
+        rule: "V10",
+        severity: "warning",
+        message: `第 ${plan.no} 镜${problem}`,
+        shotIds: [plan.shotId],
+      });
+    }
+  }
+
   // V12：立面与遮挡（B13.2）。只在有机位坐标时判；没坐标的项目一个字都不说，
   // 免得把「没画走位」说成「有遮挡」。两条都是提示，不拦生成。
   const occluded: { no: number; shotId: string; names: string[] }[] = [];
@@ -698,6 +726,28 @@ export function validateStoryboard(
       severity: "warning",
       message: `整片重做一遍约 ¥${requoteCny.toFixed(2)}，超过预算 ¥${budgetCny.toFixed(2)}：先删减镜头或降低规格。`,
       shotIds: plans.map((plan) => plan.shotId),
+    });
+  }
+
+  // V13：手持单场 ≤ 2（M4 / DIRECTOR-GRAMMAR.md §五）。手持过量会晕，
+  // 而「晕」是整体感受——逐镜看不出问题，只有按场数才知道。
+  const handheldByScene = new Map<string, { no: number; shotId: string }[]>();
+  for (const plan of plans) {
+    const shot = shotById.get(plan.shotId);
+    if (shot?.camera.movement !== "handheld") continue;
+    const list = handheldByScene.get(plan.sceneId) ?? [];
+    list.push({ no: plan.no, shotId: plan.shotId });
+    handheldByScene.set(plan.sceneId, list);
+  }
+  for (const [sceneId, list] of handheldByScene) {
+    if (list.length <= 2) continue;
+    const sceneLabel = plans.find((plan) => plan.sceneId === sceneId)?.sceneLabel ?? "这一场";
+    const nos = list.map((item) => `第 ${item.no} 镜`).join("、");
+    issues.push({
+      rule: "V13",
+      severity: "warning",
+      message: `${sceneLabel}有 ${list.length} 个手持镜（${nos}）：手持过量会晕，一场控制在 2 镜以内。`,
+      shotIds: list.map((item) => item.shotId),
     });
   }
 

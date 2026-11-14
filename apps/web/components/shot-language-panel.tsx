@@ -7,6 +7,7 @@ import {
   LIGHTING_TEMPLATES,
   SHOT_LANGUAGES,
   SHOT_LANGUAGE_GROUPS,
+  MOVE_CN,
   SHOT_ANGLE_CN,
   SHOT_SIZE_CN,
   compileComposition,
@@ -17,6 +18,8 @@ import {
   type LightingTemplate,
   type ShotLanguage,
 } from "@loomina/pipeline";
+import { shotSheetOf, shotSheetText, shotSheetTsv } from "@/lib/shot-sheet";
+import { batchPlanOf, batchText, type BatchPatch } from "@/lib/shot-batch";
 import { cn } from "@/lib/utils";
 
 const MOVE_LABEL: Record<ShotLanguage["movement"], string> = {
@@ -56,6 +59,8 @@ export type ShotLanguagePanelProps = {
   onComposition: (shotId: string, composition: Composition | undefined) => boolean;
   /** 接上一段（C.6）：`tailMs` 毫秒；`null` 表示硬接 */
   onContinuation: (shotId: string, tailMs: number | null) => boolean;
+  /** 按场批量套用（I7 第三档）：返回写了几条事件 */
+  onBatch?: (sceneId: string, patch: BatchPatch) => number;
   onClose: () => void;
 };
 
@@ -76,9 +81,16 @@ export function ShotLanguagePanel({
   onLighting,
   onComposition,
   onContinuation,
+  onBatch,
   onClose,
 }: ShotLanguagePanelProps) {
   const [flash, setFlash] = useState("");
+  /** 摄影单（I7 第二档）：全片逐镜参数总表，默认收起 */
+  const [sheetOpen, setSheetOpen] = useState(false);
+  /** 批量套用（I7 第三档）：正在改哪一场、选了哪项、草稿值 */
+  const [batchScene, setBatchScene] = useState<string>();
+  const [batchField, setBatchField] = useState<"shotSize" | "angle" | "movement" | "focalMm">("shotSize");
+  const [batchValue, setBatchValue] = useState("");
   /** 自定义焦段的输入草稿：回车 / 失焦才写，边打字边写会把 1 写成 1mm */
   const [focalDraft, setFocalDraft] = useState("");
   const shot = project.shots.find((item) => item.id === currentShotId);
@@ -95,6 +107,7 @@ export function ShotLanguagePanel({
     ? project.shots.filter((item) => item.sceneId === previous.sceneId).findIndex((item) => item.id === previous.id) + 1
     : 0;
   const tailMs = shot?.continuation?.tailMs ?? null;
+  const sheet = useMemo(() => shotSheetOf(project), [project]);
 
   const applyLighting = (template: LightingTemplate) => {
     if (!shot) return;
@@ -208,6 +221,124 @@ export function ShotLanguagePanel({
             一套说法 = 景别 + 机位 + 运镜 + 焦段。套用会写一条镜头改动，提示词里那行技术参数当场跟着变；
             机位坐标（走位里摆好的位置）保留不动。
           </p>
+
+          {/* 摄影单（I7 第二档）：全片逐镜参数总表 */}
+          <section className="mt-3 border border-line px-3 py-2.5">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => setSheetOpen((open) => !open)}
+                className="text-[10px] tracking-[.06em] text-text underline decoration-line-2 underline-offset-2"
+              >
+                摄影单 {sheetOpen ? "收起" : "展开"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(shotSheetTsv(sheet));
+                  setFlash("摄影单已复制（TSV）。");
+                }}
+                className="text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
+              >
+                复制表格
+              </button>
+            </div>
+            <p className="tnum mt-1 text-[9px] leading-[1.65] text-muted-2">
+              {shotSheetText(sheet)}
+            </p>
+            {sheetOpen && (
+              <div className="mt-2 overflow-x-auto">
+                <table className="w-full border-collapse text-[9px]">
+                  <thead>
+                    <tr className="border-b border-line text-muted-2">
+                      <th className="py-1 pr-2 text-left font-normal">镜</th>
+                      <th className="py-1 pr-2 text-left font-normal">景别</th>
+                      <th className="py-1 pr-2 text-left font-normal">机位</th>
+                      <th className="py-1 pr-2 text-left font-normal">运镜</th>
+                      <th className="py-1 pr-2 text-right font-normal">焦段</th>
+                      <th className="py-1 pr-2 text-left font-normal">光影</th>
+                      <th className="py-1 text-left font-normal">构图</th>
+                    </tr>
+                  </thead>
+                  {sheet.groups.map((group) => (
+                    <tbody key={group.sceneId}>
+                      <tr>
+                        <td colSpan={7} className="pt-2 text-[8.5px] text-muted-2">
+                          <span className="flex flex-wrap items-baseline justify-between gap-2">
+                            <span>
+                              {group.label} · {group.locationName}
+                            </span>
+                            {onBatch && group.sceneId !== "orphan" && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setBatchScene(batchScene === group.sceneId ? undefined : group.sceneId);
+                                  setBatchValue("");
+                                }}
+                                className="text-[8.5px] text-muted-2 underline decoration-line-2 underline-offset-2 hover:text-text"
+                              >
+                                {batchScene === group.sceneId ? "收起" : "整场改"}
+                              </button>
+                            )}
+                          </span>
+                        </td>
+                      </tr>
+                      {batchScene === group.sceneId && onBatch && (
+                        <tr>
+                          <td colSpan={7} className="pb-1.5">
+                            <BatchRow
+                              project={project}
+                              sceneId={group.sceneId}
+                              field={batchField}
+                              value={batchValue}
+                              readOnly={readOnly}
+                              onField={setBatchField}
+                              onValue={setBatchValue}
+                              onApply={(patch) => {
+                                const written = onBatch(group.sceneId, patch);
+                                setFlash(
+                                  written > 0 ? `整场改好了：写了 ${written} 条。` : "没有改动。",
+                                );
+                                setBatchScene(undefined);
+                              }}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                      {group.rows.map((row) => (
+                        <tr
+                          key={row.shotId}
+                          className={cn(
+                            "border-b border-line/60",
+                            row.shotId === currentShotId && "text-text",
+                          )}
+                        >
+                          <td className="py-1 pr-2">
+                            <button
+                              type="button"
+                              onClick={() => onSelectShot(row.shotId)}
+                              className="tnum text-muted-2 underline decoration-line-2 underline-offset-2 hover:text-text"
+                            >
+                              {String(row.no).padStart(2, "0")}
+                            </button>
+                          </td>
+                          <td className="py-1 pr-2 text-muted">{row.shotSize}</td>
+                          <td className="py-1 pr-2 text-muted">{row.angle}</td>
+                          <td className="py-1 pr-2 text-muted">{row.movement}</td>
+                          <td className="tnum py-1 pr-2 text-right text-muted">{row.focalMm}</td>
+                          <td className="py-1 pr-2 text-muted-2">{row.lighting ?? "—"}</td>
+                          <td className="py-1 text-muted-2">{row.composition ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  ))}
+                </table>
+                <p className="mt-1.5 text-[8.5px] leading-[1.6] text-muted-2">
+                  「—」= 这一镜没写。「复制表格」粘进 Excel / 飞书都是分好的列。
+                </p>
+              </div>
+            )}
+          </section>
 
           {shot && (
             <section className="mt-3 border border-line px-3 py-2.5">
@@ -562,6 +693,129 @@ export function ShotLanguagePanel({
           </section>
         </div>
       </aside>
+    </div>
+  );
+}
+
+/**
+ * 按场批量套用的一行（I7 第三档）。
+ *
+ * 只给一项参数：批量改多项等于「整场重设」，那不是这个入口想干的事。
+ * 选完先算计划、把「会改几镜、跳过几镜」摊给作者看，再点确认。
+ */
+function BatchRow({
+  project,
+  sceneId,
+  field,
+  value,
+  readOnly,
+  onField,
+  onValue,
+  onApply,
+}: {
+  project: Project;
+  sceneId: string;
+  field: "shotSize" | "angle" | "movement" | "focalMm";
+  value: string;
+  readOnly: boolean;
+  onField: (field: "shotSize" | "angle" | "movement" | "focalMm") => void;
+  onValue: (value: string) => void;
+  onApply: (patch: BatchPatch) => void;
+}) {
+  const patch: BatchPatch =
+    field === "focalMm"
+      ? Number.isFinite(Number(value)) && value !== ""
+        ? { focalMm: Number(value) }
+        : {}
+      : value !== ""
+        ? ({ [field]: value } as BatchPatch)
+        : {};
+  const plan = Object.keys(patch).length > 0 ? batchPlanOf(project, sceneId, patch) : undefined;
+  const error = plan && "error" in plan ? plan.error : undefined;
+  const ready = plan && "changes" in plan ? plan : undefined;
+  const canApply = !readOnly && ready !== undefined && ready.changes.length > 0;
+
+  return (
+    <div className="rounded-token border border-line px-2 py-1.5">
+      <div className="flex flex-wrap items-center gap-1.5 text-[9px]">
+        <select
+          value={field}
+          onChange={(event) => {
+            onField(event.target.value as typeof field);
+            onValue("");
+          }}
+          className="rounded-token border border-line bg-transparent px-1 py-0.5 text-[9.5px] text-text focus:border-line-2 focus:outline-none"
+        >
+          <option value="shotSize" className="bg-surface">景别</option>
+          <option value="angle" className="bg-surface">机位</option>
+          <option value="movement" className="bg-surface">运镜</option>
+          <option value="focalMm" className="bg-surface">焦段</option>
+        </select>
+        {field === "shotSize" && (
+          <select
+            value={value}
+            onChange={(event) => onValue(event.target.value)}
+            className="rounded-token border border-line bg-transparent px-1 py-0.5 text-[9.5px] text-text focus:border-line-2 focus:outline-none"
+          >
+            <option value="" className="bg-surface">选一项</option>
+            {(["wide", "medium", "close", "extreme-close"] as const).map((size) => (
+              <option key={size} value={size} className="bg-surface">
+                {SHOT_SIZE_CN[size]}
+              </option>
+            ))}
+          </select>
+        )}
+        {field === "angle" && (
+          <select
+            value={value}
+            onChange={(event) => onValue(event.target.value)}
+            className="rounded-token border border-line bg-transparent px-1 py-0.5 text-[9.5px] text-text focus:border-line-2 focus:outline-none"
+          >
+            <option value="" className="bg-surface">选一项</option>
+            {(["eye", "low", "high", "top"] as const).map((angle) => (
+              <option key={angle} value={angle} className="bg-surface">
+                {SHOT_ANGLE_CN[angle]}
+              </option>
+            ))}
+          </select>
+        )}
+        {field === "movement" && (
+          <select
+            value={value}
+            onChange={(event) => onValue(event.target.value)}
+            className="rounded-token border border-line bg-transparent px-1 py-0.5 text-[9.5px] text-text focus:border-line-2 focus:outline-none"
+          >
+            <option value="" className="bg-surface">选一项</option>
+            {(["static", "push", "pull", "pan", "tilt", "handheld"] as const).map((move) => (
+              <option key={move} value={move} className="bg-surface">
+                {MOVE_CN[move]}
+              </option>
+            ))}
+          </select>
+        )}
+        {field === "focalMm" && (
+          <input
+            type="number"
+            min={8}
+            max={300}
+            value={value}
+            placeholder="8–300"
+            onChange={(event) => onValue(event.target.value)}
+            className="tnum w-[64px] rounded-token border border-line bg-transparent px-1 py-0.5 text-[9.5px] text-text focus:border-line-2 focus:outline-none"
+          />
+        )}
+        <button
+          type="button"
+          disabled={!canApply}
+          onClick={() => onApply(patch)}
+          className="rounded-token border border-line-2 px-1.5 py-0.5 text-[9px] text-text transition-colors duration-[var(--dur)] hover:bg-text/10 disabled:opacity-40"
+        >
+          确认整场改
+        </button>
+      </div>
+      <p className="mt-1 text-[8.5px] leading-[1.6] text-muted-2">
+        {error ?? (ready ? batchText(ready) : "选一项参数，这里会说清会改几镜。")}
+      </p>
     </div>
   );
 }

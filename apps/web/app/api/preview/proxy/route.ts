@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { chmod, mkdir, readdir, rename, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
-import { projectRoot } from "@/lib/app-config";
+import { projectRoot } from "@/lib/project-root";
 import { materializeAsset } from "@/lib/storage-runtime";
 import {
   PROXY_CACHE_CAP_BYTES,

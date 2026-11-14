@@ -1,6 +1,6 @@
 # 业务功能清单（ID 与 docs/FEATURES.md 一致）。完成度由验收用例的测试结果自动计算，不手写。
 # 验收用例和测试的对应：测试名里带 [A1-a] 这样的 ID；或者用 match 写测试名里已有的一段文字（不用改测试）。
-# 这里只登记主路径上的 P0 功能；其余功能仍以 docs/FEATURES.md 为准。
+# 这里只登记主路径上的功能；其余功能仍以 docs/FEATURES.md 为准。
 features:
   - id: A1
     name: 一句话 / 大纲 → 故事梗概
@@ -34,3 +34,92 @@ features:
     acceptance:
       - { id: G8-a, desc: 导出前跑完合规预检, match: "导出前预检（G8）" }
       - { id: G8-b, desc: 四个检查点, match: "G8 四个检查点" }
+
+  # ── 以下是 2026-11-14 补登记的主路径（此前只登记了 6 条，C 组与阶段流都没进图）──
+
+  - id: F8
+    name: 阶段式创作流
+    modules: [web]
+    acceptance:
+      - { id: F8-a, desc: 七个阶段按故事到成片的顺序排好，下一步指向第一个没确认的阶段, match: "阶段式创作流（F8）" }
+  - id: F9
+    name: 闸门确认组件
+    modules: [web]
+    acceptance:
+      - { id: F9-a, desc: 确认后是 confirmed，内容一改就 stale；签名只覆盖本阶段, match: "阶段确认与过期（F9）" }
+      - { id: F9-b, desc: 回退闸门后回到未确认, match: "声音确认（A9）" }
+  - id: A12
+    name: 覆盖率规划
+    modules: [web]
+    acceptance:
+      - { id: A12-a, desc: 覆盖率不满时不直接挡确认，只列可豁免缺口, match: "A12 覆盖率硬闸门" }
+  - id: G7
+    name: 平台规格库与校验
+    modules: [web]
+    acceptance:
+      - { id: G7-a, desc: 画幅 / 时长 / 编码 / 分辨率短边硬拦，帧率与参考值只提示, match: "平台规格（G7）" }
+      - { id: G7-b, desc: 码率只从实际体积算，超出参考区间只提醒, match: "码率与文件大小（G7 补全）" }
+  - id: G2
+    name: 平台规格校验（文件上限）
+    modules: [web]
+    acceptance:
+      - { id: G2-a, desc: 核过的文件上限带出处与复核日期，超限硬拦；没核过的照实写未核验, match: "文件上限逐条核验（G2" }
+  - id: C15
+    name: 多工作空间
+    modules: [web]
+    acceptance:
+      - { id: C15-a, desc: 不能删 / 归档正在打开的空间；没有 IndexedDB 时如实拒绝, match: "删工作空间（C15" }
+  - id: C22
+    name: 照空间设定开新一集
+    modules: [web]
+    acceptance:
+      - { id: C22-a, desc: 只带设定不带成片，复用资产记 library 且不抄花费, match: "照别的空间开工（C1" }
+      - { id: C22-b, desc: 任选来源：归档的不进清单，找不到 / 归档都说清楚, match: "任选来源（C22" }
+  - id: A6
+    name: 多集连载管理
+    modules: [web]
+    acceptance:
+      - { id: A6-a, desc: 按系列分组、按集序排，钩子接力三态, match: "多集连载（A6" }
+  - id: C16
+    name: 跨空间取素材（挑图）
+    modules: [web]
+    acceptance:
+      - { id: C16-a, desc: 同一份文件在多个空间用过只出现一次，使用处合并, match: "跨空间素材清单（C4" }
+  - id: C17
+    name: 跨空间复用演员 / 场景 / 道具
+    modules: [web]
+    acceptance:
+      - { id: C17-a, desc: 把一个实体搬进当前项目，id 重编、只带被引用的资产, match: "把一个实体搬进当前项目（C1" }
+  - id: C20
+    name: 跨空间取一拍视频
+    modules: [web]
+    acceptance:
+      - { id: C20-a, desc: 按种类筛选，视频清单只出视频, match: "跨空间取视频（C1" }
+  - id: C21
+    name: 跨空间取一版配音
+    modules: [web]
+    acceptance:
+      - { id: C21-a, desc: 音频清单只出音频, match: "跨空间取音频（C1" }
+  - id: C23
+    name: 跨空间取一版故事
+    modules: [web]
+    acceptance:
+      - { id: C23-a, desc: 文字整份取过来，同名同 id 的弧光与关系都带上, match: "跨空间取一版故事（C1" }
+      - { id: C23-b, desc: 取用前逐字段给出「现在 → 取来之后」, match: "取用前的故事对比（C23" }
+  - id: C24
+    name: 跨空间取一场剧本
+    modules: [web]
+    acceptance:
+      - { id: C24-a, desc: 地点与演员都对得上时整场取；对不上整场拒绝并说清缺谁, match: "跨空间取一场剧本（C1" }
+      - { id: C24-b, desc: 整本按场序一起取，缺人的场跳过其余照取, match: "整本剧本一起取（C24" }
+  - id: C18
+    name: 项目技能（可复用提示词）
+    modules: [web]
+    acceptance:
+      - { id: C18-a, desc: 跨空间取一条技能：id 重编、默认启用, match: "跨空间取技能（C.5" }
+      - { id: C18-b, desc: 技能导入导出：不带 id 与 createdAt，同名同内容跳过, match: "技能导入导出（C18" }
+  - id: C14
+    name: 生成版本库与废片库
+    modules: [web]
+    acceptance:
+      - { id: C14-a, desc: 淘汰的拍 / 旧关键帧 / 删掉的配音都列得出来, match: "废片库（C14" }

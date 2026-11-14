@@ -1,6 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  BPM_MAX,
+  BPM_MIN,
+  DIVISION_LABEL,
+  beatGridOf,
+  beatSnapText,
+  cutsOfClips,
+  snapCuts,
+  type BeatDivision,
+} from "@/lib/beat-snap";
+import { reverbPlanOf, reverbText } from "@/lib/reverb";
 import type { SfxCue } from "@loomina/ir";
 import { StageGate } from "@/components/stage-gate";
 import { ComplianceCheckpoints } from "@/components/compliance-checkpoints";
@@ -476,6 +487,9 @@ export function EditScreen() {
   const [description, setDescription] = useState("");
   const [topics, setTopics] = useState("短剧,AI创作");
   const [platform, setPlatform] = useState<PlatformId>("douyin");
+  /** 节拍卡点（C5）：配乐多快，用来算建议切点 */
+  const [bpm, setBpm] = useState(120);
+  const [division, setDivision] = useState<BeatDivision>(1);
   const [notice, setNotice] = useState("");
   const [rendering, setRendering] = useState(false);
   const [renderStage, setRenderStage] = useState("");
@@ -600,6 +614,19 @@ export function EditScreen() {
   );
   // 生成结果复核（H6）：会进成片的每一条，逐条给作者看
   const review = useMemo(() => reviewSummaryOf(project), [project]);
+  /** 节拍卡点（C5）：BPM 与切点都是只读派生，不改时间线 */
+  const reverbPlan = useMemo(() => reverbPlanOf(project), [project]);
+  const beatPlan = useMemo(() => {
+    const grid = beatGridOf({ bpm, division });
+    const cuts = cutsOfClips(
+      view.clips.map((clip) => ({
+        startMs: clip.startMs,
+        shotId: clip.shotId,
+        label: `SH-${String(clip.shotNo).padStart(2, "0")}`,
+      })),
+    );
+    return snapCuts(cuts, grid);
+  }, [bpm, division, view.clips]);
   const platformValidation = useMemo(
     () =>
       validatePlatform(platformSpecOf(platform), {
@@ -2342,6 +2369,37 @@ export function EditScreen() {
                                 )}
                               </select>
                             </label>
+                            {/* 淡入淡出（C7）：从这一段自身算 */}
+                            <label className="flex items-center gap-1 text-[9.5px] text-muted-2">
+                              淡入
+                              <input
+                                type="number"
+                                min={0}
+                                max={5000}
+                                step={100}
+                                value={cue.fadeInMs}
+                                disabled={Boolean(readOnly)}
+                                onChange={(event) =>
+                                  updateMusic({ fadeInMs: Number(event.target.value) }, cue.id)
+                                }
+                                className="tnum w-[52px] rounded-token border border-line bg-transparent px-1 py-0.5 text-[9.5px] text-text focus:border-line-2 focus:outline-none"
+                              />
+                            </label>
+                            <label className="flex items-center gap-1 text-[9.5px] text-muted-2">
+                              淡出
+                              <input
+                                type="number"
+                                min={0}
+                                max={5000}
+                                step={100}
+                                value={cue.fadeOutMs}
+                                disabled={Boolean(readOnly)}
+                                onChange={(event) =>
+                                  updateMusic({ fadeOutMs: Number(event.target.value) }, cue.id)
+                                }
+                                className="tnum w-[52px] rounded-token border border-line bg-transparent px-1 py-0.5 text-[9.5px] text-text focus:border-line-2 focus:outline-none"
+                              />
+                            </label>
                             <button
                               type="button"
                               onClick={() => toggleMusicPreview(cue)}
@@ -2537,7 +2595,130 @@ export function EditScreen() {
                           })()}
                         </p>
                       )}
+                      {loudness.sfxGainsDb && loudness.sfxGainsDb.length > 0 && (
+                        <p className="tnum mt-1 text-[8.5px] leading-[1.6] text-muted-2">
+                          {(() => {
+                            const gains = loudness.sfxGainsDb!;
+                            const zero = gains.every((gain) => gain === 0);
+                            const touch = gains.some((gain) => Math.abs(gain) >= 15);
+                            return zero
+                              ? `音效按角色归一：${gains.length} 条，都在各自目标位附近`
+                              : `音效按角色归一：${gains.length} 条，叠加增益 ${gains
+                                  .map((gain) => `${gain >= 0 ? "+" : ""}${gain.toFixed(1)}`)
+                                  .join(" / ")} dB${touch ? "（有一条已触 15 dB 上限）" : ""}`;
+                          })()}
+                        </p>
+                      )}
                     </div>
+                  )}
+                </section>
+
+                {/* 节拍卡点（C5）：只给建议，不改时间线 */}
+                {/* 空间混响（C11）：按场给预设，同一场只用一套 */}
+                <section aria-label="空间混响" className="mt-5 border-t border-line pt-4">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <h2 className="text-[11px] tracking-[.06em] text-text">空间混响</h2>
+                    <span className="text-[8.5px] tracking-[.06em] text-muted-2">C11</span>
+                  </div>
+                  <p className="mt-1 text-[9.5px] leading-[1.7] text-muted-2">
+                    混响要匹配空间：卧室不该像大厅，街道不该像录音棚。同一场只用一套。
+                  </p>
+                  <p className="tnum mt-1.5 text-[9px] leading-[1.65] text-muted-2">
+                    {reverbText(reverbPlan)}
+                  </p>
+                  {reverbPlan.lines.length > 0 && (
+                    <ul className="mt-1.5 border-t border-line">
+                      {reverbPlan.lines.map((line) => (
+                        <li
+                          key={line.sceneId}
+                          className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line py-1 text-[9px]"
+                        >
+                          <span className="text-muted">
+                            {line.sceneLabel} · {line.locationName}
+                          </span>
+                          <span className="tnum text-muted-2">
+                            {line.preset.name} · {line.shots} 镜
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="mt-1.5 text-[8.5px] leading-[1.6] text-muted-2">
+                    预设按空间名字与内景 / 外景给，没有用真实房间脉冲响应标定过。
+                    导出时按这一场给对白加混响：同一场同一套，尾巴自然延伸不硬切。
+                  </p>
+                </section>
+
+                <section aria-label="节拍卡点" className="mt-5 border-t border-line pt-4">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <h2 className="text-[11px] tracking-[.06em] text-text">节拍卡点</h2>
+                    <span className="text-[8.5px] tracking-[.06em] text-muted-2">C5</span>
+                  </div>
+                  <p className="mt-1 text-[9.5px] leading-[1.7] text-muted-2">
+                    填这一版配乐的 BPM，看现有切点踩没踩上。只给建议，不会动时间线——
+                    卡点服务剪辑，别为了卡点把表演切碎。
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-end gap-2">
+                    <label className="flex items-center gap-2 text-[9.5px] text-muted-2">
+                      BPM
+                      <input
+                        type="number"
+                        min={BPM_MIN}
+                        max={BPM_MAX}
+                        value={bpm}
+                        onChange={(event) => {
+                          const next = Number.parseInt(event.target.value, 10);
+                          if (Number.isFinite(next)) setBpm(next);
+                        }}
+                        className="tnum w-[64px] rounded-token border border-line bg-transparent px-1.5 py-0.5 text-[10.5px] text-text focus:border-line-2 focus:outline-none"
+                      />
+                    </label>
+                    <label className="flex items-center gap-2 text-[9.5px] text-muted-2">
+                      细分
+                      <select
+                        value={division}
+                        onChange={(event) => setDivision(Number(event.target.value) as BeatDivision)}
+                        className="rounded-token border border-line bg-transparent px-1.5 py-0.5 text-[10.5px] text-text focus:border-line-2 focus:outline-none"
+                      >
+                        {([1, 2, 4] as BeatDivision[]).map((value) => (
+                          <option key={value} value={value} className="bg-surface">
+                            {DIVISION_LABEL[value]}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <p className="tnum mt-2 text-[9px] leading-[1.65] text-muted-2">
+                    {beatSnapText(beatPlan)}
+                  </p>
+                  {beatPlan.drifting.length > 0 && (
+                    <ul className="mt-1.5 border-t border-line">
+                      {beatPlan.drifting.slice(0, 8).map((item) => (
+                        <li
+                          key={`${item.cut.atMs}-${item.cut.shotId ?? ""}`}
+                          className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line py-1 text-[9px]"
+                        >
+                          <span className="text-muted">
+                            {item.cut.label ?? "切点"} · {fmtSec(item.cut.atMs)}
+                          </span>
+                          <span className="tnum text-muted-2">
+                            {item.offsetMs > 0 ? "晚" : "早"} {Math.abs(item.offsetMs)} 毫秒 ·
+                            最近一拍 {fmtSec(item.nearestMs)}
+                          </span>
+                        </li>
+                      ))}
+                      {beatPlan.drifting.length > 8 && (
+                        <li className="py-1 text-[9px] text-muted-2">
+                          还有 {beatPlan.drifting.length - 8} 个没列出来。
+                        </li>
+                      )}
+                    </ul>
+                  )}
+                  {beatPlan.suggestions.length > 0 && (
+                    <p className="tnum mt-1.5 text-[8.5px] leading-[1.6] text-muted-2">
+                      可以补切的位置：{beatPlan.suggestions.map((at) => fmtSec(at)).join(" / ")}
+                      （跨度够大、中间没有切点的地方）
+                    </p>
                   )}
                 </section>
 
@@ -2646,6 +2827,42 @@ export function EditScreen() {
                                 className="accent-[var(--pick)]"
                               />
                               循环
+                            </label>
+                            {/* 淡入淡出（C7）：从这一段自身算 */}
+                            {cue.reverbId && (
+                              <span className="text-[8.5px] text-muted-2">
+                                混响 {reverbPlan.lines.find((line) => line.preset.id === cue.reverbId)?.preset.name ?? cue.reverbId}
+                              </span>
+                            )}
+                            <label className="flex items-center gap-1 text-[9px] text-muted-2">
+                              淡入
+                              <input
+                                type="number"
+                                min={0}
+                                max={5000}
+                                step={50}
+                                value={cue.fadeInMs}
+                                disabled={Boolean(readOnly)}
+                                onChange={(event) =>
+                                  updateSfx({ fadeInMs: Number(event.target.value) }, cue.id)
+                                }
+                                className="tnum w-[48px] rounded-token border border-line bg-transparent px-1 py-0.5 text-[9px] text-text focus:border-line-2 focus:outline-none"
+                              />
+                            </label>
+                            <label className="flex items-center gap-1 text-[9px] text-muted-2">
+                              淡出
+                              <input
+                                type="number"
+                                min={0}
+                                max={5000}
+                                step={50}
+                                value={cue.fadeOutMs}
+                                disabled={Boolean(readOnly)}
+                                onChange={(event) =>
+                                  updateSfx({ fadeOutMs: Number(event.target.value) }, cue.id)
+                                }
+                                className="tnum w-[48px] rounded-token border border-line bg-transparent px-1 py-0.5 text-[9px] text-text focus:border-line-2 focus:outline-none"
+                              />
                             </label>
                             <button
                               type="button"
@@ -3066,6 +3283,11 @@ export function EditScreen() {
                         <PlatformRow key={check.id} check={check} />
                       ))}
                     </ul>
+                    {platformValidation.spec.maxFileNote && (
+                      <p className="mt-1.5 text-[8.5px] leading-[1.6] text-muted-2">
+                        文件上限的口径：{platformValidation.spec.maxFileNote}。
+                      </p>
+                    )}
                     <p className="mt-1.5 text-[8.5px] leading-[1.6] text-muted-2">
                       {platformValidation.spec.note} 只有画幅、时长上限、编码与已知上限的文件大小会硬拦；
                       帧率、码率、标题字数、话题数量与封面是参考值，平台随时会改。

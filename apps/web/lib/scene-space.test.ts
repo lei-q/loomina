@@ -203,3 +203,82 @@ describe("场景空间板 / 走位台账（B11）", () => {
     expect(report.summary.checkedPairs).toBe(0);
   });
 });
+
+describe("光影跨镜一致性（B4 / ADR-0215）", () => {
+  const light = (
+    source: "window" | "lamp" | "overhead" | "practical" | "moon",
+    position: "front" | "side" | "back" | "top" | "under",
+  ) => ({ source, position, mood: "modeled" as const, note: "" });
+
+  it("同一场相邻两镜光源一致：不报", () => {
+    const report = analyzeSceneSpace(
+      makeProject([
+        { lighting: light("window", "side") },
+        { lighting: light("window", "side") },
+      ]),
+    );
+    expect(report.scenes[0]!.issues.filter((item) => item.kind === "lighting")).toEqual([]);
+  });
+
+  it("主光从侧面变逆光：报一句，说清像换了时间或地点", () => {
+    const report = analyzeSceneSpace(
+      makeProject([
+        { lighting: light("window", "side") },
+        { lighting: light("window", "back") },
+      ]),
+    );
+    const issue = report.scenes[0]!.issues.find((item) => item.kind === "lighting")!;
+    expect(issue.severity).toBe("review");
+    expect(issue.message).toContain("侧面");
+    expect(issue.message).toContain("逆光");
+    expect(issue.message).toContain("SH-01");
+    expect(issue.shotIds).toEqual(["s-1", "s-2"]);
+  });
+
+  it("正面与侧面之间互换算软变化，不报", () => {
+    const report = analyzeSceneSpace(
+      makeProject([
+        { lighting: light("window", "front") },
+        { lighting: light("window", "side") },
+      ]),
+    );
+    expect(report.scenes[0]!.issues.filter((item) => item.kind === "lighting")).toEqual([]);
+  });
+
+  it("光源从窗光变台灯：报一句，提示要有交代", () => {
+    const report = analyzeSceneSpace(
+      makeProject([
+        { lighting: light("window", "side") },
+        { lighting: light("lamp", "side") },
+      ]),
+    );
+    const issue = report.scenes[0]!.issues.find((item) => item.kind === "lighting")!;
+    expect(issue.message).toContain("窗光");
+    expect(issue.message).toContain("台灯");
+    expect(issue.fix).toContain("交代");
+  });
+
+  it("只有一边写了光影：不判，不知道是没写还是换了", () => {
+    const report = analyzeSceneSpace(
+      makeProject([{ lighting: light("window", "side") }, {}]),
+    );
+    expect(report.scenes[0]!.issues.filter((item) => item.kind === "lighting")).toEqual([]);
+    expect(report.scenes[0]!.entries[1]!.lighting).toBeNull();
+  });
+
+  it("跨场不判光影：换场换光正常", () => {
+    const project = ProjectSchema.parse({
+      ...makeProject([{}, {}]),
+      scenes: [
+        { id: "sc-1", index: 0, locationId: "loc-1", shotIds: ["s-1"] },
+        { id: "sc-2", index: 1, locationId: "loc-1", shotIds: ["s-2"] },
+      ],
+      shots: makeProject([{}, {}]).shots.map((shot, index) => ({
+        ...shot,
+        sceneId: index === 0 ? "sc-1" : "sc-2",
+        lighting: index === 0 ? light("window", "side") : light("moon", "back"),
+      })),
+    });
+    expect(analyzeSceneSpace(project).summary.issues).toBe(0);
+  });
+});

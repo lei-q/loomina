@@ -77,6 +77,8 @@ export type ReelBarProps = {
   onDecide: (status: Decision) => void;
   /** 一句话指令：成功返回 true，输入框据此清空（ADR-0039） */
   onInstruct: (text: string) => boolean;
+  /** 按作用域改（E11）：返回写了几条事件；不传就退回单镜 */
+  onInstructScope?: (text: string) => number;
   /**
    * 规则表没听懂时，显式让文本模型再读一遍（H19 / ADR-0141）。
    * 成功返回 true，输入框据此清空。
@@ -99,6 +101,7 @@ export function ReelBar({
   onSelect,
   onDecide,
   onInstruct,
+  onInstructScope,
   onInstructWithModel,
   instructBusy,
   onSetLock,
@@ -123,6 +126,8 @@ export function ReelBar({
       ? "留用这一条 take 并锁定这一镜：写两条事件，一步到位"
       : "先留用一条 take，再锁定这一镜";
   const [draft, setDraft] = useState("");
+  /** 作用域编辑的即时反馈：这句改了几镜 */
+  const [scopeNote, setScopeNote] = useState("");
 
   return (
     <footer className="shrink-0 border-t border-line">
@@ -142,11 +147,22 @@ export function ReelBar({
 
       {/* 一句话指令 + 两个动作，重做永远带价 */}
       <div className="flex items-center gap-2 border-t border-line px-4 py-2.5">
+        {scopeNote && (
+          <span className="tnum shrink-0 text-[10px] text-muted-2">{scopeNote}</span>
+        )}
         <form
           className="flex-1"
           onSubmit={(event) => {
             event.preventDefault();
-            if (onInstruct(draft)) setDraft("");
+            if (!onInstructScope) {
+              if (onInstruct(draft)) setDraft("");
+              return;
+            }
+            const written = onInstructScope(draft);
+            if (written > 0) {
+              setDraft("");
+              setScopeNote(written > 1 ? `这句改了 ${written} 镜。` : "");
+            }
           }}
         >
           <label className="flex items-center gap-2.5 rounded-token border border-line bg-surface px-3 py-2 focus-within:border-line-2">
@@ -156,7 +172,7 @@ export function ReelBar({
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               disabled={current.locked}
-              placeholder="说哪里不对：太暗了 · 换个角度 · 快一点 · 她笑得太早了"
+              placeholder="说哪里不对：太暗了 · 换个角度 · 快一点 · 前面加「这一场」「整片」改一片"
               className="w-full bg-transparent text-[12.5px] text-text placeholder:text-muted-2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
             />
             <kbd className="tnum shrink-0 text-[9px] text-muted-2">⏎</kbd>

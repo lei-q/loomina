@@ -333,28 +333,31 @@ export function buildRenderManifest(
 
   const audio: RenderAudio[] = [];
   for (const clip of ordered) {
+    // 混响跟场走（C11 / ADR-0226）：这一场用哪套，这一镜的每句都用它
+    const reverb = clip.reverbId ? { reverb: clip.reverbId } : {};
     for (const line of clip.lines) {
       if (!line.audioUri) continue;
       // 配音按作者挪过的位置落（E1 / ADR-0131）：`audioStartMs` 已经夹在成片之内
+      const timing = { startMs: line.audioStartMs, durationMs: line.durationMs };
       if (/^https?:\/\//i.test(line.audioUri)) {
-        audio.push({ remote: line.audioUri, startMs: line.audioStartMs, durationMs: line.durationMs });
+        audio.push({ remote: line.audioUri, ...timing, ...reverb });
         continue;
       }
       if (isRemoteAssetUri(line.audioUri)) {
         const mime = mimeForExtension(line.audioUri.trim().slice(S3_PREFIX.length).split(".").pop() ?? "");
         if (!isAudioMime(mime)) continue;
-        audio.push({ audio: line.audioUri, startMs: line.audioStartMs, durationMs: line.durationMs });
+        audio.push({ audio: line.audioUri, ...timing, ...reverb });
         continue;
       }
       if (isStoredAssetUri(line.audioUri)) {
         const mime = mimeForExtension(storedAssetRef(line.audioUri)!.extension);
         if (!isAudioMime(mime)) continue;
-        audio.push({ audio: line.audioUri, startMs: line.audioStartMs, durationMs: line.durationMs });
+        audio.push({ audio: line.audioUri, ...timing, ...reverb });
         continue;
       }
       const parts = parseDataUri(line.audioUri);
       if (!parts || !isAudioMime(parts.mime)) continue;
-      audio.push({ audio: line.audioUri, startMs: line.audioStartMs, durationMs: line.durationMs });
+      audio.push({ audio: line.audioUri, ...timing, ...reverb });
     }
   }
 
@@ -370,6 +373,9 @@ export function buildRenderManifest(
       duckDb: cue.duckDb,
       ducking: cue.ducking,
       loop: cue.loop,
+      // 淡入淡出（C7）：从这一段自身算，混音侧再夹到长度内
+      ...(cue.fadeInMs ? { fadeInMs: cue.fadeInMs } : {}),
+      ...(cue.fadeOutMs ? { fadeOutMs: cue.fadeOutMs } : {}),
     };
     if (/^https?:\/\//i.test(cue.uri)) {
       music.push({ remote: cue.uri, ...common });
@@ -403,6 +409,12 @@ export function buildRenderManifest(
       endMs,
       gainDb: cue.gainDb,
       loop: cue.loop,
+      // 角色决定自动归一到哪个目标位（C7 / ADR-0218）
+      role: cue.role,
+      ...(cue.fadeInMs ? { fadeInMs: cue.fadeInMs } : {}),
+      ...(cue.fadeOutMs ? { fadeOutMs: cue.fadeOutMs } : {}),
+      // 所在场的混响（C11 / ADR-0233）：音效要跟房间走
+      ...(cue.reverbId ? { reverb: cue.reverbId } : {}),
     };
     if (/^https?:\/\//i.test(cue.uri)) {
       sfx.push({ remote: cue.uri, ...common });

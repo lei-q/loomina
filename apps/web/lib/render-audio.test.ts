@@ -11,6 +11,8 @@ import {
   parsePhaseMeter,
   secondPassAudioArgs,
   segmentGainDb,
+  SFX_TARGET_LUFS,
+  sfxGainDb,
 } from "./render-audio";
 
 describe("分段响度（C12）", () => {
@@ -375,5 +377,201 @@ describe("音效层与三路平衡（C7）", () => {
     });
     const filters = args[args.indexOf("-filter_complex") + 1]!;
     expect(filters).not.toContain("volume=");
+  });
+});
+
+describe("音效自动响度归一（C7 / ADR-0218）", () => {
+  it("按角色归一到不同目标位：环境垫在后面、重音跳出来", () => {
+    // 同一条 −45 LUFS 的音效，环境只抬 15（封顶），重音抬 27→封顶 15
+    expect(sfxGainDb(-25, "foley")).toBe(5);
+    expect(sfxGainDb(-25, "impact")).toBe(7);
+    expect(sfxGainDb(-25, "ambience")).toBe(-5);
+    expect(sfxGainDb(-25, "transition")).toBe(3);
+  });
+
+  it("单条最多 ±15 dB：太小声也不无限抬", () => {
+    expect(sfxGainDb(-60, "impact")).toBe(15);
+    expect(sfxGainDb(-5, "ambience")).toBe(-15);
+  });
+
+  it("量不到 / 静音不抬：null、非有限值与 −70 都返回 0", () => {
+    expect(sfxGainDb(null, "foley")).toBe(0);
+    expect(sfxGainDb(undefined, "foley")).toBe(0);
+    expect(sfxGainDb(Number.NaN, "foley")).toBe(0);
+    expect(sfxGainDb(-70, "foley")).toBe(0);
+    expect(sfxGainDb(-80, "ambience")).toBe(0);
+  });
+
+  it("结果按 0.1 dB 取整", () => {
+    expect(sfxGainDb(-20.06, "foley")).toBe(0.1);
+    expect(sfxGainDb(-19.94, "foley")).toBe(-0.1);
+  });
+
+  it("目标位表覆盖四个角色，且环境最低", () => {
+    const targets = Object.values(SFX_TARGET_LUFS);
+    expect(targets).toHaveLength(4);
+    expect(SFX_TARGET_LUFS.ambience).toBeLessThan(SFX_TARGET_LUFS.foley);
+    expect(SFX_TARGET_LUFS.impact).toBeGreaterThan(SFX_TARGET_LUFS.foley);
+  });
+});
+
+describe("对白混响（C11 / ADR-0226）", () => {
+  const build = (reverb?: string) =>
+    buildAudioMixCommand({
+      dialogue: [
+        {
+          path: "/tmp/a.m4a",
+          startMs: 0,
+          durationMs: 2000,
+          gainDb: 0,
+          ...(reverb ? { reverb } : {}),
+        },
+      ],
+      music: [],
+      totalMs: 5000,
+      outFile: "/tmp/mix.wav",
+    });
+  const filtersOf = (args: string[]) => args[args.indexOf("-filter_complex") + 1]!;
+
+  it("不带混响时滤镜链与旧版一致：没有 aecho", () => {
+    expect(filtersOf(build())).not.toContain("aecho");
+  });
+
+  it("带混响时 aecho 加在 adelay 之后、atrim 之前", () => {
+    const filters = filtersOf(build("aecho=0.8:0.96:38|89|176:0.500|0.370|0.250"));
+    expect(filters).toContain("aecho=");
+    // 顺序：adelay → aecho → atrim
+    const delay = filters.indexOf("adelay=");
+    const echo = filters.indexOf("aecho=");
+    const trim = filters.indexOf("atrim=");
+    expect(delay).toBeGreaterThan(-1);
+    expect(echo).toBeGreaterThan(delay);
+    expect(trim).toBeGreaterThan(echo);
+  });
+
+  it("干声预设传空串时也不挂滤镜", () => {
+    expect(filtersOf(build(""))).not.toContain("aecho");
+  });
+});
+
+describe("淡入淡出（C7 / ADR-0232）", () => {
+  const buildMusic = (fadeInMs?: number, fadeOutMs?: number) =>
+    buildAudioMixCommand({
+      dialogue: [],
+      music: [
+        {
+          path: "/tmp/m.m4a",
+          startMs: 1000,
+          endMs: 5000,
+          gainDb: -18,
+          duckDb: 15,
+          ducking: true,
+          loop: false,
+          ...(fadeInMs !== undefined ? { fadeInMs } : {}),
+          ...(fadeOutMs !== undefined ? { fadeOutMs } : {}),
+        },
+      ],
+      totalMs: 8000,
+      outFile: "/tmp/mix.wav",
+    });
+  const filtersOf = (args: string[]) => args[args.indexOf("-filter_complex") + 1]!;
+
+  it("不淡时链路里没有 afade", () => {
+    expect(filtersOf(buildMusic())).not.toContain("afade");
+  });
+
+  it("淡入从 0 开始，淡出在这段结束前开始", () => {
+    const filters = filtersOf(buildMusic(500, 1000));
+    expect(filters).toContain("afade=t=in:st=0:d=0.500");
+    // 这一段 4 秒（1000→5000），淡出 1 秒 → 从 3 秒开始
+    expect(filters).toContain("afade=t=out:st=3.000:d=1.000");
+  });
+
+  it("淡入淡出在 adelay 之前：那时时间轴还从 0 算", () => {
+    const filters = filtersOf(buildMusic(500, 500));
+    expect(filters.indexOf("afade=")).toBeGreaterThan(-1);
+    expect(filters.indexOf("afade=")).toBeLessThan(filters.indexOf("adelay="));
+  });
+
+  it("超过这一段长度时按比例缩，不会让淡出起点变负", () => {
+    // 这一段 4 秒，两边各要 3 秒 → 总和 6 > 4，按比例缩到 2 秒 / 2 秒
+    const filters = filtersOf(buildMusic(3000, 3000));
+    expect(filters).toContain("afade=t=in:st=0:d=2.000");
+    expect(filters).toContain("afade=t=out:st=2.000:d=2.000");
+    expect(filters).not.toContain("st=-");
+  });
+
+  it("音效同样支持淡入淡出", () => {
+    const args = buildAudioMixCommand({
+      dialogue: [],
+      music: [],
+      sfx: [
+        {
+          path: "/tmp/s.wav",
+          startMs: 0,
+          endMs: 2000,
+          gainDb: -12,
+          loop: false,
+          fadeInMs: 200,
+          fadeOutMs: 300,
+        },
+      ],
+      totalMs: 4000,
+      outFile: "/tmp/mix.wav",
+    });
+    const filters = filtersOf(args);
+    expect(filters).toContain("afade=t=in:st=0:d=0.200");
+    expect(filters).toContain("afade=t=out:st=1.700:d=0.300");
+  });
+});
+
+describe("音效按场混响（C11 第三档 / ADR-0233）", () => {
+  const build = (reverb?: string) =>
+    buildAudioMixCommand({
+      dialogue: [],
+      music: [],
+      sfx: [
+        {
+          path: "/tmp/s.wav",
+          startMs: 1000,
+          endMs: 3000,
+          gainDb: -12,
+          loop: false,
+          ...(reverb ? { reverb } : {}),
+        },
+      ],
+      totalMs: 5000,
+      outFile: "/tmp/mix.wav",
+    });
+  const filtersOf = (args: string[]) => args[args.indexOf("-filter_complex") + 1]!;
+
+  it("不带混响时音效链里没有 aecho", () => {
+    expect(filtersOf(build())).not.toContain("aecho");
+  });
+
+  it("aecho 在 adelay 之前：与淡入淡出同一位置", () => {
+    const filters = filtersOf(build("aecho=1.0:1.0:74|174|341:0.570|0.415|0.287"));
+    expect(filters).toContain("aecho=");
+    expect(filters.indexOf("aecho=")).toBeLessThan(filters.indexOf("adelay="));
+  });
+
+  it("配乐即使带 reverb 字段也不加 aecho（音乐不房间化）", () => {
+    const args = buildAudioMixCommand({
+      dialogue: [],
+      music: [
+        {
+          path: "/tmp/m.m4a",
+          startMs: 0,
+          endMs: 2000,
+          gainDb: -18,
+          duckDb: 15,
+          ducking: true,
+          loop: false,
+        },
+      ],
+      totalMs: 3000,
+      outFile: "/tmp/mix.wav",
+    });
+    expect(filtersOf(args)).not.toContain("aecho");
   });
 });

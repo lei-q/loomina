@@ -1,7 +1,8 @@
 import type { Project } from "@loomina/ir";
 import { describe, expect, it } from "vitest";
+import type { WorkspaceMeta } from "./event-log";
 import { sampleProject } from "./sample-project";
-import { projectFromSetup } from "./workspace-template";
+import { projectFromSetup, setupSourceProblem, setupSourcesOf } from "./workspace-template";
 
 const clone = (): Project => structuredClone(sampleProject);
 
@@ -91,5 +92,33 @@ describe("照别的空间开工（C1 / ADR-0197）", () => {
     projectFromSetup(source, { id: "p-new", title: "第二集" });
     expect(source.assets).toEqual(before.assets);
     expect(source.takes).toEqual(before.takes);
+  });
+});
+
+describe("任选来源（C22 第二档 / ADR-0213）", () => {
+  const meta = (id: string, name: string, extra: Partial<WorkspaceMeta> = {}): WorkspaceMeta => ({
+    id,
+    name,
+    createdAt: "2026-11-13T00:00:00Z",
+    lastOpenedAt: "2026-11-13T00:00:00Z",
+    ...extra,
+  });
+
+  it("列出所有能当来源的空间，归档的不收", () => {
+    const list = [
+      meta("w-1", "第一集"),
+      meta("w-2", "第二集", { seriesId: "s-a", episodeNo: 2 }),
+      meta("w-3", "收起来的", { archivedAt: "2026-11-14T00:00:00Z" }),
+    ];
+    expect(setupSourcesOf(list).map((item) => item.id)).toEqual(["w-1", "w-2"]);
+  });
+
+  it("来源找不到、归档了都要说清楚；不给来源不算问题", () => {
+    const list = [meta("w-1", "第一集"), meta("w-2", "收起来的", { archivedAt: "x" })];
+    expect(setupSourceProblem(list, undefined)).toBeUndefined();
+    expect(setupSourceProblem(list, "w-1")).toBeUndefined();
+    expect(setupSourceProblem(list, "w-9")).toContain("找不到");
+    expect(setupSourceProblem(list, "w-2")).toContain("归档");
+    expect(setupSourceProblem(list, "w-2")).toContain("收起来的");
   });
 });

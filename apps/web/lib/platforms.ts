@@ -41,6 +41,13 @@ export type PlatformSpec = {
   resolution: { width: number; height: number };
   durationMs: { min?: number; max?: number };
   maxFileBytes?: number;
+  /**
+   * 文件上限是从哪核出来的（G2 / ADR-0214）。只有逐条读过平台文档才填，
+   * 界面把它连同复核日期一起显示；没填就说明这个数还没核验过。
+   */
+  maxFileSource?: { url: string; checkedAt: string; quote: string };
+  /** 上限适用的场景（手机投稿 / web 投稿 / 账号等级），界面照实写 */
+  maxFileNote?: string;
   codec: "H.264";
   fps: number;
   coverRatio: string;
@@ -99,6 +106,14 @@ export const PLATFORM_SPECS: PlatformSpec[] = [
     titleMaxChars: 50,
     hashtagMax: 5,
     bitrateMbps: [2, 8],
+    // 官方帮助中心「如何发布长视频」：相册导入最多 31 段、大小不超过 2G、时长不超 15 分钟
+    maxFileBytes: 2 * 1024 ** 3,
+    maxFileSource: {
+      url: "https://www.kuaishou.com/help/feedback",
+      checkedAt: "2026-11-14",
+      quote: "视频最多可选择 31 段，大小不能超过 2G，时长不能超出 15 分钟。",
+    },
+    maxFileNote: "这是 App 相册导入长视频的上限；创作者服务平台网页端没有公开的同一口径",
     subtitleMode: "burn-in",
     publishMode: "api",
     badge: { corner: "tl", insetPct: 8 },
@@ -133,6 +148,15 @@ export const PLATFORM_SPECS: PlatformSpec[] = [
     coverRatio: "16:9",
     titleMaxChars: 80,
     hashtagMax: 10,
+    // 官方帮助中心（2026-04-01 更新）：单 P 上限 16G，lv3 以上 web 投稿 64G。
+    // 取小的那个当硬上限：超过 16G 的手机投稿路径一定发不了。
+    maxFileBytes: 16 * 1024 ** 3,
+    maxFileSource: {
+      url: "https://www.bilibili.com/blackboard/help.html#/?qid=3845",
+      checkedAt: "2026-11-14",
+      quote: "文件大小：不超过16G*权益等级lv3以上，则可享受web投稿64G超大文件上限",
+    },
+    maxFileNote: "手机投稿单 P 上限 16G；权益等级 lv3 以上的 web 投稿可到 64G，这里按 16G 硬拦",
     subtitleMode: "burn-in",
     publishMode: "api",
     badge: { corner: "tl", insetPct: 8 },
@@ -285,6 +309,8 @@ const formatSeconds = (ms: number) => `${(ms / 1000).toFixed(1)} 秒`;
 export function formatSize(fileBytes: number): string {
   if (!Number.isFinite(fileBytes) || fileBytes <= 0) return "0 KB";
   if (fileBytes < 1024 * 1024) return `${Math.max(1, Math.round(fileBytes / 1024))} KB`;
+  // 平台上限到了 GB 级（B 站 16G、快手 2G）：写成「2048.0 MB」读不出量级
+  if (fileBytes >= 1024 ** 3) return `${(fileBytes / 1024 ** 3).toFixed(1)} GB`;
   return `${(fileBytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
@@ -396,26 +422,38 @@ export function validatePlatform(
     });
   }
 
-  if (spec.maxFileBytes !== undefined && input.fileBytes !== undefined) {
-    const ok = input.fileBytes <= spec.maxFileBytes;
-    checks.push({
-      id: "file-size",
-      label: "文件大小",
-      status: ok ? "pass" : "block",
-      detail: `${formatSize(input.fileBytes)} · 上限 ${formatSize(spec.maxFileBytes)}`,
-    });
+  if (spec.maxFileBytes !== undefined) {
+    const limit = `上限 ${formatSize(spec.maxFileBytes)}`;
+    // 核过的上限带上出处与复核日期（G2 / ADR-0214）：作者能自己去看那句话
+    const basis = spec.maxFileSource
+      ? `（${spec.maxFileSource.checkedAt} 核：${spec.maxFileSource.quote}）`
+      : "";
+    if (input.fileBytes !== undefined) {
+      const ok = input.fileBytes <= spec.maxFileBytes;
+      checks.push({
+        id: "file-size",
+        label: "文件大小",
+        status: ok ? "pass" : "block",
+        detail: `${formatSize(input.fileBytes)} · ${limit}${basis}`,
+      });
+    } else {
+      checks.push({
+        id: "file-size",
+        label: "文件大小",
+        status: "pass",
+        detail: `${spec.name} ${limit}${basis}；导出后按实际体积核对`,
+      });
+    }
   } else {
     checks.push({
       id: "file-size",
       label: "文件大小",
       status: "pass",
       detail:
-        spec.maxFileBytes === undefined
-          ? input.fileBytes !== undefined
-            ? `${formatSize(input.fileBytes)}；${spec.name} 没有可引用的公开上限（未核验）`
-            : `${spec.name} 没有可引用的公开上限（未核验）；导出后看实际体积`
-          : "导出后按实际文件大小再核对",
-      reference: spec.maxFileBytes === undefined,
+        input.fileBytes !== undefined
+          ? `${formatSize(input.fileBytes)}；${spec.name} 没有可引用的公开上限（未核验）`
+          : `${spec.name} 没有可引用的公开上限（未核验）；导出后看实际体积`,
+      reference: true,
     });
   }
 

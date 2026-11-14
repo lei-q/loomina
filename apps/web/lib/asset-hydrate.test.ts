@@ -62,6 +62,8 @@ function view(uri: string): EditView {
         ducking: true,
         loop: true,
         role: "bed",
+        fadeInMs: 0,
+        fadeOutMs: 0,
         licenseRef: "自己录",
       },
     ],

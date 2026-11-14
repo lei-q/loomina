@@ -28,6 +28,7 @@ import {
 } from "./asset-uri";
 import { scanText, type RenderCompliance } from "./compliance";
 import { aiContentHashOf, materialOfManifest } from "./ai-label";
+import { REVERB_IDS } from "./reverb";
 import { isDefaultFrame } from "./render-effects";
 
 /** 输出档位（H13）：草稿先看节奏，定稿才交付。 */
@@ -157,6 +158,13 @@ export type RenderAudio = {
   startMs: number;
   /** 这一句多长；ducking 的时间窗靠它，不知道就不压 */
   durationMs?: number;
+  /**
+   * 这一句所在场的混响预设 id（C11 / ADR-0226）。
+   *
+   * 只传 id：服务端从固定表解析成滤镜。传裸滤镜串等于把任意 ffmpeg
+   * 参数暴露给请求体，那是注入面。不在表里的 id 一律当作没有混响。
+   */
+  reverb?: string;
 };
 
 /** 配乐床（C4 / C12）：音乐在台词下按 duckDb 自动压低 */
@@ -171,12 +179,37 @@ export type RenderMusic = {
   duckDb: number;
   ducking: boolean;
   loop: boolean;
+  /** 淡入 / 淡出（C7）：毫秒，从这一段自身算；0 / 缺省表示不淡 */
+  fadeInMs?: number;
+  fadeOutMs?: number;
 };
 
 /**
  * 音效（C7 / ADR-0184）：不 ducking，按自己的增益混进音效总线。
  * `startMs` / `endMs` 都是成片里的绝对时间。
  */
+const SFX_ROLE_SET = new Set(["ambience", "impact", "foley", "transition"]);
+
+/**
+ * 淡入 / 淡出（C7）的读取与校验。
+ *
+ * 只认 0–5000 的整数；不在范围内不报错、当作没写（旧客户端不带这两个字段）。
+ * 数值会在混音侧夹到这一段自身长度以内——写在源里没用，落地时才算得出来。
+ */
+function fadeFields(track: Record<string, unknown>): { fadeInMs?: number; fadeOutMs?: number } {
+  const read = (key: string) => {
+    const value = track[key];
+    if (!integer(value) || value < 0 || value > 5000) return undefined;
+    return value;
+  };
+  const fadeInMs = read("fadeInMs");
+  const fadeOutMs = read("fadeOutMs");
+  return {
+    ...(fadeInMs !== undefined ? { fadeInMs } : {}),
+    ...(fadeOutMs !== undefined ? { fadeOutMs } : {}),
+  };
+}
+
 export type RenderSfx = {
   audio?: string;
   remote?: string;
@@ -184,6 +217,13 @@ export type RenderSfx = {
   endMs: number;
   gainDb: number;
   loop: boolean;
+  /** 角色（C7 自动响度归一）：决定归一到哪个目标位；省略按拟音 */
+  role?: "ambience" | "impact" | "foley" | "transition";
+  /** 淡入 / 淡出（C7）：毫秒，从这一段自身算；0 / 缺省表示不淡 */
+  fadeInMs?: number;
+  fadeOutMs?: number;
+  /** 所在场的混响预设 id（C11）：只传 id，服务端从固定表解析 */
+  reverb?: string;
 };
 
 /** 三路总线平衡（C7 / ADR-0184）：全为 0 时不写进清单 */
@@ -599,11 +639,16 @@ export function validateRenderManifest(
     ) {
       return { ok: false, error: `音轨 ${index + 1} 的时长不合法` };
     }
+    // 混响只认表里的预设 id；不在表里就当没有（不报错——旧客户端不带这个字段）
+    const reverb = typeof track.reverb === "string" && REVERB_IDS.has(track.reverb)
+      ? track.reverb
+      : undefined;
     checkedAudio.push({
       audio: typeof track.audio === "string" ? track.audio : undefined,
       remote: remote || undefined,
       startMs: track.startMs,
       ...(track.durationMs !== undefined ? { durationMs: track.durationMs } : {}),
+      ...(reverb ? { reverb } : {}),
     });
   }
 
@@ -657,6 +702,7 @@ export function validateRenderManifest(
       duckDb,
       ducking: track.ducking !== false,
       loop: track.loop !== false,
+      ...fadeFields(track),
     });
   }
 
@@ -705,6 +751,11 @@ export function validateRenderManifest(
       endMs: track.endMs,
       gainDb,
       loop: track.loop === true,
+      ...(SFX_ROLE_SET.has(track.role as string) ? { role: track.role as RenderSfx["role"] } : {}),
+      ...fadeFields(track),
+      ...(typeof track.reverb === "string" && REVERB_IDS.has(track.reverb)
+        ? { reverb: track.reverb }
+        : {}),
     });
   }
 

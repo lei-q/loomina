@@ -17,6 +17,7 @@ import {
   buildVideoPrompt,
   describeSceneTemplate,
   parseInstruction,
+  parseInstructionScope,
   runMinimalChain,
   SCENE_TEMPLATES,
   sceneTemplateById,
@@ -494,5 +495,89 @@ describe("场景模板进提示词（B15 / ADR-0103）", () => {
 
     expect(prompt).toContain("场景：公寓客厅（公寓客厅模板（窗光 + 顶灯；4300K；光比 3:1；关键位置：");
     expect(prompt).toContain("沙发（中左）");
+  });
+});
+
+describe("情绪词落到光影（F7 / I2 / ADR-0217）", () => {
+  const shot = {
+    shotSize: "medium" as const,
+    camera: { angle: "eye" as const, movement: "static" as const, focalMm: 50 },
+    durationMs: 3000,
+  };
+
+  it("「再压抑一点」落成顶光 + 剪影，不再只写进 promptNotes", () => {
+    const patch = parseInstruction("再压抑一点", shot);
+    expect(patch?.lighting).toMatchObject({ position: "top", mood: "silhouette" });
+    expect(patch?.note).toBeUndefined();
+  });
+
+  it("神秘走侧逆光，柔和走正面平光，硬朗走侧面塑形", () => {
+    expect(parseInstruction("神秘一点", shot)?.lighting).toMatchObject({
+      position: "back",
+      mood: "modeled",
+    });
+    expect(parseInstruction("柔和一点", shot)?.lighting).toMatchObject({
+      position: "front",
+      mood: "flat",
+    });
+    expect(parseInstruction("硬朗一点", shot)?.lighting).toMatchObject({
+      position: "side",
+      mood: "modeled",
+    });
+  });
+
+  it("只改情绪的维度，光源沿用原来那个", () => {
+    const lit = {
+      ...shot,
+      lighting: { source: "lamp" as const, position: "front" as const, mood: "flat" as const, note: "" },
+    };
+    expect(parseInstruction("压抑一点", lit)?.lighting).toMatchObject({
+      source: "lamp",
+      position: "top",
+    });
+  });
+
+  it("没有光影时按默认光源起一份，不留空字段", () => {
+    const lighting = parseInstruction("压抑一点", shot)?.lighting;
+    expect(lighting?.source).toBe("window");
+    expect(lighting?.note).toBe("");
+  });
+
+  it("与结构字段可以同时改：暗 + 压抑两件事都落下来", () => {
+    const patch = parseInstruction("太暗了，再压抑一点", shot);
+    expect(patch?.note).toContain("提亮");
+    expect(patch?.lighting).toMatchObject({ position: "top", mood: "silhouette" });
+  });
+
+  it("只说情绪以外的话不动光影", () => {
+    expect(parseInstruction("靠近一点", shot)?.lighting).toBeUndefined();
+  });
+});
+
+describe("一句话的作用域（E11 / ADR-0231）", () => {
+  it("说了「整片 / 所有镜头 / 每一镜」就是整片", () => {
+    expect(parseInstructionScope("整片都慢一点")).toBe("film");
+    expect(parseInstructionScope("所有镜头靠近一点")).toBe("film");
+    expect(parseInstructionScope("每一镜都太暗了")).toBe("film");
+  });
+
+  it("说了「这一场 / 整场」就是这一场", () => {
+    expect(parseInstructionScope("这一场都暗一点")).toBe("scene");
+    expect(parseInstructionScope("整场换成手持")).toBe("scene");
+  });
+
+  it("说了「这一镜 / 这镜」就是这一镜", () => {
+    expect(parseInstructionScope("这一镜太快了")).toBe("shot");
+    expect(parseInstructionScope("这镜换个角度")).toBe("shot");
+  });
+
+  it("没说范围就按调用方给的默认（通常是当前这一镜）", () => {
+    expect(parseInstructionScope("太暗了")).toBe("shot");
+    expect(parseInstructionScope("太暗了", "scene")).toBe("scene");
+    expect(parseInstructionScope("")).toBe("shot");
+  });
+
+  it("「整片」优先于「整场」：说整片的时候不给判成场", () => {
+    expect(parseInstructionScope("整片每一场都快一点")).toBe("film");
   });
 });

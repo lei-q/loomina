@@ -12,6 +12,7 @@ import { SpendLedger } from "@/components/spend-ledger";
 import type { Modality } from "@/lib/config-types";
 import { nextOpenStage, stageStates } from "@/lib/stage-flow";
 import { rememberWorkspace } from "@/lib/event-log";
+import { setupSourcesOf } from "@/lib/workspace-template";
 import { useWorkbench } from "@/lib/workbench-store";
 
 /** 阶段是一列；还没做出来的阶段 href 为 null，点了不跳。 */
@@ -251,6 +252,8 @@ export function TopBar({
   const [deleting, setDeleting] = useState<string>();
   const [workspaceNote, setWorkspaceNote] = useState<string>();
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
+  /** 清理已归档要按两下：与删单个空间同一口径 */
+  const [clearingArchived, setClearingArchived] = useState(false);
   const project = useWorkbench((state) => state.project);
   const events = useWorkbench((state) => state.events);
   const undo = useWorkbench((state) => state.undo);
@@ -267,8 +270,12 @@ export function TopBar({
   const createWorkspace = useWorkbench((state) => state.createWorkspace);
   const renameWorkspace = useWorkbench((state) => state.renameWorkspace);
   const deleteWorkspace = useWorkbench((state) => state.deleteWorkspace);
+  const exportWorkspace = useWorkbench((state) => state.exportWorkspace);
+  const deleteArchivedWorkspaces = useWorkbench((state) => state.deleteArchivedWorkspaces);
   const archiveWorkspace = useWorkbench((state) => state.archiveWorkspace);
   const currentWorkspace = workspaces.find((item) => item.id === workspaceId);
+  /** 能当来源的空间：归档的不能（C15 / ADR-0210 与 C22 / ADR-0213 共用一份判断） */
+  const sourceOptions = setupSourcesOf(workspaces);
 
   useEffect(() => {
     void refreshWorkspaces();
@@ -451,6 +458,33 @@ export function TopBar({
                             >
                               改
                             </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void exportWorkspace(item.id).then((pack) => {
+                                  if (!pack) {
+                                    setWorkspaceNote(
+                                      useWorkbench.getState().workspaceError ?? "导出没做成。",
+                                    );
+                                    return;
+                                  }
+                                  const blob = new Blob([pack.json], { type: "application/json" });
+                                  const url = URL.createObjectURL(blob);
+                                  const anchor = document.createElement("a");
+                                  anchor.href = url;
+                                  anchor.download = pack.fileName;
+                                  anchor.click();
+                                  URL.revokeObjectURL(url);
+                                  setWorkspaceNote(
+                                    `导出了「${item.name}」的日志：${pack.fileName}。素材文件不在里面，按地址引用。`,
+                                  );
+                                });
+                              }}
+                              title="把这个空间的事件日志导成 JSON：删之前留个底"
+                              className="shrink-0 text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
+                            >
+                              导出
+                            </button>
                             {active ? (
                               <span
                                 title="正在打开的空间不能归档：先切到别的空间"
@@ -537,6 +571,52 @@ export function TopBar({
                   })}
                 </div>
 
+                {workspaces.some((item) => item.archivedAt) && (
+                  <div className="mt-2 border-t border-line pt-2">
+                    {clearingArchived ? (
+                      <span className="flex flex-wrap items-center gap-2 text-[9px]">
+                        <span className="text-muted-2">
+                          清理 {workspaces.filter((item) => item.archivedAt).length} 个已归档的空间：
+                          日志一起清掉，取不回来（素材文件不动）。
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void deleteArchivedWorkspaces().then((count) => {
+                              setClearingArchived(false);
+                              setWorkspaceNote(
+                                count > 0
+                                  ? `清掉了 ${count} 个已归档的空间。素材文件不动。`
+                                  : "没有可清理的已归档空间。",
+                              );
+                            });
+                          }}
+                          title="真清：这些空间的事件日志从本机清掉，取不回来"
+                          className="shrink-0 rounded-token border border-pick px-1.5 py-0.5 text-[9px] text-pick"
+                        >
+                          真清
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setClearingArchived(false)}
+                          className="shrink-0 text-[9px] text-muted-2 hover:text-text"
+                        >
+                          算了
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setClearingArchived(true)}
+                        title="一次清掉所有已归档的空间（日志清掉，素材文件不动）"
+                        className="text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-pick"
+                      >
+                        清理已归档（{workspaces.filter((item) => item.archivedAt).length}）
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 {workspaceNote && (
                   <p className="mt-2 border-t border-line pt-2 text-[9px] leading-[1.6] text-muted-2">
                     {workspaceNote}
@@ -552,12 +632,19 @@ export function TopBar({
                     className="w-full rounded-token border border-line bg-surface px-1.5 py-0.5 text-[9.5px] text-text focus:border-pick focus:outline-none"
                   >
                     <option value="">示例项目（从零开工）</option>
-                    {workspaces.map((item) => (
+                    {sourceOptions.map((item) => (
                       <option key={item.id} value={item.id}>
-                        照「{item.name}」的设定开工（带故事 / 演员 / 场景 / 道具，不带成片）
+                        照「{item.name}」的设定开工
+                        {item.episodeNo !== undefined ? `（第 ${item.episodeNo} 集）` : ""}
                       </option>
                     ))}
                   </select>
+                  <span className="text-[8.5px] leading-[1.6] text-muted-2">
+                    照设定开工只带故事 / 演员 / 场景 / 道具 / 技能 / 风格，不带成片。
+                    {sourceOptions.length === 0
+                      ? "现在没有可当来源的空间。"
+                      : `可选 ${sourceOptions.length} 个；归档的空间不在里面。`}
+                  </span>
                 </label>
 
                 <form

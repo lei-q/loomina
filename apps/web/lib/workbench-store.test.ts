@@ -812,6 +812,60 @@ describe("一句话指令（ADR-0039）", () => {
     );
   });
 
+  it("「再压抑一点」落到 Shot.lighting，写一条 shot.updated 且可回放（F7 / ADR-0217）", () => {
+    const id = state().currentShotId;
+    const ok = state().instruct("再压抑一点");
+
+    expect(ok).toBe(true);
+    const after = state().project.shots.find((item) => item.id === id)!;
+    expect(after.lighting).toMatchObject({ position: "top", mood: "silhouette" });
+    // 落到了结构字段，就不再往 promptNotes 里塞同一件事
+    expect(after.promptNotes).toEqual([]);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.updated",
+      patch: { lighting: { position: "top", mood: "silhouette" } },
+    });
+    expect(
+      rebuild(state().events).shots.find((item) => item.id === id)?.lighting,
+    ).toMatchObject({ position: "top", mood: "silhouette" });
+  });
+
+  it("「这一场都快一点」改整场、共用一个 at：撤销一步整场退回（E11 / ADR-0231）", () => {
+    const sceneId = state().project.shots.find((item) => item.id === state().currentShotId)!.sceneId;
+    const inScene = state().project.shots.filter((item) => item.sceneId === sceneId);
+    const before = inScene.map((item) => item.durationMs);
+
+    const written = state().instructScope("这一场都快一点");
+
+    const after = state().project.shots.filter((item) => item.sceneId === sceneId);
+    expect(written).toBe(inScene.length);
+    expect(after.map((item) => item.durationMs)).not.toEqual(before);
+    const events = state().events.slice(-written);
+    expect(new Set(events.map((event) => event.at)).size).toBe(1);
+  });
+
+  it("「整片都太暗了」改所有未锁定的镜", () => {
+    const unlocked = state().project.shots.filter((item) => !item.locked);
+    const written = state().instructScope("整片都太暗了");
+    expect(written).toBe(unlocked.length);
+  });
+
+  it("没说范围就只改当前这一镜", () => {
+    const written = state().instructScope("太暗了");
+    expect(written).toBe(1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.updated",
+      shotId: state().currentShotId,
+    });
+  });
+
+  it("锁定的镜跳过；一句都没听懂时不写事件", () => {
+    const before = state().events.length;
+    expect(state().instructScope("随便说点什么")).toBe(0);
+    expect(state().events).toHaveLength(before);
+    expect(state().castError).toContain("没听懂");
+  });
+
   it("补充要求进 promptNotes，同一句不重复追加", () => {
     state().instruct("太暗了");
     state().instruct("太暗了");
@@ -6649,6 +6703,13 @@ describe("删工作空间（C15 / ADR-0201）", () => {
 
   it("测试环境没有 IndexedDB：删别的空间也不报成功", async () => {
     expect(await state().deleteWorkspace("w-somewhere-else")).toBeUndefined();
+    expect(state().workspaceError).toContain("不支持多工作空间");
+  });
+
+  it("没有 IndexedDB 时导出与批量清理都如实拒绝（C15 / ADR-0234）", async () => {
+    expect(await state().exportWorkspace("w-any")).toBeUndefined();
+    expect(state().workspaceError).toContain("不支持多工作空间");
+    expect(await state().deleteArchivedWorkspaces()).toBe(0);
     expect(state().workspaceError).toContain("不支持多工作空间");
   });
 });

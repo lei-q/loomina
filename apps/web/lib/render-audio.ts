@@ -29,6 +29,13 @@ export type MixDialogue = {
   durationMs: number;
   /** 按句量出来的增益（dB）；缺省 / 0 表示不动这一句 */
   gainDb?: number;
+  /**
+   * 这一句所在场的混响滤镜串（C11 / ADR-0226）；缺省就是干声。
+   *
+   * 由服务端从预设 id 解析后传入，这里只负责拼进滤镜链。
+   * 加在 `adelay` 之后：混响尾巴可以自然延伸，不会被 `atrim` 截断。
+   */
+  reverb?: string;
 };
 
 export type MixMusic = {
@@ -39,7 +46,13 @@ export type MixMusic = {
   duckDb: number;
   ducking: boolean;
   loop: boolean;
+  /** 淡入 / 淡出（C7）：毫秒，从这一段自身算 */
+  fadeInMs?: number;
+  fadeOutMs?: number;
 };
+
+/** 音效角色：与 IR 的 `SFX_ROLES` 一致（环境 / 重音 / 拟音 / 转场） */
+export type MixSfxRole = "ambience" | "impact" | "foley" | "transition";
 
 /** 一条音效（C7 / ADR-0184）：不 ducking，按自己的增益进音效总线 */
 export type MixSfx = {
@@ -48,6 +61,16 @@ export type MixSfx = {
   endMs: number;
   gainDb: number;
   loop: boolean;
+  /** 角色决定自动归一到哪个目标位；缺省按拟音 */
+  role?: MixSfxRole;
+  /** 淡入 / 淡出（C7）：毫秒，从这一段自身算 */
+  fadeInMs?: number;
+  fadeOutMs?: number;
+  /**
+   * 所在场的混响滤镜串（C11 / ADR-0233）：服务端从预设 id 解析后传入。
+   * 音效要跟房间走；配乐不房间化（音乐是独立的一层）。
+   */
+  reverb?: string;
 };
 
 /** 三路总线平衡（C7 / ADR-0184）：缺省就是 0 dB */
@@ -75,6 +98,8 @@ export type LoudnessReport = {
   monoMs: number | null;
   /** 分段响度（C12）：每句对白实际用的增益；没有对白或一句都没量到时缺省 */
   dialogueGainsDb?: number[];
+  /** 音效自动归一（C7）：每条音效叠加上去的增量；没有音效时缺省 */
+  sfxGainsDb?: number[];
   /** 自动二次归一（C12）：1 表示一遍过，2 表示复核不过后补了一遍 */
   passes?: number;
   checkedAt: string;
@@ -86,8 +111,68 @@ function seconds(ms: number): string {
   return (ms / 1000).toFixed(3);
 }
 
+/**
+ * 淡入 / 淡出滤镜（C7）。
+ *
+ * 从**这一段自身**的时间轴算：淡入从 0 开始、淡出在这一段结束前开始。
+ * 长度夹在这段时长内（写 5 秒淡出但这一段只有 2 秒，就淡 2 秒），
+ * 两段加起来超过长度时按比例缩——加起来超过会让中点变负，afade 会报错。
+ * 都放在 `adelay` 之前：那时时间轴还是从 0 开始的。
+ */
+export function audioFadeFilters(
+  lengthMs: number,
+  fadeInMs = 0,
+  fadeOutMs = 0,
+): string {
+  if (lengthMs <= 0) return "";
+  const seconds = (ms: number) => (ms / 1000).toFixed(3);
+  let fadeIn = Math.min(Math.max(0, fadeInMs), lengthMs);
+  let fadeOut = Math.min(Math.max(0, fadeOutMs), lengthMs);
+  const total = fadeIn + fadeOut;
+  if (total > lengthMs && total > 0) {
+    const scale = lengthMs / total;
+    fadeIn = Math.floor(fadeIn * scale);
+    fadeOut = Math.floor(fadeOut * scale);
+  }
+  const parts: string[] = [];
+  if (fadeIn > 0) parts.push(`afade=t=in:st=0:d=${seconds(fadeIn)}`);
+  if (fadeOut > 0) {
+    parts.push(`afade=t=out:st=${seconds(lengthMs - fadeOut)}:d=${seconds(fadeOut)}`);
+  }
+  return parts.length > 0 ? `${parts.join(",")},` : "";
+}
+
 function dbToLinear(db: number): number {
   return Math.pow(10, db / 20);
+}
+
+/** 音效按自己的角色归一到这个目标位（C7）：拟音 / 重音靠前，环境垫在后面 */
+export const SFX_TARGET_LUFS: Record<MixSfxRole, number> = {
+  foley: -20,
+  impact: -18,
+  ambience: -30,
+  transition: -22,
+};
+/** 单条音效最多抬 / 压这么多；超过就是文件本身有问题，别拿增益硬修 */
+export const SFX_MAX_GAIN_DB = 15;
+
+/**
+ * 音效自动响度归一（C7）：把一条音效拉到它那个角色的目标位需要多少 dB。
+ *
+ * 与对白同一个口径（`segmentGainDb`）：量不到（null / 非有限 / 静音 −70）就不动。
+ * 但目标位按角色分——环境声铺底、重音要跳出来，用同一个目标会把环境推得太响。
+ * 结果是**叠加**在作者写的 `gainDb` 之上的增量，不是替换：作者手动压过的那一档仍然有效。
+ */
+export function sfxGainDb(
+  inputLufs: number | null | undefined,
+  role: MixSfxRole,
+  maxDb = SFX_MAX_GAIN_DB,
+): number {
+  if (inputLufs === null || inputLufs === undefined) return 0;
+  if (!Number.isFinite(inputLufs) || inputLufs <= -70) return 0;
+  const wanted = SFX_TARGET_LUFS[role] - inputLufs;
+  const clamped = Math.max(-maxDb, Math.min(maxDb, wanted));
+  return Math.round(clamped * 10) / 10;
 }
 
 /**
@@ -197,10 +282,14 @@ export function buildAudioMixCommand(input: {
   input.dialogue.forEach((track, index) => {
     // 分段响度（C12）+ 对白总线（C7）：每句先拉到自己该在的位置，再进总线
     const gain = gainStage((track.gainDb ?? 0) + bus.dialogueDb);
+    // 混响（C11）放在 adelay 之后、统一 atrim 之前：同一场同一套，
+    // 尾巴自然延伸进下一句，不硬切（硬切会在接缝处爆音）。
+    const reverb = track.reverb ? `${track.reverb},` : "";
     filters.push(
       `[${index}:a]aresample=48000,` +
         `adelay=${track.startMs}|${track.startMs},` +
         gain +
+        reverb +
         `atrim=duration=${seconds(input.totalMs)},asetpts=PTS-STARTPTS[dlg${index}]`,
     );
     dialogueLabels.push(`[dlg${index}]`);
@@ -224,6 +313,7 @@ export function buildAudioMixCommand(input: {
     filters.push(
       `[${inputIndex}:a]aresample=48000,` +
         `atrim=duration=${length},asetpts=PTS-STARTPTS,` +
+        audioFadeFilters(track.endMs - track.startMs, track.fadeInMs, track.fadeOutMs) +
         `adelay=${track.startMs}|${track.startMs},` +
         `volume=volume='${expression}':eval=frame[mus${index}]`,
     );
@@ -236,9 +326,13 @@ export function buildAudioMixCommand(input: {
     const length = seconds(track.endMs - track.startMs);
     // 音效不 ducking：长短与增益都是作者定的，总线再统一调一次
     const gain = gainStage(track.gainDb + bus.sfxDb);
+    // 混响（C11）：跟着这一条所在的房间走，与淡入淡出同一位置（adelay 之前）
+    const reverb = track.reverb ? `${track.reverb},` : "";
     filters.push(
       `[${inputIndex}:a]aresample=48000,` +
         `atrim=duration=${length},asetpts=PTS-STARTPTS,` +
+        audioFadeFilters(track.endMs - track.startMs, track.fadeInMs, track.fadeOutMs) +
+        reverb +
         `adelay=${track.startMs}|${track.startMs},` +
         gain +
         `anull[sfx${index}]`,

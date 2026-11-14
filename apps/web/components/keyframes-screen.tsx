@@ -259,7 +259,7 @@ export function KeyframesScreen() {
 
   useEffect(() => {
     void hydrate();
-    void fetchPrice().then((price) => {
+    void fetchPrice(project.models).then((price) => {
       if (!price) return;
       setImagePrice(price);
       if (price.video) setVideoPrice(price.video);

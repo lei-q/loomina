@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { chmod, mkdir, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { projectRoot } from "@/lib/app-config";
+import { projectRoot } from "@/lib/project-root";
 import {
   MAX_ASSET_BYTES,
   extensionForMime,

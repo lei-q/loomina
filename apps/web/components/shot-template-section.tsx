@@ -5,6 +5,15 @@ import { useWorkbench } from "@/lib/workbench-store";
 import { shotLabel, toStageView } from "@/lib/read-model";
 import { shotTemplateOf, type ShotTemplate } from "@/lib/shot-template";
 import { listShotTemplates, removeShotTemplate, saveShotTemplate } from "@/lib/template-store";
+import {
+  TEMPLATE_NAME_MAX,
+  TEMPLATE_NOTE_MAX,
+  findSameShotTemplate,
+  renameShotTemplate,
+  templateNameProblem,
+  templateNoteProblem,
+  withShotTemplateNote,
+} from "@/lib/template-edit";
 import { cn } from "@/lib/utils";
 
 /**
@@ -22,6 +31,8 @@ export function ShotTemplateSection({ readOnly }: { readOnly: boolean }) {
   const [name, setName] = useState("");
   const [notice, setNotice] = useState<string>();
   const [error, setError] = useState<string>();
+  /** 正在编辑的模板（改名 + 说明） */
+  const [editing, setEditing] = useState<{ id: string; name: string; note: string }>();
 
   const load = useCallback(async () => {
     try {
@@ -58,6 +69,11 @@ export function ShotTemplateSection({ readOnly }: { readOnly: boolean }) {
       at: new Date().toISOString(),
       shotLabel: shotPlace(shot.id),
     });
+    const same = findSameShotTemplate(templates ?? [], template);
+    if (same) {
+      setNotice(`这套拍法已经存过了：「${same.name}」。改名字或删掉旧的那份都行。`);
+      return;
+    }
     try {
       await saveShotTemplate(template);
       setName("");
@@ -82,6 +98,29 @@ export function ShotTemplateSection({ readOnly }: { readOnly: boolean }) {
     await removeShotTemplate(template.id);
     setNotice(`删掉了「${template.name}」：正在用的项目不受影响。`);
     await load();
+  };
+
+  /** 存回改名 / 说明：只动这两个字段，createdAt 与 from 保留 */
+  const commitEdit = async (template: ShotTemplate) => {
+    if (!editing || editing.id !== template.id) return;
+    const problem = templateNameProblem(editing.name) ?? templateNoteProblem(editing.note);
+    if (problem) {
+      setError(problem);
+      return;
+    }
+    setError(undefined);
+    try {
+      const renamed = withShotTemplateNote(
+        renameShotTemplate(template, editing.name),
+        editing.note,
+      );
+      await saveShotTemplate(renamed);
+      setEditing(undefined);
+      setNotice(`改好了：「${renamed.name}」。`);
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "改不了这个模板。");
+    }
   };
 
   /** 导出：一个 JSON 文件，只读备份；导入另开 ADR */
@@ -158,18 +197,80 @@ export function ShotTemplateSection({ readOnly }: { readOnly: boolean }) {
             key={template.id}
             className="flex flex-wrap items-baseline justify-between gap-2 border-t border-line/60 pt-1.5 first:border-t-0 first:pt-0"
           >
-            <span className="min-w-0">
-              <span className="text-[10px] text-text">{template.name}</span>
-              <span className="tnum ml-2 text-[9px] text-muted-2">
-                {template.shotSize} · {template.angle} · {template.movement} · {template.focalMm}mm
-                {template.lighting ? " · 光影" : ""}
-                {template.composition ? " · 构图" : ""}
+            {editing?.id === template.id ? (
+              <span className="min-w-0 flex-1">
+                <span className="flex flex-wrap items-center gap-1.5">
+                  <input
+                    value={editing.name}
+                    maxLength={TEMPLATE_NAME_MAX}
+                    aria-label="模板名字"
+                    onChange={(event) => {
+                        const value = event.target.value;
+                        setEditing((prev) => (prev ? { ...prev, name: value } : prev));
+                      }}
+                    className="w-[140px] rounded-token border border-line-2 bg-surface px-1.5 py-0.5 text-[10px] text-text focus:border-pick focus:outline-none"
+                  />
+                  <input
+                    value={editing.note}
+                    maxLength={TEMPLATE_NOTE_MAX}
+                    aria-label="模板说明"
+                    placeholder="说明（可选）"
+                    onChange={(event) => {
+                        const value = event.target.value;
+                        setEditing((prev) => (prev ? { ...prev, note: value } : prev));
+                      }}
+                    className="min-w-0 flex-1 rounded-token border border-line bg-surface px-1.5 py-0.5 text-[9.5px] text-text placeholder:text-muted-2 focus:border-pick focus:outline-none"
+                  />
+                </span>
               </span>
-              <span className="ml-2 text-[8.5px] text-muted-2">
-                来自「{template.from.title}」{template.from.shotLabel}
+            ) : (
+              <span className="min-w-0">
+                <span className="text-[10px] text-text">{template.name}</span>
+                <span className="tnum ml-2 text-[9px] text-muted-2">
+                  {template.shotSize} · {template.angle} · {template.movement} · {template.focalMm}mm
+                  {template.lighting ? " · 光影" : ""}
+                  {template.composition ? " · 构图" : ""}
+                </span>
+                <span className="ml-2 text-[8.5px] text-muted-2">
+                  来自「{template.from.title}」{template.from.shotLabel}
+                </span>
+                {template.note && (
+                  <span className="mt-0.5 block text-[9px] text-muted-2">{template.note}</span>
+                )}
               </span>
-            </span>
+            )}
             <span className="flex items-center gap-2">
+              {editing?.id === template.id ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void commitEdit(template)}
+                    disabled={readOnly}
+                    className="rounded-token border border-line-2 px-2 py-0.5 text-[9.5px] text-text transition-colors duration-[var(--dur)] hover:bg-text/10 disabled:opacity-40"
+                  >
+                    存
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditing(undefined)}
+                    className="text-[9px] text-muted-2 hover:text-text"
+                  >
+                    算了
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setEditing({ id: template.id, name: template.name, note: template.note ?? "" })
+                  }
+                  disabled={readOnly}
+                  title="改名字或加说明：不会重置保存时间与来历"
+                  className="text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text disabled:opacity-40"
+                >
+                  改
+                </button>
+              )}
               <button
                 type="button"
                 disabled={readOnly || !shotId}
