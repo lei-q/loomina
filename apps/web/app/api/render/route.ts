@@ -681,6 +681,10 @@ async function runJob(job: RenderJob): Promise<void> {
       sfx.push({
         ...track,
         path: await writeAsset(dir, track.audio!, `sfx-${index}`),
+        // 混响（C11）：id 已在清单校验过白名单，这里解析成滤镜串
+        ...(track.reverb
+          ? { reverb: reverbFilterOf(presetById(track.reverb)) || undefined }
+          : {}),
       });
     }
 

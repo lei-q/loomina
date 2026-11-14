@@ -334,6 +334,13 @@ export type EditSfx = {
   /** 淡入 / 淡出（C7）：毫秒，0 表示不淡 */
   fadeInMs: number;
   fadeOutMs: number;
+  /**
+   * 这一条音效所在场的混响预设（C11 / ADR-0233）。
+   *
+   * 按**起点落在哪一镜**算：音效通常很短，跨场的多是环境声，
+   * 环境声跟着起点那一场走，比按长度切段更好听也更简单。
+   */
+  reverbId?: string;
   licenseRef: string;
 };
 
@@ -657,6 +664,15 @@ export function toEditView(
   const cues = clips
     .flatMap((clip) => clip.lines.flatMap((line) => line.cues))
     .sort((a, b) => a.startMs - b.startMs);
+  /**
+   * 某一时刻落在哪一镜的混响（C11 / ADR-0233）。
+   * 音效按起点算：跨场的环境声跟着起点那一场走。
+   */
+  const reverbAt = (atMs: number): string | undefined =>
+    clips.find(
+      (clip) => atMs >= clip.startMs && atMs < clip.startMs + clip.durationMs,
+    )?.reverbId;
+
   const music: EditMusic[] = project.timeline.music.flatMap((cue) => {
     const asset = assetById.get(cue.assetId);
     if (!asset || asset.kind !== "audio") return [];
@@ -702,6 +718,9 @@ export function toEditView(
         role: cue.role,
         fadeInMs: cue.fadeInMs,
         fadeOutMs: cue.fadeOutMs,
+        ...(reverbAt(cue.startMs + headMs)
+          ? { reverbId: reverbAt(cue.startMs + headMs)! }
+          : {}),
         licenseRef: cue.licenseRef,
       },
     ];

@@ -222,6 +222,8 @@ export type RenderSfx = {
   /** 淡入 / 淡出（C7）：毫秒，从这一段自身算；0 / 缺省表示不淡 */
   fadeInMs?: number;
   fadeOutMs?: number;
+  /** 所在场的混响预设 id（C11）：只传 id，服务端从固定表解析 */
+  reverb?: string;
 };
 
 /** 三路总线平衡（C7 / ADR-0184）：全为 0 时不写进清单 */
@@ -751,6 +753,9 @@ export function validateRenderManifest(
       loop: track.loop === true,
       ...(SFX_ROLE_SET.has(track.role as string) ? { role: track.role as RenderSfx["role"] } : {}),
       ...fadeFields(track),
+      ...(typeof track.reverb === "string" && REVERB_IDS.has(track.reverb)
+        ? { reverb: track.reverb }
+        : {}),
     });
   }
 

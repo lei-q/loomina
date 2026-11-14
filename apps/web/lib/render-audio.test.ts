@@ -524,3 +524,54 @@ describe("淡入淡出（C7 / ADR-0232）", () => {
     expect(filters).toContain("afade=t=out:st=1.700:d=0.300");
   });
 });
+
+describe("音效按场混响（C11 第三档 / ADR-0233）", () => {
+  const build = (reverb?: string) =>
+    buildAudioMixCommand({
+      dialogue: [],
+      music: [],
+      sfx: [
+        {
+          path: "/tmp/s.wav",
+          startMs: 1000,
+          endMs: 3000,
+          gainDb: -12,
+          loop: false,
+          ...(reverb ? { reverb } : {}),
+        },
+      ],
+      totalMs: 5000,
+      outFile: "/tmp/mix.wav",
+    });
+  const filtersOf = (args: string[]) => args[args.indexOf("-filter_complex") + 1]!;
+
+  it("不带混响时音效链里没有 aecho", () => {
+    expect(filtersOf(build())).not.toContain("aecho");
+  });
+
+  it("aecho 在 adelay 之前：与淡入淡出同一位置", () => {
+    const filters = filtersOf(build("aecho=1.0:1.0:74|174|341:0.570|0.415|0.287"));
+    expect(filters).toContain("aecho=");
+    expect(filters.indexOf("aecho=")).toBeLessThan(filters.indexOf("adelay="));
+  });
+
+  it("配乐即使带 reverb 字段也不加 aecho（音乐不房间化）", () => {
+    const args = buildAudioMixCommand({
+      dialogue: [],
+      music: [
+        {
+          path: "/tmp/m.m4a",
+          startMs: 0,
+          endMs: 2000,
+          gainDb: -18,
+          duckDb: 15,
+          ducking: true,
+          loop: false,
+        },
+      ],
+      totalMs: 3000,
+      outFile: "/tmp/mix.wav",
+    });
+    expect(filtersOf(args)).not.toContain("aecho");
+  });
+});

@@ -413,6 +413,8 @@ export function buildRenderManifest(
       role: cue.role,
       ...(cue.fadeInMs ? { fadeInMs: cue.fadeInMs } : {}),
       ...(cue.fadeOutMs ? { fadeOutMs: cue.fadeOutMs } : {}),
+      // 所在场的混响（C11 / ADR-0233）：音效要跟房间走
+      ...(cue.reverbId ? { reverb: cue.reverbId } : {}),
     };
     if (/^https?:\/\//i.test(cue.uri)) {
       sfx.push({ remote: cue.uri, ...common });

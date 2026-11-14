@@ -2829,6 +2829,11 @@ export function EditScreen() {
                               循环
                             </label>
                             {/* 淡入淡出（C7）：从这一段自身算 */}
+                            {cue.reverbId && (
+                              <span className="text-[8.5px] text-muted-2">
+                                混响 {reverbPlan.lines.find((line) => line.preset.id === cue.reverbId)?.preset.name ?? cue.reverbId}
+                              </span>
+                            )}
                             <label className="flex items-center gap-1 text-[9px] text-muted-2">
                               淡入
                               <input

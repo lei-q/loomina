@@ -66,6 +66,11 @@ export type MixSfx = {
   /** 淡入 / 淡出（C7）：毫秒，从这一段自身算 */
   fadeInMs?: number;
   fadeOutMs?: number;
+  /**
+   * 所在场的混响滤镜串（C11 / ADR-0233）：服务端从预设 id 解析后传入。
+   * 音效要跟房间走；配乐不房间化（音乐是独立的一层）。
+   */
+  reverb?: string;
 };
 
 /** 三路总线平衡（C7 / ADR-0184）：缺省就是 0 dB */
@@ -321,10 +326,13 @@ export function buildAudioMixCommand(input: {
     const length = seconds(track.endMs - track.startMs);
     // 音效不 ducking：长短与增益都是作者定的，总线再统一调一次
     const gain = gainStage(track.gainDb + bus.sfxDb);
+    // 混响（C11）：跟着这一条所在的房间走，与淡入淡出同一位置（adelay 之前）
+    const reverb = track.reverb ? `${track.reverb},` : "";
     filters.push(
       `[${inputIndex}:a]aresample=48000,` +
         `atrim=duration=${length},asetpts=PTS-STARTPTS,` +
         audioFadeFilters(track.endMs - track.startMs, track.fadeInMs, track.fadeOutMs) +
+        reverb +
         `adelay=${track.startMs}|${track.startMs},` +
         gain +
         `anull[sfx${index}]`,
