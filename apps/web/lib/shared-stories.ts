@@ -97,3 +97,58 @@ export function storySize(story: StoryBible): string {
   if (story.relationships.length > 0) parts.push(`关系 ${story.relationships.length}`);
   return parts.join(" · ");
 }
+
+/**
+ * 取用前的逐字段对比（C23 第二档 / ADR-0211）。
+ *
+ * 行与 `storyRestorePatch` 的可写字段一一对应：作者看到的「会被改成什么」
+ * 就是取用后真正写回去的东西。弧光 / 关系按条数比，不逐条摊开。
+ */
+export type StoryCompareRow = {
+  key: string;
+  label: string;
+  /** 现在这一项的值（人话） */
+  now: string;
+  /** 取用之后会变成什么 */
+  next: string;
+  changed: boolean;
+};
+
+const emptyAs = (value: string, fallback: string) => (value.trim() ? value.trim() : fallback);
+
+export function storyCompareOf(current: Project, source: Project): StoryCompareRow[] {
+  const rows: StoryCompareRow[] = [];
+  const text = (key: string, label: string, before: string, after: string) => {
+    rows.push({
+      key,
+      label,
+      now: emptyAs(before, "（空）"),
+      next: emptyAs(after, "（空）"),
+      changed: before.trim() !== after.trim(),
+    });
+  };
+
+  text("logline", "Logline", current.story.logline, source.story.logline);
+  text("synopsis", "梗概", current.story.synopsis, source.story.synopsis);
+  text("genre", "类型", current.story.genre, source.story.genre);
+  text("audience", "受众", current.story.audience, source.story.audience);
+  text("tone", "调性", current.story.tone, source.story.tone);
+  text("opening", "开场钩子", current.story.hooks.opening, source.story.hooks.opening);
+  text("ending", "结尾钩子", current.story.hooks.ending, source.story.hooks.ending);
+
+  rows.push({
+    key: "arcs",
+    label: "人物弧光",
+    now: `${current.story.arcs.length} 条`,
+    next: `${source.story.arcs.length} 条（只带同名同 id 的角色）`,
+    changed: current.story.arcs.length !== source.story.arcs.length,
+  });
+  rows.push({
+    key: "relationships",
+    label: "关系张力",
+    now: `${current.story.relationships.length} 对`,
+    next: `${source.story.relationships.length} 对（两端都要对得上）`,
+    changed: current.story.relationships.length !== source.story.relationships.length,
+  });
+  return rows;
+}
