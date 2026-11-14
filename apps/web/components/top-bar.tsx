@@ -431,6 +431,11 @@ export function TopBar({
                               )}
                             >
                               {item.name}
+                              {item.episodeNo !== undefined && (
+                                <span className="tnum ml-1.5 text-[8px] text-muted-2">
+                                  第 {item.episodeNo} 集
+                                </span>
+                              )}
                               {active && (
                                 <span className="tnum ml-1.5 text-[8px] text-muted-2">
                                   现在

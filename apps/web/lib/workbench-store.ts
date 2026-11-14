@@ -108,6 +108,7 @@ import { sceneImportEvents, sceneReadiness } from "@/lib/shared-scenes";
 import { storyImportPatch } from "@/lib/shared-stories";
 import type { CastImageRequest } from "@/lib/generate-image";
 import { findCachedAsset, referenceHashesOf, reuseAssetEvents } from "@/lib/generation-cache";
+import { nextEpisodeNo } from "@/lib/series";
 import { imagePlanOf } from "@/lib/image-plan";
 import { replayRestore, scriptRestoreEvents, scriptVersionsOf } from "@/lib/script-versions";
 import {
@@ -6343,7 +6344,23 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
         seed = ProjectSchema.parse({ ...sampleProject, id: `p-${id}`, title: name });
       }
       await indexedDbLogFor(id).replace(bootstrap(seed));
-      await saveWorkspace({ id, name, createdAt: now, lastOpenedAt: now });
+      // 连载（A6 / ADR-0209）：照来源空间开工就继承它的系列并排到下一集；
+      // 从零开工则自成一部剧的第一集。集序只是本机编排，不进事件日志。
+      const source = fromWorkspaceId
+        ? list.find((item) => item.id === fromWorkspaceId)
+        : undefined;
+      const seriesId = source?.seriesId ?? source?.id ?? id;
+      const episodeNo = fromWorkspaceId
+        ? nextEpisodeNo(list, seriesId)
+        : 1;
+      await saveWorkspace({
+        id,
+        name,
+        createdAt: now,
+        lastOpenedAt: now,
+        seriesId,
+        episodeNo,
+      });
       rememberWorkspace(id);
       set({ workspaces: await listWorkspaces(), workspaceError: undefined });
       return id;

@@ -7,6 +7,7 @@ import { HealthPanel } from "@/components/health-panel";
 import { Logomark } from "@/components/icons";
 import { SharedSkillPicker } from "@/components/shared-skill-picker";
 import { ShotTemplateSection } from "@/components/shot-template-section";
+import { SeriesSection } from "@/components/series-section";
 import {
   MODALITIES,
   MODALITY_HINT,
@@ -985,6 +986,7 @@ export function SettingsScreen() {
         <TemplateSection readOnly={Boolean(readOnly)} />
         <ShotTemplateSection readOnly={Boolean(readOnly)} />
         <ReuseCacheSection />
+        <SeriesSection />
         <SkillsSection readOnly={Boolean(readOnly)} />
 
         <DataSection
