@@ -6937,3 +6937,31 @@ IR 260 / gateway 32 / pipeline 144 / web 1287（4 skipped）全过；`pnpm -r ty
 - 有损压缩（MJPEG q=4），定妆细节略降；参考图只作约束，不参与最终画质。
 - 只缩不裁；极端长图缩完短边很小。
 - 参考图权重、自动挑图、真正裁剪框仍未做。
+
+## 第二百二十六次 · 2026-11-14 · 接上远端仓库（GitHub）
+
+**问题**
+
+本地仓库一直没有 remote，之前几轮「发 PR」只能在本地用 `--no-merge` 合并提交代替。
+用户给了 `https://github.com/lei-q/loomina.git`，要建连接并把代码提上去。
+
+**结论**
+
+1. 远端走 **SSH**（`git@github.com:lei-q/loomina.git`）：本机 443 直连 GitHub 不通
+   （HTTP2 framing / connect timeout），SSH 认证正常（`Hi lei-q!`）。HTTPS 地址只在
+   文档里写，实际操作按 SSH。
+2. 远端已有一次无关的 `Initial commit`（只有 LICENSE，GPL-3.0）。用
+   `git merge --allow-unrelated-histories` 把 LICENSE 接进本地历史，不丢任何一侧。
+3. 推送 `main` 与两个工作分支 `scout/onboard` / `feat/b2-reference-fit`。
+4. 推送前核对：`.env` / `secrity.env` / `.loomina/` 均被忽略，`.env.example` 只有占位值；
+   572 个跟踪文件里没有真实密钥。
+
+**验证**
+
+`git push` 结果 `0343819..1b99576  main -> main`；`origin/main` 指向本次合并提交；
+两个分支各自建立 upstream。`.git` 体积约 7 MB，推送无异常。
+
+**边界 / 后续**
+
+- 之前几轮合并是本地 `--no-ff` 提交，不是 GitHub PR；需要的话可以按提交重开 PR 补评审记录。
+- 远端默认分支是 `main`，与本地一致。
