@@ -186,7 +186,8 @@ export type StoryboardRule =
   | "V10"
   | "V11"
   | "V12"
-  | "V13";
+  | "V13"
+  | "V14";
 
 export type StoryboardIssue = {
   rule: StoryboardRule;
@@ -747,6 +748,29 @@ export function validateStoryboard(
       rule: "V13",
       severity: "warning",
       message: `${sceneLabel}有 ${list.length} 个手持镜（${nos}）：手持过量会晕，一场控制在 2 镜以内。`,
+      shotIds: list.map((item) => item.shotId),
+    });
+  }
+
+  // V14：荷兰角单场 ≤ 1（A4 / DIRECTOR-GRAMMAR.md §四）。
+  // dutch 是画面滚转，连用两次会让观众晕；单场一次是「失衡」，
+  // 两次以上就只是「这个导演只会这一招」。
+  const dutchByScene = new Map<string, { no: number; shotId: string }[]>();
+  for (const plan of plans) {
+    const shot = shotById.get(plan.shotId);
+    if (shot?.camera.angle !== "dutch") continue;
+    const list = dutchByScene.get(plan.sceneId) ?? [];
+    list.push({ no: plan.no, shotId: plan.shotId });
+    dutchByScene.set(plan.sceneId, list);
+  }
+  for (const [sceneId, list] of dutchByScene) {
+    if (list.length <= 1) continue;
+    const sceneLabel = plans.find((plan) => plan.sceneId === sceneId)?.sceneLabel ?? "这一场";
+    const nos = list.map((item) => `第 ${item.no} 镜`).join("、");
+    issues.push({
+      rule: "V14",
+      severity: "warning",
+      message: `${sceneLabel}有 ${list.length} 个荷兰角（${nos}）：一场最多一个，连用会让观众晕。`,
       shotIds: list.map((item) => item.shotId),
     });
   }

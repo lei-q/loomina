@@ -33,7 +33,7 @@ const MOVE_LABEL: Record<ShotLanguage["movement"], string> = {
 
 /** 手调参数用的取值表（I7）：与 IR 枚举一一对应，不另造词 */
 const SHOT_SIZES = ["wide", "medium", "close", "extreme-close"] as const;
-const ANGLES = ["eye", "low", "high", "top"] as const;
+const ANGLES = ["eye", "low", "high", "top", "dutch"] as const;
 const MOVEMENTS = ["static", "push", "pull", "pan", "tilt", "handheld"] as const;
 const FOCAL_STEPS = [14, 24, 35, 50, 85, 135] as const;
 
@@ -772,7 +772,7 @@ function BatchRow({
             className="rounded-token border border-line bg-transparent px-1 py-0.5 text-[9.5px] text-text focus:border-line-2 focus:outline-none"
           >
             <option value="" className="bg-surface">选一项</option>
-            {(["eye", "low", "high", "top"] as const).map((angle) => (
+            {(["eye", "low", "high", "top", "dutch"] as const).map((angle) => (
               <option key={angle} value={angle} className="bg-surface">
                 {SHOT_ANGLE_CN[angle]}
               </option>

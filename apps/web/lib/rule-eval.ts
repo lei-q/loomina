@@ -585,6 +585,37 @@ export const EVAL_CASES: EvalCase[] = [
     },
   );
 
+  // V14 荷兰角单场 ≤ 1（A4）
+  const dutch = {
+    camera: { angle: "dutch" as const, movement: "static" as const, focalMm: 35 },
+  };
+  EVAL_CASES.push(
+    {
+      id: "V14-positive",
+      what: "一场一个荷兰角：不报",
+      rule: "V14",
+      kind: "positive",
+      project: makeProject([
+        { shotSize: "wide", beat: "hook", ...performed },
+        { shotSize: "medium", beat: "hook", ...dutch, ...performed },
+        { shotSize: "close", beat: "endHook", ...performed },
+        { shotSize: "medium", beat: "endHook", ...performed },
+      ]),
+    },
+    {
+      id: "V14-negative",
+      what: "一场两个荷兰角：该报",
+      rule: "V14",
+      kind: "negative",
+      project: makeProject([
+        { shotSize: "wide", beat: "hook", ...performed },
+        { shotSize: "medium", beat: "hook", ...dutch, ...performed },
+        { shotSize: "close", beat: "endHook", ...dutch, ...performed },
+        { shotSize: "medium", beat: "endHook", ...performed },
+      ]),
+    },
+  );
+
   // V12 需要地点几何与机位坐标，单独构造
   const withGeometry = (
     shots: Parameters<typeof makeProject>[0],

@@ -18,6 +18,8 @@ import {
   describeSceneTemplate,
   parseInstruction,
   parseInstructionScope,
+  SHOT_ANGLE_CN,
+  angleFromPitch,
   runMinimalChain,
   SCENE_TEMPLATES,
   sceneTemplateById,
@@ -579,5 +581,31 @@ describe("一句话的作用域（E11 / ADR-0231）", () => {
 
   it("「整片」优先于「整场」：说整片的时候不给判成场", () => {
     expect(parseInstructionScope("整片每一场都快一点")).toBe("film");
+  });
+});
+
+describe("荷兰角（A4 / ADR-0235）", () => {
+  const shot = {
+    shotSize: "medium" as const,
+    camera: { angle: "eye" as const, movement: "static" as const, focalMm: 50 },
+    durationMs: 3000,
+  };
+
+  it("不进「换个角度」轮换：仍是平 → 仰 → 俯 → 平", () => {
+    expect(parseInstruction("换个角度", shot)?.camera?.angle).toBe("low");
+    expect(
+      parseInstruction("换个角度", { ...shot, camera: { ...shot.camera, angle: "high" } })?.camera
+        ?.angle,
+    ).toBe("eye");
+  });
+
+  it("提示词里有自己的说法", () => {
+    expect(SHOT_ANGLE_CN.dutch).toBe("荷兰角");
+  });
+
+  it("俯仰换算永远不会给出荷兰角：它是滚转不是高度", () => {
+    for (const pitch of [-90, -30, 0, 30, 90]) {
+      expect(angleFromPitch(pitch)).not.toBe("dutch");
+    }
   });
 });

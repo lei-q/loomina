@@ -393,8 +393,18 @@ export const CameraPlacementSchema = z.object({
 });
 export type CameraPlacement = z.infer<typeof CameraPlacementSchema>;
 
+/** 机位档位：唯一一份；提示词、下拉、指令解析都从这里取，别再各写一份 */
+export const CAMERA_ANGLES = ["eye", "low", "high", "top", "dutch"] as const;
+
 export const CameraSchema = z.object({
-  angle: z.enum(["eye", "low", "high", "top"]),
+  /**
+   * 机位档位：平 / 仰 / 俯 / 顶 + **荷兰角**（dutch，画面歪斜）。
+   *
+   * dutch 与前四个不是一类：前四个讲「相机比主体高还是低」，dutch 讲「相机滚转」。
+   * 所以它不参与俯仰换算（`angleFromPitch` 永远不会返回 dutch），
+   * 也不进「换个角度」的轮换。加它是为了让 A4「dutch 单场 ≤ 1」能被查。
+   */
+  angle: z.enum(CAMERA_ANGLES),
   movement: z.enum(["static", "push", "pull", "pan", "tilt", "handheld"]),
   focalMm: z.number().positive(),
   /**

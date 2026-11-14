@@ -118,7 +118,8 @@ describe("立面读数（B13.2 / ADR-0126 §1）", () => {
     expect(angleFromPitch(-5)).toBe("eye");
     expect(angleFromPitch(-10)).toBe("low");
     expect(angleFromPitch(-40)).toBe("low");
-    expect(Object.keys(ANGLE_LABEL)).toEqual(["eye", "low", "high", "top"]);
+    // 荷兰角有标签（提示词与下拉要用），但俯仰换算永远不会给出它
+    expect(Object.keys(ANGLE_LABEL)).toEqual(["eye", "low", "high", "top", "dutch"]);
   });
 
   it("没有机位坐标就没有立面：不编造高度", () => {
