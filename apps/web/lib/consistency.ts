@@ -88,13 +88,15 @@ export type ConsistencyReport = {
 const NOT_MEASURED: ConsistencyReport["notMeasured"] = [
   {
     key: "lighting",
-    label: "光影",
-    reason: "还没有 LightingSpec 与画面比色，当前只能靠人眼。",
+    label: "光影（画面比色）",
+    reason:
+      "主光方向与光源的跨镜一致性在走位台账里查（B4 / ADR-0215）；画面里的实际色温与亮度仍需人眼或视觉模型。",
   },
   {
     key: "spatial",
-    label: "空间",
-    reason: "没有 3D 走位与机位参数，轴线与左右关系不在这一版检查范围。",
+    label: "空间（轴线）",
+    reason:
+      "左右翻面、朝向翻转、前后景跳变在走位台账里查（B11）；机位参数与 180° 轴线的几何判定仍未做。",
   },
   {
     key: "performance",

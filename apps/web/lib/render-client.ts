@@ -403,6 +403,8 @@ export function buildRenderManifest(
       endMs,
       gainDb: cue.gainDb,
       loop: cue.loop,
+      // 角色决定自动归一到哪个目标位（C7 / ADR-0218）
+      role: cue.role,
     };
     if (/^https?:\/\//i.test(cue.uri)) {
       sfx.push({ remote: cue.uri, ...common });

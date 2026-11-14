@@ -812,6 +812,24 @@ describe("一句话指令（ADR-0039）", () => {
     );
   });
 
+  it("「再压抑一点」落到 Shot.lighting，写一条 shot.updated 且可回放（F7 / ADR-0217）", () => {
+    const id = state().currentShotId;
+    const ok = state().instruct("再压抑一点");
+
+    expect(ok).toBe(true);
+    const after = state().project.shots.find((item) => item.id === id)!;
+    expect(after.lighting).toMatchObject({ position: "top", mood: "silhouette" });
+    // 落到了结构字段，就不再往 promptNotes 里塞同一件事
+    expect(after.promptNotes).toEqual([]);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.updated",
+      patch: { lighting: { position: "top", mood: "silhouette" } },
+    });
+    expect(
+      rebuild(state().events).shots.find((item) => item.id === id)?.lighting,
+    ).toMatchObject({ position: "top", mood: "silhouette" });
+  });
+
   it("补充要求进 promptNotes，同一句不重复追加", () => {
     state().instruct("太暗了");
     state().instruct("太暗了");

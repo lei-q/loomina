@@ -19,7 +19,7 @@
  * 判不了的（人物在屋里走位但没写坐标、镜头内位置变化）如实写在报告里。
  */
 
-import type { Project, Shot, StagingMark } from "@loomina/ir";
+import type { Lighting, Project, Shot, StagingMark } from "@loomina/ir";
 
 export type SceneStateEntry = {
   shotId: string;
@@ -27,6 +27,8 @@ export type SceneStateEntry = {
   label: string;
   /** 这一镜有没有走位坐标 */
   hasGeometry: boolean;
+  /** 这一镜写没写光影（I2）；没写就是 null */
+  lighting: { source: Lighting["source"]; position: Lighting["position"]; mood: Lighting["mood"] } | null;
   characters: {
     characterId: string;
     name: string;
@@ -41,7 +43,7 @@ export type SceneStateEntry = {
 };
 
 export type SceneSpaceIssue = {
-  kind: "side" | "facing" | "depth" | "prop";
+  kind: "side" | "facing" | "depth" | "prop" | "lighting";
   severity: "review" | "fail";
   message: string;
   fix: string;
@@ -90,6 +92,22 @@ const DEPTH_ORDER: Record<StagingMark["depth"], number> = {
   background: 2,
 };
 
+const LIGHTING_SOURCE_CN: Record<Lighting["source"], string> = {
+  window: "窗光",
+  lamp: "台灯",
+  overhead: "顶灯",
+  practical: "实用光源",
+  moon: "月光",
+};
+
+const LIGHTING_POSITION_CN: Record<Lighting["position"], string> = {
+  front: "正面",
+  side: "侧面",
+  back: "逆光",
+  top: "顶光",
+  under: "底光",
+};
+
 /** 面向角差超过这个角度就算「转身了」（120°：斜过 45° 的抖动不算） */
 const FACING_FLIP_RAD = (120 * Math.PI) / 180;
 
@@ -114,6 +132,13 @@ function entryOf(
     no,
     label: shotLabel(no),
     hasGeometry: Boolean(shot.blocking?.actors.length),
+    lighting: shot.lighting
+      ? {
+          source: shot.lighting.source,
+          position: shot.lighting.position,
+          mood: shot.lighting.mood,
+        }
+      : null,
     characters: shot.characterIds.flatMap((characterId) => {
       const character = project.characters.find((item) => item.id === characterId);
       if (!character) return [];
@@ -204,6 +229,38 @@ function issuesBetween(previous: SceneStateEntry, current: SceneStateEntry): Sce
         severity: "review",
         message: `「${before.name}」在 ${previous.label} 出现，${current.label} 里没了。`,
         fix: "如果这一镜还拿着，把道具加进这一镜；确实收起来了就不用管。",
+        shotIds: pair,
+      });
+    }
+  }
+
+  // 光影（B4 / ADR-0215）：同一场相邻两镜的主光方向不该无缘无故换边。
+  // 只判两边都写了的；一边没写，不知道是「没写」还是「换了」。
+  if (previous.lighting && current.lighting) {
+    const was = previous.lighting;
+    const now = current.lighting;
+
+    // 主光方向翻转最刺眼：正 → 侧不算事，正 → 逆 / 顶 / 底就是换了一套光
+    if (was.position !== now.position) {
+      const soft = ["front", "side"].includes(was.position) && ["front", "side"].includes(now.position);
+      if (!soft) {
+        issues.push({
+          kind: "lighting",
+          severity: "review",
+          message: `主光从${LIGHTING_POSITION_CN[was.position]}换成了${LIGHTING_POSITION_CN[now.position]}（${previous.label} → ${current.label}）：同一场里看起来像换了个时间或地点。`,
+          fix: "如果两镜是同一时刻，把主光方向改回一致；真要换，中间插一个过渡镜或写清时间变化。",
+          shotIds: pair,
+        });
+      }
+    }
+
+    // 光源换了但没写时间变化：窗光 → 台灯，观众会觉得「什么时候关的窗」
+    if (was.source !== now.source) {
+      issues.push({
+        kind: "lighting",
+        severity: "review",
+        message: `光源从${LIGHTING_SOURCE_CN[was.source]}换成了${LIGHTING_SOURCE_CN[now.source]}（${previous.label} → ${current.label}）。`,
+        fix: "同一条时间线里换光源要有交代（关灯、拉窗帘、天黑）；不然把光源改回一致。",
         shotIds: pair,
       });
     }

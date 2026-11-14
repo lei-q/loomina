@@ -11,6 +11,8 @@ import {
   parsePhaseMeter,
   secondPassAudioArgs,
   segmentGainDb,
+  SFX_TARGET_LUFS,
+  sfxGainDb,
 } from "./render-audio";
 
 describe("分段响度（C12）", () => {
@@ -375,5 +377,40 @@ describe("音效层与三路平衡（C7）", () => {
     });
     const filters = args[args.indexOf("-filter_complex") + 1]!;
     expect(filters).not.toContain("volume=");
+  });
+});
+
+describe("音效自动响度归一（C7 / ADR-0218）", () => {
+  it("按角色归一到不同目标位：环境垫在后面、重音跳出来", () => {
+    // 同一条 −45 LUFS 的音效，环境只抬 15（封顶），重音抬 27→封顶 15
+    expect(sfxGainDb(-25, "foley")).toBe(5);
+    expect(sfxGainDb(-25, "impact")).toBe(7);
+    expect(sfxGainDb(-25, "ambience")).toBe(-5);
+    expect(sfxGainDb(-25, "transition")).toBe(3);
+  });
+
+  it("单条最多 ±15 dB：太小声也不无限抬", () => {
+    expect(sfxGainDb(-60, "impact")).toBe(15);
+    expect(sfxGainDb(-5, "ambience")).toBe(-15);
+  });
+
+  it("量不到 / 静音不抬：null、非有限值与 −70 都返回 0", () => {
+    expect(sfxGainDb(null, "foley")).toBe(0);
+    expect(sfxGainDb(undefined, "foley")).toBe(0);
+    expect(sfxGainDb(Number.NaN, "foley")).toBe(0);
+    expect(sfxGainDb(-70, "foley")).toBe(0);
+    expect(sfxGainDb(-80, "ambience")).toBe(0);
+  });
+
+  it("结果按 0.1 dB 取整", () => {
+    expect(sfxGainDb(-20.06, "foley")).toBe(0.1);
+    expect(sfxGainDb(-19.94, "foley")).toBe(-0.1);
+  });
+
+  it("目标位表覆盖四个角色，且环境最低", () => {
+    const targets = Object.values(SFX_TARGET_LUFS);
+    expect(targets).toHaveLength(4);
+    expect(SFX_TARGET_LUFS.ambience).toBeLessThan(SFX_TARGET_LUFS.foley);
+    expect(SFX_TARGET_LUFS.impact).toBeGreaterThan(SFX_TARGET_LUFS.foley);
   });
 });

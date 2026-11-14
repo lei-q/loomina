@@ -177,6 +177,8 @@ export type RenderMusic = {
  * 音效（C7 / ADR-0184）：不 ducking，按自己的增益混进音效总线。
  * `startMs` / `endMs` 都是成片里的绝对时间。
  */
+const SFX_ROLE_SET = new Set(["ambience", "impact", "foley", "transition"]);
+
 export type RenderSfx = {
   audio?: string;
   remote?: string;
@@ -184,6 +186,8 @@ export type RenderSfx = {
   endMs: number;
   gainDb: number;
   loop: boolean;
+  /** 角色（C7 自动响度归一）：决定归一到哪个目标位；省略按拟音 */
+  role?: "ambience" | "impact" | "foley" | "transition";
 };
 
 /** 三路总线平衡（C7 / ADR-0184）：全为 0 时不写进清单 */
@@ -705,6 +709,7 @@ export function validateRenderManifest(
       endMs: track.endMs,
       gainDb,
       loop: track.loop === true,
+      ...(SFX_ROLE_SET.has(track.role as string) ? { role: track.role as RenderSfx["role"] } : {}),
     });
   }
 

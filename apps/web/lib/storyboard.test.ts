@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ProjectSchema, type Project } from "@loomina/ir";
 import {
@@ -8,6 +9,7 @@ import {
   inferPurpose,
   planShots,
 } from "./storyboard";
+import { DIRECTOR_RULES } from "./director-grammar";
 
 type ShotPatch = Partial<Project["shots"][number]>;
 
@@ -738,5 +740,28 @@ describe("V11 节拍顺序（A11 / ADR-0108）", () => {
   it("只有一个镜头时不查首尾顺序", () => {
     const project = makeProject([{ beat: "setup", purpose: "information" }]);
     expect(analyzeStoryboard(project).issues.some((issue) => issue.rule === "V11")).toBe(false);
+  });
+});
+
+describe("规则目录与实现一致（I8 / ADR-0216）", () => {
+  it("storyboard.ts 里写出的每个规则编号都在目录里登记了", () => {
+    // 从源码里扫 rule: "Vx"，比手工维护一份清单可靠：
+    // 以后有人加一条判定却忘了登记目录，这条会拦住
+    const source = readFileSync(new URL("./storyboard.ts", import.meta.url), "utf8");
+    const used = new Set(
+      [...source.matchAll(/rule: "(V\d+)"/g)].map((match) => match[1]!),
+    );
+    const registered = new Set(DIRECTOR_RULES.map((rule) => rule.id));
+    for (const id of used) {
+      expect(registered.has(id), `${id} 在 storyboard.ts 里用了，但目录没登记`).toBe(true);
+    }
+    expect(used.size).toBe(registered.size);
+  });
+
+  it("目录里的每条规则都真的会被检查到", () => {
+    const source = readFileSync(new URL("./storyboard.ts", import.meta.url), "utf8");
+    for (const rule of DIRECTOR_RULES) {
+      expect(source.includes(`rule: "${rule.id}"`), `${rule.id} 登记了但没实现`).toBe(true);
+    }
   });
 });

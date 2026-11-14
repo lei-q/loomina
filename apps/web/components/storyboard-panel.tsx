@@ -18,6 +18,7 @@ import {
   analyzeStoryboard,
   digestBeats,
 } from "@/lib/storyboard";
+import { GRAMMAR_VERSION, grammarCoverage } from "@/lib/director-grammar";
 import { cn } from "@/lib/utils";
 
 function shotLabel(no: number): string {
@@ -394,6 +395,12 @@ export function StoryboardPanel({
                 </li>
               )}
             </ul>
+            {/* 规则目录（I8 / ADR-0216）：说清按哪版查的、还有哪些没查 */}
+            <p className="mt-1.5 text-[8.5px] leading-[1.65] text-muted-2">
+              语法库 {GRAMMAR_VERSION}：自动查 {grammarCoverage().implemented} 条，
+              另有 {grammarCoverage().pending} 条（要视觉模型、要参考片标定，或只是审美默认值）仍需人看。
+              规则来源见 DIRECTOR-GRAMMAR.md。
+            </p>
           </section>
 
           <section className="mt-5" aria-label="覆盖率模板与报告">

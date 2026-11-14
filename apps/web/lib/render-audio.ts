@@ -41,6 +41,9 @@ export type MixMusic = {
   loop: boolean;
 };
 
+/** 音效角色：与 IR 的 `SFX_ROLES` 一致（环境 / 重音 / 拟音 / 转场） */
+export type MixSfxRole = "ambience" | "impact" | "foley" | "transition";
+
 /** 一条音效（C7 / ADR-0184）：不 ducking，按自己的增益进音效总线 */
 export type MixSfx = {
   path: string;
@@ -48,6 +51,8 @@ export type MixSfx = {
   endMs: number;
   gainDb: number;
   loop: boolean;
+  /** 角色决定自动归一到哪个目标位；缺省按拟音 */
+  role?: MixSfxRole;
 };
 
 /** 三路总线平衡（C7 / ADR-0184）：缺省就是 0 dB */
@@ -75,6 +80,8 @@ export type LoudnessReport = {
   monoMs: number | null;
   /** 分段响度（C12）：每句对白实际用的增益；没有对白或一句都没量到时缺省 */
   dialogueGainsDb?: number[];
+  /** 音效自动归一（C7）：每条音效叠加上去的增量；没有音效时缺省 */
+  sfxGainsDb?: number[];
   /** 自动二次归一（C12）：1 表示一遍过，2 表示复核不过后补了一遍 */
   passes?: number;
   checkedAt: string;
@@ -88,6 +95,35 @@ function seconds(ms: number): string {
 
 function dbToLinear(db: number): number {
   return Math.pow(10, db / 20);
+}
+
+/** 音效按自己的角色归一到这个目标位（C7）：拟音 / 重音靠前，环境垫在后面 */
+export const SFX_TARGET_LUFS: Record<MixSfxRole, number> = {
+  foley: -20,
+  impact: -18,
+  ambience: -30,
+  transition: -22,
+};
+/** 单条音效最多抬 / 压这么多；超过就是文件本身有问题，别拿增益硬修 */
+export const SFX_MAX_GAIN_DB = 15;
+
+/**
+ * 音效自动响度归一（C7）：把一条音效拉到它那个角色的目标位需要多少 dB。
+ *
+ * 与对白同一个口径（`segmentGainDb`）：量不到（null / 非有限 / 静音 −70）就不动。
+ * 但目标位按角色分——环境声铺底、重音要跳出来，用同一个目标会把环境推得太响。
+ * 结果是**叠加**在作者写的 `gainDb` 之上的增量，不是替换：作者手动压过的那一档仍然有效。
+ */
+export function sfxGainDb(
+  inputLufs: number | null | undefined,
+  role: MixSfxRole,
+  maxDb = SFX_MAX_GAIN_DB,
+): number {
+  if (inputLufs === null || inputLufs === undefined) return 0;
+  if (!Number.isFinite(inputLufs) || inputLufs <= -70) return 0;
+  const wanted = SFX_TARGET_LUFS[role] - inputLufs;
+  const clamped = Math.max(-maxDb, Math.min(maxDb, wanted));
+  return Math.round(clamped * 10) / 10;
 }
 
 /**

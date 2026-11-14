@@ -2537,6 +2537,20 @@ export function EditScreen() {
                           })()}
                         </p>
                       )}
+                      {loudness.sfxGainsDb && loudness.sfxGainsDb.length > 0 && (
+                        <p className="tnum mt-1 text-[8.5px] leading-[1.6] text-muted-2">
+                          {(() => {
+                            const gains = loudness.sfxGainsDb!;
+                            const zero = gains.every((gain) => gain === 0);
+                            const touch = gains.some((gain) => Math.abs(gain) >= 15);
+                            return zero
+                              ? `音效按角色归一：${gains.length} 条，都在各自目标位附近`
+                              : `音效按角色归一：${gains.length} 条，叠加增益 ${gains
+                                  .map((gain) => `${gain >= 0 ? "+" : ""}${gain.toFixed(1)}`)
+                                  .join(" / ")} dB${touch ? "（有一条已触 15 dB 上限）" : ""}`;
+                          })()}
+                        </p>
+                      )}
                     </div>
                   )}
                 </section>

@@ -7497,7 +7497,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     if (!parsed) {
       set({
         castError:
-          "没听懂这句。现在认得：太暗了 / 太亮 / 换个角度 / 靠近一点 / 拉远 / 手持 / 稳住 / 快一点 / 慢一点。",
+          "没听懂这句。现在认得：太暗了 / 太亮 / 换个角度 / 靠近一点 / 拉远 / 手持 / 稳住 / 快一点 / 慢一点 / 压抑一点 / 柔和一点。",
       });
       return false;
     }
@@ -7507,6 +7507,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     if (parsed.shotSize) patch.shotSize = parsed.shotSize;
     if (parsed.camera) patch.camera = parsed.camera;
     if (parsed.durationMs) patch.durationMs = parsed.durationMs;
+    if (parsed.lighting) patch.lighting = parsed.lighting;
     if (parsed.note && !shot.promptNotes.includes(parsed.note)) {
       patch.promptNotes = [...shot.promptNotes, parsed.note];
     }
