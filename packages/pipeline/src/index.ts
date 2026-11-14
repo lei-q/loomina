@@ -216,6 +216,8 @@ export const SHOT_ANGLE_CN: Record<Shot["camera"]["angle"], string> = {
   low: "仰拍",
   high: "俯拍",
   top: "顶拍",
+  // 荷兰角：画面沿光轴滚转，人物与地平线一起歪
+  dutch: "荷兰角",
 };
 
 /** 运镜的中文长说法（进提示词）；表格里的短词在 web 侧另有一份 */

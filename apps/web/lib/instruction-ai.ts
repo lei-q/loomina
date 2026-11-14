@@ -12,24 +12,17 @@
  */
 
 import { z } from "zod";
-import { CameraSchema, type Shot } from "@loomina/ir";
-import { SHOT_SIZE_CN, type ShotPatch } from "@loomina/pipeline";
+import { CAMERA_ANGLES, CameraSchema, type Shot } from "@loomina/ir";
+import { SHOT_ANGLE_CN as ANGLE_CN, SHOT_SIZE_CN, type ShotPatch } from "@loomina/pipeline";
 
 export const INSTRUCTION_AI_MAX_CHARS = 200;
 export const INSTRUCTION_NOTE_MAX_CHARS = 60;
 export const INSTRUCTION_REASON_MAX_CHARS = 120;
 
 const SHOT_SIZES = ["wide", "medium", "close", "extreme-close"] as const;
-const CAMERA_ANGLES = ["eye", "low", "high", "top"] as const;
+
 const CAMERA_MOVEMENTS = ["static", "push", "pull", "pan", "tilt", "handheld"] as const;
 
-
-const ANGLE_CN: Record<(typeof CAMERA_ANGLES)[number], string> = {
-  eye: "平视",
-  low: "仰拍",
-  high: "俯拍",
-  top: "顶拍",
-};
 const MOVEMENT_CN: Record<(typeof CAMERA_MOVEMENTS)[number], string> = {
   static: "固定机位",
   push: "推镜",

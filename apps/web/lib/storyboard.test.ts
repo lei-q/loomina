@@ -867,3 +867,46 @@ describe("V13 手持单场 ≤ 2（M4 / ADR-0229）", () => {
     expect(analyzeStoryboard(project).issues.some((issue) => issue.rule === "V13")).toBe(false);
   });
 });
+
+describe("V14 荷兰角单场 ≤ 1（A4 / ADR-0235）", () => {
+  const dutch = {
+    camera: { angle: "dutch" as const, movement: "static" as const, focalMm: 35 },
+  };
+
+  it("一场一个荷兰角：不报", () => {
+    const project = makeProject([
+      { shotSize: "wide", beat: "hook" },
+      { shotSize: "medium", beat: "hook", ...dutch },
+      { shotSize: "close", beat: "endHook" },
+    ]);
+    expect(analyzeStoryboard(project).issues.some((issue) => issue.rule === "V14")).toBe(false);
+  });
+
+  it("一场两个荷兰角：报一条并点名两镜", () => {
+    const project = makeProject([
+      { shotSize: "wide", beat: "hook" },
+      { shotSize: "medium", beat: "hook", ...dutch },
+      { shotSize: "close", beat: "endHook", ...dutch },
+    ]);
+    const issues = analyzeStoryboard(project).issues.filter((issue) => issue.rule === "V14");
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.message).toContain("连用会让观众晕");
+    expect(issues[0]!.shotIds).toHaveLength(2);
+  });
+
+  it("不同场各一个：跨场不累计", () => {
+    const project = ProjectSchema.parse({
+      ...makeProject([{}, {}]),
+      scenes: [
+        { id: "sc-1", index: 0, locationId: "loc-1", shotIds: ["s-1"] },
+        { id: "sc-2", index: 1, locationId: "loc-1", shotIds: ["s-2"] },
+      ],
+      shots: makeProject([{}, {}]).shots.map((shot, index) => ({
+        ...shot,
+        sceneId: index === 0 ? "sc-1" : "sc-2",
+        camera: { angle: "dutch" as const, movement: "static" as const, focalMm: 35 },
+      })),
+    });
+    expect(analyzeStoryboard(project).issues.some((issue) => issue.rule === "V14")).toBe(false);
+  });
+});

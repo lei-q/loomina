@@ -61,6 +61,7 @@ export const ANGLE_LABEL: Record<Camera["angle"], string> = {
   low: "仰拍",
   high: "俯拍（稍高）",
   top: "顶拍",
+  dutch: "荷兰角",
 };
 
 /**
@@ -78,10 +79,12 @@ export function elevationOf(project: Project, shot: Shot): ElevationReport | und
   const pitchDeg = (Math.atan2(camera[1] - target[1], groundDistanceM) * 180) / Math.PI;
   const angleFromGeometry = angleFromPitch(pitchDeg);
   const declaredAngle = shot.camera.angle;
+  // 荷兰角是滚转、不是俯仰：它没有「相机该多高」的主张，因此不参与比对。
+  // 拿它去算 indexOf 会得到 -1，凭空造出一条「角度对不上」的假警告。
   const delta = Math.abs(
     ANGLE_ORDER.indexOf(angleFromGeometry) - ANGLE_ORDER.indexOf(declaredAngle),
   );
-  const agrees = delta === 0;
+  const agrees = declaredAngle === "dutch" ? true : delta === 0;
   return {
     shotId: shot.id,
     camera,

@@ -25,3 +25,4 @@ thresholds:
   top_growth_30d_pct: 50
   exports_added: 5
 # 生成测试报告：pnpm -r exec vitest run --reporter=default --reporter=junit --outputFile=../../.scout/reports/$(basename $PWD).xml
+ack: label

@@ -190,6 +190,16 @@ export const DIRECTOR_RULES: DirectorRule[] = [
     fix: "把多余的手持改成固定或推拉；手持过量会晕",
     source: "storyboard",
   },
+  {
+    id: "V14",
+    docId: "A4",
+    name: "荷兰角单场 ≤ 1",
+    category: "angle",
+    priority: "may",
+    checks: "同一场里的 dutch（画面滚转）不超过 1 个",
+    fix: "把多余的改成平视或俯仰；dutch 连用两次观众会晕",
+    source: "storyboard",
+  },
 ];
 
 /**
@@ -210,11 +220,6 @@ export const UNIMPLEMENTED: { docId: string; name: string; reason: string }[] = 
   { docId: "A1", name: "权力 / 威胁用低机位", reason: "要读懂「谁是威胁」，需剧情理解" },
   { docId: "A2", name: "脆弱 / 被压用高机位", reason: "要判断「谁处于弱势」，需读懂剧情" },
   { docId: "A3", name: "中立对话用 eye-level", reason: "审美默认值" },
-  {
-    docId: "A4",
-    name: "dutch 单场 ≤ 1",
-    reason: "IR 的 camera.angle 只有平 / 仰 / 俯 / 顶，没有 dutch —— 要先扩枚举才能查",
-  },
   { docId: "A5", name: "对话优先 OTS", reason: "审美默认值" },
   { docId: "A6", name: "POV 需动机，单场 ≤ 1", reason: "「动机」要读懂剧情" },
   { docId: "M1", name: "发现 / 逼近用 push-in", reason: "审美默认值" },

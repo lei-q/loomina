@@ -30,7 +30,7 @@ import { beatSheetPrompt, type BeatSheet } from "./story-kit";
  */
 
 const SHOT_SIZES = ["wide", "medium", "close", "extreme-close"] as const;
-const ANGLES = ["eye", "low", "high", "top"] as const;
+const ANGLES = ["eye", "low", "high", "top", "dutch"] as const;
 const MOVEMENTS = ["static", "push", "pull", "pan", "tilt", "handheld"] as const;
 const SPACES = ["int", "ext"] as const;
 const TIMES = ["day", "night", "dawn", "dusk"] as const;
@@ -65,6 +65,7 @@ const ANGLE_ALIASES: Record<string, (typeof ANGLES)[number]> = {
   low: "low", 仰拍: "low", 低机位: "low",
   high: "high", 俯拍: "high", 高机位: "high",
   top: "top", 顶拍: "top", 俯视: "top",
+  dutch: "dutch", 荷兰角: "dutch", 斜角: "dutch", 歪斜: "dutch",
 };
 const MOVEMENT_ALIASES: Record<string, (typeof MOVEMENTS)[number]> = {
   static: "static", 固定: "static", 静止: "static",

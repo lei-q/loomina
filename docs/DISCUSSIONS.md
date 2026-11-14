@@ -7924,3 +7924,36 @@ IR 260 / gateway 32 / pipeline 155 / web 1451（4 skipped）全过；`pnpm -r ty
 - 不能导入：导出只是留底，恢复要照日志重做。
 - 不含素材字节，换机器后包里的地址可能失效。
 - 没有「勾选部分空间」的批量删。
+
+## 第二百五十五次 · 2026-11-14 · IR 加 dutch 机位，A4 落地（I8 第三档 / ADR-0235）
+
+**问题**
+
+ADR-0229 纠正过：A4「dutch 单场 ≤ 1」查不了，因为 IR 的 `Camera.angle` 没有 dutch。
+这次补枚举。关键判断是 **dutch 与前四个不是同一类**——前四个讲俯仰（相机比主体高低），
+dutch 讲滚转（画面歪斜），凡是用「档位顺序」表达俯仰的地方，放进去都会算错。
+
+**结论**
+
+1. `CAMERA_ANGLES` 成为唯一一份枚举（从 ir 导出），web 指令 schema 的本地副本消掉。
+2. dutch **不参与俯仰换算**：`angleFromPitch` 不返回它；`elevationOf` 遇到作者写 dutch
+   直接判 agrees——否则 `indexOf` 得到 −1，凭空造出假警告。
+3. dutch **不进「换个角度」轮换**（仍是平 → 仰 → 俯）。
+4. 词表加「荷兰角」，故事草稿别名加 荷兰角 / 斜角 / 歪斜。
+5. 新增 **V14「dutch 单场 ≤ 1」**（A4，may 级）。
+6. 不动 `LOG_VERSION`：加枚举值不改变事件形状。
+
+**验证**
+
+`storyboard.test.ts` +3、`chain.test.ts` +3、`elevation.test.ts` 更新断言、
+评测集 +2（V14 正反例，28 条全过、14 条规则全覆盖）。
+浏览器实测：机位里出现「荷兰角」，点它写出 `shot.updated { camera: { angle: "dutch" } }`。
+IR 260 / gateway 32 / pipeline 158 / web 1454（4 skipped）全过；`pnpm -r typecheck` 全过；
+`scout check` 全绿。
+
+**边界**
+
+- 提示词只是多了个词，模型能否稳定画出滚转构图未验证（供应商未通）。
+- 几何工具（走位台账 / 立面读数）不理解 dutch，只做到不误报。
+- 没有滚转角度数值，只能选档。
+- 旧版本客户端读含 dutch 的新日志会解析失败。
