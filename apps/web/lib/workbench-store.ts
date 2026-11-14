@@ -155,6 +155,7 @@ import { modelIdFor } from "@/lib/model-choice";
 import type { Modality } from "@/lib/config-types";
 import { sampleProject } from "@/lib/sample-project";
 import { projectFromSetup, setupSourceProblem } from "@/lib/workspace-template";
+import { batchPlanOf, type BatchPatch } from "@/lib/shot-batch";
 import { stageMetaOf, stageSignature } from "@/lib/stage-flow";
 import {
   stageLockOf,
@@ -584,6 +585,13 @@ type WorkbenchState = {
     shotId: string,
     patch: { shotSize?: Shot["shotSize"]; angle?: Camera["angle"]; movement?: Camera["movement"]; focalMm?: number },
   ) => boolean;
+  /**
+   * 按场批量套用摄影参数（I7 第三档）：一场一条事件一条事件地写。
+   *
+   * 锁定的镜跳过、已经是这样的镜不写。返回实际写了几条事件。
+   * 所有事件共用一个 `at`：整批是一次操作，撤销一步整批退回。
+   */
+  applyShotBatch: (sceneId: string, patch: BatchPatch) => number;
   /**
    * 写这一镜的光影模板（I2）：一条 `shot.updated { lighting }`；
    * `undefined` 表示清空（沿用场景与风格给的光）。
@@ -2744,6 +2752,30 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       castError: undefined,
     });
     return true;
+  },
+
+  applyShotBatch: (sceneId, patch) => {
+    if (get().readOnly) return 0;
+    const plan = batchPlanOf(get().project, sceneId, patch);
+    if ("error" in plan || plan.changes.length === 0) {
+      if ("error" in plan) set({ castError: plan.error });
+      return 0;
+    }
+    const at = stamp();
+    let project = get().project;
+    const appended: ProjectEvent[] = [];
+    for (const change of plan.changes) {
+      const event: ProjectEvent = {
+        type: "shot.updated",
+        at,
+        shotId: change.shotId,
+        patch: change.next,
+      };
+      project = applyEvent(project, event);
+      appended.push(event);
+    }
+    set({ project, events: [...get().events, ...appended], castError: undefined });
+    return appended.length;
   },
 
   setShotLighting: (shotId, lighting) => {
