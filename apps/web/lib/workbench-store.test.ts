@@ -6955,3 +6955,50 @@ describe("空间归档与技能导入（C15 / C18 / ADR-0210）", () => {
     useWorkbench.setState({ readOnly: false });
   });
 });
+
+describe("整本剧本一起取（C24 / ADR-0212）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("一次写一批事件、同一个 at，回放一致", () => {
+    const source = structuredClone(state().project);
+    const before = state().project;
+    const snapshot = state().events.length;
+    const result = state().adoptSharedScenes(source, ["sc-1", "sc-2"], "来源集");
+    expect(result).toMatchObject({ scenes: 2, skipped: 0 });
+    expect(result!.shots).toBeGreaterThan(0);
+    const batch = state().events.slice(snapshot);
+    expect(new Set(batch.map((event) => event.at)).size).toBe(1);
+    expect(state().project.scenes).toHaveLength(before.scenes.length + 2);
+    expect(rebuild(state().events).scenes).toHaveLength(before.scenes.length + 2);
+  });
+
+  it("缺人时跳过那几场、其余照取；一场都没成时不写事件", () => {
+    const source = structuredClone(state().project);
+    useWorkbench.setState({
+      project: {
+        ...state().project,
+        characters: state().project.characters.filter((character) => character.id !== "c-zhou"),
+      },
+    });
+    const snapshot = state().events.length;
+    const result = state().adoptSharedScenes(source, ["sc-1"], "来源集");
+    expect(result).toBeUndefined();
+    expect(state().castError).toContain("一场都没取过来");
+    expect(state().events).toHaveLength(snapshot);
+
+    const mixed = state().adoptSharedScenes(source, ["sc-1", "sc-3"], "来源集");
+    expect(mixed).toMatchObject({ scenes: 1, skipped: 1 });
+  });
+
+  it("只读拒绝", () => {
+    const source = structuredClone(state().project);
+    useWorkbench.setState({ readOnly: true });
+    const snapshot = state().events.length;
+    expect(state().adoptSharedScenes(source, ["sc-1"], "来源集")).toBeUndefined();
+    expect(state().events).toHaveLength(snapshot);
+    useWorkbench.setState({ readOnly: false });
+  });
+});

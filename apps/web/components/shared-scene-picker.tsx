@@ -15,6 +15,7 @@ export function SharedScenePicker() {
   const workspaceId = useWorkbench((state) => state.workspaceId);
   const project = useWorkbench((state) => state.project);
   const adoptSharedScene = useWorkbench((state) => state.adoptSharedScene);
+  const adoptSharedScenes = useWorkbench((state) => state.adoptSharedScenes);
   const [open, setOpen] = useState(false);
   const [spaces, setSpaces] = useState<WorkspaceProject[]>();
   const [busy, setBusy] = useState(false);
@@ -53,6 +54,29 @@ export function SharedScenePicker() {
           ? `；道具「${item.readiness.missingProps.join("、")}」只摘掉了引用`
           : ""
       }。关键帧、take 与配音没有跟过来。`,
+    );
+    setOpen(false);
+  };
+
+  /** 整本取过来（C24 第二档 / ADR-0212）：能取的场一次取完 */
+  const takeAll = (space: WorkspaceProject) => {
+    const ready = (list ?? [])
+      .filter((item) => item.workspaceId === space.id && item.readiness.ready)
+      .map((item) => item.scene.id);
+    if (ready.length === 0) {
+      setError("这个空间里没有能整场取过来的场。");
+      return;
+    }
+    const result = adoptSharedScenes(space.project, ready, space.name);
+    if (!result) {
+      setError(useWorkbench.getState().castError ?? "整本没取成。");
+      return;
+    }
+    setError(undefined);
+    setNote(
+      `已取用「${space.name}」的 ${result.scenes} 场：${result.shots} 镜 · ${result.lines} 句` +
+        (result.skipped > 0 ? `；跳过 ${result.skipped} 场（缺人 / 缺地点，补上后可单场再取）` : "") +
+        "。关键帧、take 与配音没有跟过来。",
     );
     setOpen(false);
   };
@@ -124,14 +148,26 @@ export function SharedScenePicker() {
                           {!item.readiness.ready ? ` · 缺 ${item.readiness.missing.join("、")}` : ""}
                         </span>
                       </span>
-                      <button
-                        type="button"
-                        disabled={!item.readiness.ready || !space}
-                        onClick={() => space && take(space, item)}
-                        className="rounded-token border border-line px-2 py-px text-[9px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-pick enabled:hover:text-pick disabled:opacity-40"
-                      >
-                        {item.readiness.ready ? "取这一场" : "缺人 / 缺地点"}
-                      </button>
+                      <span className="flex shrink-0 items-center gap-1.5">
+                        {item.readiness.ready && (
+                          <button
+                            type="button"
+                            onClick={() => space && takeAll(space)}
+                            title="把这个空间里能取的场一次取完；缺人缺地点的场跳过"
+                            className="rounded-token border border-line px-1.5 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+                          >
+                            整本取过来
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          disabled={!item.readiness.ready || !space}
+                          onClick={() => space && take(space, item)}
+                          className="rounded-token border border-line px-2 py-px text-[9px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-pick enabled:hover:text-pick disabled:opacity-40"
+                        >
+                          {item.readiness.ready ? "取这一场" : "缺人 / 缺地点"}
+                        </button>
+                      </span>
                     </div>
                   );
                 })}
