@@ -216,6 +216,13 @@ export type WorkspaceMeta = {
   name: string;
   createdAt: string;
   lastOpenedAt: string;
+  /**
+   * 连载归属（A6 / ADR-0209）：同一部剧的几个工作空间共用一个 `seriesId`。
+   * 旧数据没有这两个字段，读出来按「自己是一集」处理；不迁移、不改写。
+   */
+  seriesId?: string;
+  /** 第几集，从 1 数 */
+  episodeNo?: number;
 };
 
 type Row = { seq: number; event: ProjectEvent; workspaceId?: string };
