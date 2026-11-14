@@ -17,6 +17,7 @@ import {
   type LightingTemplate,
   type ShotLanguage,
 } from "@loomina/pipeline";
+import { shotSheetOf, shotSheetText, shotSheetTsv } from "@/lib/shot-sheet";
 import { cn } from "@/lib/utils";
 
 const MOVE_LABEL: Record<ShotLanguage["movement"], string> = {
@@ -79,6 +80,8 @@ export function ShotLanguagePanel({
   onClose,
 }: ShotLanguagePanelProps) {
   const [flash, setFlash] = useState("");
+  /** 摄影单（I7 第二档）：全片逐镜参数总表，默认收起 */
+  const [sheetOpen, setSheetOpen] = useState(false);
   /** 自定义焦段的输入草稿：回车 / 失焦才写，边打字边写会把 1 写成 1mm */
   const [focalDraft, setFocalDraft] = useState("");
   const shot = project.shots.find((item) => item.id === currentShotId);
@@ -95,6 +98,7 @@ export function ShotLanguagePanel({
     ? project.shots.filter((item) => item.sceneId === previous.sceneId).findIndex((item) => item.id === previous.id) + 1
     : 0;
   const tailMs = shot?.continuation?.tailMs ?? null;
+  const sheet = useMemo(() => shotSheetOf(project), [project]);
 
   const applyLighting = (template: LightingTemplate) => {
     if (!shot) return;
@@ -208,6 +212,86 @@ export function ShotLanguagePanel({
             一套说法 = 景别 + 机位 + 运镜 + 焦段。套用会写一条镜头改动，提示词里那行技术参数当场跟着变；
             机位坐标（走位里摆好的位置）保留不动。
           </p>
+
+          {/* 摄影单（I7 第二档）：全片逐镜参数总表 */}
+          <section className="mt-3 border border-line px-3 py-2.5">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => setSheetOpen((open) => !open)}
+                className="text-[10px] tracking-[.06em] text-text underline decoration-line-2 underline-offset-2"
+              >
+                摄影单 {sheetOpen ? "收起" : "展开"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(shotSheetTsv(sheet));
+                  setFlash("摄影单已复制（TSV）。");
+                }}
+                className="text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
+              >
+                复制表格
+              </button>
+            </div>
+            <p className="tnum mt-1 text-[9px] leading-[1.65] text-muted-2">
+              {shotSheetText(sheet)}
+            </p>
+            {sheetOpen && (
+              <div className="mt-2 overflow-x-auto">
+                <table className="w-full border-collapse text-[9px]">
+                  <thead>
+                    <tr className="border-b border-line text-muted-2">
+                      <th className="py-1 pr-2 text-left font-normal">镜</th>
+                      <th className="py-1 pr-2 text-left font-normal">景别</th>
+                      <th className="py-1 pr-2 text-left font-normal">机位</th>
+                      <th className="py-1 pr-2 text-left font-normal">运镜</th>
+                      <th className="py-1 pr-2 text-right font-normal">焦段</th>
+                      <th className="py-1 pr-2 text-left font-normal">光影</th>
+                      <th className="py-1 text-left font-normal">构图</th>
+                    </tr>
+                  </thead>
+                  {sheet.groups.map((group) => (
+                    <tbody key={group.sceneId}>
+                      <tr>
+                        <td colSpan={7} className="pt-2 text-[8.5px] text-muted-2">
+                          {group.label} · {group.locationName}
+                        </td>
+                      </tr>
+                      {group.rows.map((row) => (
+                        <tr
+                          key={row.shotId}
+                          className={cn(
+                            "border-b border-line/60",
+                            row.shotId === currentShotId && "text-text",
+                          )}
+                        >
+                          <td className="py-1 pr-2">
+                            <button
+                              type="button"
+                              onClick={() => onSelectShot(row.shotId)}
+                              className="tnum text-muted-2 underline decoration-line-2 underline-offset-2 hover:text-text"
+                            >
+                              {String(row.no).padStart(2, "0")}
+                            </button>
+                          </td>
+                          <td className="py-1 pr-2 text-muted">{row.shotSize}</td>
+                          <td className="py-1 pr-2 text-muted">{row.angle}</td>
+                          <td className="py-1 pr-2 text-muted">{row.movement}</td>
+                          <td className="tnum py-1 pr-2 text-right text-muted">{row.focalMm}</td>
+                          <td className="py-1 pr-2 text-muted-2">{row.lighting ?? "—"}</td>
+                          <td className="py-1 text-muted-2">{row.composition ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  ))}
+                </table>
+                <p className="mt-1.5 text-[8.5px] leading-[1.6] text-muted-2">
+                  「—」= 这一镜没写。「复制表格」粘进 Excel / 飞书都是分好的列。
+                </p>
+              </div>
+            )}
+          </section>
 
           {shot && (
             <section className="mt-3 border border-line px-3 py-2.5">

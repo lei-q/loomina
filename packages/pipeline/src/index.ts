@@ -218,7 +218,8 @@ export const SHOT_ANGLE_CN: Record<Shot["camera"]["angle"], string> = {
   top: "顶拍",
 };
 
-const MOVE_CN: Record<Shot["camera"]["movement"], string> = {
+/** 运镜的中文长说法（进提示词）；表格里的短词在 web 侧另有一份 */
+export const MOVE_CN: Record<Shot["camera"]["movement"], string> = {
   static: "固定机位",
   push: "缓缓推近",
   pull: "缓缓拉远",
