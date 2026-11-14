@@ -1,7 +1,7 @@
 import type { Project, StoryBible } from "@loomina/ir";
 import { describe, expect, it } from "vitest";
 import { sampleProject } from "./sample-project";
-import { sharedStoriesOf, storyImportPatch, storySize } from "./shared-stories";
+import { sharedStoriesOf, storyCompareOf, storyImportPatch, storySize } from "./shared-stories";
 
 const clone = (): Project => structuredClone(sampleProject);
 
@@ -106,5 +106,44 @@ describe("跨空间取一版故事（C1）", () => {
     expect(list[0]!.imported).not.toBeNull();
     expect(list[1]!.imported).toBeNull();
     expect(storySize(list[0]!.story)).toBe("");
+  });
+});
+
+describe("取用前的故事对比（C23 / ADR-0211）", () => {
+  it("逐字段给出「现在 → 取来之后」，只标真的会变的那些", () => {
+    const current = withStory(clone(), { logline: "现在的一句", tone: "冷" });
+    const source = withStory(clone(), {
+      logline: "来源的一句",
+      tone: "冷",
+      synopsis: "来源的梗概",
+      arcs: [arc("c-lin", "拿到监控")],
+    });
+    const rows = storyCompareOf(current, source);
+    const by = (key: string) => rows.find((row) => row.key === key)!;
+    expect(by("logline")).toMatchObject({ now: "现在的一句", next: "来源的一句", changed: true });
+    expect(by("tone")).toMatchObject({ now: "冷", next: "冷", changed: false });
+    expect(by("synopsis").changed).toBe(true);
+    expect(by("opening")).toMatchObject({ now: "（空）", changed: false });
+    expect(by("arcs")).toMatchObject({ now: "0 条", next: "1 条（只带同名同 id 的角色）", changed: true });
+    expect(by("relationships").changed).toBe(false);
+  });
+
+  it("空白差异算变化（写回会 trim）；行与可写字段一一对应", () => {
+    const current = withStory(clone(), { logline: " 一样 " });
+    const source = withStory(clone(), { logline: "一样" });
+    const rows = storyCompareOf(current, source);
+    // trim 后相同：不算变化，但显示的是原值
+    expect(rows.find((row) => row.key === "logline")!.changed).toBe(false);
+    expect(rows.map((row) => row.key)).toEqual([
+      "logline",
+      "synopsis",
+      "genre",
+      "audience",
+      "tone",
+      "opening",
+      "ending",
+      "arcs",
+      "relationships",
+    ]);
   });
 });
