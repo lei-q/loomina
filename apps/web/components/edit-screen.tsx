@@ -11,6 +11,7 @@ import {
   snapCuts,
   type BeatDivision,
 } from "@/lib/beat-snap";
+import { reverbPlanOf, reverbText } from "@/lib/reverb";
 import type { SfxCue } from "@loomina/ir";
 import { StageGate } from "@/components/stage-gate";
 import { ComplianceCheckpoints } from "@/components/compliance-checkpoints";
@@ -614,6 +615,7 @@ export function EditScreen() {
   // 生成结果复核（H6）：会进成片的每一条，逐条给作者看
   const review = useMemo(() => reviewSummaryOf(project), [project]);
   /** 节拍卡点（C5）：BPM 与切点都是只读派生，不改时间线 */
+  const reverbPlan = useMemo(() => reverbPlanOf(project), [project]);
   const beatPlan = useMemo(() => {
     const grid = beatGridOf({ bpm, division });
     const cuts = cutsOfClips(
@@ -2581,6 +2583,41 @@ export function EditScreen() {
                 </section>
 
                 {/* 节拍卡点（C5）：只给建议，不改时间线 */}
+                {/* 空间混响（C11）：按场给预设，同一场只用一套 */}
+                <section aria-label="空间混响" className="mt-5 border-t border-line pt-4">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <h2 className="text-[11px] tracking-[.06em] text-text">空间混响</h2>
+                    <span className="text-[8.5px] tracking-[.06em] text-muted-2">C11</span>
+                  </div>
+                  <p className="mt-1 text-[9.5px] leading-[1.7] text-muted-2">
+                    混响要匹配空间：卧室不该像大厅，街道不该像录音棚。同一场只用一套。
+                  </p>
+                  <p className="tnum mt-1.5 text-[9px] leading-[1.65] text-muted-2">
+                    {reverbText(reverbPlan)}
+                  </p>
+                  {reverbPlan.lines.length > 0 && (
+                    <ul className="mt-1.5 border-t border-line">
+                      {reverbPlan.lines.map((line) => (
+                        <li
+                          key={line.sceneId}
+                          className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line py-1 text-[9px]"
+                        >
+                          <span className="text-muted">
+                            {line.sceneLabel} · {line.locationName}
+                          </span>
+                          <span className="tnum text-muted-2">
+                            {line.preset.name} · {line.shots} 镜
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="mt-1.5 text-[8.5px] leading-[1.6] text-muted-2">
+                    预设按空间名字与内景 / 外景给，没有用真实房间脉冲响应标定过；
+                    渲染侧暂未接这套参数，先在导出前把口径定下来。
+                  </p>
+                </section>
+
                 <section aria-label="节拍卡点" className="mt-5 border-t border-line pt-4">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <h2 className="text-[11px] tracking-[.06em] text-text">节拍卡点</h2>
