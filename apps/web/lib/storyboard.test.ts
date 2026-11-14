@@ -765,3 +765,58 @@ describe("规则目录与实现一致（I8 / ADR-0216）", () => {
     }
   });
 });
+
+describe("表演语法接进 V10（I11 / ADR-0220）", () => {
+  it("强度 5 却写了大喊：点名这一镜", () => {
+    const project = makeProject([
+      {
+        performance: {
+          objective: "压抑的愤怒",
+          intensity: 5,
+          beats: [
+            { phase: "during", micro: "", body: "她大喊着扑过去", startMs: 0, endMs: 1000 },
+          ],
+          gaze: { target: "off-screen", direction: "left" },
+          avoid: ["大吼"],
+        },
+      },
+      { performance: { objective: "别的事", intensity: 2, gaze: { target: "camera", direction: "center" } } },
+    ]);
+    const issues = analyzeStoryboard(project).issues.filter((issue) => issue.rule === "V10");
+    expect(issues.some((issue) => issue.message.includes("情绪越强动作越小"))).toBe(true);
+  });
+
+  it("认出意图却没写 avoid：点名并说清为什么要写", () => {
+    const project = makeProject([
+      {
+        performance: {
+          objective: "心虚",
+          intensity: 3,
+          beats: [{ phase: "during", micro: "视线下移", startMs: 0, endMs: 800 }],
+          gaze: { target: "off-screen", direction: "down" },
+          avoid: [],
+        },
+      },
+      { performance: { objective: "别的事", intensity: 2, gaze: { target: "camera", direction: "center" } } },
+    ]);
+    const issues = analyzeStoryboard(project).issues.filter((issue) => issue.rule === "V10");
+    expect(issues.some((issue) => issue.message.includes("没写"))).toBe(true);
+  });
+
+  it("表演参数与语法对得上时不报", () => {
+    const project = makeProject([
+      {
+        performance: {
+          objective: "心虚",
+          intensity: 3,
+          beats: [{ phase: "during", micro: "视线下移", startMs: 0, endMs: 800 }],
+          gaze: { target: "off-screen", direction: "down" },
+          avoid: ["复杂手部动作"],
+        },
+      },
+      { performance: { objective: "别的事", intensity: 2, gaze: { target: "camera", direction: "center" } } },
+    ]);
+    const issues = analyzeStoryboard(project).issues.filter((issue) => issue.rule === "V10");
+    expect(issues).toEqual([]);
+  });
+});

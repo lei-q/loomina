@@ -7445,3 +7445,36 @@ IR 260 / gateway 32 / pipeline 150 / web 1352（4 skipped）全过；`pnpm -r ty
 - 依赖注入让两个函数签名多一个参数；不传时 `readBytes` 返回 null（参考图全记 missing），
   安全但静默。
 - 本轮纯结构调整，没有新增业务能力。
+
+## 第二百四十次 · 2026-11-14 · 表演语法库做成可版本化目录（I11 第一档 / ADR-0220）
+
+**问题**
+
+PERFORMANCE.md §五 早写好了「AI 可生成的表演语法」七组意图与「情绪越强动作越小」的铁律，
+但只活在文档里。`PerformanceSpec` 字段齐全，V10 却只查「有没有写 objective」——
+一镜标了强度 5 却写「大喊着扑过去」，工具不说话。
+
+**结论**
+
+1. 新建 `performance-grammar.ts`，`PERFORMANCE_GRAMMAR_VERSION = "2026-11"`（与 I8 同一写法）。
+2. 七组意图逐条登记 `micro` / `body` / `avoid` / `intensityHint`，内容与 §五 一一对应。
+3. `INTENSITY_ACTION_SCALE` 写清强度 1–5 各档可用的动作幅度，第 5 档「只有微表情，身体几乎不动」。
+4. `intentOf` 按意图名与同义词词面匹配（认不出不猜）；`performanceAdvice` 只判两条能确定的：
+   强度 4–5 却写大幅动作、认出意图却没写 `avoid`。
+5. 接进分镜检查 V10，仍是 warning 不拦生成；`director-grammar.ts` 里 V10 的说明同步补上。
+
+**验证**
+
+`performance-grammar.test.ts` 11 条：版本号、七组与文档一一对应、每组手段与避免项齐全、
+强度五档说明、同义词识别、认不出不猜、强度冲突提醒、低强度不误报、缺 avoid 提醒并给建议、
+写了 avoid 不再提醒、覆盖率。
+`storyboard.test.ts` +3 条：强度 5 写大喊被点名、缺 avoid 被点名、参数对得上不报。
+IR 260 / gateway 32 / pipeline 150 / web 1366（4 skipped）全过；`pnpm -r typecheck` 全过；
+`scout check` 全绿。
+
+**边界**
+
+- 同义词表手写，覆盖有限（「像被踩了一脚」认不出）。
+- 大动作词表是启发式，已按强度门控，但极端语境仍可能误报。
+- 只做建议不做自动填充，作者要自己抄。
+- 表演的画面效果仍无法验证，要等视觉模型。

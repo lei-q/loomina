@@ -22,6 +22,7 @@ import type {
   ShotPurpose,
 } from "@loomina/ir";
 import { SHOT_ANGLE_CN, SHOT_SIZE_CN, checkAxis, elevationOf, occlusionsOf } from "@loomina/pipeline";
+import { performanceAdvice } from "./performance-grammar";
 
 export const BEAT_ORDER: BeatKind[] = [
   "hook",
@@ -581,6 +582,32 @@ export function validateStoryboard(
       message: `${shown}${tail}还没有表演设计：补上 objective 与视线，首尾帧与视频提示词才会写到表情和看谁。`,
       shotIds: missingPerformance.map((plan) => plan.shotId),
     });
+  }
+
+  // V10 续（I11 / ADR-0220）：有了表演设计之后，再查它与表演语法对不对得上。
+  // 只判两条能确定的：强度 4–5 却写了大动作、认出意图却没写 avoid。
+  for (const plan of plans) {
+    const shot = shotById.get(plan.shotId);
+    const performance = shot?.performance;
+    if (!performance || !performance.objective.trim()) continue;
+    const advice = performanceAdvice({
+      objective: performance.objective,
+      intensity: performance.intensity,
+      beats: performance.beats.map((beat) => ({
+        micro: beat.micro,
+        body: beat.body,
+        action: beat.action,
+      })),
+      avoid: performance.avoid,
+    });
+    for (const problem of advice.problems) {
+      issues.push({
+        rule: "V10",
+        severity: "warning",
+        message: `第 ${plan.no} 镜${problem}`,
+        shotIds: [plan.shotId],
+      });
+    }
   }
 
   // V12：立面与遮挡（B13.2）。只在有机位坐标时判；没坐标的项目一个字都不说，

@@ -155,8 +155,9 @@ export const DIRECTOR_RULES: DirectorRule[] = [
     name: "表演设计",
     category: "feasibility",
     priority: "should",
-    checks: "有台词的镜头是否写了 objective 与视线",
-    fix: "补上表演目标与看谁，首尾帧与视频提示词才会写到表情",
+    checks:
+      "有台词的镜头是否写了 objective 与视线；强度 4–5 却写大幅动作、认出意图却没写 avoid 也会点名（I11 / ADR-0220）",
+    fix: "补上表演目标与看谁；强度高的镜头改成微动作，并把「不做什么」写进 avoid",
     source: "storyboard",
   },
   {
