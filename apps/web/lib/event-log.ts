@@ -223,6 +223,11 @@ export type WorkspaceMeta = {
   seriesId?: string;
   /** 第几集，从 1 数 */
   episodeNo?: number;
+  /**
+   * 归档时间（C15 / ADR-0210）：有值就从主列表与复用清单里隐藏，
+   * 事件日志与素材引用一律不动，随时可以取消归档。
+   */
+  archivedAt?: string;
 };
 
 type Row = { seq: number; event: ProjectEvent; workspaceId?: string };

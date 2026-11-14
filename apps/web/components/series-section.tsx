@@ -21,7 +21,8 @@ export function SeriesSection() {
 
   const load = useCallback(async () => {
     try {
-      const list = await listWorkspaces();
+      // 归档的集不进连载概览（C15 / ADR-0210）
+      const list = (await listWorkspaces()).filter((meta) => !meta.archivedAt);
       setMetas(list);
       const spaces = await loadWorkspaceProjects();
       const projects = new Map(spaces.map((space) => [space.id, space.project]));
