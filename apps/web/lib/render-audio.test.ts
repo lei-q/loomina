@@ -414,3 +414,42 @@ describe("音效自动响度归一（C7 / ADR-0218）", () => {
     expect(SFX_TARGET_LUFS.impact).toBeGreaterThan(SFX_TARGET_LUFS.foley);
   });
 });
+
+describe("对白混响（C11 / ADR-0226）", () => {
+  const build = (reverb?: string) =>
+    buildAudioMixCommand({
+      dialogue: [
+        {
+          path: "/tmp/a.m4a",
+          startMs: 0,
+          durationMs: 2000,
+          gainDb: 0,
+          ...(reverb ? { reverb } : {}),
+        },
+      ],
+      music: [],
+      totalMs: 5000,
+      outFile: "/tmp/mix.wav",
+    });
+  const filtersOf = (args: string[]) => args[args.indexOf("-filter_complex") + 1]!;
+
+  it("不带混响时滤镜链与旧版一致：没有 aecho", () => {
+    expect(filtersOf(build())).not.toContain("aecho");
+  });
+
+  it("带混响时 aecho 加在 adelay 之后、atrim 之前", () => {
+    const filters = filtersOf(build("aecho=0.8:0.96:38|89|176:0.500|0.370|0.250"));
+    expect(filters).toContain("aecho=");
+    // 顺序：adelay → aecho → atrim
+    const delay = filters.indexOf("adelay=");
+    const echo = filters.indexOf("aecho=");
+    const trim = filters.indexOf("atrim=");
+    expect(delay).toBeGreaterThan(-1);
+    expect(echo).toBeGreaterThan(delay);
+    expect(trim).toBeGreaterThan(echo);
+  });
+
+  it("干声预设传空串时也不挂滤镜", () => {
+    expect(filtersOf(build(""))).not.toContain("aecho");
+  });
+});

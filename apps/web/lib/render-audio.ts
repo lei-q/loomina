@@ -29,6 +29,13 @@ export type MixDialogue = {
   durationMs: number;
   /** 按句量出来的增益（dB）；缺省 / 0 表示不动这一句 */
   gainDb?: number;
+  /**
+   * 这一句所在场的混响滤镜串（C11 / ADR-0226）；缺省就是干声。
+   *
+   * 由服务端从预设 id 解析后传入，这里只负责拼进滤镜链。
+   * 加在 `adelay` 之后：混响尾巴可以自然延伸，不会被 `atrim` 截断。
+   */
+  reverb?: string;
 };
 
 export type MixMusic = {
@@ -233,10 +240,14 @@ export function buildAudioMixCommand(input: {
   input.dialogue.forEach((track, index) => {
     // 分段响度（C12）+ 对白总线（C7）：每句先拉到自己该在的位置，再进总线
     const gain = gainStage((track.gainDb ?? 0) + bus.dialogueDb);
+    // 混响（C11）放在 adelay 之后、统一 atrim 之前：同一场同一套，
+    // 尾巴自然延伸进下一句，不硬切（硬切会在接缝处爆音）。
+    const reverb = track.reverb ? `${track.reverb},` : "";
     filters.push(
       `[${index}:a]aresample=48000,` +
         `adelay=${track.startMs}|${track.startMs},` +
         gain +
+        reverb +
         `atrim=duration=${seconds(input.totalMs)},asetpts=PTS-STARTPTS[dlg${index}]`,
     );
     dialogueLabels.push(`[dlg${index}]`);

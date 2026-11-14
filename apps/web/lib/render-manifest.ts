@@ -28,6 +28,7 @@ import {
 } from "./asset-uri";
 import { scanText, type RenderCompliance } from "./compliance";
 import { aiContentHashOf, materialOfManifest } from "./ai-label";
+import { REVERB_IDS } from "./reverb";
 import { isDefaultFrame } from "./render-effects";
 
 /** 输出档位（H13）：草稿先看节奏，定稿才交付。 */
@@ -157,6 +158,13 @@ export type RenderAudio = {
   startMs: number;
   /** 这一句多长；ducking 的时间窗靠它，不知道就不压 */
   durationMs?: number;
+  /**
+   * 这一句所在场的混响预设 id（C11 / ADR-0226）。
+   *
+   * 只传 id：服务端从固定表解析成滤镜。传裸滤镜串等于把任意 ffmpeg
+   * 参数暴露给请求体，那是注入面。不在表里的 id 一律当作没有混响。
+   */
+  reverb?: string;
 };
 
 /** 配乐床（C4 / C12）：音乐在台词下按 duckDb 自动压低 */
@@ -603,11 +611,16 @@ export function validateRenderManifest(
     ) {
       return { ok: false, error: `音轨 ${index + 1} 的时长不合法` };
     }
+    // 混响只认表里的预设 id；不在表里就当没有（不报错——旧客户端不带这个字段）
+    const reverb = typeof track.reverb === "string" && REVERB_IDS.has(track.reverb)
+      ? track.reverb
+      : undefined;
     checkedAudio.push({
       audio: typeof track.audio === "string" ? track.audio : undefined,
       remote: remote || undefined,
       startMs: track.startMs,
       ...(track.durationMs !== undefined ? { durationMs: track.durationMs } : {}),
+      ...(reverb ? { reverb } : {}),
     });
   }
 

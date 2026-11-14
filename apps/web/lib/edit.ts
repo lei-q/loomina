@@ -16,6 +16,7 @@ import type {
 import { toStageView, type SceneKind } from "./read-model";
 import { SPEAKER_DEFAULT_COLOR, speakerPaletteOf } from "./speaker-color";
 import { subtitleCues } from "./subtitle";
+import { reverbPresetOf } from "./reverb";
 
 // ── 字幕样式（D3）───────────────────────────────────────────────
 
@@ -269,6 +270,11 @@ export type EditClip = {
   hasPicture: boolean;
   art: SceneKind;
   sceneCode: string;
+  /**
+   * 这一镜所在场的混响预设 id（C11 / ADR-0226）。
+   * 只传 id，滤镜串由服务端从固定表解析——不把裸滤镜传进渲染命令。
+   */
+  reverbId?: string;
   locked: boolean;
   /** 这一镜可选的全部 take：换 take 用 */
   takes: EditTakeOption[];
@@ -592,6 +598,14 @@ export function toEditView(
           hasPicture: Boolean(uri ?? stillUri ?? keyframe),
           art: stageShot.art,
           sceneCode: scene?.code || `S${(scene?.index ?? 0) + 1}`,
+          ...(scene
+            ? {
+                reverbId: reverbPresetOf(
+                  project.locations.find((item) => item.id === scene.locationId),
+                  scene.space,
+                ).preset.id,
+              }
+            : {}),
           locked: stageShot.locked,
           ...(item.transitionIn ? { transitionIn: item.transitionIn } : {}),
           ...(shot.focus ? { focus: shot.focus } : {}),

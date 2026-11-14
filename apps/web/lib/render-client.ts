@@ -333,28 +333,31 @@ export function buildRenderManifest(
 
   const audio: RenderAudio[] = [];
   for (const clip of ordered) {
+    // 混响跟场走（C11 / ADR-0226）：这一场用哪套，这一镜的每句都用它
+    const reverb = clip.reverbId ? { reverb: clip.reverbId } : {};
     for (const line of clip.lines) {
       if (!line.audioUri) continue;
       // 配音按作者挪过的位置落（E1 / ADR-0131）：`audioStartMs` 已经夹在成片之内
+      const timing = { startMs: line.audioStartMs, durationMs: line.durationMs };
       if (/^https?:\/\//i.test(line.audioUri)) {
-        audio.push({ remote: line.audioUri, startMs: line.audioStartMs, durationMs: line.durationMs });
+        audio.push({ remote: line.audioUri, ...timing, ...reverb });
         continue;
       }
       if (isRemoteAssetUri(line.audioUri)) {
         const mime = mimeForExtension(line.audioUri.trim().slice(S3_PREFIX.length).split(".").pop() ?? "");
         if (!isAudioMime(mime)) continue;
-        audio.push({ audio: line.audioUri, startMs: line.audioStartMs, durationMs: line.durationMs });
+        audio.push({ audio: line.audioUri, ...timing, ...reverb });
         continue;
       }
       if (isStoredAssetUri(line.audioUri)) {
         const mime = mimeForExtension(storedAssetRef(line.audioUri)!.extension);
         if (!isAudioMime(mime)) continue;
-        audio.push({ audio: line.audioUri, startMs: line.audioStartMs, durationMs: line.durationMs });
+        audio.push({ audio: line.audioUri, ...timing, ...reverb });
         continue;
       }
       const parts = parseDataUri(line.audioUri);
       if (!parts || !isAudioMime(parts.mime)) continue;
-      audio.push({ audio: line.audioUri, startMs: line.audioStartMs, durationMs: line.durationMs });
+      audio.push({ audio: line.audioUri, ...timing, ...reverb });
     }
   }
 

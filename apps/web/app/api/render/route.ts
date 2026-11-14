@@ -29,6 +29,7 @@ import {
   type LoudnessReport,
   type MixSfxRole,
 } from "@/lib/render-audio";
+import { presetById, reverbFilterOf } from "@/lib/reverb";
 import {
   fadeFilters,
   frameChain,
@@ -641,6 +642,10 @@ async function runJob(job: RenderJob): Promise<void> {
         path: await writeAsset(dir, track.audio!, `audio-${index}`),
         startMs: track.startMs,
         durationMs,
+        // 混响（C11）：id 已在清单校验过白名单，这里解析成滤镜串
+        ...(track.reverb
+          ? { reverb: reverbFilterOf(presetById(track.reverb)) || undefined }
+          : {}),
       });
     }
 

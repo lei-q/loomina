@@ -153,6 +153,9 @@ export function reverbPresetOf(
   };
 }
 
+/** 预设 id 的白名单：渲染清单只认这些值（C11 / ADR-0226） */
+export const REVERB_IDS = new Set(REVERB_PRESETS.map((preset) => preset.id));
+
 export function presetById(id: string): ReverbPreset {
   return REVERB_PRESETS.find((preset) => preset.id === id) ?? REVERB_PRESETS[0]!;
 }
@@ -207,7 +210,10 @@ export function reverbFilterOf(preset: ReverbPreset): string {
   const decay1 = Math.min(0.9, 0.35 + preset.roomSize * 0.4).toFixed(3);
   const decay2 = Math.min(0.85, 0.25 + preset.roomSize * 0.3).toFixed(3);
   const decay3 = Math.min(0.8, 0.15 + preset.roomSize * 0.25).toFixed(3);
-  return `aecho=0.8:${(1 - preset.wet * 0.5).toFixed(3)}:${d1}|${d2}|${d3}:${decay1}|${decay2}|${decay3}`;
+  // `in_gain` / `out_gain` 都是 1.0：干声不衰减，湿度只由三个 decay 系数决定。
+  // 早先按 wet 去压 out_gain，实测把干声整体拉低 2–3 dB——混响不该顺带改音量，
+  // 整片响度由 loudnorm 统一管。
+  return `aecho=1.0:1.0:${d1}|${d2}|${d3}:${decay1}|${decay2}|${decay3}`;
 }
 
 /** 一句话说清全片用了几套混响、哪一场认不出空间 */
