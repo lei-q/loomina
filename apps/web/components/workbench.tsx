@@ -34,6 +34,7 @@ export function Workbench() {
   const setBudget = useWorkbench((state) => state.setBudget);
   const generateKeyframe = useWorkbench((state) => state.generateKeyframe);
   const instruct = useWorkbench((state) => state.instruct);
+  const instructScope = useWorkbench((state) => state.instructScope);
   const removeNote = useWorkbench((state) => state.removeNote);
   const setShotLock = useWorkbench((state) => state.setShotLock);
   const setShotBudget = useWorkbench((state) => state.setShotBudget);
@@ -327,6 +328,7 @@ export function Workbench() {
             onSelect={select}
             onDecide={decide}
             onInstruct={instruct}
+            onInstructScope={instructScope}
             onInstructWithModel={instructWithModel}
             instructBusy={instructionBusy}
             onSetLock={(locked) => setShotLock(view.shots[view.current]!.id, locked)}

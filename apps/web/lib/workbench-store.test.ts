@@ -830,6 +830,42 @@ describe("一句话指令（ADR-0039）", () => {
     ).toMatchObject({ position: "top", mood: "silhouette" });
   });
 
+  it("「这一场都快一点」改整场、共用一个 at：撤销一步整场退回（E11 / ADR-0231）", () => {
+    const sceneId = state().project.shots.find((item) => item.id === state().currentShotId)!.sceneId;
+    const inScene = state().project.shots.filter((item) => item.sceneId === sceneId);
+    const before = inScene.map((item) => item.durationMs);
+
+    const written = state().instructScope("这一场都快一点");
+
+    const after = state().project.shots.filter((item) => item.sceneId === sceneId);
+    expect(written).toBe(inScene.length);
+    expect(after.map((item) => item.durationMs)).not.toEqual(before);
+    const events = state().events.slice(-written);
+    expect(new Set(events.map((event) => event.at)).size).toBe(1);
+  });
+
+  it("「整片都太暗了」改所有未锁定的镜", () => {
+    const unlocked = state().project.shots.filter((item) => !item.locked);
+    const written = state().instructScope("整片都太暗了");
+    expect(written).toBe(unlocked.length);
+  });
+
+  it("没说范围就只改当前这一镜", () => {
+    const written = state().instructScope("太暗了");
+    expect(written).toBe(1);
+    expect(state().events.at(-1)).toMatchObject({
+      type: "shot.updated",
+      shotId: state().currentShotId,
+    });
+  });
+
+  it("锁定的镜跳过；一句都没听懂时不写事件", () => {
+    const before = state().events.length;
+    expect(state().instructScope("随便说点什么")).toBe(0);
+    expect(state().events).toHaveLength(before);
+    expect(state().castError).toContain("没听懂");
+  });
+
   it("补充要求进 promptNotes，同一句不重复追加", () => {
     state().instruct("太暗了");
     state().instruct("太暗了");

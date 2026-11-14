@@ -695,6 +695,31 @@ export function parseInstruction(
 }
 
 /**
+ * 一句话的作用域（E11 / 意图层语义编辑）。
+ *
+ * 同一句话可以落在三个层级上：这一镜 / 这一场 / 整片。
+ * 只认**明确说了**的：说「都」「整片」才是整片，说「这一场」才是整场，
+ * 没提就按当前这一镜——宁可少改，不可多改。
+ *
+ * 顺序有讲究：「整片」优先于「整场」，否则「整片每一场」会被判成整场。
+ */
+export type InstructionScope = "shot" | "scene" | "film";
+
+export function parseInstructionScope(
+  text: string,
+  fallback: InstructionScope = "shot",
+): InstructionScope {
+  const said = text.trim();
+  if (!said) return fallback;
+  if (/整片|全片|整条片|整部|所有镜头|全部的镜|每一镜|每一场都|全都|都改/.test(said)) {
+    return "film";
+  }
+  if (/这一场|整场|这场|当前的场/.test(said)) return "scene";
+  if (/这一镜|这镜|当前镜|这一个镜头/.test(said)) return "shot";
+  return fallback;
+}
+
+/**
  * 情绪词 → 光影模板（F7 / I2）。
  *
  * 只认能明确落到「主光方向 + 塑形」的说法：压抑 / 神秘 / 柔和 / 硬朗。

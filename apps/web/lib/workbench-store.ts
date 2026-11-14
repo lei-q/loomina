@@ -70,6 +70,7 @@ import {
 } from "@loomina/ir";
 import {
   parseInstruction,
+  parseInstructionScope,
   previousShotOf,
   projectFromStoryDraft,
   projectFromVerbatimDocument,
@@ -823,6 +824,14 @@ type WorkbenchState = {
   stopBatch: () => void;
   /** 一句话指令：查表翻成镜头补丁，写一条 shot.updated；没听懂返回 false（ADR-0039） */
   instruct: (text: string) => boolean;
+  /**
+   * 按作用域改（E11）：一句话可以落在这一镜 / 这一场 / 整片。
+   *
+   * 作用域从话里认（`parseInstructionScope`），认不出就按当前这一镜。
+   * 锁定的镜跳过；每镜各自算补丁（同一句话在不同镜上可能改不同的东西）。
+   * 整批共用一个 `at`：撤销一步整批退回。返回写了几条事件。
+   */
+  instructScope: (text: string) => number;
   /**
    * 规则表没听懂时，显式让文本模型再读一遍（H19 / ADR-0141）。
    * 只回一个补丁、只写一条事件；模型也读不出来就返回 false，不动 IR。
@@ -7556,6 +7565,59 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       castError: undefined,
     });
     return true;
+  },
+
+  instructScope: (text) => {
+    if (get().readOnly) return 0;
+    const { project, currentShotId } = get();
+    const current = project.shots.find((item) => item.id === currentShotId);
+    if (!current) return 0;
+
+    const scope = parseInstructionScope(text);
+    // 作用域里的镜：整片 = 全部，这一场 = 同场，这一镜 = 当前
+    const inScope =
+      scope === "film"
+        ? project.shots
+        : scope === "scene"
+          ? project.shots.filter((item) => item.sceneId === current.sceneId)
+          : [current];
+
+    const at = stamp();
+    let next = project;
+    const appended: ProjectEvent[] = [];
+    let understood = false;
+    for (const shot of inScope) {
+      if (shot.locked) continue;
+      const parsed = parseInstruction(text, shot);
+      if (!parsed) continue;
+      understood = true;
+      const patch: Partial<Shot> = {};
+      if (parsed.shotSize) patch.shotSize = parsed.shotSize;
+      if (parsed.camera) patch.camera = parsed.camera;
+      if (parsed.durationMs) patch.durationMs = parsed.durationMs;
+      if (parsed.lighting) patch.lighting = parsed.lighting;
+      if (parsed.note && !shot.promptNotes.includes(parsed.note)) {
+        patch.promptNotes = [...shot.promptNotes, parsed.note];
+      }
+      if (Object.keys(patch).length === 0) continue;
+      const event: ProjectEvent = { type: "shot.updated", at, shotId: shot.id, patch };
+      next = applyEvent(next, event);
+      appended.push(event);
+    }
+
+    if (!understood) {
+      set({
+        castError:
+          "没听懂这句。现在认得：太暗了 / 太亮 / 换个角度 / 靠近一点 / 拉远 / 手持 / 稳住 / 快一点 / 慢一点 / 压抑一点 / 柔和一点。前面还可以说「这一场」「整片」。",
+      });
+      return 0;
+    }
+    if (appended.length === 0) {
+      set({ castError: "这句没改动什么：范围内的镜头已经是这样了。" });
+      return 0;
+    }
+    set({ project: next, events: [...get().events, ...appended], castError: undefined });
+    return appended.length;
   },
 
   instructWithModel: async (text) => {

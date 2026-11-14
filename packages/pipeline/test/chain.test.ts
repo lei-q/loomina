@@ -17,6 +17,7 @@ import {
   buildVideoPrompt,
   describeSceneTemplate,
   parseInstruction,
+  parseInstructionScope,
   runMinimalChain,
   SCENE_TEMPLATES,
   sceneTemplateById,
@@ -550,5 +551,33 @@ describe("情绪词落到光影（F7 / I2 / ADR-0217）", () => {
 
   it("只说情绪以外的话不动光影", () => {
     expect(parseInstruction("靠近一点", shot)?.lighting).toBeUndefined();
+  });
+});
+
+describe("一句话的作用域（E11 / ADR-0231）", () => {
+  it("说了「整片 / 所有镜头 / 每一镜」就是整片", () => {
+    expect(parseInstructionScope("整片都慢一点")).toBe("film");
+    expect(parseInstructionScope("所有镜头靠近一点")).toBe("film");
+    expect(parseInstructionScope("每一镜都太暗了")).toBe("film");
+  });
+
+  it("说了「这一场 / 整场」就是这一场", () => {
+    expect(parseInstructionScope("这一场都暗一点")).toBe("scene");
+    expect(parseInstructionScope("整场换成手持")).toBe("scene");
+  });
+
+  it("说了「这一镜 / 这镜」就是这一镜", () => {
+    expect(parseInstructionScope("这一镜太快了")).toBe("shot");
+    expect(parseInstructionScope("这镜换个角度")).toBe("shot");
+  });
+
+  it("没说范围就按调用方给的默认（通常是当前这一镜）", () => {
+    expect(parseInstructionScope("太暗了")).toBe("shot");
+    expect(parseInstructionScope("太暗了", "scene")).toBe("scene");
+    expect(parseInstructionScope("")).toBe("shot");
+  });
+
+  it("「整片」优先于「整场」：说整片的时候不给判成场", () => {
+    expect(parseInstructionScope("整片每一场都快一点")).toBe("film");
   });
 });
