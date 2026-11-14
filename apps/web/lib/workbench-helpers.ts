@@ -9,6 +9,7 @@
  */
 
 import type { ApprovalTargetType, Project, ProjectEvent, TimelineItem } from "@loomina/ir";
+import type { GenerateJob, WorkbenchState } from "./workbench-types";
 import {
   hasWorkspaces,
   listWorkspaces,
@@ -216,4 +217,78 @@ export async function registerWorkspace(
   } catch {
     // 列表读不到不影响编辑：顶栏最多显示不出别的空间
   }
+}
+
+/** 手改过的提示词（ADR-0148）：没有就什么都不加，让服务端按默认那段生成 */
+export function withPromptOverride(
+  get: () => WorkbenchState,
+  key: string,
+): { prompt?: string } {
+  const prompt = get().promptOverrides[key]?.trim();
+  return prompt ? { prompt } : {};
+}
+
+/** 这次生成的提示词覆盖键（H14）：与各生成动作传给 `withPromptOverride` 的键一一对应 */
+export function promptKeyOf(input: { key: string; job: GenerateJob }): string {
+  if (input.job.kind === "sheet") return `sheet:${input.key}:${input.job.angle}`;
+  if (input.job.kind === "master") return `master:${input.key}`;
+  if (input.job.kind === "prop") return `prop:${input.key}`;
+  if (input.job.kind === "keyframe") {
+    // 关键帧的进度键是 `${shotId}:${frame}`，提示词键是 `keyframe:${shotId}:${frame}`
+    return `keyframe:${input.key}`;
+  }
+  return `other:${input.key}`;
+}
+
+/**
+ * 把资产 id 变成「随请求发出去的参考图」（B2 / ADR-0162）。
+ *
+ * 只收有地址的图；缺的、不是图的都跳过——服务端还会再按字节校验一次，
+ * 这里少带一张比带一个空地址更安全。最多 4 张，与 `MAX_REFERENCES` 对齐。
+ */
+export function referenceImagesOf(
+  project: Project,
+  refs: { assetId: string; label: string }[],
+): { assetId: string; uri: string; label: string }[] {
+  const out: { assetId: string; uri: string; label: string }[] = [];
+  const seen = new Set<string>();
+  for (const ref of refs) {
+    if (out.length >= 4) break;
+    if (seen.has(ref.assetId)) continue;
+    const asset = project.assets.find((item) => item.id === ref.assetId);
+    if (!asset?.uri || asset.kind !== "image") continue;
+    seen.add(ref.assetId);
+    out.push({ assetId: ref.assetId, uri: asset.uri, label: ref.label });
+  }
+  return out;
+}
+
+export function clipReason(reason: string): string {
+  return reason.length > 240 ? `${reason.slice(0, 240)}…` : reason;
+}
+
+/**
+ * 出图之后那句「参考图到底发出去没有」（B2 / ADR-0162）。
+ *
+ * 三种情况分开说：真的带上了、读不到字节所以少带、供应商不收于是退回纯文生图。
+ * 没说清的话，作者会以为身份一致性已经靠参考图锁住了（准则 P3 / P15）。
+ */
+export function referenceNotice(
+  result:
+    | { mode?: "edits" | "prompt-only"; sent?: number; missing?: string[]; fitted?: number }
+    | undefined,
+): string | undefined {
+  if (!result) return undefined;
+  const sent = result.sent ?? 0;
+  const missing = result.missing ?? [];
+  const fitted = result.fitted ?? 0;
+  const fittedTail = fitted > 0 ? `；其中 ${fitted} 张太大，出图前压到长边 1536（等比，不裁剪）` : "";
+  if (result.mode === "edits" && sent > 0) {
+    const tail = missing.length ? `；另有 ${missing.length} 张读不到字节没发出去（${missing.join("、")}）` : "";
+    return `已带 ${sent} 张参考图生成${tail}${fittedTail}。`;
+  }
+  if (missing.length > 0) {
+    return `参考图读不到字节（${missing.join("、")}），这一张按纯文生图生成。`;
+  }
+  return "这一张按纯文生图生成：供应商没有接收参考图。";
 }
