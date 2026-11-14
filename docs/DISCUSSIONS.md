@@ -7407,3 +7407,41 @@ IR 260 / gateway 32 / pipeline 150 / web 1352（4 skipped）全过；`pnpm -r ty
 - 只按角色归一，不按场景：同一场里两条环境声仍可能不一致。
 - 每条音效多跑一次响度测量，渲染时间略增（最多 8 条）。
 - 按场景切混响、淡入淡出仍未做。
+
+## 第二百三十九次 · 2026-11-14 · 清技术债：纯计算层下沉，基线归零（ADR-0219）
+
+**问题**
+
+nest-scout 接入时留了 10 条基线：1 条 M4（`web.assets ⇄ governance ⇄ models ⇄ render ⇄
+review ⇄ state` 六模块循环）与 9 条 M6（跨包重复定义业务概念）。
+
+M4 的根因不是某处写错，是**分层缺失**：`platforms` / `ai-label` / `compliance` / `pricing` /
+`read-model` 这些纯计算、无 I/O 的模块散落在五个子模块里，于是「合规要用平台规格」
+「读模型要用价目」这种正常引用在地图上变成了模块互依。
+
+**结论**
+
+1. **9 条 M6 全清**：能直接引归属模块的直接引（`MUST_NOT_CHANGE_MAX` / `RIGHTS_KINDS` /
+   `DEFAULT_LOOK` / `VideoApiName` / `SHOT_SIZE_CN`）；同名不同物的改名（`MOVE_CN` →
+   `MOVE_SHORT_CN`、`ImagePrice`/`imagePrice` → `ImageQuote`/`imageQuoteOf`）。
+2. **新建 `web.logic` 子模块**（`depends_on: []`）承载纯计算层：平台规格、AI 标识、
+   合规规则、价目与报价、读模型、覆盖率、剧本诊断、授权留档、素材复核、资产地址、
+   路径与环境变量、存储配置、模型选择、按量计价、哈希。
+3. **两处改依赖注入**：`generateCastImage` 的 `readBytes`、`buildHealthReport` 的
+   `loadJobs` 都由服务端路由传入，models 不再反向依赖 assets / render。
+4. **`S3Config` 类型移到 `config-types`**：`storage-config` 属于纯计算层，不该为构造
+   一个类型反向依赖 assets。
+5. **基线归零**：`scout baseline --prune` 清掉全部 10 条。
+
+**验证**
+
+IR 260 / gateway 32 / pipeline 150 / web 1352（4 skipped）全过；`pnpm -r typecheck` 全过。
+`scout check` 全绿，`基线: 0 条`，`健康` 无拦截项、地图悬空 0。
+
+**边界**
+
+- web 现在 9 个子模块，超过 scout 建议的 8 个——为分层付的代价。
+- `web.governance` 从 1717 行降到 83 行，名不副实，将来要么合并要么补回 I/O 逻辑。
+- 依赖注入让两个函数签名多一个参数；不传时 `readBytes` 返回 null（参考图全记 missing），
+  安全但静默。
+- 本轮纯结构调整，没有新增业务能力。

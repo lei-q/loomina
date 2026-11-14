@@ -7,6 +7,7 @@ import { recordHealthEvent } from "@/lib/health-events";
 import { PromptBlockedError } from "@/lib/moderation";
 import { withLongJobSlot } from "@/lib/long-job";
 import { readPromptOverride } from "@/lib/prompt-override";
+import { readAssetBytes } from "@/lib/asset-store";
 import { name, parseLook, parseShotMaterial, text } from "@/lib/request-shape";
 
 /** 出图是 20–45 秒的事，别让它跑在 edge 的短超时里。 */
@@ -165,7 +166,7 @@ export async function POST(request: Request) {
     // 出图也排进同一条长任务队列（H2 / ADR-0135）：渲染正在跑时等它跑完，
     // 别让 ffmpeg 与出图同时抢 CPU。队列只影响排队，失败语义不变。
     const result = await withLongJobSlot("image", labelOf(parsed), () =>
-      generateCastImage(parsed, modelId, override.prompt, refs),
+      generateCastImage(parsed, modelId, override.prompt, refs, readAssetBytes),
     );
     void recordHealthEvent({
       at: new Date().toISOString(),

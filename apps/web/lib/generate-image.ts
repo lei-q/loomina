@@ -11,7 +11,6 @@ import {
 import type { Character, Id, Location, Look, ProjectSkill, Prop, SheetView } from "@loomina/ir";
 import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
 import { imagePlanOf } from "@/lib/image-plan";
-import { readAssetBytes } from "@/lib/asset-store";
 import { assertPromptAllowed, type PromptModeration } from "@/lib/moderation";
 import { fitReferenceBytes } from "@/lib/reference-compress";
 import { fitsHardLimit } from "@/lib/reference-fit";
@@ -109,12 +108,13 @@ export async function imageQuoteOf(modelId?: string): Promise<ImageQuote> {
  */
 async function referencesOf(
   refs: { assetId: string; uri: string; label: string }[] | undefined,
+  readBytes: ReadAssetBytes,
 ): Promise<{ references: ImageReference[]; missing: string[]; fitted: number }> {
   const references: ImageReference[] = [];
   const missing: string[] = [];
   let fitted = 0;
   for (const ref of (refs ?? []).slice(0, MAX_REFERENCES)) {
-    const file = await readAssetBytes(ref.uri);
+    const file = await readBytes(ref.uri);
     if (!file) {
       missing.push(ref.label);
       continue;
@@ -135,6 +135,11 @@ async function referencesOf(
   return { references, missing, fitted };
 }
 
+/** 地址 → 字节；由调用方（服务端路由）注入，避免 models 反向依赖 assets */
+export type ReadAssetBytes = (
+  uri: string,
+) => Promise<{ bytes: Uint8Array; mime: string } | null>;
+
 export async function generateCastImage(
   request: CastImageRequest,
   modelId?: string,
@@ -142,6 +147,13 @@ export async function generateCastImage(
   promptOverride?: string,
   /** 调用方点名的参考图（B2 / ADR-0162）：给了就真的发给供应商 */
   refs?: { assetId: string; uri: string; label: string }[],
+  /**
+   * 地址 → 字节的读取器，由调用方注入。
+   *
+   * 不在这个文件里直接引 `@/lib/asset-store`：那会让 models 与 assets 互相依赖（M4）。
+   * 出图这一侧只关心「拿到字节」，从哪读是资产库的事。
+   */
+  readBytes?: ReadAssetBytes,
 ): Promise<GeneratedImage> {
   const resolved = await resolveModel("image", modelId);
   const config = gatewayConfigOf(resolved);
@@ -154,7 +166,11 @@ export async function generateCastImage(
   const prompt = promptOverride ?? built.prompt;
   // H6：硬阻断的提示词在这里就停，供应商一次请求都不发
   const moderation = assertPromptAllowed(prompt, "image");
-  const { references, missing, fitted } = await referencesOf(refs);
+  // 没注入读取器时就没有参考图可读：如实记成全部 missing，而不是假装发过
+  const { references, missing, fitted } = await referencesOf(
+    refs,
+    readBytes ?? (async () => null),
+  );
   const output = await adapter.generate({
     // 定妆资产还不属于某一镜，用语义 id 占位，保证溯源能对上是什么东西
     shotId: built.label as Id,

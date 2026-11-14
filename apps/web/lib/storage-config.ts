@@ -12,7 +12,7 @@
 
 import type { EnvMap } from "@loomina/gateway";
 import type { PublicStorage, StorageRecord } from "@/lib/config-types";
-import type { S3Config } from "@/lib/s3-store";
+import type { S3Config } from "@/lib/config-types";
 
 export type StorageResolution = {
   /** 实际要用的实现；`undefined` 表示本机资产库 */

@@ -174,3 +174,19 @@ export function modalityOf(value: unknown): Modality | null {
 export function isModelId(value: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(value);
 }
+
+/**
+ * 对象存储的连接参数（H3）。
+ *
+ * 形状放在这里而不是 `s3-store.ts`：`storage-config` 属于纯计算层，
+ * 它要构造这个类型，不该为此反向依赖 assets（M4）。
+ */
+export type S3Config = {
+  endpoint: string;
+  bucket: string;
+  region: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  pathStyle: boolean;
+  sessionToken?: string;
+};

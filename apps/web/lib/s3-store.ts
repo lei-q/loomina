@@ -24,15 +24,10 @@ const REQUEST_TIMEOUT_MS = 120_000;
 const LIST_PAGE_LIMIT = 1000;
 const MAX_LIST_PAGES = 100;
 
-export type S3Config = {
-  endpoint: string;
-  bucket: string;
-  region: string;
-  accessKeyId: string;
-  secretAccessKey: string;
-  pathStyle: boolean;
-  sessionToken?: string;
-};
+// S3Config 的形状在 config-types：storage-config（纯计算层）也要用它，
+// 放在这里会让 logic 反向依赖 assets。
+import type { S3Config } from "@/lib/config-types";
+export type { S3Config };
 
 export type S3ObjectRef = { bucket: string; key: string };
 
