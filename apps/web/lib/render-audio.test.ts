@@ -453,3 +453,74 @@ describe("对白混响（C11 / ADR-0226）", () => {
     expect(filtersOf(build(""))).not.toContain("aecho");
   });
 });
+
+describe("淡入淡出（C7 / ADR-0232）", () => {
+  const buildMusic = (fadeInMs?: number, fadeOutMs?: number) =>
+    buildAudioMixCommand({
+      dialogue: [],
+      music: [
+        {
+          path: "/tmp/m.m4a",
+          startMs: 1000,
+          endMs: 5000,
+          gainDb: -18,
+          duckDb: 15,
+          ducking: true,
+          loop: false,
+          ...(fadeInMs !== undefined ? { fadeInMs } : {}),
+          ...(fadeOutMs !== undefined ? { fadeOutMs } : {}),
+        },
+      ],
+      totalMs: 8000,
+      outFile: "/tmp/mix.wav",
+    });
+  const filtersOf = (args: string[]) => args[args.indexOf("-filter_complex") + 1]!;
+
+  it("不淡时链路里没有 afade", () => {
+    expect(filtersOf(buildMusic())).not.toContain("afade");
+  });
+
+  it("淡入从 0 开始，淡出在这段结束前开始", () => {
+    const filters = filtersOf(buildMusic(500, 1000));
+    expect(filters).toContain("afade=t=in:st=0:d=0.500");
+    // 这一段 4 秒（1000→5000），淡出 1 秒 → 从 3 秒开始
+    expect(filters).toContain("afade=t=out:st=3.000:d=1.000");
+  });
+
+  it("淡入淡出在 adelay 之前：那时时间轴还从 0 算", () => {
+    const filters = filtersOf(buildMusic(500, 500));
+    expect(filters.indexOf("afade=")).toBeGreaterThan(-1);
+    expect(filters.indexOf("afade=")).toBeLessThan(filters.indexOf("adelay="));
+  });
+
+  it("超过这一段长度时按比例缩，不会让淡出起点变负", () => {
+    // 这一段 4 秒，两边各要 3 秒 → 总和 6 > 4，按比例缩到 2 秒 / 2 秒
+    const filters = filtersOf(buildMusic(3000, 3000));
+    expect(filters).toContain("afade=t=in:st=0:d=2.000");
+    expect(filters).toContain("afade=t=out:st=2.000:d=2.000");
+    expect(filters).not.toContain("st=-");
+  });
+
+  it("音效同样支持淡入淡出", () => {
+    const args = buildAudioMixCommand({
+      dialogue: [],
+      music: [],
+      sfx: [
+        {
+          path: "/tmp/s.wav",
+          startMs: 0,
+          endMs: 2000,
+          gainDb: -12,
+          loop: false,
+          fadeInMs: 200,
+          fadeOutMs: 300,
+        },
+      ],
+      totalMs: 4000,
+      outFile: "/tmp/mix.wav",
+    });
+    const filters = filtersOf(args);
+    expect(filters).toContain("afade=t=in:st=0:d=0.200");
+    expect(filters).toContain("afade=t=out:st=1.700:d=0.300");
+  });
+});

@@ -2369,6 +2369,37 @@ export function EditScreen() {
                                 )}
                               </select>
                             </label>
+                            {/* 淡入淡出（C7）：从这一段自身算 */}
+                            <label className="flex items-center gap-1 text-[9.5px] text-muted-2">
+                              淡入
+                              <input
+                                type="number"
+                                min={0}
+                                max={5000}
+                                step={100}
+                                value={cue.fadeInMs}
+                                disabled={Boolean(readOnly)}
+                                onChange={(event) =>
+                                  updateMusic({ fadeInMs: Number(event.target.value) }, cue.id)
+                                }
+                                className="tnum w-[52px] rounded-token border border-line bg-transparent px-1 py-0.5 text-[9.5px] text-text focus:border-line-2 focus:outline-none"
+                              />
+                            </label>
+                            <label className="flex items-center gap-1 text-[9.5px] text-muted-2">
+                              淡出
+                              <input
+                                type="number"
+                                min={0}
+                                max={5000}
+                                step={100}
+                                value={cue.fadeOutMs}
+                                disabled={Boolean(readOnly)}
+                                onChange={(event) =>
+                                  updateMusic({ fadeOutMs: Number(event.target.value) }, cue.id)
+                                }
+                                className="tnum w-[52px] rounded-token border border-line bg-transparent px-1 py-0.5 text-[9.5px] text-text focus:border-line-2 focus:outline-none"
+                              />
+                            </label>
                             <button
                               type="button"
                               onClick={() => toggleMusicPreview(cue)}
@@ -2796,6 +2827,37 @@ export function EditScreen() {
                                 className="accent-[var(--pick)]"
                               />
                               循环
+                            </label>
+                            {/* 淡入淡出（C7）：从这一段自身算 */}
+                            <label className="flex items-center gap-1 text-[9px] text-muted-2">
+                              淡入
+                              <input
+                                type="number"
+                                min={0}
+                                max={5000}
+                                step={50}
+                                value={cue.fadeInMs}
+                                disabled={Boolean(readOnly)}
+                                onChange={(event) =>
+                                  updateSfx({ fadeInMs: Number(event.target.value) }, cue.id)
+                                }
+                                className="tnum w-[48px] rounded-token border border-line bg-transparent px-1 py-0.5 text-[9px] text-text focus:border-line-2 focus:outline-none"
+                              />
+                            </label>
+                            <label className="flex items-center gap-1 text-[9px] text-muted-2">
+                              淡出
+                              <input
+                                type="number"
+                                min={0}
+                                max={5000}
+                                step={50}
+                                value={cue.fadeOutMs}
+                                disabled={Boolean(readOnly)}
+                                onChange={(event) =>
+                                  updateSfx({ fadeOutMs: Number(event.target.value) }, cue.id)
+                                }
+                                className="tnum w-[48px] rounded-token border border-line bg-transparent px-1 py-0.5 text-[9px] text-text focus:border-line-2 focus:outline-none"
+                              />
                             </label>
                             <button
                               type="button"

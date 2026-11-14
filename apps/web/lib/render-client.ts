@@ -373,6 +373,9 @@ export function buildRenderManifest(
       duckDb: cue.duckDb,
       ducking: cue.ducking,
       loop: cue.loop,
+      // 淡入淡出（C7）：从这一段自身算，混音侧再夹到长度内
+      ...(cue.fadeInMs ? { fadeInMs: cue.fadeInMs } : {}),
+      ...(cue.fadeOutMs ? { fadeOutMs: cue.fadeOutMs } : {}),
     };
     if (/^https?:\/\//i.test(cue.uri)) {
       music.push({ remote: cue.uri, ...common });
@@ -408,6 +411,8 @@ export function buildRenderManifest(
       loop: cue.loop,
       // 角色决定自动归一到哪个目标位（C7 / ADR-0218）
       role: cue.role,
+      ...(cue.fadeInMs ? { fadeInMs: cue.fadeInMs } : {}),
+      ...(cue.fadeOutMs ? { fadeOutMs: cue.fadeOutMs } : {}),
     };
     if (/^https?:\/\//i.test(cue.uri)) {
       sfx.push({ remote: cue.uri, ...common });

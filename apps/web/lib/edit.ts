@@ -308,6 +308,9 @@ export type EditMusic = {
   role: MusicCue["role"];
   /** 指向的主题动机（C10）；没挂就是 undefined */
   motifId?: string;
+  /** 淡入 / 淡出（C7）：毫秒，0 表示不淡 */
+  fadeInMs: number;
+  fadeOutMs: number;
   licenseRef: string;
 };
 
@@ -328,6 +331,9 @@ export type EditSfx = {
   gainDb: number;
   loop: boolean;
   role: SfxCue["role"];
+  /** 淡入 / 淡出（C7）：毫秒，0 表示不淡 */
+  fadeInMs: number;
+  fadeOutMs: number;
   licenseRef: string;
 };
 
@@ -670,6 +676,8 @@ export function toEditView(
         ducking: cue.ducking,
         loop: cue.loop,
         role: cue.role,
+        fadeInMs: cue.fadeInMs,
+        fadeOutMs: cue.fadeOutMs,
         ...(cue.motifId ? { motifId: cue.motifId } : {}),
         licenseRef: cue.licenseRef,
       },
@@ -692,6 +700,8 @@ export function toEditView(
         gainDb: cue.gainDb,
         loop: cue.loop,
         role: cue.role,
+        fadeInMs: cue.fadeInMs,
+        fadeOutMs: cue.fadeOutMs,
         licenseRef: cue.licenseRef,
       },
     ];

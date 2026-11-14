@@ -749,6 +749,14 @@ export const MusicCueSchema = z.object({
   /** 音乐比片子短时是否循环铺满这一段 */
   loop: z.boolean().default(true),
   /**
+   * 淡入 / 淡出（C7）：毫秒，0 表示不淡。
+   *
+   * 淡入从这一段的开头算、淡出到这一段的结尾算——不是从整片算。
+   * 对配乐来说这是「这一段怎么进、怎么出」，不是「整条片子的淡入淡出」。
+   */
+  fadeInMs: z.number().int().min(0).max(5000).default(0),
+  fadeOutMs: z.number().int().min(0).max(5000).default(0),
+  /**
    * 这一段在音乐结构里干什么（C10 / ADR-0125）：铺底、重音、转场。
    * 旧日志读出来是 `bed`。它不影响渲染，只用于曲线显示与复盘。
    */
@@ -887,6 +895,9 @@ export const SfxCueSchema = z.object({
   /** 比这一段短时是否循环铺满；环境声常开，重音默认关 */
   loop: z.boolean().default(false),
   role: z.enum(SFX_ROLES).default("foley"),
+  /** 淡入 / 淡出（C7）：毫秒，0 表示不淡；从这一段自身算 */
+  fadeInMs: z.number().int().min(0).max(5000).default(0),
+  fadeOutMs: z.number().int().min(0).max(5000).default(0),
   /** 授权来源备注：音效库 / 授权书编号 / 自己录制，不允许空 */
   licenseRef: z.string().min(1).max(240),
 });

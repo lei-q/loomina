@@ -145,7 +145,7 @@ describe("素材清点（H3 / ADR-0128）", () => {
         gainDb: -18,
         duckDb: 15,
         ducking: true,
-        loop: true,
+        loop: true, fadeInMs: 0, fadeOutMs: 0,
         role: "bed",
         licenseRef: "自己录",
       },

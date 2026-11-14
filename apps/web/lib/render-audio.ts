@@ -46,6 +46,9 @@ export type MixMusic = {
   duckDb: number;
   ducking: boolean;
   loop: boolean;
+  /** 淡入 / 淡出（C7）：毫秒，从这一段自身算 */
+  fadeInMs?: number;
+  fadeOutMs?: number;
 };
 
 /** 音效角色：与 IR 的 `SFX_ROLES` 一致（环境 / 重音 / 拟音 / 转场） */
@@ -60,6 +63,9 @@ export type MixSfx = {
   loop: boolean;
   /** 角色决定自动归一到哪个目标位；缺省按拟音 */
   role?: MixSfxRole;
+  /** 淡入 / 淡出（C7）：毫秒，从这一段自身算 */
+  fadeInMs?: number;
+  fadeOutMs?: number;
 };
 
 /** 三路总线平衡（C7 / ADR-0184）：缺省就是 0 dB */
@@ -98,6 +104,37 @@ export type LoudnessReport = {
 
 function seconds(ms: number): string {
   return (ms / 1000).toFixed(3);
+}
+
+/**
+ * 淡入 / 淡出滤镜（C7）。
+ *
+ * 从**这一段自身**的时间轴算：淡入从 0 开始、淡出在这一段结束前开始。
+ * 长度夹在这段时长内（写 5 秒淡出但这一段只有 2 秒，就淡 2 秒），
+ * 两段加起来超过长度时按比例缩——加起来超过会让中点变负，afade 会报错。
+ * 都放在 `adelay` 之前：那时时间轴还是从 0 开始的。
+ */
+export function audioFadeFilters(
+  lengthMs: number,
+  fadeInMs = 0,
+  fadeOutMs = 0,
+): string {
+  if (lengthMs <= 0) return "";
+  const seconds = (ms: number) => (ms / 1000).toFixed(3);
+  let fadeIn = Math.min(Math.max(0, fadeInMs), lengthMs);
+  let fadeOut = Math.min(Math.max(0, fadeOutMs), lengthMs);
+  const total = fadeIn + fadeOut;
+  if (total > lengthMs && total > 0) {
+    const scale = lengthMs / total;
+    fadeIn = Math.floor(fadeIn * scale);
+    fadeOut = Math.floor(fadeOut * scale);
+  }
+  const parts: string[] = [];
+  if (fadeIn > 0) parts.push(`afade=t=in:st=0:d=${seconds(fadeIn)}`);
+  if (fadeOut > 0) {
+    parts.push(`afade=t=out:st=${seconds(lengthMs - fadeOut)}:d=${seconds(fadeOut)}`);
+  }
+  return parts.length > 0 ? `${parts.join(",")},` : "";
 }
 
 function dbToLinear(db: number): number {
@@ -271,6 +308,7 @@ export function buildAudioMixCommand(input: {
     filters.push(
       `[${inputIndex}:a]aresample=48000,` +
         `atrim=duration=${length},asetpts=PTS-STARTPTS,` +
+        audioFadeFilters(track.endMs - track.startMs, track.fadeInMs, track.fadeOutMs) +
         `adelay=${track.startMs}|${track.startMs},` +
         `volume=volume='${expression}':eval=frame[mus${index}]`,
     );
@@ -286,6 +324,7 @@ export function buildAudioMixCommand(input: {
     filters.push(
       `[${inputIndex}:a]aresample=48000,` +
         `atrim=duration=${length},asetpts=PTS-STARTPTS,` +
+        audioFadeFilters(track.endMs - track.startMs, track.fadeInMs, track.fadeOutMs) +
         `adelay=${track.startMs}|${track.startMs},` +
         gain +
         `anull[sfx${index}]`,

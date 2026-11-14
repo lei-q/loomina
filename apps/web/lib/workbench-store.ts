@@ -771,7 +771,19 @@ type WorkbenchState = {
    */
   updateMusic: (
     patch: Partial<
-      Pick<MusicCue, "gainDb" | "duckDb" | "ducking" | "mood" | "role" | "motifId" | "startMs" | "durationMs">
+      Pick<
+        MusicCue,
+        | "gainDb"
+        | "duckDb"
+        | "ducking"
+        | "mood"
+        | "role"
+        | "motifId"
+        | "startMs"
+        | "durationMs"
+        | "fadeInMs"
+        | "fadeOutMs"
+      >
     >,
     cueId?: string,
   ) => boolean;
@@ -794,7 +806,9 @@ type WorkbenchState = {
   }) => boolean;
   /** 调音效：起点 / 长度 / 增益 / 循环 / 类型；写一条 `timeline.sfx.updated` */
   updateSfx: (
-    patch: Partial<Pick<SfxCue, "gainDb" | "loop" | "role" | "startMs" | "durationMs">>,
+    patch: Partial<
+      Pick<SfxCue, "gainDb" | "loop" | "role" | "startMs" | "durationMs" | "fadeInMs" | "fadeOutMs">
+    >,
     cueId?: string,
   ) => boolean;
   /** 移掉音效：不给 id 就全部移掉；资产留在项目里 */
@@ -4820,7 +4834,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       gainDb: -18,
       duckDb: 15,
       ducking: true,
-      loop: true,
+      loop: true, fadeInMs: 0, fadeOutMs: 0,
       role: "bed",
       licenseRef: licenseRef.trim().slice(0, 240),
     };
@@ -4989,7 +5003,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       startMs: start,
       durationMs: span,
       gainDb: -12,
-      loop: loopOn,
+      loop: loopOn, fadeInMs: 0, fadeOutMs: 0,
       role: role ?? "foley",
       licenseRef: licenseRef.trim().slice(0, 240),
     };

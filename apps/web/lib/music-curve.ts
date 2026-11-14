@@ -246,6 +246,9 @@ export function planMusicFill(
     ducking: source.ducking,
     loop: source.loop,
     role: group.state === "peak" || group.state === "drop" ? "hit" : "bed",
+    // 补曲是自动生成的 cue：不淡入淡出（作者要淡再自己调）
+    fadeInMs: 0,
+    fadeOutMs: 0,
     licenseRef: source.licenseRef,
   }));
 
