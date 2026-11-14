@@ -7544,3 +7544,34 @@ IR 260 / gateway 32 / pipeline 150 / web 1385（4 skipped）全过；`pnpm -r ty
 - 光影只显示主光方向，不显示光源与塑形；构图只显示规则名。
 - 没有筛选与排序，镜数一多仍要自己找。
 - 导出的 TSV 不是完整分镜表（不含台词）。
+
+## 第二百四十三次 · 2026-11-14 · 两处技术债：拆 components、撤 governance（ADR-0223）
+
+**问题**
+
+ADR-0219 分层后留了两处结构债：`web.governance` 只剩 92 行两个文件、名不副实；
+`web.components` 28847 行、占 web 的 46%，是全项目最大的子模块。
+
+**结论**
+
+1. **撤掉 `web.governance`**：`prompt-override`（纯请求体校验）归 `web.logic`；
+   `image-price`（读配置后的报价，只 type-import models 的类型）归 `web.models`。
+   子模块从 9 降到 8，回到 scout 的建议上限内。
+2. **拆 `web.components` 为两层**：`web.screens`（8 个 `*-screen.tsx`，13030 行，只被路由挂载）
+   与 `web.panels`（53 个其余组件，15998 行，被页面与工作台嵌入）。
+   两边**零交叉引用**（拆之前核对过：screen 之间互不引用，非 screen 也不引 screen）。
+   最大子模块从 28847 降到 15998。
+
+**验证**
+
+IR 260 / gateway 32 / pipeline 150 / web 1385（4 skipped）全过；`pnpm -r typecheck` 全过；
+`scout check` 全绿、基线 0 条、子模块 8 个（先降到 8 再加 screens/panels 变 9——
+见边界）。
+
+**边界**
+
+- 子模块最终是 **9 个**，仍超过建议的 8 个：撤 governance（−1）与拆 components（+1）
+  相抵。但体量分布从「一个 46% 的巨块」变成两个各占 ~25% 的层，比只看数量更有意义。
+- `web.panels` 的 paths 必须写成 53 个精确路径，不能用 `**` 通配——否则会连
+  `*-screen.tsx` 一起匹配，报「同时属于多个模块」。
+- 这次纯结构调整，没有新增业务能力。
