@@ -7957,3 +7957,33 @@ IR 260 / gateway 32 / pipeline 158 / web 1454（4 skipped）全过；`pnpm -r ty
 - 几何工具（走位台账 / 立面读数）不理解 dutch，只做到不误报。
 - 没有滚转角度数值，只能选档。
 - 旧版本客户端读含 dutch 的新日志会解析失败。
+
+## 第二百五十六次 · 2026-11-14 · 工作台 store 拆分第一步：抽纯函数（ADR-0236）
+
+**问题**
+
+`workbench-store.ts` 7956 行、161 个 action、215 个接口项，是所有子模块的依赖枢纽。
+
+**结论**
+
+先量结构再切。原本以为 `set` 是 519 行的巨型实现，实际它是接口声明之后的辅助函数区
+（`lockedStage` / `generateOne` 等）——量清楚才知道该从哪里下刀。
+
+抽了六个纯函数到 `workbench-helpers.ts`：`restack` / `canonicalSpeakerColors` /
+`nextOpenShotId` / `isLocked` / `appendOnly` / `removalUndoEvents`。
+吃 `Store`（get/set）的函数与 161 个 action 明确留下——抽它们要连带搬类型、会循环导入。
+
+**验证**
+
+新增 `workbench-helpers.test.ts` 11 条（以前这些函数只被 store 测试间接覆盖）。
+过程中暴露两个隐含约束并写进测试：
+`canonicalSpeakerColors` 排序是为了「语义相同的两份输入规范后逐字节相同」；
+`appendOnly` 按**引用**比较（同位置的新对象不算追加）。
+IR 260 / gateway 32 / pipeline 158 / web 1465（4 skipped）全过；`pnpm -r typecheck` 全过；
+`scout check` 全绿。
+
+**边界**
+
+- 只减了 154 行（约 2%）。真正的量在 6000 行的 action 区。
+- 抽出的函数依赖 `toStageView`（web.logic），所以 `workbench-helpers` 留在 web.state。
+- action 区拆分未开始，store 依然是枢纽。
