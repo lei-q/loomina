@@ -16,6 +16,8 @@ import type { Character, Id, Location, Look, ProjectSkill, Prop, SheetView } fro
 import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
 import { readAssetBytes } from "@/lib/asset-store";
 import { assertPromptAllowed, type PromptModeration } from "@/lib/moderation";
+import { fitReferenceBytes } from "@/lib/reference-compress";
+import { fitsHardLimit } from "@/lib/reference-fit";
 
 /**
  * 服务端出图（ADR-0031 / ADR-0032）。
@@ -66,8 +68,10 @@ export type GeneratedImage = {
     mode: "edits" | "prompt-only";
     /** 实际发出去几张 */
     sent: number;
-    /** 调用方点名要带、但读不到字节的几张 */
+    /** 调用方点名要带、但读不到字节或压完仍超上限的几张 */
     missing: string[];
+    /** 其中几张贴图前被压过（B2 / ADR-0206）；没压过是 0 */
+    fitted?: number;
   };
 };
 
@@ -121,25 +125,38 @@ export async function imagePrice(modelId?: string): Promise<ImagePrice> {
 }
 
 /**
- * 把调用方点名的参考图读成字节（B2 / ADR-0162）。
+ * 把调用方点名的参考图读成字节（B2 / ADR-0162），过大的先压一遍（ADR-0206）。
  *
  * 读不到的不报错、不阻塞生成：如实回一份 `missing` 名单，界面据此说
  * 「这一张没吃到参考图」，比悄悄当它存在更可信（准则 P15）。
+ * 压过的张数记在 `fitted` 里，界面另说一句——作者要知道发出去的图被改过。
  */
 async function referencesOf(
   refs: { assetId: string; uri: string; label: string }[] | undefined,
-): Promise<{ references: ImageReference[]; missing: string[] }> {
+): Promise<{ references: ImageReference[]; missing: string[]; fitted: number }> {
   const references: ImageReference[] = [];
   const missing: string[] = [];
+  let fitted = 0;
   for (const ref of (refs ?? []).slice(0, MAX_REFERENCES)) {
     const file = await readAssetBytes(ref.uri);
     if (!file) {
       missing.push(ref.label);
       continue;
     }
-    references.push({ bytes: file.bytes, mime: file.mime, label: ref.label });
+    const compressed = await fitReferenceBytes(file.bytes, file.mime);
+    if (!fitsHardLimit(compressed.bytes.byteLength)) {
+      // 压过还是太大：如实说，不发一张会被网关过滤掉的图
+      missing.push(ref.label);
+      continue;
+    }
+    if (compressed.fitted) fitted += 1;
+    references.push({
+      bytes: compressed.bytes,
+      mime: compressed.mime,
+      label: ref.label,
+    });
   }
-  return { references, missing };
+  return { references, missing, fitted };
 }
 
 export async function generateCastImage(
@@ -161,7 +178,7 @@ export async function generateCastImage(
   const prompt = promptOverride ?? built.prompt;
   // H6：硬阻断的提示词在这里就停，供应商一次请求都不发
   const moderation = assertPromptAllowed(prompt, "image");
-  const { references, missing } = await referencesOf(refs);
+  const { references, missing, fitted } = await referencesOf(refs);
   const output = await adapter.generate({
     // 定妆资产还不属于某一镜，用语义 id 占位，保证溯源能对上是什么东西
     shotId: built.label as Id,
@@ -181,6 +198,7 @@ export async function generateCastImage(
       mode: output.referenceMode ?? "prompt-only",
       sent: output.referenceCount ?? 0,
       missing,
+      ...(fitted > 0 ? { fitted } : {}),
     },
   };
 }
