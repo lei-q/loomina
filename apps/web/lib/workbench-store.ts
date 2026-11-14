@@ -231,14 +231,18 @@ function clipReason(reason: string): string {
  * 没说清的话，作者会以为身份一致性已经靠参考图锁住了（准则 P3 / P15）。
  */
 function referenceNotice(
-  result: { mode?: "edits" | "prompt-only"; sent?: number; missing?: string[] } | undefined,
+  result:
+    | { mode?: "edits" | "prompt-only"; sent?: number; missing?: string[]; fitted?: number }
+    | undefined,
 ): string | undefined {
   if (!result) return undefined;
   const sent = result.sent ?? 0;
   const missing = result.missing ?? [];
+  const fitted = result.fitted ?? 0;
+  const fittedTail = fitted > 0 ? `；其中 ${fitted} 张太大，出图前压到长边 1536（等比，不裁剪）` : "";
   if (result.mode === "edits" && sent > 0) {
     const tail = missing.length ? `；另有 ${missing.length} 张读不到字节没发出去（${missing.join("、")}）` : "";
-    return `已带 ${sent} 张参考图生成${tail}。`;
+    return `已带 ${sent} 张参考图生成${tail}${fittedTail}。`;
   }
   if (missing.length > 0) {
     return `参考图读不到字节（${missing.join("、")}），这一张按纯文生图生成。`;
@@ -1303,7 +1307,13 @@ async function generateOne(
       prompt?: string;
       cny?: number;
       error?: string;
-      references?: { mode?: "edits" | "prompt-only"; sent?: number; missing?: string[] };
+      references?: {
+        mode?: "edits" | "prompt-only";
+        sent?: number;
+        missing?: string[];
+        /** 其中几张太大、出图前压过（B2 / ADR-0206） */
+        fitted?: number;
+      };
     };
     if (!response.ok || !payload.uri) {
       throw new Error(payload.error ?? `生成失败（${response.status}）`);

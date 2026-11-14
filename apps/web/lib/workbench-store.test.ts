@@ -6011,6 +6011,15 @@ describe("参考图真的发出去（B2 / ADR-0162）", () => {
     vi.unstubAllGlobals();
   });
 
+  it("参考图压过时，回执另说一句压到长边 1536（B2 / ADR-0206）", async () => {
+    stub(() => ({ references: { mode: "edits", sent: 1, missing: [], fitted: 1 } }));
+    await state().generateKeyframe("s-03");
+    expect(state().generationNotice).toContain("已带 1 张参考图");
+    expect(state().generationNotice).toContain("压到长边 1536");
+    expect(state().generationNotice).toContain("不裁剪");
+    vi.unstubAllGlobals();
+  });
+
   it("参考图资产还没有地址时不硬塞空地址：这一张按纯文生图出", async () => {
     const calls = stub(() => ({ references: { mode: "prompt-only", sent: 0, missing: [] } }));
     // 示例项目里的道具参考图只有 id、没有 uri（还没真出过图）
