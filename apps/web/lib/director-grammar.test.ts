@@ -61,10 +61,10 @@ describe("导演语法库目录（I8 / ADR-0216）", () => {
     );
   });
 
-  it("覆盖率如实说：已查 12 条、待落地 25 条", () => {
+  it("覆盖率如实说：已查 13 条、待落地 24 条", () => {
     const coverage = grammarCoverage();
-    expect(coverage.implemented).toBe(12);
-    expect(coverage.pending).toBe(25);
+    expect(coverage.implemented).toBe(13);
+    expect(coverage.pending).toBe(24);
     expect(coverage.total).toBe(37);
   });
 });

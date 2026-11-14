@@ -180,6 +180,16 @@ export const DIRECTOR_RULES: DirectorRule[] = [
     fix: "挪开挡在前面的人或家具，或改机位高度 / 角度",
     source: "storyboard",
   },
+  {
+    id: "V13",
+    docId: "M4",
+    name: "手持单场 ≤ 2",
+    category: "movement",
+    priority: "may",
+    checks: "同一场里的手持镜不超过 2 个",
+    fix: "把多余的手持改成固定或推拉；手持过量会晕",
+    source: "storyboard",
+  },
 ];
 
 /**
@@ -200,13 +210,16 @@ export const UNIMPLEMENTED: { docId: string; name: string; reason: string }[] = 
   { docId: "A1", name: "权力 / 威胁用低机位", reason: "要读懂「谁是威胁」，需剧情理解" },
   { docId: "A2", name: "脆弱 / 被压用高机位", reason: "要判断「谁处于弱势」，需读懂剧情" },
   { docId: "A3", name: "中立对话用 eye-level", reason: "审美默认值" },
-  { docId: "A4", name: "dutch 单场 ≤ 1", reason: "可以查，但 dutch 用得极少，优先级低" },
+  {
+    docId: "A4",
+    name: "dutch 单场 ≤ 1",
+    reason: "IR 的 camera.angle 只有平 / 仰 / 俯 / 顶，没有 dutch —— 要先扩枚举才能查",
+  },
   { docId: "A5", name: "对话优先 OTS", reason: "审美默认值" },
   { docId: "A6", name: "POV 需动机，单场 ≤ 1", reason: "「动机」要读懂剧情" },
   { docId: "M1", name: "发现 / 逼近用 push-in", reason: "审美默认值" },
   { docId: "M2", name: "抽离 / 揭示用 pull-out", reason: "审美默认值" },
   { docId: "M3", name: "跟随 / 连接用 track / pan", reason: "审美默认值" },
-  { docId: "M4", name: "手持单场 ≤ 2", reason: "可以查，优先级低" },
   { docId: "M5", name: "固定镜头用于控制 / 压迫", reason: "审美默认值" },
   { docId: "X2", name: "越轴必须有过渡镜", reason: "要判断「有没有过渡镜」需读懂镜序意图" },
   { docId: "X4", name: "屏幕方向一致", reason: "要看画面里的移动方向，需视觉模型" },

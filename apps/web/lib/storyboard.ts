@@ -185,7 +185,8 @@ export type StoryboardRule =
   | "V9"
   | "V10"
   | "V11"
-  | "V12";
+  | "V12"
+  | "V13";
 
 export type StoryboardIssue = {
   rule: StoryboardRule;
@@ -725,6 +726,28 @@ export function validateStoryboard(
       severity: "warning",
       message: `整片重做一遍约 ¥${requoteCny.toFixed(2)}，超过预算 ¥${budgetCny.toFixed(2)}：先删减镜头或降低规格。`,
       shotIds: plans.map((plan) => plan.shotId),
+    });
+  }
+
+  // V13：手持单场 ≤ 2（M4 / DIRECTOR-GRAMMAR.md §五）。手持过量会晕，
+  // 而「晕」是整体感受——逐镜看不出问题，只有按场数才知道。
+  const handheldByScene = new Map<string, { no: number; shotId: string }[]>();
+  for (const plan of plans) {
+    const shot = shotById.get(plan.shotId);
+    if (shot?.camera.movement !== "handheld") continue;
+    const list = handheldByScene.get(plan.sceneId) ?? [];
+    list.push({ no: plan.no, shotId: plan.shotId });
+    handheldByScene.set(plan.sceneId, list);
+  }
+  for (const [sceneId, list] of handheldByScene) {
+    if (list.length <= 2) continue;
+    const sceneLabel = plans.find((plan) => plan.sceneId === sceneId)?.sceneLabel ?? "这一场";
+    const nos = list.map((item) => `第 ${item.no} 镜`).join("、");
+    issues.push({
+      rule: "V13",
+      severity: "warning",
+      message: `${sceneLabel}有 ${list.length} 个手持镜（${nos}）：手持过量会晕，一场控制在 2 镜以内。`,
+      shotIds: list.map((item) => item.shotId),
     });
   }
 

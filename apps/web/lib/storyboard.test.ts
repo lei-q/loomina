@@ -823,3 +823,47 @@ describe("表演语法接进 V10（I11 / ADR-0220）", () => {
     expect(issues).toEqual([]);
   });
 });
+
+describe("V13 手持单场 ≤ 2（M4 / ADR-0229）", () => {
+  const handheld = {
+    camera: { angle: "eye" as const, movement: "handheld" as const, focalMm: 35 },
+  };
+
+  it("一场两个手持镜：不报", () => {
+    const project = makeProject([
+      { shotSize: "wide", beat: "hook" },
+      { shotSize: "medium", beat: "hook", ...handheld },
+      { shotSize: "close", beat: "endHook", ...handheld },
+    ]);
+    expect(analyzeStoryboard(project).issues.some((issue) => issue.rule === "V13")).toBe(false);
+  });
+
+  it("一场三个手持镜：报一条，点名三个镜", () => {
+    const project = makeProject([
+      { shotSize: "wide", beat: "hook" },
+      { shotSize: "medium", beat: "hook", ...handheld },
+      { shotSize: "close", beat: "hook", ...handheld },
+      { shotSize: "medium", beat: "endHook", ...handheld },
+    ]);
+    const issues = analyzeStoryboard(project).issues.filter((issue) => issue.rule === "V13");
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.message).toContain("手持过量会晕");
+    expect(issues[0]!.shotIds).toHaveLength(3);
+  });
+
+  it("不同场各两个手持：跨场不累计", () => {
+    const project = ProjectSchema.parse({
+      ...makeProject([{}, {}, {}, {}]),
+      scenes: [
+        { id: "sc-1", index: 0, locationId: "loc-1", shotIds: ["s-1", "s-2"] },
+        { id: "sc-2", index: 1, locationId: "loc-1", shotIds: ["s-3", "s-4"] },
+      ],
+      shots: makeProject([{}, {}, {}, {}]).shots.map((shot, index) => ({
+        ...shot,
+        sceneId: index < 2 ? "sc-1" : "sc-2",
+        camera: { angle: "eye" as const, movement: "handheld" as const, focalMm: 35 },
+      })),
+    });
+    expect(analyzeStoryboard(project).issues.some((issue) => issue.rule === "V13")).toBe(false);
+  });
+});

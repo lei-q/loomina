@@ -550,6 +550,41 @@ export const EVAL_CASES: EvalCase[] = [
     },
   );
 
+  // V13 手持单场 ≤ 2（M4）
+  const handheld = {
+    camera: { angle: "eye" as const, movement: "handheld" as const, focalMm: 35 },
+  };
+  const steady = {
+    camera: { angle: "eye" as const, movement: "static" as const, focalMm: 35 },
+  };
+  EVAL_CASES.push(
+    {
+      id: "V13-positive",
+      what: "一场里两个手持镜：没超，不报",
+      rule: "V13",
+      kind: "positive",
+      project: makeProject([
+        { shotSize: "wide", beat: "hook", ...performed },
+        { shotSize: "medium", beat: "hook", ...handheld, ...performed },
+        { shotSize: "close", beat: "endHook", ...handheld, ...performed },
+        { shotSize: "wide", beat: "endHook", ...steady, ...performed },
+      ]),
+    },
+    {
+      id: "V13-negative",
+      what: "一场里三个手持镜：该报",
+      rule: "V13",
+      kind: "negative",
+      project: makeProject([
+        { shotSize: "wide", beat: "hook", ...performed },
+        { shotSize: "medium", beat: "hook", ...handheld, ...performed },
+        { shotSize: "close", beat: "hook", ...handheld, ...performed },
+        { shotSize: "medium", beat: "endHook", ...handheld, ...performed },
+        { shotSize: "close", beat: "endHook", ...steady, ...performed },
+      ]),
+    },
+  );
+
   // V12 需要地点几何与机位坐标，单独构造
   const withGeometry = (
     shots: Parameters<typeof makeProject>[0],
