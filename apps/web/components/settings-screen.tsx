@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { HealthPanel } from "@/components/health-panel";
 import { Logomark } from "@/components/icons";
 import { SharedSkillPicker } from "@/components/shared-skill-picker";
+import { SKILLS_FILE_BYTES, parseSkillsFile, skillsFileOf } from "@/lib/skills-file";
 import { ShotTemplateSection } from "@/components/shot-template-section";
 import { SeriesSection } from "@/components/series-section";
 import {
@@ -1299,7 +1300,9 @@ function SkillsSection({ readOnly }: { readOnly: boolean }) {
   const addSkill = useWorkbench((state) => state.addSkill);
   const updateSkill = useWorkbench((state) => state.updateSkill);
   const removeSkill = useWorkbench((state) => state.removeSkill);
+  const importSkillsToProject = useWorkbench((state) => state.importSkills);
   const [open, setOpen] = useState(false);
+  const [notice, setNotice] = useState<string>();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [body, setBody] = useState("");
@@ -1324,6 +1327,60 @@ function SkillsSection({ readOnly }: { readOnly: boolean }) {
     close();
   };
 
+  /** 导出：一份 JSON 文件（C18 / ADR-0210） */
+  const exportSkills = () => {
+    const file = skillsFileOf(skills, new Date().toISOString());
+    const blob = new Blob([JSON.stringify(file, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `loomina-skills-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setError(undefined);
+    setNotice(`导出了 ${skills.length} 条技能。`);
+  };
+
+  /** 导入：读文件 → 逐条校验 → 一次写一批 */
+  const importSkills = async (file: File) => {
+    setError(undefined);
+    setNotice(undefined);
+    if (file.size > SKILLS_FILE_BYTES) {
+      setError("文件超过 200 KB：技能是短文本，先看看是不是选错了文件。");
+      return;
+    }
+    try {
+      const raw = JSON.parse(await file.text()) as unknown;
+      const parsed = parseSkillsFile(raw, {
+        existing: skills,
+        at: new Date().toISOString(),
+        tag: Date.now().toString(36),
+      });
+      if (parsed.skills.length === 0) {
+        setError(
+          parsed.invalid > 0
+            ? `这个包里没有能用的技能：${parsed.invalid} 条格式不对。`
+            : parsed.duplicates > 0
+              ? `这些技能都已经在用了（${parsed.duplicates} 条）。`
+              : "这个文件不是技能包。",
+        );
+        return;
+      }
+      if (importSkillsToProject(parsed.skills)) {
+        setNotice(
+          `导入了 ${parsed.skills.length} 条技能` +
+            (parsed.duplicates > 0 ? `，跳过 ${parsed.duplicates} 条已经在用的` : "") +
+            (parsed.invalid > 0 ? `，${parsed.invalid} 条格式不对没导入` : "") +
+            "。",
+        );
+      } else {
+        setError(useWorkbench.getState().castError ?? "技能没导入。");
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? `读不了这个文件：${cause.message}` : "读不了这个文件。");
+    }
+  };
+
   return (
     <section className="mt-9 border-t border-line pt-5">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
@@ -1333,6 +1390,34 @@ function SkillsSection({ readOnly }: { readOnly: boolean }) {
         </div>
         <span className="flex flex-wrap items-center gap-2">
           <SharedSkillPicker />
+          <button
+            type="button"
+            onClick={exportSkills}
+            disabled={skills.length === 0}
+            title="导出一个 JSON 文件：只带名字 / 说明 / 阶段 / 内容 / 启用状态，换机器可导入"
+            className="rounded-token border border-line px-2 py-0.5 text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:opacity-40"
+          >
+            导出技能
+          </button>
+          <label
+            className={cn(
+              "cursor-pointer rounded-token border border-line px-2 py-0.5 text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text",
+              readOnly && "pointer-events-none opacity-40",
+            )}
+            title="导入一个技能包：逐条校验、重编 id，同名同内容跳过"
+          >
+            导入技能
+            <input
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                if (file) void importSkills(file);
+              }}
+            />
+          </label>
           <span className="tnum text-[9.5px] text-muted-2">
             {skills.filter((skill) => skill.enabled).length} / {skills.length} 条生效
           </span>
@@ -1470,6 +1555,9 @@ function SkillsSection({ readOnly }: { readOnly: boolean }) {
           </button>
         )
       )}
+
+      {notice && <p className="mt-2 text-[9.5px] leading-[1.7] text-muted">{notice}</p>}
+      {!open && error && <p className="mt-2 text-[9.5px] leading-[1.7] text-pick">{error}</p>}
     </section>
   );
 }

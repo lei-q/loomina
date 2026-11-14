@@ -87,6 +87,7 @@ import {
   diffEvents,
   getEventLog,
   hasWorkspaces,
+  DEFAULT_WORKSPACE_ID,
   indexedDbLog,
   indexedDbLogFor,
   listWorkspaces,
@@ -462,6 +463,13 @@ type WorkbenchState = {
    * 不调模型、不花钱。
    */
   adoptSharedSkill: (skill: ProjectSkill) => boolean;
+  /**
+   * 导入一批技能（C18 / ADR-0210）：一次 `project.updated { skills }`。
+   *
+   * 传进来的 id 由 `parseSkillsFile` 重编好；这里再兜一次「与本项目已有 id 撞车」。
+   * 不调模型、不花钱。
+   */
+  importSkills: (skills: ProjectSkill[]) => boolean;
   /**
    * 导入一份 .cube 调色表（I3 / ADR-0181）：落一条 `asset.updated { kind:"lut" }`。
    * 只加资产、不改调色——是否启用由作者在面板里勾（再走 `setGrade`）。
@@ -1005,6 +1013,13 @@ type WorkbenchState = {
    * 返回删掉了几条事件；失败写 `workspaceError`。
    */
   deleteWorkspace: (id: string) => Promise<number | undefined>;
+  /**
+   * 归档 / 取消归档一个工作空间（C15 / ADR-0210）：只改登记表里的 `archivedAt`。
+   *
+   * 归档 = 从主列表与跨空间取用清单里隐藏；日志、素材、连载归属都不动。
+   * 正在打开的空间不能归档（写锁与内存项目还挂着）。
+   */
+  archiveWorkspace: (id: string, archived: boolean) => Promise<boolean>;
   /**
    * 改故事层文字（A16）：一条 `story.updated`。
    * 只改传进来的字段；没改的字段与 `provenance` 都不动。
@@ -1729,9 +1744,26 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     if (getEventLog() === indexedDbLog) {
       setEventLog(indexedDbLogFor(startingWorkspace));
     }
-    const log = getEventLog();
+    let log = getEventLog();
 
     try {
+      // 直链兜底（C15 / ADR-0210）：记住的空间读不出日志就退回默认空间。
+      // 不自动新建空空间——那是猜，猜错比退回更糟。
+      if (hasWorkspaces() && startingWorkspace !== DEFAULT_WORKSPACE_ID) {
+        const metas = await listWorkspaces().catch(() => []);
+        const known = metas.some((meta) => meta.id === startingWorkspace);
+        const stored = await log.load().catch(() => undefined);
+        if (!known && (stored === undefined || stored.events.length === 0)) {
+          rememberWorkspace(DEFAULT_WORKSPACE_ID);
+          setEventLog(indexedDbLogFor(DEFAULT_WORKSPACE_ID));
+          log = getEventLog();
+          set({
+            workspaceId: DEFAULT_WORKSPACE_ID,
+            storageError: "上次打开的工作空间找不到了，已回到默认空间。",
+          });
+        }
+      }
+
       const stored = migrateLog(await log.load());
 
       // 另一个标签页正在写同一个空间：读得到它的进度，但这一页不改、不存
@@ -1907,6 +1939,42 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       type: "project.updated",
       at: stamp(),
       skills: project.skills.filter((skill) => skill.id !== skillId),
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  importSkills: (incoming) => {
+    if (get().readOnly) {
+      set({ castError: "现在是只读：换到能写的窗口再导入技能。" });
+      return false;
+    }
+    if (incoming.length === 0) {
+      set({ castError: "这个文件里没有能导入的技能。" });
+      return false;
+    }
+    const { project, events } = get();
+    const used = new Set(project.skills.map((skill) => skill.id));
+    const parsed: ProjectSkill[] = [];
+    for (const skill of incoming) {
+      let id = skill.id;
+      while (used.has(id)) id += "x";
+      used.add(id);
+      const next = ProjectSkillSchema.safeParse({ ...skill, id });
+      if (!next.success) {
+        set({ castError: `技能不合法：${next.error.issues[0]?.message ?? "未知原因"}` });
+        return false;
+      }
+      parsed.push(next.data);
+    }
+    const event: ProjectEvent = {
+      type: "project.updated",
+      at: stamp(),
+      skills: [...project.skills, ...parsed],
     };
     set({
       project: applyEvent(project, event),
@@ -6397,6 +6465,34 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       return true;
     } catch (error) {
       set({ workspaceError: error instanceof Error ? error.message : "名字没改成。" });
+      return false;
+    }
+  },
+
+  archiveWorkspace: async (id, archived) => {
+    if (id === get().workspaceId) {
+      set({ workspaceError: "不能归档正在打开的空间：先切到别的空间。" });
+      return false;
+    }
+    if (!hasWorkspaces()) {
+      set({ workspaceError: "这个浏览器不支持多工作空间。" });
+      return false;
+    }
+    try {
+      const list = await listWorkspaces();
+      const target = list.find((item) => item.id === id);
+      if (!target) {
+        set({ workspaceError: "找不到这个工作空间。" });
+        return false;
+      }
+      const next = { ...target };
+      if (archived) next.archivedAt = new Date().toISOString();
+      else delete next.archivedAt;
+      await saveWorkspace(next);
+      set({ workspaces: await listWorkspaces(), workspaceError: undefined });
+      return true;
+    } catch (error) {
+      set({ workspaceError: error instanceof Error ? error.message : "归档没改成。" });
       return false;
     }
   },

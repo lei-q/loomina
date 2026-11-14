@@ -72,7 +72,8 @@ export function sharedAssetsOf(
 /** 读出本机所有能回放的工作空间；某一份日志坏了只跳过它 */
 export async function loadWorkspaceProjects(): Promise<WorkspaceProject[]> {
   if (!hasWorkspaces()) return [];
-  const metas = await listWorkspaces();
+  // 归档的空间不进复用清单（C15 / ADR-0210）：收起来就是不想它再出现在「从别的空间取」
+  const metas = (await listWorkspaces()).filter((meta) => !meta.archivedAt);
   const spaces: WorkspaceProject[] = [];
   for (const meta of metas) {
     try {

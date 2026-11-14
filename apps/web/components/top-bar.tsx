@@ -267,6 +267,7 @@ export function TopBar({
   const createWorkspace = useWorkbench((state) => state.createWorkspace);
   const renameWorkspace = useWorkbench((state) => state.renameWorkspace);
   const deleteWorkspace = useWorkbench((state) => state.deleteWorkspace);
+  const archiveWorkspace = useWorkbench((state) => state.archiveWorkspace);
   const currentWorkspace = workspaces.find((item) => item.id === workspaceId);
 
   useEffect(() => {
@@ -450,6 +451,41 @@ export function TopBar({
                             >
                               改
                             </button>
+                            {active ? (
+                              <span
+                                title="正在打开的空间不能归档：先切到别的空间"
+                                className="shrink-0 text-[9px] text-muted-2 opacity-40"
+                              >
+                                {item.archivedAt ? "收起" : "归档"}
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void archiveWorkspace(item.id, !item.archivedAt).then((ok) => {
+                                    if (!ok) {
+                                      setWorkspaceNote(
+                                        useWorkbench.getState().workspaceError ?? "归档没改成。",
+                                      );
+                                      return;
+                                    }
+                                    setWorkspaceNote(
+                                      item.archivedAt
+                                        ? `「${item.name}」回到列表了。`
+                                        : `「${item.name}」收起来了：日志与素材不动，从复用清单里也暂时取不到。`,
+                                    );
+                                  });
+                                }}
+                                title={
+                                  item.archivedAt
+                                    ? "取消归档：重新出现在列表与复用清单里"
+                                    : "归档：从列表与复用清单里收起，日志与素材不动，随时可取消"
+                                }
+                                className="shrink-0 text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text"
+                              >
+                                {item.archivedAt ? "收起" : "归档"}
+                              </button>
+                            )}
                             {active ? (
                               <span
                                 title="正在打开的空间不能删：先切到别的空间"

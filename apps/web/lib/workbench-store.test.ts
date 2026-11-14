@@ -6878,3 +6878,80 @@ describe("结果缓存与复用（H14 / ADR-0208）", () => {
     expect(calls).toHaveLength(2);
   });
 });
+
+describe("空间归档与技能导入（C15 / C18 / ADR-0210）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("不能归档正在打开的空间", async () => {
+    expect(await state().archiveWorkspace(state().workspaceId, true)).toBe(false);
+    expect(state().workspaceError).toContain("正在打开");
+  });
+
+  it("没有 IndexedDB 时如实说不支持", async () => {
+    expect(await state().archiveWorkspace("w-other", true)).toBe(false);
+    expect(state().workspaceError).toContain("不支持多工作空间");
+  });
+
+  it("导入一批技能：一次 project.updated，id 撞车时补后缀", () => {
+    const before = state().project.skills.length;
+    const snapshot = state().events.length;
+    expect(
+      state().importSkills([
+        {
+          id: "sk-import-1",
+          name: "不要现代物品",
+          description: "",
+          stage: "all",
+          body: "场景里不要出现手机。",
+          enabled: true,
+          createdAt: "2026-11-14T00:00:00Z",
+        },
+      ]),
+    ).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "project.updated" });
+    expect(state().project.skills).toHaveLength(before + 1);
+    expect(rebuild(state().events).skills).toHaveLength(before + 1);
+
+    // 再导一次同一批：id 撞车，补后缀后仍能落库（判重交给 parseSkillsFile）
+    expect(
+      state().importSkills([
+        {
+          id: "sk-import-1",
+          name: "另一条",
+          description: "",
+          stage: "all",
+          body: "另一条内容。",
+          enabled: true,
+          createdAt: "2026-11-14T00:00:00Z",
+        },
+      ]),
+    ).toBe(true);
+    const ids = state().project.skills.map((skill) => skill.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("空批次与只读都拒绝", () => {
+    const snapshot = state().events.length;
+    expect(state().importSkills([])).toBe(false);
+    useWorkbench.setState({ readOnly: true });
+    expect(
+      state().importSkills([
+        {
+          id: "sk-x",
+          name: "x",
+          description: "",
+          stage: "all",
+          body: "x",
+          enabled: true,
+          createdAt: "2026-11-14T00:00:00Z",
+        },
+      ]),
+    ).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+    useWorkbench.setState({ readOnly: false });
+  });
+});
