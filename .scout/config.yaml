@@ -1,0 +1,27 @@
+# nest-scout 配置
+include:
+  - apps/web/**/*.{ts,tsx,mts,cts}
+  - packages/gateway/**/*.{ts,tsx,mts,cts}
+  - packages/ir/**/*.{ts,tsx,mts,cts}
+  - packages/pipeline/**/*.{ts,tsx,mts,cts}
+exclude:
+  - "**/node_modules/**"
+  - "**/dist/**"
+  - "**/build/**"
+  - "**/*.d.ts"
+tests:
+  - "**/*.test.{ts,tsx}"
+  - "**/*.spec.{ts,tsx}"
+  - "**/__tests__/**"
+  - test/**
+  - tests/**
+tsconfig: tsconfig.json
+junit:
+  - .scout/reports/*.xml
+acceptance_pattern: \[([A-I][0-9]+-[a-z0-9]+)\]
+thresholds:
+  sub_growth_pct: 30
+  sub_growth_lines: 200
+  top_growth_30d_pct: 50
+  exports_added: 5
+# 生成测试报告：pnpm -r exec vitest run --reporter=default --reporter=junit --outputFile=../../.scout/reports/$(basename $PWD).xml

@@ -1,0 +1,36 @@
+# 业务功能清单（ID 与 docs/FEATURES.md 一致）。完成度由验收用例的测试结果自动计算，不手写。
+# 验收用例和测试的对应：测试名里带 [A1-a] 这样的 ID；或者用 match 写测试名里已有的一段文字（不用改测试）。
+# 这里只登记主路径上的 P0 功能；其余功能仍以 docs/FEATURES.md 为准。
+features:
+  - id: A1
+    name: 一句话 / 大纲 → 故事梗概
+    modules: [web, pipeline]
+    acceptance:
+      - { id: A1-a, desc: 模型输出能解析成故事草稿（标题、logline、梗概、题材/受众/基调、结尾钩子）, match: "故事草稿解析（ADR-0088）" }
+  - id: A3
+    name: 场次与分镜自动拆解
+    modules: [pipeline, ir]
+    acceptance:
+      - { id: A3-a, desc: 草稿落成 Project 并通过 assertValidProject, match: "草稿 → 项目（ADR-0088）" }
+  - id: F1
+    name: 项目文档（Project IR）
+    modules: [ir]
+    acceptance:
+      - { id: F1-a, desc: 不变量校验拒绝不合法的项目, match: "validateProject" }
+      - { id: F1-b, desc: 项目版本随事件递增, match: "项目版本随事件递增（F1" }
+  - id: H19
+    name: 一句话指令
+    modules: [web, pipeline, ir]
+    acceptance:
+      - { id: H19-a, desc: 规则表认不出时走模型兜底；越界或空补丁当没听懂, match: "一句话的模型兜底（H19）" }
+  - id: E6
+    name: 渲染导出
+    modules: [web]
+    acceptance:
+      - { id: E6-a, desc: 成片渲染清单正确、能过 validateRenderManifest, match: "成片渲染清单（E6）" }
+  - id: G8
+    name: 合规预检
+    modules: [web]
+    acceptance:
+      - { id: G8-a, desc: 导出前跑完合规预检, match: "导出前预检（G8）" }
+      - { id: G8-b, desc: 四个检查点, match: "G8 四个检查点" }

@@ -11,6 +11,7 @@ import {
   type LibraryView,
 } from "@/lib/asset-inventory";
 import { assetHref } from "@/lib/asset-uri";
+import { matchQuery, paginate } from "@/lib/library-filters";
 import { formatSize } from "@/lib/platforms";
 import { trashOf, trashStateLabel, type TrashItem } from "@/lib/trash";
 import { useWorkbench } from "@/lib/workbench-store";
@@ -52,6 +53,32 @@ const PLACEMENT_CN: Record<LibraryRow["placement"], string> = {
   none: "没地址",
 };
 
+const TRASH_KINDS: { key: TrashItem["kind"] | "all"; label: string }[] = [
+  { key: "all", label: "全部" },
+  { key: "take", label: "视频" },
+  { key: "keyframe", label: "关键帧" },
+  { key: "voice", label: "配音" },
+];
+
+const TRASH_STATES: { key: TrashItem["state"] | "all"; label: string }[] = [
+  { key: "all", label: "全部状态" },
+  { key: "rejected", label: "淘汰" },
+  { key: "removed", label: "删掉" },
+  { key: "old", label: "旧版" },
+];
+
+/** 废片库每页条数（C14 / ADR-0205）：取代原来写死的「最多 40 条」 */
+const TRASH_PAGE_SIZE = 20;
+
+/** 废片「作参考」能挂的地方（C2 / ADR-0200）：人物 / 场景 / 道具的参考图 */
+type ReferenceTarget = {
+  kind: "character" | "location" | "prop";
+  id: string;
+  name: string;
+  group: string;
+  attached: string[];
+};
+
 export function AssetsScreen() {
   const project = useWorkbench((state) => state.project);
   const hydrate = useWorkbench((state) => state.hydrate);
@@ -62,6 +89,7 @@ export function AssetsScreen() {
   const restoreTake = useWorkbench((state) => state.restoreTake);
   const restoreVoiceTake = useWorkbench((state) => state.restoreVoiceTake);
   const useKeyframeVersion = useWorkbench((state) => state.useKeyframeVersion);
+  const attachTrashReference = useWorkbench((state) => state.attachTrashReference);
   const [filter, setFilter] = useState<AssetFilter>("all");
   const [files, setFiles] = useState<Map<string, number>>();
   const [storeError, setStoreError] = useState<string>();
@@ -105,6 +133,33 @@ export function AssetsScreen() {
   const rows = useMemo(() => filterLibrary(library.rows, filter), [library.rows, filter]);
   // 废片库（C14）：淘汰 / 删掉的拍子与旧版关键帧，汇到一处才能取回
   const trash = useMemo(() => trashOf(project, events), [project, events]);
+  // 「作参考」能挂的地方（C2 / ADR-0200）
+  const referenceTargets = useMemo<ReferenceTarget[]>(
+    () => [
+      ...project.characters.map((character) => ({
+        kind: "character" as const,
+        id: character.id,
+        name: character.name,
+        group: "人物",
+        attached: character.referenceImages,
+      })),
+      ...project.locations.map((location) => ({
+        kind: "location" as const,
+        id: location.id,
+        name: location.name,
+        group: "场景",
+        attached: location.referenceImages,
+      })),
+      ...project.props.map((prop) => ({
+        kind: "prop" as const,
+        id: prop.id,
+        name: prop.name,
+        group: "道具",
+        attached: prop.referenceImages,
+      })),
+    ],
+    [project.characters, project.locations, project.props],
+  );
 
   return (
     <div className="flex h-dvh flex-col bg-bg text-text">
@@ -142,6 +197,19 @@ export function AssetsScreen() {
           <TrashSection
             items={trash}
             readOnly={Boolean(readOnly)}
+            targets={referenceTargets}
+            onReference={(item, target) => {
+              const ok = attachTrashReference(item.assetId, {
+                kind: target.kind,
+                id: target.id,
+              });
+              setNote(
+                ok
+                  ? `挂到了「${target.name}」的参考图：只登记同一个文件，不复制、不花钱。`
+                  : (useWorkbench.getState().castError ?? "这张图挂不上。"),
+              );
+              return ok;
+            }}
             onRestoreTake={(takeId) => {
               const ok = restoreTake(takeId);
               setNote(
@@ -242,22 +310,41 @@ export function AssetsScreen() {
 function TrashSection({
   items,
   readOnly,
+  targets,
+  onReference,
   onRestoreTake,
   onRestoreVoice,
   onRestoreKeyframe,
 }: {
   items: TrashItem[];
   readOnly: boolean;
+  targets: ReferenceTarget[];
+  onReference: (item: TrashItem, target: ReferenceTarget) => boolean;
   onRestoreTake: (takeId: string) => void;
   onRestoreVoice: (takeId: string) => void;
   onRestoreKeyframe: (item: TrashItem) => void;
 }) {
+  const [referenceFor, setReferenceFor] = useState<TrashItem>();
+  const [kind, setKind] = useState<TrashItem["kind"] | "all">("all");
+  const [stateFilter, setStateFilter] = useState<TrashItem["state"] | "all">("all");
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(0);
   const counts = {
     rejected: items.filter((item) => item.state === "rejected").length,
     removed: items.filter((item) => item.state === "removed").length,
     old: items.filter((item) => item.state === "old").length,
   };
-  const shown = items.slice(0, 40);
+  const filtered = items.filter(
+    (item) =>
+      (kind === "all" || item.kind === kind) &&
+      (stateFilter === "all" || item.state === stateFilter) &&
+      matchQuery(
+        [item.shotLabel, item.shotDescription, item.modelId ?? "", item.lineText ?? "", item.assetId],
+        query,
+      ),
+  );
+  const list = paginate(filtered, page, TRASH_PAGE_SIZE);
+  const shown = list.rows;
 
   return (
     <section className="mt-6" aria-label="废片库">
@@ -274,9 +361,54 @@ function TrashSection({
         不重新生成、不花钱；删掉的拍子的时间线片段不会自动接回。
       </p>
 
+      {items.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {TRASH_KINDS.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => { setKind(item.key); setPage(0); }}
+              className={cn(
+                "rounded-token border px-1.5 py-0.5 text-[8.5px] transition-colors duration-[var(--dur)]",
+                kind === item.key
+                  ? "border-line-2 text-text"
+                  : "border-line text-muted-2 hover:text-text",
+              )}
+            >
+              {item.label}
+            </button>
+          ))}
+          <select
+            aria-label="废片状态"
+            value={stateFilter}
+            onChange={(event) => {
+              setStateFilter(event.target.value as TrashItem["state"] | "all");
+              setPage(0);
+            }}
+            className="rounded-token border border-line bg-surface px-1 py-0.5 text-[8.5px] text-muted"
+          >
+            {TRASH_STATES.map((item) => (
+              <option key={item.key} value={item.key}>{item.label}</option>
+            ))}
+          </select>
+          <input
+            value={query}
+            aria-label="搜废片"
+            placeholder="搜镜号 / 描述 / 模型 / 台词"
+            onChange={(event) => { setQuery(event.target.value); setPage(0); }}
+            className="min-w-[150px] flex-1 rounded-token border border-line bg-surface px-1.5 py-0.5 text-[9px] text-text placeholder:text-muted-2 focus:border-pick focus:outline-none"
+          />
+          <span className="tnum text-[8.5px] text-muted-2">命中 {list.total}</span>
+        </div>
+      )}
+
       {items.length === 0 ? (
         <p className="mt-3 rounded-token border border-line px-3 py-4 text-center text-[10px] text-muted-2">
           还没有废片。淘汰或删掉一拍、重生成一次关键帧，这里就会有东西。
+        </p>
+      ) : shown.length === 0 ? (
+        <p className="mt-3 rounded-token border border-dashed border-line px-3 py-4 text-center text-[10px] text-muted-2">
+          这一组里没有匹配的废片：换一种筛选或清空搜索。
         </p>
       ) : (
         <ul className="mt-2 border-t border-line">
@@ -368,15 +500,108 @@ function TrashSection({
                 >
                   {item.kind === "keyframe" ? "换回" : "取回"}
                 </button>
+
+                {item.kind === "keyframe" && (
+                  <button
+                    type="button"
+                    onClick={() => setReferenceFor(item)}
+                    disabled={readOnly}
+                    title="把这张旧图挂成人物 / 场景 / 道具的参考图；只登记同一个文件，不花钱"
+                    className="shrink-0 rounded-token border border-line px-2 py-px text-[9px] text-muted-2 transition-colors duration-[var(--dur)] enabled:hover:border-line-2 enabled:hover:text-text disabled:pointer-events-none disabled:opacity-40"
+                  >
+                    作参考
+                  </button>
+                )}
               </li>
             );
           })}
         </ul>
       )}
-      {items.length > shown.length && (
-        <p className="mt-2 text-[9px] text-muted-2">
-          还有 {items.length - shown.length} 条没列出：先取回或清理前面的，再显示后面的。
-        </p>
+
+      {referenceFor && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-bg/80 p-4 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setReferenceFor(undefined);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-label="把这张图作参考"
+            className="max-h-[82vh] w-[520px] max-w-[94vw] overflow-y-auto border border-line bg-bg px-4 py-3"
+          >
+            <div className="flex items-baseline justify-between gap-2">
+              <h3 className="text-[11px] tracking-[.06em] text-text">把这张图作参考</h3>
+              <button
+                type="button"
+                onClick={() => setReferenceFor(undefined)}
+                className="rounded-token border border-line px-2 py-0.5 text-[9.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+              >
+                关闭
+              </button>
+            </div>
+            <p className="mt-1 text-[9px] leading-[1.7] text-muted-2">
+              「{referenceFor.shotLabel}」的这张旧版挂成谁的参考图？只登记同一个文件，
+              不复制、不重新生成、不花钱；同一张图对同一条只能挂一次。
+            </p>
+            {["人物", "场景", "道具"].map((group) => {
+              const groupTargets = targets.filter((target) => target.group === group);
+              if (groupTargets.length === 0) return null;
+              return (
+                <div key={group} className="mt-3">
+                  <p className="text-[9px] text-muted-2">{group}</p>
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    {groupTargets.map((target) => {
+                      const attached = target.attached.includes(referenceFor.assetId);
+                      return (
+                        <button
+                          key={`${target.kind}:${target.id}`}
+                          type="button"
+                          disabled={attached}
+                          onClick={() => {
+                            if (onReference(referenceFor, target)) setReferenceFor(undefined);
+                          }}
+                          className="rounded-token border border-line px-2 py-0.5 text-[9.5px] text-muted transition-colors duration-[var(--dur)] enabled:hover:border-pick enabled:hover:text-pick disabled:opacity-40"
+                        >
+                          {target.name}
+                          {attached ? " · 已挂" : ""}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+            {targets.length === 0 && (
+              <p className="mt-3 text-[10px] text-muted-2">
+                还没有人物 / 场景 / 道具可以挂：先去定妆页建一个。
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+      {list.pageCount > 1 && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[9px] text-muted-2">
+          <button
+            type="button"
+            disabled={list.page === 0}
+            onClick={() => setPage(list.page - 1)}
+            className="rounded-token border border-line px-1.5 py-0.5 disabled:opacity-40"
+          >
+            上一页
+          </button>
+          <span className="tnum">
+            第 {list.page + 1} / {list.pageCount} 页 · 共 {list.total} 条
+          </span>
+          <button
+            type="button"
+            disabled={list.page >= list.pageCount - 1}
+            onClick={() => setPage(list.page + 1)}
+            className="rounded-token border border-line px-1.5 py-0.5 disabled:opacity-40"
+          >
+            下一页
+          </button>
+        </div>
       )}
     </section>
   );

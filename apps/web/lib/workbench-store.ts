@@ -83,6 +83,7 @@ import {
 } from "@loomina/pipeline";
 import { create } from "zustand";
 import {
+  deleteWorkspace as deleteWorkspaceRows,
   diffEvents,
   getEventLog,
   hasWorkspaces,
@@ -103,6 +104,9 @@ import { autoCut, timelineEquals } from "@/lib/edit";
 import { planMusicFill } from "@/lib/music-curve";
 import { instructionsOf, performanceOf } from "@/lib/voice-performance";
 import { buildHistory, historyPosition, nextUndo } from "@/lib/history";
+import { sceneImportEvents, sceneReadiness } from "@/lib/shared-scenes";
+import { storyImportPatch } from "@/lib/shared-stories";
+import { replayRestore, scriptRestoreEvents, scriptVersionsOf } from "@/lib/script-versions";
 import { storyRestorePatch, storyVersionsOf } from "@/lib/story-versions";
 import { takeFromLog, voiceTakeFromLog } from "@/lib/trash";
 import { sharedEntityImport, type SharedEntity } from "@/lib/shared-entities";
@@ -300,6 +304,8 @@ type WorkbenchState = {
   historyNotice?: string;
   /** 故事版本库的一句话：恢复了哪一版、有几条带不回来（C2） */
   storyNotice?: string;
+  /** 剧本版本库的一句话：写回了几条、哪些带不回来（C14 / ADR-0204） */
+  scriptNotice?: string;
   /** 阶段式 / 自由工作台（F8）：存在 localStorage，跨页面生效 */
   mode: WorkbenchMode;
   /** 刚刚被阶段硬锁拦下的那句话（F8）：写一次就弹一次 */
@@ -396,6 +402,13 @@ type WorkbenchState = {
     patch: Partial<Pick<ProjectSkill, "name" | "description" | "stage" | "body" | "enabled">>,
   ) => boolean;
   removeSkill: (skillId: string) => boolean;
+  /**
+   * 取用别的空间的一条技能（C.5 / ADR-0202）：抄成当前项目的一条新技能。
+   *
+   * 内容照抄、id 重新编（`sk-<时间戳>`），默认启用；同名同内容的已在就不重复加。
+   * 不调模型、不花钱。
+   */
+  adoptSharedSkill: (skill: ProjectSkill) => boolean;
   /**
    * 导入一份 .cube 调色表（I3 / ADR-0181）：落一条 `asset.updated { kind:"lut" }`。
    * 只加资产、不改调色——是否启用由作者在面板里勾（再走 `setGrade`）。
@@ -926,6 +939,13 @@ type WorkbenchState = {
   /** 改工作空间名字：只改本机的登记表，不动项目标题与日志 */
   renameWorkspace: (id: string, name: string) => Promise<boolean>;
   /**
+   * 删掉一个工作空间（C15 / ADR-0201）：事件行、日志版本、登记表一起清。
+   *
+   * 不能删当前打开的空间（先切走再删）；素材文件不删，字节可能被别的空间用着。
+   * 返回删掉了几条事件；失败写 `workspaceError`。
+   */
+  deleteWorkspace: (id: string) => Promise<number | undefined>;
+  /**
    * 改故事层文字（A16）：一条 `story.updated`。
    * 只改传进来的字段；没改的字段与 `provenance` 都不动。
    */
@@ -938,6 +958,28 @@ type WorkbenchState = {
    * 与现在完全一样时不写事件。
    */
   useStoryVersion: (eventIndex: number) => boolean;
+  /**
+   * 把剧本 / 分镜写回某一版（C14 / ADR-0204）：一批事件只改当前仍存在的
+   * 场 / 镜 / 句的剧本字段，不动 take / 关键帧 / 配音 / 时间线。
+   * 同批共用一个 `at`，撤销一步可退；与现在一致时不写事件。
+   */
+  restoreScriptVersion: (eventIndex: number) => boolean;
+  /**
+   * 取用别的空间的一版故事（C1 / ADR-0198）：一条 `story.updated` 整份写回。
+   *
+   * 弧光 / 关系只带本空间有**同名同 id** 角色的那些，其余过滤并计数——
+   * 名字对不上就不算同一个人，不把弧光安到别人身上。不调模型、不花钱。
+   * 与本空间现在一致时不写事件。
+   */
+  adoptSharedStory: (source: Project, fromWorkspaceName: string) => boolean;
+  /**
+   * 取用别的空间的一场剧本（C1 / ADR-0199）：场 + 镜 + 台词整场追加到末尾。
+   *
+   * 地点与出场演员必须本空间同名同 id，否则整场拒绝（不取半场）；
+   * 对不上的道具只摘引用。id 全部重编、关键帧 / take / 配音 / 时间线不跟。
+   * 同一批事件共用一个 `at`，撤销一步就能整场退回。不调模型、不花钱。
+   */
+  adoptSharedScene: (source: Project, sceneId: string, fromWorkspaceName: string) => boolean;
   /**
    * 采用剧本医生的一条改写（A18 / ADR-0123）：台词走 `editDialogue`、
    * 动作走 `editAction`、故事层走 `editStory`——同一个决定只用一套写入口。
@@ -968,6 +1010,15 @@ type WorkbenchState = {
   addLocationReference: (locationId: string, uri: string, source?: Asset["source"]) => boolean;
   /** 摘掉地点的一张参考图：图留在资产里，可以再挂回来 */
   removeLocationReference: (locationId: string, assetId: string) => boolean;
+  /**
+   * 把废片库里的旧关键帧挂成人物 / 场景 / 道具的参考图（C2 / ADR-0200）。
+   *
+   * 只登记引用，不复制文件、不重新生成、不花钱；图片已经在资产里，直接挂同一个 id。
+   */
+  attachTrashReference: (
+    assetId: string,
+    target: { kind: "character" | "location" | "prop"; id: string },
+  ) => boolean;
   /** 撤销最近一次删除：按前缀重放取回快照，再写补偿事件（ADR-0076） */
   undoLastRemoval: () => boolean;
   /** 回收站里恢复某一条删除：与撤销删除走同一条补偿逻辑（F2 / ADR-0109） */
@@ -1737,6 +1788,43 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       type: "project.updated",
       at: stamp(),
       skills: project.skills.filter((skill) => skill.id !== skillId),
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  adoptSharedSkill: (skill) => {
+    if (get().readOnly) {
+      set({ castError: "现在是只读：换到能写的窗口再改技能。" });
+      return false;
+    }
+    const { project, events } = get();
+    const same = (item: ProjectSkill) =>
+      item.name.trim() === skill.name.trim() && item.body.trim() === skill.body.trim();
+    if (project.skills.some(same)) {
+      set({ castError: "这条技能已经在用了。" });
+      return false;
+    }
+    let id = `sk-${Date.now().toString(36)}`;
+    while (project.skills.some((item) => item.id === id)) id += "x";
+    const parsed = ProjectSkillSchema.safeParse({
+      ...skill,
+      id,
+      enabled: true,
+      createdAt: stamp(),
+    });
+    if (!parsed.success) {
+      set({ castError: `技能不合法：${parsed.error.issues[0]?.message ?? "未知原因"}` });
+      return false;
+    }
+    const event: ProjectEvent = {
+      type: "project.updated",
+      at: stamp(),
+      skills: [...project.skills, parsed.data],
     };
     set({
       project: applyEvent(project, event),
@@ -6149,6 +6237,26 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     }
   },
 
+  deleteWorkspace: async (id) => {
+    // 先拦「删当前空间」：这条与浏览器能力无关，是最该说清楚的一句
+    if (id === get().workspaceId) {
+      set({ workspaceError: "不能删正在打开的空间：先切到别的空间，再回来删。" });
+      return undefined;
+    }
+    if (!hasWorkspaces()) {
+      set({ workspaceError: "这个浏览器不支持多工作空间。" });
+      return undefined;
+    }
+    try {
+      const removed = await deleteWorkspaceRows(id);
+      set({ workspaces: await listWorkspaces(), workspaceError: undefined });
+      return removed;
+    } catch (error) {
+      set({ workspaceError: error instanceof Error ? error.message : "工作空间没删掉。" });
+      return undefined;
+    }
+  },
+
   startProjectFromVerbatim: (document) => {
     if (get().readOnly) {
       set({ castError: "另一个标签页在编辑：这一页只读，开不了新项目。" });
@@ -6257,6 +6365,106 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       return true;
     } catch (error) {
       set({ castError: error instanceof Error ? error.message : "故事没恢复成。" });
+      return false;
+    }
+  },
+
+  restoreScriptVersion: (eventIndex) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const version = scriptVersionsOf(events).find((item) => item.eventIndex === eventIndex);
+    if (!version) {
+      set({ scriptNotice: "找不到这一版剧本。" });
+      return false;
+    }
+    const restore = scriptRestoreEvents(project, version.project, stamp());
+    if (restore.events.length === 0) {
+      set({ scriptNotice: "现在就是这一版，没有要改的。" });
+      return false;
+    }
+    try {
+      // 先整批在草稿上回放：任何一条不合法都不落半份剧本
+      const nextProject = replayRestore(project, restore.events);
+      const skipped =
+        restore.missingScenes + restore.missingShots + restore.missingLines +
+        restore.lockedShots + restore.droppedLocations;
+      set({
+        project: nextProject,
+        events: [...events, ...restore.events],
+        castError: undefined,
+        scriptNotice:
+          (skipped > 0
+            ? `已写回这一版：${restore.events.length} 条改动；${skipped} 处带不回来（已删结构 / 锁定镜头 / 失效地点不重建）。`
+            : `已写回这一版：${restore.events.length} 条改动。`) +
+          "关键帧、take 与配音没有动；想连别的阶段一起回退，用「整份回到这里」。",
+      });
+      return true;
+    } catch (error) {
+      set({ scriptNotice: error instanceof Error ? error.message : "这一版剧本没写回来。" });
+      return false;
+    }
+  },
+
+  adoptSharedStory: (source, fromWorkspaceName) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const imported = storyImportPatch(project, source);
+    if (!imported) {
+      set({ castError: "现在就是这一版故事，没有要改的。" });
+      return false;
+    }
+    const event: ProjectEvent = { type: "story.updated", at: stamp(), patch: imported.patch };
+    try {
+      const nextProject = applyEvent(project, event);
+      const dropped = imported.droppedArcs + imported.droppedRelationships;
+      set({
+        project: nextProject,
+        events: [...events, event],
+        castError: undefined,
+        storyNotice:
+          dropped > 0
+            ? `已取用「${fromWorkspaceName}」的故事；其中 ${dropped} 条弧光 / 关系因本空间没有同名角色，没有带过来。`
+            : `已取用「${fromWorkspaceName}」的故事。`,
+      });
+      return true;
+    } catch (error) {
+      set({ castError: error instanceof Error ? error.message : "故事没取成。" });
+      return false;
+    }
+  },
+
+  adoptSharedScene: (source, sceneId, fromWorkspaceName) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const sourceScene = source.scenes.find((scene) => scene.id === sceneId);
+    if (!sourceScene) {
+      set({ castError: "找不到这一场。" });
+      return false;
+    }
+    const tag = Date.now().toString(36);
+    const imported = sceneImportEvents(source, project, sceneId, tag, stamp());
+    if (!imported) {
+      const readiness = sceneReadiness(source, project, sourceScene);
+      set({
+        castError: readiness.missing.length
+          ? `这一场取不过来：本空间缺 ${readiness.missing.join("、")}。`
+          : "这一场取不过来。",
+      });
+      return false;
+    }
+
+    try {
+      // 先整批在草稿上回放：任何一条不合法都不落半场
+      let nextProject = project;
+      for (const event of imported.events) nextProject = applyEvent(nextProject, event);
+      set({
+        project: nextProject,
+        events: [...events, ...imported.events],
+        castError: undefined,
+      });
+      return true;
+    } catch (error) {
+      set({ castError: error instanceof Error ? error.message : "这一场没取成。" });
       return false;
     }
   },
@@ -6587,6 +6795,54 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
         referenceImages: location.referenceImages.filter((id) => id !== assetId),
       },
     };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
+  attachTrashReference: (assetId, target) => {
+    if (get().readOnly) return false;
+    const { project, events } = get();
+    const asset = project.assets.find((item) => item.id === assetId);
+    if (!asset) {
+      set({ castError: "这个文件已经不在项目里了。" });
+      return false;
+    }
+    if (asset.kind !== "image") {
+      set({ castError: "只有图片能当参考图；视频要先抽一帧。" });
+      return false;
+    }
+
+    const current =
+      target.kind === "character"
+        ? project.characters.find((item) => item.id === target.id)
+        : target.kind === "location"
+          ? project.locations.find((item) => item.id === target.id)
+          : project.props.find((item) => item.id === target.id);
+    if (!current) {
+      set({ castError: "找不到要挂的那一条。" });
+      return false;
+    }
+    if (current.referenceImages.includes(assetId)) {
+      set({ castError: "这张图已经挂过了。" });
+      return false;
+    }
+    if (current.referenceImages.length >= REFERENCE_IMAGES_MAX) {
+      set({ castError: `参考图最多 ${REFERENCE_IMAGES_MAX} 张：再多会把提示词挤爆。` });
+      return false;
+    }
+
+    const at = stamp();
+    const referenceImages = [...current.referenceImages, assetId];
+    const event: ProjectEvent =
+      target.kind === "character"
+        ? { type: "character.updated", at, characterId: target.id, patch: { referenceImages } }
+        : target.kind === "location"
+          ? { type: "location.updated", at, locationId: target.id, patch: { referenceImages } }
+          : { type: "prop.updated", at, propId: target.id, patch: { referenceImages } };
     set({
       project: applyEvent(project, event),
       events: [...events, event],
@@ -7175,6 +7431,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
       batch: undefined,
       castError: undefined,
       storyNotice: undefined,
+      scriptNotice: undefined,
       lastSwap: undefined,
       asrResult: undefined,
       editError: undefined,

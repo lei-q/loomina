@@ -116,10 +116,13 @@ export function parseEvents(raw: unknown): ProjectEvent[] | null {
   if (!first || first.type !== "project.created") return null;
 
   try {
-    // 快照按当前 schema 解析：缺省字段补齐，坏字段在这里就暴露
-    first.project = ProjectSchema.parse(first.project);
+    // 快照按当前 schema 解析（ADR-0203）：缺省字段补齐，坏字段在这里就暴露。
+    // 不只第一条——逐字导入 / 模板 / 故事草稿会在日志末尾再写一条 `project.created`，
+    // 那些快照同样可能是早期写出的，直接读事件数组的函数（storyVersionsOf 等）也要拿到规范快照。
     for (const event of events) {
-      if (event.type === "asset.updated") {
+      if (event.type === "project.created") {
+        event.project = ProjectSchema.parse(event.project);
+      } else if (event.type === "asset.updated") {
         event.asset = AssetSchema.parse(event.asset);
       }
     }
@@ -364,6 +367,45 @@ export async function saveWorkspace(meta: WorkspaceMeta): Promise<void> {
     const tx = db.transaction(WORKSPACES, "readwrite");
     tx.objectStore(WORKSPACES).put(meta);
     await committed(tx);
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * 删掉一个工作空间（C15 / ADR-0201）：事件行、日志版本、登记表一起清。
+ *
+ * 只动这个空间自己的行：别的空间还在写，不能一起抹掉。
+ * 素材文件不在这里删——字节是内容寻址、可能被别的空间用着（H3 管清理）。
+ * 返回删掉了几条事件。
+ */
+export async function deleteWorkspace(workspaceId: string): Promise<number> {
+  if (!hasWorkspaces()) return 0;
+  const db = await openDb();
+  try {
+    const tx = db.transaction([STORE, META, WORKSPACES], "readwrite");
+    const store = tx.objectStore(STORE);
+    let removed = 0;
+    const cursor = store.openCursor();
+    await new Promise<void>((resolve, reject) => {
+      cursor.onsuccess = () => {
+        const position = cursor.result;
+        if (!position) {
+          resolve();
+          return;
+        }
+        if (workspaceOfRow(position.value as Row) === workspaceId) {
+          position.delete();
+          removed += 1;
+        }
+        position.continue();
+      };
+      cursor.onerror = () => reject(cursor.error ?? new Error("删工作空间失败"));
+    });
+    tx.objectStore(META).delete(`log:${workspaceId}`);
+    tx.objectStore(WORKSPACES).delete(workspaceId);
+    await committed(tx);
+    return removed;
   } finally {
     db.close();
   }

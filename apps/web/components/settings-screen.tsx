@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { HealthPanel } from "@/components/health-panel";
 import { Logomark } from "@/components/icons";
+import { SharedSkillPicker } from "@/components/shared-skill-picker";
 import {
   MODALITIES,
   MODALITY_HINT,
@@ -1286,8 +1287,11 @@ function SkillsSection({ readOnly }: { readOnly: boolean }) {
           <h2 className="text-[12px] tracking-[.04em]">技能</h2>
           <span className="tnum text-[9px] text-muted-2">C.5</span>
         </div>
-        <span className="tnum text-[9.5px] text-muted-2">
-          {skills.filter((skill) => skill.enabled).length} / {skills.length} 条生效
+        <span className="flex flex-wrap items-center gap-2">
+          <SharedSkillPicker />
+          <span className="tnum text-[9.5px] text-muted-2">
+            {skills.filter((skill) => skill.enabled).length} / {skills.length} 条生效
+          </span>
         </span>
       </div>
       <p className="mt-1 max-w-[640px] text-[9.5px] leading-[1.7] text-muted-2">

@@ -1,4 +1,4 @@
-import { DEFAULT_GRADE, applyEvent, rebuild, type ProjectEvent } from "@loomina/ir";
+import { DEFAULT_GRADE, ProjectSchema, applyEvent, rebuild, type ProjectEvent } from "@loomina/ir";
 import { parseStoryDraft } from "@loomina/pipeline";
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 import { setEventLog, type EventLog } from "./event-log";
@@ -4531,6 +4531,134 @@ describe("故事版本库（C2）", () => {
   });
 });
 
+describe("跨空间取一版故事（C1 / ADR-0198）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  const sourceOf = () => {
+    const project = structuredClone(state().project);
+    return {
+      ...project,
+      story: {
+        ...project.story,
+        logline: "外卖员撞见顶层的秘密",
+        tone: "冷",
+        arcs: [
+          {
+            characterId: "c-lin",
+            want: "拿到监控",
+            need: "",
+            wound: "",
+            flaw: "",
+            secret: "",
+            agency: "",
+            arc: "",
+          },
+        ],
+      },
+    };
+  };
+
+  it("取用写一条 story.updated，文字与弧光一起过来", () => {
+    const snapshot = state().events.length;
+    expect(state().adoptSharedStory(sourceOf(), "夜班")).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "story.updated" });
+    expect(state().project.story.logline).toBe("外卖员撞见顶层的秘密");
+    expect(state().project.story.tone).toBe("冷");
+    expect(state().project.story.arcs).toHaveLength(1);
+    expect(state().storyNotice).toContain("夜班");
+    expect(rebuild(state().events).story.logline).toBe("外卖员撞见顶层的秘密");
+  });
+
+  it("名字对不上的弧光跳过并在提示里说清楚", () => {
+    const source = sourceOf();
+    source.characters = source.characters.map((character) =>
+      character.id === "c-lin" ? { ...character, name: "林小姐" } : character,
+    );
+    expect(state().adoptSharedStory(source, "夜班")).toBe(true);
+    expect(state().project.story.arcs).toHaveLength(0);
+    expect(state().storyNotice).toContain("没有同名角色");
+  });
+
+  it("同一版不写事件；只读时拒绝", () => {
+    expect(state().adoptSharedStory(sourceOf(), "夜班")).toBe(true);
+    const snapshot = state().events.length;
+    expect(state().adoptSharedStory(sourceOf(), "夜班")).toBe(false);
+    expect(state().castError).toContain("就是这一版");
+
+    useWorkbench.setState({ readOnly: true });
+    const source = sourceOf();
+    source.story.tone = "更冷";
+    expect(state().adoptSharedStory(source, "夜班")).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+    useWorkbench.setState({ readOnly: false });
+  });
+});
+
+describe("跨空间取一场剧本（C1 / ADR-0199）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  const sourceOf = () => structuredClone(state().project);
+
+  it("整场追加到末尾：场 / 镜 / 台词一起进来，一条事件一目了然", () => {
+    const before = state().project;
+    const source = sourceOf();
+    const snapshot = state().events.length;
+
+    expect(state().adoptSharedScene(source, "sc-1", "夜班")).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 6);
+    expect(state().events.slice(snapshot).map((event) => event.type)).toEqual([
+      "scene.added",
+      "shot.added",
+      "dialogue.added",
+      "shot.added",
+      "shot.added",
+      "dialogue.added",
+    ]);
+    // 同一批事件共用一个 at：撤销一步就能整场退回
+    const batch = state().events.slice(snapshot);
+    expect(new Set(batch.map((event) => event.at)).size).toBe(1);
+
+    const scene = state().project.scenes.at(-1)!;
+    expect(scene.id).not.toBe("sc-1");
+    expect(scene.shotIds).toHaveLength(3);
+    expect(state().project.shots).toHaveLength(before.shots.length + 3);
+    expect(state().project.dialogue).toHaveLength(before.dialogue.length + 2);
+    expect(rebuild(state().events).scenes).toHaveLength(before.scenes.length + 1);
+  });
+
+  it("缺演员时整场拒绝且不写事件", () => {
+    const source = sourceOf();
+    const snapshot = state().events.length;
+    useWorkbench.setState({
+      project: {
+        ...state().project,
+        characters: state().project.characters.filter((character) => character.id !== "c-lin"),
+      },
+    });
+    const trimmed = state().project;
+    expect(state().adoptSharedScene(source, "sc-1", "夜班")).toBe(false);
+    expect(state().castError).toContain("演员「林」");
+    expect(state().events).toHaveLength(snapshot);
+    expect(state().project).toBe(trimmed);
+  });
+
+  it("只读时拒绝", () => {
+    const source = sourceOf();
+    useWorkbench.setState({ readOnly: true });
+    const snapshot = state().events.length;
+    expect(state().adoptSharedScene(source, "sc-1", "夜班")).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+    useWorkbench.setState({ readOnly: false });
+  });
+});
+
 describe("采用剧本医生的改写（A18 / ADR-0123）", () => {
   beforeEach(() => {
     state().reset();
@@ -6174,6 +6302,76 @@ describe("关键帧版本库（C2）", () => {
   });
 });
 
+describe("废片作参考（C2 / ADR-0200）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("挂到人物 / 场景 / 道具的参考图：一条 updated 事件，同一个文件不复制", () => {
+    const assetId = "a-keyframe-s-03";
+    useWorkbench.setState({
+      project: ProjectSchema.parse({
+        ...state().project,
+        assets: [
+          ...state().project.assets,
+          {
+            id: assetId,
+            kind: "image",
+            source: "generated",
+            uri: "loomina://assets/kf.png",
+            createdAt: "2026-11-13T00:00:00Z",
+          },
+        ],
+      }),
+    });
+    const snapshot = state().events.length;
+
+    expect(state().attachTrashReference(assetId, { kind: "character", id: "c-lin" })).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "character.updated", characterId: "c-lin" });
+    expect(state().project.characters.find((item) => item.id === "c-lin")!.referenceImages).toContain(assetId);
+    // 同一张图只登记一次，资产数量不变
+    expect(state().project.assets).toHaveLength(state().project.assets.length);
+
+    expect(state().attachTrashReference(assetId, { kind: "location", id: "loc-corridor" })).toBe(true);
+    expect(state().project.locations.find((item) => item.id === "loc-corridor")!.referenceImages).toContain(assetId);
+    expect(state().attachTrashReference(assetId, { kind: "prop", id: "p-cup" })).toBe(true);
+    expect(state().project.props.find((item) => item.id === "p-cup")!.referenceImages).toContain(assetId);
+  });
+
+  it("已经挂过 / 不是图片 / 文件不在 都拒绝且不写事件", () => {
+    const snapshot = state().events.length;
+    // a-lin-expr 已经挂在林身上
+    expect(state().attachTrashReference("a-lin-expr", { kind: "character", id: "c-lin" })).toBe(false);
+    expect(state().castError).toContain("已经挂过");
+
+    useWorkbench.setState({
+      project: ProjectSchema.parse({
+        ...state().project,
+        assets: [
+          ...state().project.assets,
+          { id: "a-vid", kind: "video", source: "generated", createdAt: "2026-11-13T00:00:00Z" },
+        ],
+      }),
+    });
+    expect(state().attachTrashReference("a-vid", { kind: "character", id: "c-lin" })).toBe(false);
+    expect(state().castError).toContain("只有图片");
+
+    expect(state().attachTrashReference("a-nope", { kind: "character", id: "c-lin" })).toBe(false);
+    expect(state().castError).toContain("不在项目里");
+    expect(state().events).toHaveLength(snapshot);
+  });
+
+  it("只读时拒绝", () => {
+    useWorkbench.setState({ readOnly: true });
+    const snapshot = state().events.length;
+    expect(state().attachTrashReference("a-lin-expr", { kind: "prop", id: "p-cup" })).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+    useWorkbench.setState({ readOnly: false });
+  });
+});
+
 describe("技能（C.5 / ADR-0191）", () => {
   beforeEach(() => {
     state().reset();
@@ -6421,6 +6619,117 @@ describe("废片库取回配音（C14 / ADR-0196）", () => {
     useWorkbench.setState({ readOnly: true });
     expect(state().restoreVoiceTake("vt-nope")).toBe(false);
     expect(state().events).toHaveLength(before);
+    useWorkbench.setState({ readOnly: false });
+  });
+});
+
+describe("删工作空间（C15 / ADR-0201）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("不能删正在打开的空间：说清楚先切走，不写状态", async () => {
+    const list = state().workspaces;
+    expect(await state().deleteWorkspace(state().workspaceId)).toBeUndefined();
+    expect(state().workspaceError).toContain("正在打开");
+    expect(state().workspaces).toBe(list);
+  });
+
+  it("测试环境没有 IndexedDB：删别的空间也不报成功", async () => {
+    expect(await state().deleteWorkspace("w-somewhere-else")).toBeUndefined();
+    expect(state().workspaceError).toContain("不支持多工作空间");
+  });
+});
+
+describe("跨空间取技能（C.5 / ADR-0202）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  const source = () => ({
+    id: "sk-night",
+    name: "不要现代物品",
+    description: "夜班是九十年代",
+    stage: "all" as const,
+    body: "场景里不要出现手机、汽车、路灯。",
+    enabled: false,
+    createdAt: "2026-11-13T00:00:00Z",
+  });
+
+  it("取用抄成一条新技能：id 重编、默认启用，一条 project.updated", () => {
+    const before = state().project.skills.length;
+    const snapshot = state().events.length;
+    expect(state().adoptSharedSkill(source())).toBe(true);
+    expect(state().events).toHaveLength(snapshot + 1);
+    expect(state().events.at(-1)).toMatchObject({ type: "project.updated" });
+    const added = state().project.skills.at(-1)!;
+    expect(state().project.skills).toHaveLength(before + 1);
+    expect(added.id).not.toBe("sk-night");
+    expect(added.name).toBe("不要现代物品");
+    expect(added.description).toBe("夜班是九十年代");
+    expect(added.body).toBe("场景里不要出现手机、汽车、路灯。");
+    // 在来源空间关着的，取过来默认打开
+    expect(added.enabled).toBe(true);
+    expect(rebuild(state().events).skills).toHaveLength(before + 1);
+  });
+
+  it("同名同内容已经在用就不重复加；只读拒绝", () => {
+    expect(state().adoptSharedSkill(source())).toBe(true);
+    const snapshot = state().events.length;
+    expect(state().adoptSharedSkill(source())).toBe(false);
+    expect(state().castError).toContain("已经在用");
+    expect(state().events).toHaveLength(snapshot);
+
+    useWorkbench.setState({ readOnly: true });
+    const other = { ...source(), body: "另一条要求" };
+    expect(state().adoptSharedSkill(other)).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
+    useWorkbench.setState({ readOnly: false });
+  });
+});
+
+describe("剧本版本库写回（C14 / ADR-0204）", () => {
+  beforeEach(() => {
+    state().reset();
+    useWorkbench.setState({ readOnly: false });
+  });
+
+  it("改过动作与台词后写回初版：一批事件、同一 at、成片不动", () => {
+    const initial = structuredClone(state().project);
+    expect(state().editAction("s-01", "改过的动作")).toBe(true);
+    expect(state().editDialogue("d-01", "改过的台词")).toBe(true);
+    const snapshot = state().events.length;
+
+    expect(state().restoreScriptVersion(0)).toBe(true);
+    const batch = state().events.slice(snapshot);
+    expect(batch.length).toBeGreaterThan(0);
+    expect(new Set(batch.map((event) => event.at)).size).toBe(1);
+    expect(state().project.shots.find((shot) => shot.id === "s-01")!.description).toBe(
+      initial.shots.find((shot) => shot.id === "s-01")!.description,
+    );
+    expect(state().project.dialogue.find((line) => line.id === "d-01")!.text).toBe(
+      initial.dialogue.find((line) => line.id === "d-01")!.text,
+    );
+    expect(state().project.takes).toEqual(state().project.takes);
+    expect(state().scriptNotice).toContain("已写回这一版");
+    expect(rebuild(state().events).shots.find((shot) => shot.id === "s-01")!.description).toBe(
+      initial.shots.find((shot) => shot.id === "s-01")!.description,
+    );
+  });
+
+  it("现在就是这一版 / 找不到这一版 / 只读 都不写事件", () => {
+    expect(state().restoreScriptVersion(state().events.length - 1)).toBe(false);
+    expect(state().scriptNotice).toContain("现在就是这一版");
+    expect(state().restoreScriptVersion(999)).toBe(false);
+    expect(state().scriptNotice).toContain("找不到这一版");
+
+    expect(state().editAction("s-01", "改过的动作")).toBe(true);
+    const snapshot = state().events.length;
+    useWorkbench.setState({ readOnly: true });
+    expect(state().restoreScriptVersion(0)).toBe(false);
+    expect(state().events).toHaveLength(snapshot);
     useWorkbench.setState({ readOnly: false });
   });
 });

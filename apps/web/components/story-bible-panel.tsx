@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { SharedStoryPicker } from "@/components/shared-story-picker";
+import { matchQuery, paginate } from "@/lib/library-filters";
+import { textDiff } from "@/lib/text-diff";
 import { HOOK_TYPES, scoreHook, type HookPosition } from "@/lib/hooks";
 import { storyVersionsOf } from "@/lib/story-versions";
 import { useWorkbench } from "@/lib/workbench-store";
@@ -65,6 +68,34 @@ export function StoryBiblePanel() {
   /** 正在改的字段：`arc:<角色>:<字段>` / `rel:<from>:<to>` / `text:<字段>` */
   const [editing, setEditing] = useState<string>();
   const [draft, setDraft] = useState("");
+  /** 版本库：搜索 / 分页 / 与现在这一版对比（C14 / ADR-0205） */
+  const [versionQuery, setVersionQuery] = useState("");
+  const [versionPage, setVersionPage] = useState(0);
+  const [compare, setCompare] = useState<number>();
+
+  /** 故事整份文本，用于版本对比；与 storyRestorePatch 的可恢复字段同一口径 */
+  const storyText = (story: (typeof versions)[number]["story"]) =>
+    [
+      story.logline, story.synopsis, story.genre, story.audience, story.tone,
+      `开场：${story.hooks.opening}`, `结尾：${story.hooks.ending}`,
+      ...story.arcs.map((arc) => `弧光 ${arc.characterId}：${[arc.want, arc.need, arc.wound, arc.flaw, arc.secret, arc.agency, arc.arc].filter(Boolean).join(" / ")}`),
+      ...story.relationships.map((relation) => `关系 ${relation.fromCharacterId} → ${relation.toCharacterId}：${relation.tension}`),
+    ].filter((line) => line.trim()).join("\n");
+  const currentStoryText = storyText(versions.at(-1)!.story);
+  const versionList = paginate(
+    [...versions]
+      .reverse()
+      .filter((version) =>
+        matchQuery(
+          [version.changed.join(" "), version.story.logline, version.story.synopsis, version.story.tone],
+          versionQuery,
+        ),
+      ),
+    versionPage,
+    10,
+  );
+  const compared = versions.find((version) => version.eventIndex === compare);
+  const storyDiff = compared ? textDiff(storyText(compared.story), currentStoryText) : undefined;
 
   const open = (key: string, value: string) => {
     setEditing(key);
@@ -527,16 +558,52 @@ export function StoryBiblePanel() {
         <p className="mt-1 text-[9px] leading-[1.7] text-muted-2">
           生成与每一次改字都留一版（旧版从事件日志重建，不另存）。「用这版」写一条
           <code> story.updated</code>，不重新生成、不花钱；指向已删角色的弧光 / 关系带不回来。
+          「对比」按行列出与现在这一版的差别。
         </p>
         {storyNotice && (
           <p className="mt-1 text-[9.5px] leading-[1.6] text-muted">{storyNotice}</p>
         )}
+        {versions.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <input
+              value={versionQuery}
+              aria-label="搜故事版本"
+              placeholder="搜改了什么 / logline"
+              onChange={(event) => { setVersionQuery(event.target.value); setVersionPage(0); }}
+              className="min-w-[150px] flex-1 rounded-token border border-line bg-surface px-1.5 py-0.5 text-[9px] text-text placeholder:text-muted-2 focus:border-pick focus:outline-none"
+            />
+            <span className="tnum text-[8.5px] text-muted-2">
+              命中 {versionList.total}
+            </span>
+          </div>
+        )}
+        {storyDiff && (
+          <div className="mt-2 rounded-token border border-line bg-surface px-2 py-1.5">
+            <div className="flex items-baseline justify-between gap-2">
+              <p className="text-[9px] text-muted">这一版 ↔ 现在这一版</p>
+              <button type="button" onClick={() => setCompare(undefined)} className="text-[8.5px] text-muted-2 hover:text-text">收起对比</button>
+            </div>
+            {storyDiff.added.length === 0 && storyDiff.removed.length === 0 ? (
+              <p className="mt-1 text-[8.5px] text-muted-2">两版文本一样。</p>
+            ) : (
+              <div className="mt-1 grid gap-2 sm:grid-cols-2">
+                <ul className="space-y-0.5">
+                  {storyDiff.removed.slice(0, 6).map((line, index) => (
+                    <li key={`r-${index}`} className="truncate text-[9px] text-pick">− {line}</li>
+                  ))}
+                </ul>
+                <ul className="space-y-0.5">
+                  {storyDiff.added.slice(0, 6).map((line, index) => (
+                    <li key={`a-${index}`} className="truncate text-[9px] text-muted">＋ {line}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
         <ol className="mt-2 space-y-1">
-          {versions
-            .slice()
-            .reverse()
-            .map((version, index) => {
-              const current = index === 0;
+          {versionList.rows.map((version) => {
+            const current = version.eventIndex === versions.at(-1)?.eventIndex;
               return (
                 <li
                   key={version.eventIndex}
@@ -549,15 +616,24 @@ export function StoryBiblePanel() {
                     {current ? (
                       <span className="text-[8.5px] text-muted-2">现在这一版</span>
                     ) : (
-                      <button
-                        type="button"
-                        disabled={Boolean(readOnly)}
-                        onClick={() => useStoryVersion(version.eventIndex)}
-                        title="把故事整份写回这一版；不重新生成、不花钱"
-                        className="rounded-token border border-line px-1.5 py-0.5 text-[9px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
-                      >
-                        用这版
-                      </button>
+                      <span className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setCompare(version.eventIndex)}
+                          className="text-[8.5px] text-muted-2 hover:text-text"
+                        >
+                          对比
+                        </button>
+                        <button
+                          type="button"
+                          disabled={Boolean(readOnly)}
+                          onClick={() => useStoryVersion(version.eventIndex)}
+                          title="把故事整份写回这一版；不重新生成、不花钱"
+                          className="rounded-token border border-line px-1.5 py-0.5 text-[9px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text disabled:opacity-40"
+                        >
+                          用这版
+                        </button>
+                      </span>
                     )}
                   </div>
                   <p className="mt-0.5 line-clamp-2 text-[9.5px] leading-[1.6] text-muted-2">
@@ -569,7 +645,21 @@ export function StoryBiblePanel() {
               );
             })}
         </ol>
+        {versionList.pageCount > 1 && (
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[9px] text-muted-2">
+            <button type="button" disabled={versionList.page === 0} onClick={() => setVersionPage(versionList.page - 1)} className="rounded-token border border-line px-1.5 py-0.5 disabled:opacity-40">上一页</button>
+            <span className="tnum">第 {versionList.page + 1} / {versionList.pageCount} 页</span>
+            <button type="button" disabled={versionList.page >= versionList.pageCount - 1} onClick={() => setVersionPage(versionList.page + 1)} className="rounded-token border border-line px-1.5 py-0.5 disabled:opacity-40">下一页</button>
+          </div>
+        )}
       </details>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <SharedStoryPicker />
+        <span className="text-[8.5px] leading-[1.6] text-muted-2">
+          故事、弧光、关系都能从另一个工作空间取；不重新生成、不花钱。
+        </span>
+      </div>
 
       {castError && (
         <p className="mt-2 text-[10px] leading-[1.6] text-pick">{castError}</p>

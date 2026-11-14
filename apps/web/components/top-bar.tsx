@@ -247,6 +247,9 @@ export function TopBar({
   const [newWorkspace, setNewWorkspace] = useState("");
   const [newWorkspaceFrom, setNewWorkspaceFrom] = useState("");
   const [renaming, setRenaming] = useState<{ id: string; name: string }>();
+  /** 删空间要按两下：第一下问，第二下真删（C15 / ADR-0201） */
+  const [deleting, setDeleting] = useState<string>();
+  const [workspaceNote, setWorkspaceNote] = useState<string>();
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const project = useWorkbench((state) => state.project);
   const events = useWorkbench((state) => state.events);
@@ -263,6 +266,7 @@ export function TopBar({
   const refreshWorkspaces = useWorkbench((state) => state.refreshWorkspaces);
   const createWorkspace = useWorkbench((state) => state.createWorkspace);
   const renameWorkspace = useWorkbench((state) => state.renameWorkspace);
+  const deleteWorkspace = useWorkbench((state) => state.deleteWorkspace);
   const currentWorkspace = workspaces.find((item) => item.id === workspaceId);
 
   useEffect(() => {
@@ -441,12 +445,62 @@ export function TopBar({
                             >
                               改
                             </button>
+                            {active ? (
+                              <span
+                                title="正在打开的空间不能删：先切到别的空间"
+                                className="shrink-0 text-[9px] text-muted-2 opacity-40"
+                              >
+                                删
+                              </span>
+                            ) : deleting === item.id ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    void deleteWorkspace(item.id).then((removed) => {
+                                      setDeleting(undefined);
+                                      setWorkspaceNote(
+                                        removed === undefined
+                                          ? (useWorkbench.getState().workspaceError ?? "没删掉。")
+                                          : `删掉了「${item.name}」：${removed} 条事件。素材文件不动，别处还在用。`,
+                                      );
+                                    });
+                                  }}
+                                  title="真删：这个空间的事件日志从本机清掉，取不回来"
+                                  className="shrink-0 rounded-token border border-pick px-1 text-[9px] text-pick"
+                                >
+                                  真删
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setDeleting(undefined)}
+                                  className="shrink-0 text-[9px] text-muted-2 hover:text-text"
+                                >
+                                  算了
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setDeleting(item.id)}
+                                title="删掉这个工作空间的事件日志（不可恢复；素材文件留着）"
+                                className="shrink-0 text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-pick"
+                              >
+                                删
+                              </button>
+                            )}
                           </>
                         )}
                       </div>
                     );
                   })}
                 </div>
+
+                {workspaceNote && (
+                  <p className="mt-2 border-t border-line pt-2 text-[9px] leading-[1.6] text-muted-2">
+                    {workspaceNote}
+                  </p>
+                )}
 
                 <label className="mt-2 flex flex-col gap-1 border-t border-line pt-2 text-[9px] text-muted-2">
                   新空间从哪里开工
