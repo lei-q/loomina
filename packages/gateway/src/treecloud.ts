@@ -289,6 +289,60 @@ function referenceForm(
   return form;
 }
 
+/**
+ * 视频首帧：`POST /v1/videos` 的 multipart 形式（ADR-0249）。
+ *
+ * 供应商文档（UHub / console.jtreecloud.com）规定：
+ * - `input_reference` 可以是 JSON 数组、JSON 对象或 multipart 文件；
+ * - **数组 = 参考图，单个文件 / 单个对象 = 首帧**；
+ * - data URI 必须带 MIME，不能是裸 base64。
+ *
+ * 实测：JSON 对象会被 litellm 当文件流读（`'dict' object has no attribute 'read'`），
+ * 只有 multipart 文件 part 能真正生效——产物第 0 帧与输入图一致。
+ *
+ * 返回 null 表示这张图不是 data URI（例如 http / 资产库地址），
+ * 调用方退回旧的 `content[].image_url` 形态，不在网关卡里猜怎么读远端字节。
+ */
+function videoFrameForm(
+  model: string,
+  prompt: string,
+  imageUri: string,
+  seconds: number,
+  resolution: string | undefined,
+): FormData | null {
+  const match = /^data:([^;]+);base64,(.*)$/s.exec(imageUri);
+  if (!match) return null;
+
+  const form = new FormData();
+  form.append("model", model);
+  form.append("prompt", prompt);
+  form.append("seconds", String(seconds));
+  const size = VIDEO_SIZE_OF[normalizeResolution(resolution)];
+  if (size) form.append("size", size);
+  else if (resolution) form.append("resolution", resolution.toUpperCase());
+
+  const bytes = new Uint8Array(Buffer.from(match[2]!, "base64"));
+  form.append(
+    "input_reference",
+    new Blob([bytes], { type: match[1]! }),
+    `first-frame.${match[1]!.includes("jpeg") ? "jpg" : "png"}`,
+  );
+  return form;
+}
+
+/** 竖屏 9:16：文档要求 `size` 用 `宽x高`，否则 480p 会出横屏。 */
+const VIDEO_SIZE_OF: Record<string, string> = {
+  "480p": "480x854",
+  "720p": "720x1280",
+  "768p": "768x1366",
+  "1080p": "1080x1920",
+  "2k": "1440x2560",
+};
+
+function normalizeResolution(resolution: string | undefined): string {
+  return (resolution ?? "").trim().toLowerCase();
+}
+
 export class TreecloudImageAdapter implements ImageAdapter {
   private readonly now: () => string;
   private counter = 0;
@@ -690,13 +744,19 @@ export class TreecloudVideoAdapter implements VideoAdapter {
     const model = this.options.model ?? this.client.config.videoModel;
     const resolution =
       input.resolution ?? this.options.resolution ?? this.client.config.videoResolution;
+    const seconds = Math.max(1, Math.round(input.durationMs / 1000));
 
-    const body = {
+    // 首帧走 multipart 的 `input_reference` 文件 part（ADR-0249）。
+    // 文档口径：数组 = 参考图，单个文件 / 单个对象 = 首帧；litellm 会把 JSON 对象
+    // 当成文件流读（`'dict' object has no attribute 'read'`），所以 JSON 路不通。
+    const form = input.imageUri ? videoFrameForm(model, input.prompt ?? "", input.imageUri, seconds, resolution) : null;
+    const body = form ?? {
       model,
       prompt: input.prompt ?? "",
       ...(resolution ? { resolution } : {}),
-      seconds: Math.max(1, Math.round(input.durationMs / 1000)),
-      ...(input.imageUri
+      seconds,
+      // 非 data URI（http / 资产库地址）沿用旧形态：网关不替远端下载图片。
+      ...(input.imageUri && !form
         ? { content: [{ type: "image_url", image_url: { url: input.imageUri } }] }
         : {}),
     };

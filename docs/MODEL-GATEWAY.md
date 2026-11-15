@@ -260,22 +260,31 @@ S1 仍未完成，且不是代码问题：
 这三件事在客户端侧已经做到头了，需要代理方或模型供应商给口径。复现命令都写在这里，
 免得下次再从零试一遍。
 
-### 1. 图生视频到底怎么传首帧
+### 1. 图生视频怎么传首帧：已解决（2026-11-15，ADR-0249）
 
-- 模型清单（`GET /v1/models`）里视频模态有 8 个，全部 `mode: video_generation`：
-  `seedance-2.0`、`seedance-2-5`、`seedance-unfiltered`、`wan3.0-video`、
-  `wan3.0-video-unfiltered`、`wan3.0-video-prime`、`wan3.0-video-prime-unfiltered`、`minimax-h3`。
-- 现状：`content: [{ type: "image_url", image_url: { url } }]` 被 `wan3.0-*` 接受，
-  但**产物第 0 帧与输入图无关**；`seedance` / `minimax-h3` 回
-  `content or prompt is required`（prompt 明明传了），换成
-  `content: [image, text]` 又回 `video content requires exactly one media source`。
-- 要问的：
-  1. i2v 的 content 结构样例（把「一个媒体源」的完整 JSON 给一份）；
-  2. 图片是否必须是**公网可访问 URL**，data URI 是否支持；
-  3. 是否支持 multipart 上传图片文件；
-  4. 请求里 `content` 与 `prompt` 的优先级/互斥关系。
-- 判定方法不要用真实素材：塞一张纯洋红 720×1280 合成图，取产物第 0 帧看颜色
-  （ADR-0245）。HTTP 200 只代表任务建立了。
+供应商文档（UHub AI 视频生成接口文档 / console.jtreecloud.com 的 `video-generations`）规定：
+
+| 形态 | 语义 |
+| --- | --- |
+| `input_reference` 为 JSON 数组 | 参考图（有序：图1、图2……） |
+| `input_reference` 为单个 JSON 对象 | 首帧 |
+| `input_reference` 为单个文件（multipart） | **首帧 —— 本代理唯一可用的形态** |
+| 省略该字段 | 纯文生视频 |
+
+实测：JSON 对象/数组在这个代理上会让 litellm 把 dict 当文件流读
+（`'dict' object has no attribute 'read'`，500）；`content[].image_url` 虽返回 200 但被忽略。
+**multipart 文件 part 有效**：纯洋红 720×1280 首帧 → 产物 720×1280、第 0 帧就是洋红。
+端到端探针（1024×1536 键帧 → 782×1174 / 4.04 秒 / ¥2.52）第 0 帧与参考图同人同构图。
+
+实现口径（`TreecloudVideoAdapter.submit`）：data URI 走 multipart，`seconds` 用整秒字符串，
+`size` 按竖屏映射（480p→480×854 / 720p→720×1280 / 1080p→1080×1920）；
+非 data URI 退回旧 JSON 形态（未验是否生效）。
+
+还要注意：
+
+- **输出比例跟随首帧**：1024×1536 的键帧会得到 2:3 的成片，竖屏 9:16 需要 720×1280 键帧。
+- `480p` 不给 `size` 会出横屏。
+- 判定能力仍要用合成图看产物第 0 帧，不要看 HTTP 200。
 
 ### 2. TTS / ASR 的部署地址与计费
 
