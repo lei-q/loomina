@@ -609,3 +609,76 @@ describe("价目表", () => {
     expect(imageCostCny("gpt-image-2-c")).toBe(0.12);
   });
 });
+
+describe("任务成功但响应体没有地址（2026-11-15 实测的 litellm 行为）", () => {
+  const mp4Bytes = new Uint8Array([0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70]);
+
+  it("回落到 content 端点取字节，包成 data URI", async () => {
+    const { client, calls } = clientWith(
+      [
+        () => jsonResponse({ id: "vid_9", status: "queued" }),
+        () =>
+          jsonResponse({
+            id: "vid_9",
+            status: "completed",
+            model: "minimax-h3",
+            seconds: 4,
+          }),
+        () =>
+          new Response(mp4Bytes, {
+            status: 200,
+            headers: { "content-type": "video/mp4" },
+          }),
+      ],
+      { videoApi: "litellm" },
+    );
+
+    const adapter = new TreecloudVideoAdapter(client, { resolution: "720p" });
+    const { jobId } = await adapter.submit({
+      shotId: "sh-1",
+      durationMs: 4000,
+      prompt: "推近",
+    });
+    const job = await adapter.poll(jobId);
+
+    expect(job.status).toBe("succeeded");
+    expect(job.output?.uri.startsWith("data:video/mp4;base64,")).toBe(true);
+    // 第三次调用是 content 端点
+    expect(calls[2]?.url).toContain("/content");
+  });
+
+  it("content 也拿不到时如实报错，不假装成功", async () => {
+    const { client } = clientWith(
+      [
+        () => jsonResponse({ id: "vid_10", status: "queued" }),
+        () => jsonResponse({ id: "vid_10", status: "completed", seconds: 4 }),
+        () => new Response("nope", { status: 404 }),
+      ],
+      { videoApi: "litellm" },
+    );
+
+    const adapter = new TreecloudVideoAdapter(client, { resolution: "720p" });
+    const { jobId } = await adapter.submit({
+      shotId: "sh-2",
+      durationMs: 4000,
+      prompt: "推近",
+    });
+    await expect(adapter.poll(jobId)).rejects.toThrow(/content 端点也没拿到字节/);
+  });
+
+  it("treecloud 路由没有 content 端点：照旧报错，不去试不存在的路径", async () => {
+    const { client, calls } = clientWith([
+      () => jsonResponse({ id: "vid_11", status: "queued" }),
+      () => jsonResponse({ id: "vid_11", status: "succeeded", seconds: 4 }),
+    ]);
+
+    const adapter = new TreecloudVideoAdapter(client, { resolution: "768p" });
+    const { jobId } = await adapter.submit({
+      shotId: "sh-3",
+      durationMs: 4000,
+      prompt: "推近",
+    });
+    await expect(adapter.poll(jobId)).rejects.toThrow(/没有返回视频地址/);
+    expect(calls.every((call) => !call.url.includes("/content"))).toBe(true);
+  });
+});

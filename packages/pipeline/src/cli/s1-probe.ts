@@ -342,6 +342,10 @@ async function main(): Promise<void> {
         video,
         textOnly: args.textOnly,
         imageSize: args.imageSize,
+        // 测绘一次只跑一两个镜头，给足等待时间：视频是异步任务，
+        // 只 poll 一次会把「还在排队」误判成失败（2026-11-15 踩过）
+        videoTimeoutMs: 8 * 60_000,
+        videoPollIntervalMs: 5_000,
         videoResolution: resolution,
         prices: {
           imageCny: imageCostCny(env.imageModel) ?? 0,

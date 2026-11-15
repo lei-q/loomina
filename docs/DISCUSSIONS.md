@@ -8144,3 +8144,42 @@ IR 260 / gateway 32 / pipeline 158 / web 1467（4 skipped）全过；`pnpm -r ty
 - 没解决「到底能发多长」：创作者中心的实际上限仍未核到。
 - 15 分钟硬拦仍在，只是加了说明。
 - 只处理了抖音；其他平台时长同样没逐条核过。
+
+## 第二百六十二次 · 2026-11-15 · 视频通路其实是通的（ADR-0242）
+
+**问题**
+
+RISKS.md 里「供应商授权」这条阻塞记了很久。这次去查实际状态，发现**视频通路是通的**，
+阻塞的一半是工具自己的 bug：
+
+1. `runShot` 只 `poll` 一次就判失败——视频是异步任务，刚提交时是 `queued`，
+   被当成「生成失败」。探测脚本因此报 0/8。
+2. 修了轮询后仍报「已成功但没有返回视频地址」。直连供应商才发现 `completed`
+   的响应体里**没有 url**。
+3. 成片在 `GET /v1/videos/{id}/content`——直连验证 200、`video/mp4`、4.6 MB、mp4 文件头。
+   适配器从来没走过这个端点。
+
+**结论**
+
+1. `runShot` 加 `waitForVideo`：按间隔轮询到终态，超时如实报「等了 N 秒还没出片」。
+2. `VideoEndpoints` 加可选 `content`（litellm 路由填，treecloud 不填）。
+3. `outputOf` 先看响应体、再问 content，字节包成 data URI；两边都失败才报错。
+4. `TreecloudClient.binary(path)` 取原始字节，与 JSON 的 `request` 分开。
+
+**验证**
+
+`pnpm probe:s1 --shots 1 --budget 5 --text-only` → **通过 1/1**，44 秒出片，
+日志里能看到 `GET /v1/videos/{id}/content -> 200`。
+直连验证：200 / video/mp4 / 4641442 字节 / `00000020 66747970`。
+`treecloud.test.ts` +3 条；IR 260 / gateway 35 / pipeline 158 / web 1469 全过。
+
+**教训**
+
+**先复现再归因**。两个 bug 叠加，让一条本来能跑的通路看起来完全不可用，
+这个错误结论还被写进了 RISKS.md 与多份 ADR。
+
+**边界**
+
+- 图像接口仍 503，「关键帧 → 图生视频」主路径不通，只有 `--text-only` 能出片。
+- `data:` URI 装 4.6 MB 视频会让内存与日志变大，对象存储可用时应改存资产。
+- 只验证了 `minimax-h3 @ 720p` 一条组合。

@@ -76,6 +76,13 @@ export class TreecloudError extends Error {
 export interface VideoEndpoints {
   create: string;
   status: (jobId: string) => string;
+  /**
+   * 取成片字节的端点（可选）。
+   *
+   * 有的代理（实测 litellm）任务成功时**只回状态、不回地址**，
+   * 成片要从 `/{id}/content` 拿。没有这个端点时就沿用旧的「必须有 url」路径。
+   */
+  content?: (jobId: string) => string;
 }
 
 const enc = (id: string) => encodeURIComponent(id);
@@ -88,6 +95,8 @@ export const VIDEO_ENDPOINTS: Record<VideoApiName, VideoEndpoints> = {
   litellm: {
     create: "/v1/videos",
     status: (jobId) => `/v1/videos/${enc(jobId)}`,
+    // 实测（2026-11-15）：completed 的响应体里没有 url，成片在 /content
+    content: (jobId) => `/v1/videos/${enc(jobId)}/content`,
   },
 };
 
@@ -110,6 +119,26 @@ export class TreecloudClient {
   constructor(readonly config: TreecloudConfig) {
     this.fetcher = config.fetcher ?? fetch;
     this.sleep = config.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  }
+
+  /**
+   * 取一段二进制（成片字节）。
+   *
+   * 与 `request` 分开：那个按 JSON 解析，这里要原始字节。非 2xx 返回 undefined，
+   * 由调用方决定怎么报——不把「没拿到」包装成成功。
+   */
+  async binary(path: string): Promise<Uint8Array | undefined> {
+    try {
+      const response = await this.fetcher(`${this.baseUrl}${path}`, {
+        headers: { authorization: `Bearer ${this.config.apiKey}` },
+      });
+      this.config.onAttempt?.(`GET ${path} -> ${response.status}`);
+      if (!response.ok) return undefined;
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      return bytes.byteLength > 0 ? bytes : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   get baseUrl(): string {
@@ -723,11 +752,27 @@ export class TreecloudVideoAdapter implements VideoAdapter {
     if (status === "failed") state.error = error ?? "供应商未说明失败原因";
 
     if (status === "succeeded") {
-      state.output = outputOf(jobId, payload, state.input, this.now());
+      state.output = await outputOf(jobId, payload, state.input, this.now(), () =>
+        this.downloadContent(jobId),
+      );
       return { jobId, status, output: state.output };
     }
 
     return { jobId, status, ...(error ? { error } : {}) };
+  }
+
+  /**
+   * 从 content 端点取成片，落成 data URI。
+   *
+   * 只在任务成功但响应体没有地址时调用。拿不到（端点不存在 / 非 2xx）就返回
+   * undefined，让上层照旧报 `video_response_invalid`——不把「没拿到」说成成功。
+   */
+  private async downloadContent(jobId: string): Promise<string | undefined> {
+    const endpoints = VIDEO_ENDPOINTS[this.apiName];
+    if (!endpoints.content) return undefined;
+    const bytes = await this.client.binary(endpoints.content(jobId));
+    if (!bytes) return undefined;
+    return `data:video/mp4;base64,${Buffer.from(bytes).toString("base64")}`;
   }
 
   private alternateApi(): VideoApiName | undefined {
@@ -837,18 +882,20 @@ export function videoUriOf(payload: Json): string | undefined {
   return undefined;
 }
 
-function outputOf(
+async function outputOf(
   jobId: string,
   payload: Json,
   input: VideoInput,
   createdAt: string,
-): VideoOutput {
-  const uri = videoUriOf(payload);
+  download: () => Promise<string | undefined>,
+): Promise<VideoOutput> {
+  // 先看响应体里有没有地址；没有就问 content 端点（有的代理只回状态）
+  const uri = videoUriOf(payload) ?? (await download());
   if (!uri) {
     throw new TreecloudError(
       502,
       "video_response_invalid",
-      `任务 ${jobId} 已成功但没有返回视频地址`,
+      `任务 ${jobId} 已成功但没有返回视频地址（content 端点也没拿到字节）`,
     );
   }
 
