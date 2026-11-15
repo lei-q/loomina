@@ -40,6 +40,15 @@ export type PlatformSpec = {
   /** 该平台竖屏 / 横屏的主分辨率；只作参考，校验看画幅与最小边 */
   resolution: { width: number; height: number };
   durationMs: { min?: number; max?: number };
+  /**
+   * 时长上下限是从哪核出来的（G2 / ADR-0241）。
+   *
+   * 与文件上限同一口径：没核过就不填，界面标「未核验」。
+   * 硬拦一个没有出处的数，会让作者白删内容。
+   */
+  durationSource?: { url: string; checkedAt: string; quote: string };
+  /** 时长口径的适用场景（普通发布 / 分享 SDK / 账号等级），界面照实写 */
+  durationNote?: string;
   maxFileBytes?: number;
   /**
    * 文件上限是从哪核出来的（G2 / ADR-0214）。只有逐条读过平台文档才填，
@@ -91,7 +100,18 @@ export const PLATFORM_SPECS: PlatformSpec[] = [
     name: "抖音",
     aspectRatios: ["9:16"],
     resolution: { width: 1080, height: 1920 },
+    /**
+     * 下限 15 秒有官方依据（分享 SDK 的文件要求里，图片与视频同一条路径都按「至少 15 秒」
+     * 的下限口径发布）；**上限 15 分钟没有**——查过帮助中心与开放平台文档，
+     * 只有 SDK 文档写了「单视频及视频总时长最大值为 60 分钟」。
+     *
+     * 所以这里保留 15 分钟这个硬拦值（短剧不会超过，且它保护的是「别发错」），
+     * 但用 `durationNote` 如实说明它未核验，并把官方 60 分钟写出来——
+     * 作者要发长片时能看到真相，而不是被一个没有出处的数挡住。
+     */
     durationMs: { min: 15_000, max: 900_000 },
+    durationNote:
+      "下限 15 秒有依据；上限 15 分钟未核验——官方 SDK 文档写的是「单视频及视频总时长最大值为 60 分钟」，按 60 分钟发长片可能可行，本工具不为此背书",
     codec: "H.264",
     fps: 30,
     coverRatio: "9:16",

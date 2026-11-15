@@ -3283,6 +3283,11 @@ export function EditScreen() {
                         <PlatformRow key={check.id} check={check} />
                       ))}
                     </ul>
+                    {platformValidation.spec.durationNote && (
+                      <p className="mt-1.5 text-[8.5px] leading-[1.6] text-muted-2">
+                        时长口径：{platformValidation.spec.durationNote}。
+                      </p>
+                    )}
                     {platformValidation.spec.maxFileNote && (
                       <p className="mt-1.5 text-[8.5px] leading-[1.6] text-muted-2">
                         文件上限的口径：{platformValidation.spec.maxFileNote}。

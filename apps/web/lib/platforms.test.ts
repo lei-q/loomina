@@ -273,6 +273,22 @@ describe("文件上限逐条核验（G2 / ADR-0214）", () => {
     expect(check.detail).not.toContain("未核验");
   });
 
+  it("抖音时长上限 15 分钟如实标未核验，并写出官方的 60 分钟（ADR-0241）", () => {
+    const spec = platformSpecOf("douyin");
+    expect(spec.durationMs.max).toBe(900_000);
+    expect(spec.durationNote).toContain("上限 15 分钟未核验");
+    // 界面上是纯文本，不该出现 markdown 记号
+    expect(spec.durationNote).not.toContain("**");
+    expect(spec.durationNote).toContain("60 分钟");
+    // 有上限但没给出处：这是「知道它没依据」的诚实写法，不是遗漏
+    expect(spec.durationSource).toBeUndefined();
+  });
+
+  it("时长口径只写在有歧义的平台上，其余平台不啰嗦", () => {
+    const withNote = PLATFORM_SPECS.filter((spec) => spec.durationNote);
+    expect(withNote.map((spec) => spec.id)).toEqual(["douyin"]);
+  });
+
   it("「已核未设上限」与「未核验」是两个不同的结论，同一平台不会同时出现", () => {
     for (const spec of PLATFORM_SPECS) {
       expect(
