@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /Users/lay/VscodeProject/loomina && /Users/lay/.nvm/versions/node/v24.12.0/bin/scout context --brief 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}

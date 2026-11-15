@@ -33,7 +33,7 @@ export const MODALITY_HINT: Record<Modality, string> = {
 export const SEED_MODELS: Record<Modality, string | undefined> = {
   text: "deepseek-v4.1-flash-1017",
   image: "gpt-image-2",
-  video: "minimax-h3",
+  video: "wan3.0-video-unfiltered",
   tts: "seedance-2.0",
   asr: undefined,
 };

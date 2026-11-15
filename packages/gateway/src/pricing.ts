@@ -27,6 +27,11 @@ export const VIDEO_PRICES: VideoPriceQuote[] = [
   { model: "wan3.0-video-prime", resolution: "480p", cnyPerSecond: 0.45 },
   { model: "wan3.0-video-prime", resolution: "720p", cnyPerSecond: 0.9 },
   { model: "wan3.0-video-prime", resolution: "1080p", cnyPerSecond: 1.8 },
+  // 实测可用的分组（2026-11-15）：不带 -unfiltered 的 wan3.0-video 回 403
+  // GROUP_ROUTING_FAILED，同参数走 -unfiltered 正常建立任务。价目按同系列取。
+  { model: "wan3.0-video-unfiltered", resolution: "480p", cnyPerSecond: 0.3 },
+  { model: "wan3.0-video-unfiltered", resolution: "720p", cnyPerSecond: 0.6 },
+  { model: "wan3.0-video-unfiltered", resolution: "1080p", cnyPerSecond: 1.2 },
 ];
 
 /**
