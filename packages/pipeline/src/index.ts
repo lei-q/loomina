@@ -18,7 +18,7 @@ import {
   type StagingMark,
   type Take,
 } from "@loomina/ir";
-import type { ImageAdapter, VideoAdapter } from "@loomina/gateway";
+import type { ImageAdapter, VideoAdapter, VideoJob } from "@loomina/gateway";
 import { sceneTemplateById, sceneTemplatePrompt, type SceneTemplate } from "./scene-templates";
 import { compileLook, compileStudioLook } from "./look";
 import { compileSkills } from "./skills";
@@ -66,6 +66,15 @@ export interface RunOptions {
    * 只在关键帧接口不可用时用来单独验证视频通路，不是常规生产方式（P4 关键帧先行）。
    */
   textOnly?: boolean;
+  /**
+   * 视频任务等多久算超时（毫秒），默认 5 分钟。
+   *
+   * `poll` 只查一次、不等待（供应商侧是异步任务）；所以这里必须有循环，
+   * 否则刚提交就拿到 `queued`，会被当成失败——那是工具的错，不是供应商的错。
+   */
+  videoTimeoutMs?: number;
+  /** 两次轮询之间等多久（毫秒），默认 3 秒 */
+  videoPollIntervalMs?: number;
 }
 
 export interface ShotRunResult {
@@ -140,6 +149,36 @@ export async function runMinimalChain(
  * 单独抽出来，是因为探针（S1 能力测绘）需要“一次失败不影响其他镜头”，
  * 而链路函数应该“一失败就停”。两种语义不该混在一个函数里。
  */
+/**
+ * 等到视频任务进入终态（succeeded / failed）。
+ *
+ * `poll` 只查一次；供应商侧的视频是异步任务，刚提交时状态是 `queued`。
+ * 早先这里只 poll 一次就判失败，导致「接口 200、任务在排队」被误报成生成失败
+ * （2026-11-15 实测发现）。现在按间隔重试到超时。
+ */
+async function waitForVideo(
+  options: RunOptions,
+  shotId: Id,
+  jobId: string,
+): Promise<VideoJob> {
+  const timeoutMs = options.videoTimeoutMs ?? 5 * 60_000;
+  const intervalMs = options.videoPollIntervalMs ?? 3_000;
+  const deadline = Date.now() + timeoutMs;
+  let job = await options.video.poll(jobId);
+  while (job.status === "queued" || job.status === "running") {
+    if (Date.now() >= deadline) {
+      return {
+        ...job,
+        status: "failed",
+        error: `等了 ${Math.round(timeoutMs / 1000)} 秒还没出片（最后状态 ${job.status}）`,
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    job = await options.video.poll(jobId);
+  }
+  return job;
+}
+
 export async function runShot(
   project: Project,
   shot: Shot,
@@ -168,7 +207,7 @@ export async function runShot(
     ...(options.videoResolution ? { resolution: options.videoResolution } : {}),
   });
 
-  const job = await options.video.poll(jobId);
+  const job = await waitForVideo(options, shot.id, jobId);
   if (job.status !== "succeeded") {
     throw new Error(`镜头 ${shot.id} 生成失败：${job.error ?? job.status}`);
   }
