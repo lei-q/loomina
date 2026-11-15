@@ -8049,3 +8049,31 @@ IR 260 / gateway 32 / pipeline 158 / web 1465（4 skipped）全过；`pnpm -r ty
 
 `workbench-store.test.ts` 有几个用例依赖前面用例留下的状态，用 `-t` 单独过滤跑会失败。
 改动前后各验一次，确认与本次拆分无关。
+
+## 第二百五十九次 · 2026-11-15 · 修测试隔离：resetForTests（ADR-0239）
+
+**问题**
+
+ADR-0238 发现几个用例单独用 `-t` 过滤跑会失败、全量跑却全过。根因是两件事叠加：
+`reset()` 在只读时直接返回（H18 的正确保护），而测试里 49 处设了 `readOnly: true`、
+97 处 `beforeEach` 只有 4 处先清它——**一个用例没恢复，后面所有 reset 都静默失效**。
+
+**结论**
+
+1. 新增 `resetForTests()`：先清 `readOnly` 再 `reset()`，放在 store 里作为唯一出处。
+2. 87 处 `beforeEach` 的 `state().reset()` 全部换掉。
+3. 用例体内 5 处 `reset()` 保持原样——它们测的就是 reset 本身（含「只读时不生效」）。
+4. 不改 `reset()` 的生产语义：问题在测试没清理，不在实现。
+
+**验证**
+
+`-t "锁定"` 从 3 个失败变成 47 个全过；抽查「只读 / 表演 / 关键帧 / 跨空间 / 生成」
+五组过滤全部通过；全量 398 条仍全过。
+IR 260 / gateway 32 / pipeline 158 / web 1465（4 skipped）全过；`pnpm -r typecheck` 全过；
+`scout check` 全绿。
+
+**边界**
+
+- 多了一个只在测试里用的导出。
+- 用例体内 5 处裸 `reset()` 需要读代码的人能分辨原因。
+- 只修了 `readOnly` 这一条最明显的污染；`localStorage` / 注入日志等可能还有别的形态。

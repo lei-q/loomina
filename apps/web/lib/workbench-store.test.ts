@@ -9,7 +9,7 @@ import { spendOf, toScriptView, toStageView } from "./read-model";
 import { referencedAssetIds } from "./asset-inventory";
 import { toEditView } from "./edit";
 import { stageStateOf } from "./stage-flow";
-import { resetPersistenceForTests, useWorkbench } from "./workbench-store";
+import { resetForTests, resetPersistenceForTests, useWorkbench } from "./workbench-store";
 import { dataUriBytesOf, logBytesOf, sha256OfBytes } from "./log-compact";
 
 const state = () => useWorkbench.getState();
@@ -18,7 +18,7 @@ const statusOf = (takeId: string) =>
 
 describe("审片台 store", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
   });
 
   it("开局停在第一个还没定的镜头，日志里只有引导事件", () => {
@@ -205,7 +205,7 @@ describe("审片台 store", () => {
 
 describe("生成定妆资产（ADR-0031 / ADR-0032）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
   });
 
   type Call = { kind: string; angle?: string };
@@ -383,7 +383,7 @@ describe("生成定妆资产（ADR-0031 / ADR-0032）", () => {
 
 describe("首帧（ADR-0037）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     state().setImagePrice({ model: "gpt-image-2-c", cny: 0.12 });
   });
 
@@ -448,7 +448,7 @@ describe("首帧（ADR-0037）", () => {
 
 describe("尾帧（ADR-0038）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     state().setImagePrice({ model: "gpt-image-2-c", cny: 0.12 });
   });
 
@@ -513,7 +513,7 @@ describe("尾帧（ADR-0038）", () => {
 
 describe("视频与多 take（ADR-0083）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     state().setImagePrice({ model: "gpt-image-2-c", cny: 0.12 });
     state().setVideoPrice({ model: "seedance", cnyPerSecond: 0.6 });
   });
@@ -792,7 +792,7 @@ describe("视频与多 take（ADR-0083）", () => {
 
 describe("一句话指令（ADR-0039）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
   });
 
   it("换个角度写一条 shot.updated，机位真的变了，可回放", () => {
@@ -924,7 +924,7 @@ describe("一句话指令（ADR-0039）", () => {
 
 describe("镜头锁定（ADR-0041）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
   });
 
   it("没有留用过的 take 不许锁，只给一句说明", async () => {
@@ -1041,7 +1041,7 @@ describe("镜头锁定（ADR-0041）", () => {
 
 describe("批量补帧（ADR-0042 附记）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     state().setImagePrice({ model: "gpt-image-2-c", cny: 0.12 });
   });
 
@@ -1144,7 +1144,7 @@ describe("批量补帧（ADR-0042 附记）", () => {
 
 describe("预算（ADR-0035）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     state().setImagePrice({ model: "gpt-image-2-c", cny: 0.12 });
   });
 
@@ -1365,7 +1365,7 @@ describe("预算（ADR-0035）", () => {
 
 describe("发布记录（G1 / ADR-0102）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
   });
 
   it("记发布记录写 publish.recorded，重放后还在", () => {
@@ -1429,7 +1429,7 @@ describe("发布记录（G1 / ADR-0102）", () => {
 
 describe("镜头语言（I1）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
   });
 
   it("套一套说法写一条 shot.updated，四个字段一起变", () => {
@@ -1469,7 +1469,7 @@ describe("镜头语言（I1）", () => {
 
 describe("手调摄影参数（I7）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
   });
 
   it("改景别只写一条 shot.updated，机位三项原样保留", () => {
@@ -1522,7 +1522,7 @@ describe("手调摄影参数（I7）", () => {
 
 describe("光影与构图（I2 / I4）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
   });
 
   it("写光影写一条 shot.updated，重放后还在；清空也留一条", () => {
@@ -1584,7 +1584,7 @@ describe("光影与构图（I2 / I4）", () => {
 
 describe("发布台账回执（G10 / ADR-0166）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
   });
 
   it("贴回执写 publish.updated，重放后还在；发布包本身不动", () => {
@@ -1663,7 +1663,7 @@ describe("发布台账回执（G10 / ADR-0166）", () => {
 
 describe("授权记录（H7 / ADR-0167）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
   });
 
   it("新增写 rights.updated，重放后还在", () => {
@@ -1725,7 +1725,7 @@ describe("授权记录（H7 / ADR-0167）", () => {
 
 describe("重置为示例项目（H18）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -1797,7 +1797,7 @@ describe("本地事件日志（ADR-0034）", () => {
     // hydrate 会把单写者锁握到标签页关闭；测试里每个用例换一个新的"标签页"
     releaseWriter();
     resetPersistenceForTests();
-    state().reset();
+    resetForTests();
   });
 
   it("本地有日志就从日志恢复，不回到示例项目", async () => {
@@ -1915,7 +1915,7 @@ describe("单写者（ADR-0034）", () => {
 describe("台词改写（ADR-0044）", () => {
   beforeEach(() => {
     // 上一个用例可能把标签页设成了只读，这里回到可写
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -1999,7 +1999,7 @@ describe("台词改写（ADR-0044）", () => {
 
 describe("手改断句（D2）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -2061,7 +2061,7 @@ describe("手改断句（D2）", () => {
 
 describe("字幕版式（D3）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -2134,7 +2134,7 @@ describe("字幕版式（D3）", () => {
 
 describe("音轨与字幕轨（E1 / ADR-0131）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -2230,7 +2230,7 @@ describe("音轨与字幕轨（E1 / ADR-0131）", () => {
 
 describe("生成结果复核（H6 / ADR-0132）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -2282,7 +2282,7 @@ describe("生成结果复核（H6 / ADR-0132）", () => {
 
 describe("台词增删（ADR-0045）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -2338,7 +2338,7 @@ describe("台词增删（ADR-0045）", () => {
 
 describe("换说话人（ADR-0046）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -2374,7 +2374,7 @@ describe("换说话人（ADR-0046）", () => {
 
 describe("台词排序（ADR-0047）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -2412,7 +2412,7 @@ describe("台词排序（ADR-0047）", () => {
 
 describe("动作改写（ADR-0049）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -2460,7 +2460,7 @@ describe("动作改写（ADR-0049）", () => {
 
 describe("场头改写（ADR-0050）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -2526,7 +2526,7 @@ describe("场头改写（ADR-0050）", () => {
 
 describe("显式场号（ADR-0080）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -2569,7 +2569,7 @@ describe("显式场号（ADR-0080）", () => {
 
 describe("这一镜里谁出场（ADR-0065）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -2624,7 +2624,7 @@ describe("这一镜里谁出场（ADR-0065）", () => {
 
 describe("这一镜里有哪些道具（ADR-0066）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -2676,7 +2676,7 @@ describe("这一镜里有哪些道具（ADR-0066）", () => {
 });
 
 describe("新建场次与镜头（ADR-0064）", () => {  beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -2746,7 +2746,7 @@ describe("新建场次与镜头（ADR-0064）", () => {  beforeEach(() => {
 
 describe("中间插入场次与镜头（ADR-0068）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -2813,7 +2813,7 @@ describe("中间插入场次与镜头（ADR-0068）", () => {
 
 describe("新场沿用前一场的地点与日夜（ADR-0069）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -2843,7 +2843,7 @@ describe("新场沿用前一场的地点与日夜（ADR-0069）", () => {
 
 describe("人物库：新建与改名（ADR-0071）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -2925,7 +2925,7 @@ describe("人物库：新建与改名（ADR-0071）", () => {
 
 describe("道具库：新建与改名（ADR-0072）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -2989,7 +2989,7 @@ describe("道具库：新建与改名（ADR-0072）", () => {
 
 describe("删除人物与道具（ADR-0073）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -3033,7 +3033,7 @@ describe("删除人物与道具（ADR-0073）", () => {
 
 describe("这一镜里换人（ADR-0070）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -3088,7 +3088,7 @@ describe("这一镜里换人（ADR-0070）", () => {
 
 describe("换人撤销（ADR-0081）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -3174,7 +3174,7 @@ describe("换人撤销（ADR-0081）", () => {
 
 describe("删一场、删一镜（ADR-0067）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -3235,7 +3235,7 @@ describe("删一场、删一镜（ADR-0067）", () => {
 
 describe("调整场序（ADR-0060）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -3312,7 +3312,7 @@ describe("调整场序（ADR-0060）", () => {
 
 describe("新建 / 编辑地点（ADR-0059）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -3476,7 +3476,7 @@ describe("新建 / 编辑地点（ADR-0059）", () => {
 
 describe("台词顺序整组写回（ADR-0053）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -3529,7 +3529,7 @@ describe("台词顺序整组写回（ADR-0053）", () => {
 
 describe("跨镜头挪台词（ADR-0054）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -3594,7 +3594,7 @@ describe("跨镜头挪台词（ADR-0054）", () => {
 
 describe("恢复被删的台词（ADR-0055）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -3652,7 +3652,7 @@ describe("恢复被删的台词（ADR-0055）", () => {
 
 describe("编辑不许变清单（ADR-0074）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -3716,7 +3716,7 @@ describe("编辑不许变清单（ADR-0074）", () => {
 
 describe("撤销删除（ADR-0076）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -3803,7 +3803,7 @@ describe("撤销删除（ADR-0076）", () => {
 
 describe("出场顺序（ADR-0077）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -3850,7 +3850,7 @@ describe("出场顺序（ADR-0077）", () => {
 
 describe("参考图多张与手动挂（ADR-0079）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -4002,7 +4002,7 @@ describe("参考图多张与手动挂（ADR-0079）", () => {
 
 describe("配音（ADR-0085）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
   });
 
   it("贴一条音轨：落一条音频资产，再把这句挂在它上面", () => {
@@ -4076,7 +4076,7 @@ describe("配音（ADR-0085）", () => {
 
 describe("识别（ADR-0087）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
   });
 
   afterEach(() => {
@@ -4176,7 +4176,7 @@ describe("识别（ADR-0087）", () => {
 
 describe("成片（ADR-0086）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
   });
 
   it("自动初剪写一条 timeline.updated，跳过没有可用 take 的镜头", () => {
@@ -4411,7 +4411,7 @@ describe("故事入口开工（ADR-0088）", () => {
 
 describe("故事层单独编辑（A16）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -4517,7 +4517,7 @@ describe("故事层单独编辑（A16）", () => {
 
 describe("故事版本库（C2）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -4589,7 +4589,7 @@ describe("故事版本库（C2）", () => {
 
 describe("跨空间取一版故事（C1 / ADR-0198）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -4656,7 +4656,7 @@ describe("跨空间取一版故事（C1 / ADR-0198）", () => {
 
 describe("跨空间取一场剧本（C1 / ADR-0199）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -4717,7 +4717,7 @@ describe("跨空间取一场剧本（C1 / ADR-0199）", () => {
 
 describe("采用剧本医生的改写（A18 / ADR-0123）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -4806,7 +4806,7 @@ describe("采用剧本医生的改写（A18 / ADR-0123）", () => {
 
 describe("分镜节拍与镜头目的（ADR-0096）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
   });
 
   it("改节拍写一条 shot.updated，回放一致", () => {
@@ -4867,7 +4867,7 @@ describe("分镜节拍与镜头目的（ADR-0096）", () => {
 
 describe("表演设计与镜头调度（B16 / B17 / ADR-0103）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
   });
 
   const performance = {
@@ -4989,7 +4989,7 @@ describe("表演设计与镜头调度（B16 / B17 / ADR-0103）", () => {
 
 describe("阶段闸门与单镜预算（F8 / F9 / H10）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     state().setImagePrice({ model: "gpt-image-2-c", cny: 0.12 });
   });
 
@@ -5090,7 +5090,7 @@ describe("阶段闸门与单镜预算（F8 / F9 / H10）", () => {
 
 describe("多步撤销与历史回滚（F2 / ADR-0109）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -5178,7 +5178,7 @@ describe("多步撤销与历史回滚（F2 / ADR-0109）", () => {
 
 describe("自由工作台与阶段硬锁（F8）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ mode: "guided", lockedNotice: undefined, readOnly: false });
   });
 
@@ -5258,7 +5258,7 @@ describe("本机资产库（H3 / ADR-0128）", () => {
   const BIG = `data:image/png;base64,${"A".repeat(300_000)}`;
 
   beforeEach(() => {
-    state().reset();
+    resetForTests();
   });
 
   it("素材清点跟着项目走：没人引用的单独列出来", () => {
@@ -5354,7 +5354,7 @@ describe("本机资产库（H3 / ADR-0128）", () => {
 describe("走位与场地几何（B13.1 / ADR-0126）", () => {
   beforeEach(() => {
     useWorkbench.setState({ readOnly: false });
-    state().reset();
+    resetForTests();
   });
 
   const SPACE = {
@@ -5485,7 +5485,7 @@ describe("走位与场地几何（B13.1 / ADR-0126）", () => {
 describe("存量地点补几何（B13.1 / ADR-0126）", () => {
   beforeEach(() => {
     useWorkbench.setState({ readOnly: false });
-    state().reset();
+    resetForTests();
   });
 
   it("模板早就选好但没有 space：存名字时顺手补上", () => {
@@ -5517,7 +5517,7 @@ describe("存量地点补几何（B13.1 / ADR-0126）", () => {
 
 describe("逐句表演参数与试听台（C2 / C9 / ADR-0124）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
   });
 
   it("改表演参数写一条 dialogue.updated，时长不动", () => {
@@ -5753,7 +5753,7 @@ describe("逐句表演参数与试听台（C2 / C9 / ADR-0124）", () => {
 
 describe("删掉没人引用的资产（F4 / ADR-0136）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -5803,7 +5803,7 @@ describe("删掉没人引用的资产（F4 / ADR-0136）", () => {
 describe("按项目固定模型（H22）", () => {
   beforeEach(() => {
     useWorkbench.setState({ readOnly: false });
-    state().reset();
+    resetForTests();
     state().setImagePrice({ model: "gpt-image-2-c", cny: 0.12 });
   });
 
@@ -5865,7 +5865,7 @@ describe("手改提示词（ADR-0148）", () => {
   beforeEach(() => {
     // 前面的用例可能把 store 留成只读（另一个标签页在编辑）：先复位
     useWorkbench.setState({ readOnly: false });
-    state().reset();
+    resetForTests();
     state().setImagePrice({ model: "gpt-image-2-c", cny: 0.12 });
   });
 
@@ -6002,7 +6002,7 @@ describe("逐字导入开工（F6 / ADR-0154）", () => {
 
 describe("参考图真的发出去（B2 / ADR-0162）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     state().setImagePrice({ model: "gpt-image-2-c", cny: 0.12 });
   });
 
@@ -6089,7 +6089,7 @@ describe("参考图真的发出去（B2 / ADR-0162）", () => {
 
 describe("品牌包与头尾卡（E9 / ADR-0174）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
   });
 
   it("写一条 brand.updated，读模型里的卡片跟着出来", () => {
@@ -6138,7 +6138,7 @@ describe("品牌包与头尾卡（E9 / ADR-0174）", () => {
 
 describe("多条配乐混排（C4）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
   });
 
   const add = (startSec: number) =>
@@ -6195,7 +6195,7 @@ describe("多条配乐混排（C4）", () => {
 
 describe("音效层与三路平衡（C7）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
   });
 
   const add = (
@@ -6281,7 +6281,7 @@ describe("音效层与三路平衡（C7）", () => {
 
 describe("关键帧版本库（C2）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     state().setImagePrice({ model: "gpt-image-2-c", cny: 0.12 });
   });
 
@@ -6369,7 +6369,7 @@ describe("关键帧版本库（C2）", () => {
 
 describe("废片作参考（C2 / ADR-0200）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -6439,7 +6439,7 @@ describe("废片作参考（C2 / ADR-0200）", () => {
 
 describe("技能（C.5 / ADR-0191）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -6478,7 +6478,7 @@ describe("技能（C.5 / ADR-0191）", () => {
 
 describe("接上一段（C.6 / ADR-0192）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -6517,7 +6517,7 @@ describe("接上一段（C.6 / ADR-0192）", () => {
 
 describe("废片库取回（C14 / ADR-0193）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -6575,7 +6575,7 @@ describe("废片库取回（C14 / ADR-0193）", () => {
 
 describe("从别的空间取一拍视频（C1 / ADR-0194）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -6605,7 +6605,7 @@ describe("从别的空间取一拍视频（C1 / ADR-0194）", () => {
 
 describe("从别的空间取一版配音（C1 / ADR-0195）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -6633,7 +6633,7 @@ describe("从别的空间取一版配音（C1 / ADR-0195）", () => {
 
 describe("废片库取回配音（C14 / ADR-0196）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -6690,7 +6690,7 @@ describe("废片库取回配音（C14 / ADR-0196）", () => {
 
 describe("删工作空间（C15 / ADR-0201）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -6716,7 +6716,7 @@ describe("删工作空间（C15 / ADR-0201）", () => {
 
 describe("跨空间取技能（C.5 / ADR-0202）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -6764,7 +6764,7 @@ describe("跨空间取技能（C.5 / ADR-0202）", () => {
 
 describe("剧本版本库写回（C14 / ADR-0204）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -6808,7 +6808,7 @@ describe("剧本版本库写回（C14 / ADR-0204）", () => {
 
 describe("镜头模板套用（F3 / ADR-0207）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -6866,7 +6866,7 @@ describe("镜头模板套用（F3 / ADR-0207）", () => {
 
 describe("结果缓存与复用（H14 / ADR-0208）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false, reuseCache: true });
     state().setImagePrice({ model: "gpt-image-2-c", cny: 0.12 });
   });
@@ -6942,7 +6942,7 @@ describe("结果缓存与复用（H14 / ADR-0208）", () => {
 
 describe("空间归档与技能导入（C15 / C18 / ADR-0210）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
@@ -7019,7 +7019,7 @@ describe("空间归档与技能导入（C15 / C18 / ADR-0210）", () => {
 
 describe("整本剧本一起取（C24 / ADR-0212）", () => {
   beforeEach(() => {
-    state().reset();
+    resetForTests();
     useWorkbench.setState({ readOnly: false });
   });
 
