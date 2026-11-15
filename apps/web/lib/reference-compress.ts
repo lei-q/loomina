@@ -79,4 +79,26 @@ export async function fitReferenceBytes(
   return { bytes: out, mime: "image/jpeg", fitted: true };
 }
 
+/**
+ * 把一张图压到指定字节以内（视频首帧用，2026-11-15）。
+ *
+ * 与 `fitReferenceBytes` 同一套 ffmpeg 管道，只是阈值不同：
+ * 首帧要塞进视频请求的单个 part（1024 KB，base64 后膨胀 4/3），
+ * 所以原始字节要压到约 768 KB 以内。
+ *
+ * 压不动（没 ffmpeg / 报错 / 输出空 / 压完仍超）就**原样返回**——
+ * 由调用方如实报错，不悄悄发一张必然被拒的图。
+ */
+export async function fitVideoFrameBytes(
+  bytes: Uint8Array,
+  mime: string,
+  limitBytes: number,
+): Promise<Compressed> {
+  if (bytes.byteLength <= limitBytes) return { bytes, mime, fitted: false };
+  const out = await runFfmpeg(bytes);
+  if (!out || out.byteLength === 0) return { bytes, mime, fitted: false };
+  if (out.byteLength > limitBytes) return { bytes, mime, fitted: false };
+  return { bytes: out, mime: "image/jpeg", fitted: true };
+}
+
 export { REFERENCE_SOFT_BYTES };

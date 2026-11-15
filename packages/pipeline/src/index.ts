@@ -75,6 +75,17 @@ export interface RunOptions {
   videoTimeoutMs?: number;
   /** 两次轮询之间等多久（毫秒），默认 3 秒 */
   videoPollIntervalMs?: number;
+  /**
+   * 提交前压首帧（可选）。
+   *
+   * `POST /v1/videos` 的首帧走 `image_url` 的 data URI，代理按单个 part 限 1024 KB；
+   * 一张 1024×1536 的 PNG 有 1.2 MB，base64 后约 1.6 MB，直接被 400 拒掉
+   * （2026-11-15 实测：`Part exceeded maximum size of 1024KB.`）。
+   *
+   * pipeline 是纯函数包，不自己 spawn ffmpeg；由调用方注入压缩实现，
+   * 压不动就原样返回，让供应商如实拒绝。
+   */
+  compressFrame?: (uri: string) => Promise<string>;
 }
 
 export interface ShotRunResult {
@@ -199,9 +210,13 @@ export async function runShot(
         ...(options.imageSize ? { size: options.imageSize } : {}),
       });
 
+  const imageUri = frame && options.compressFrame
+    ? await options.compressFrame(frame.uri)
+    : frame?.uri;
+
   const { jobId } = await options.video.submit({
     shotId: shot.id,
-    ...(frame ? { imageAssetId: frame.assetId, imageUri: frame.uri } : {}),
+    ...(frame ? { imageAssetId: frame.assetId, imageUri } : {}),
     durationMs: shot.durationMs,
     prompt,
     ...(options.videoResolution ? { resolution: options.videoResolution } : {}),

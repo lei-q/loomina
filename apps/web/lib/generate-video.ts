@@ -9,6 +9,8 @@ import { buildVideoPrompt, type ShotPromptMaterial } from "@loomina/pipeline";
 import type { Id } from "@loomina/ir";
 import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
 import { assertPromptAllowed, type PromptModeration } from "@/lib/moderation";
+import { fitVideoFrameBytes } from "@/lib/reference-compress";
+import { VIDEO_FRAME_SOFT_BYTES } from "@/lib/reference-fit";
 
 /**
  * 服务端出视频（ADR-0083）。
@@ -97,6 +99,25 @@ function submitRetryable(error: unknown): boolean {
   return error.status === 429 || error.status >= 500;
 }
 
+/**
+ * 首帧要不要压（2026-11-15 实测）。
+ *
+ * `POST /v1/videos` 的首帧走 `image_url` 的 data URI，代理按单个 part 限 1024 KB。
+ * 一张 1024×1536 的 PNG 有 1.2 MB，base64 后约 1.6 MB——直接被 400 拒掉
+ * （`Part exceeded maximum size of 1024KB.`）。所以发之前压到 768 KB 以内。
+ *
+ * 不是 data URI（http(s) 地址）就不动：那种不占 part 体积。
+ */
+async function frameForSubmit(firstFrame?: string): Promise<string | undefined> {
+  if (!firstFrame || !firstFrame.startsWith("data:")) return firstFrame;
+  const parts = /^data:([^;]+);base64,(.*)$/s.exec(firstFrame);
+  if (!parts) return firstFrame;
+  const bytes = new Uint8Array(Buffer.from(parts[2]!, "base64"));
+  const fitted = await fitVideoFrameBytes(bytes, parts[1]!, VIDEO_FRAME_SOFT_BYTES);
+  if (!fitted.fitted) return firstFrame;
+  return `data:${fitted.mime};base64,${Buffer.from(fitted.bytes).toString("base64")}`;
+}
+
 export async function generateShotVideo(
   request: ShotVideoRequest,
   modelId?: string,
@@ -115,13 +136,17 @@ export async function generateShotVideo(
   // H6：硬阻断在提交前就停，任务不会建立，也就不会计费
   const moderation = assertPromptAllowed(prompt, "video");
 
+  // 首帧以 data URI 塞进请求的单个 part，代理限 1024 KB（base64 后膨胀 4/3）。
+  // 超过就压到 768 KB 以内；压不动仍照发——让供应商如实拒绝，不在这里假装成功。
+  const firstFrame = await frameForSubmit(request.firstFrame);
+
   const { jobId } = await adapter
     .submit({
       // 这一镜在服务端已经是"某一镜的 take"，用语义 id 占位只为溯源
       shotId: "video" as Id,
       prompt,
       durationMs: request.durationMs,
-      imageUri: request.firstFrame,
+      imageUri: firstFrame,
       ...(config.videoResolution ? { resolution: config.videoResolution } : {}),
     })
     .catch((error: unknown) => {

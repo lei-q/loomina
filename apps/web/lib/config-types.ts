@@ -24,10 +24,15 @@ export const MODALITY_HINT: Record<Modality, string> = {
   asr: "音轨转文字",
 };
 
-/** 用户当前要求的默认模型；环境变量没配时用它 */
+/**
+ * 用户当前要求的默认模型；环境变量没配时用它。
+ *
+ * `image` 用不带 `-c` 后缀的：2026-11-15 实测带 `-c` 的分组在上游全部 503
+ * （`The upstream image response could not be validated`，代理的计费配置坏了）。
+ */
 export const SEED_MODELS: Record<Modality, string | undefined> = {
   text: "deepseek-v4.1-flash-1017",
-  image: "gpt-image-2-c",
+  image: "gpt-image-2",
   video: "minimax-h3",
   tts: "seedance-2.0",
   asr: undefined,

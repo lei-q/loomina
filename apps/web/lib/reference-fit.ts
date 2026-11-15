@@ -15,6 +15,16 @@ export const REFERENCE_MAX_EDGE = 1536;
 export const REFERENCE_SOFT_BYTES = 1_500_000;
 /** 网关的硬上限（B2 / ADR-0162）：超过它的参考图会被过滤 */
 export const REFERENCE_HARD_BYTES = 8 * 1024 * 1024;
+/**
+ * 视频提交时首帧内联的硬上限（2026-11-15 实测）。
+ *
+ * 首帧以 `image_url` 的 data URI 塞进 `POST /v1/videos`，代理按「单个 part」
+ * 限 1024 KB——base64 会膨胀 4/3，所以**原始字节**要压到约 768 KB 以内。
+ * 超了就是 400 `Part exceeded maximum size of 1024KB.`。
+ */
+export const VIDEO_FRAME_PART_BYTES = 1024 * 1024;
+/** base64 膨胀后的安全余量：留 1/4 给编码膨胀 */
+export const VIDEO_FRAME_SOFT_BYTES = Math.floor(VIDEO_FRAME_PART_BYTES * 0.72);
 /** MJPEG 质量：2–5 肉眼几乎无差，4 在体积与细节之间比较稳 */
 export const REFERENCE_JPEG_QUALITY = 4;
 

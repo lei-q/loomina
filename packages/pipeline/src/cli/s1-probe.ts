@@ -13,6 +13,7 @@ import {
   videoCostCny,
 } from "@loomina/gateway";
 import { ProjectSchema, type Project, type Shot } from "@loomina/ir";
+import { spawn } from "node:child_process";
 import { runShot } from "../index";
 
 /**
@@ -26,6 +27,39 @@ import { runShot } from "../index";
  *   pnpm probe:s1 -- --dry-run
  *   pnpm probe:s1 -- --shots 8 --resolution 768p --budget 30
  */
+
+/**
+ * 把 data URI 的图压到 768 KB 以内（视频首帧用）。
+ *
+ * 与 `apps/web/lib/reference-compress.ts` 同一套 ffmpeg 参数，但这里是 CLI，
+ * 直接 spawn 即可。压不动就原样返回——让供应商如实拒绝，不假装成功。
+ */
+async function compressDataUri(uri: string): Promise<string> {
+  const match = /^data:([^;]+);base64,(.*)$/s.exec(uri);
+  if (!match) return uri;
+  const bytes = Buffer.from(match[2]!, "base64");
+  const LIMIT = 768 * 1024;
+  if (bytes.byteLength <= LIMIT) return uri;
+
+  const out = await new Promise<Buffer | null>((resolve) => {
+    const child = spawn("ffmpeg", [
+      "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
+      "-vf", "scale='min(1536,iw)':'min(1536,ih)':force_original_aspect_ratio=decrease",
+      "-q:v", "4", "-f", "mjpeg", "pipe:1",
+    ], { stdio: ["pipe", "pipe", "ignore"] });
+    const chunks: Buffer[] = [];
+    child.stdout?.on("data", (chunk: Buffer) => chunks.push(chunk));
+    child.on("error", () => resolve(null));
+    child.on("close", (code) => {
+      const buf = Buffer.concat(chunks);
+      resolve(code === 0 && buf.byteLength > 0 && buf.byteLength <= LIMIT ? buf : null);
+    });
+    child.stdin?.on("error", () => undefined);
+    child.stdin?.end(bytes);
+  });
+  if (!out) return uri;
+  return `data:image/jpeg;base64,${out.toString("base64")}`;
+}
 
 interface Args {
   envPath: string;
@@ -347,6 +381,8 @@ async function main(): Promise<void> {
         videoTimeoutMs: 8 * 60_000,
         videoPollIntervalMs: 5_000,
         videoResolution: resolution,
+        // 首帧要塞进视频请求的单个 part（代理限 1024 KB，base64 膨胀 4/3）
+        compressFrame: compressDataUri,
         prices: {
           imageCny: imageCostCny(env.imageModel) ?? 0,
           videoPerSecondCny: uploadedVideoPerSecond,
