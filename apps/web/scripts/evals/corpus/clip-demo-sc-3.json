@@ -1,0 +1,328 @@
+{
+  "meta": {
+    "id": "clip-demo-sc-3",
+    "source": "示例项目「夜班」",
+    "license": "self-made",
+    "genre": "悬疑",
+    "platform": "douyin",
+    "note": "示例项目第 3 场（1 镜）；不是真实短剧，只验跑分链路"
+  },
+  "project": {
+    "id": "demo-night-shift-sc-3",
+    "title": "夜班 · 第 3 场",
+    "version": 3,
+    "models": {},
+    "look": {
+      "presetId": "",
+      "contrast": "balanced",
+      "temperature": "neutral",
+      "texture": "grain",
+      "aspect": "9:16",
+      "note": ""
+    },
+    "grade": {
+      "presetId": "",
+      "contrast": "natural",
+      "saturation": "natural",
+      "temperature": "neutral",
+      "vignette": false,
+      "film": "none",
+      "grain": 0,
+      "lutAssetId": "",
+      "lutName": ""
+    },
+    "frame": {
+      "aspect": "9:16",
+      "fit": "pad"
+    },
+    "brand": {
+      "name": "",
+      "handle": "",
+      "color": "#121215",
+      "intro": {
+        "enabled": false,
+        "title": "",
+        "subtitle": "",
+        "durationMs": 2000
+      },
+      "outro": {
+        "enabled": false,
+        "title": "",
+        "subtitle": "",
+        "durationMs": 2000
+      }
+    },
+    "budgetCny": 60,
+    "maxAttemptsPerShot": 3,
+    "onBudgetExceed": "block",
+    "story": {
+      "logline": "",
+      "synopsis": "",
+      "genre": "",
+      "audience": "",
+      "tone": "",
+      "hooks": {
+        "opening": "",
+        "ending": ""
+      },
+      "arcs": [],
+      "relationships": []
+    },
+    "motifs": [],
+    "skills": [],
+    "locations": [
+      {
+        "id": "loc-corridor",
+        "name": "走廊",
+        "templateId": "corridor",
+        "description": "",
+        "masterShotId": "a-corridor",
+        "referenceImages": []
+      },
+      {
+        "id": "loc-door",
+        "name": "门口",
+        "templateId": "doorway",
+        "description": "",
+        "masterShotId": "a-door",
+        "referenceImages": []
+      },
+      {
+        "id": "loc-table",
+        "name": "桌边",
+        "templateId": "table",
+        "description": "",
+        "masterShotId": "a-table",
+        "referenceImages": []
+      }
+    ],
+    "characters": [
+      {
+        "id": "c-lin",
+        "name": "林",
+        "appearance": "短发，深色外套",
+        "voiceProfileId": "voice-lin",
+        "sheet": {
+          "front": "a-lin-front",
+          "threeQuarter": "a-lin-34",
+          "side": "a-lin-side",
+          "back": "a-lin-back"
+        },
+        "referenceImages": [
+          "a-lin-expr"
+        ],
+        "mustNotChange": [
+          "左眼下的痣",
+          "齐肩黑发，中分",
+          "米色风衣"
+        ]
+      },
+      {
+        "id": "c-zhou",
+        "name": "周",
+        "appearance": "高个，衬衫袖口卷起",
+        "voiceProfileId": "voice-zhou",
+        "sheet": {
+          "front": "a-zhou-front",
+          "threeQuarter": "a-zhou-34",
+          "side": "a-zhou-side",
+          "back": "a-zhou-back"
+        },
+        "referenceImages": [],
+        "mustNotChange": [
+          "右眉尾的疤",
+          "袖口永远卷到手肘",
+          "不戴眼镜"
+        ]
+      }
+    ],
+    "props": [
+      {
+        "id": "p-cup",
+        "name": "搪瓷杯",
+        "description": "白底蓝边搪瓷缸，杯沿有一道旧磕痕",
+        "referenceImages": [
+          "a-cup"
+        ]
+      },
+      {
+        "id": "p-lamp",
+        "name": "台灯",
+        "description": "绿色玻璃罩台灯，黄铜底座，灯绳磨得发白",
+        "referenceImages": [
+          "a-lamp"
+        ]
+      }
+    ],
+    "scenes": [
+      {
+        "id": "sc-3",
+        "index": 0,
+        "code": "",
+        "locationId": "loc-corridor",
+        "space": "int",
+        "timeOfDay": "night",
+        "shotIds": [
+          "s-06"
+        ]
+      }
+    ],
+    "shots": [
+      {
+        "id": "s-06",
+        "sceneId": "sc-3",
+        "index": 0,
+        "durationMs": 4200,
+        "description": "走廊空了，灯还亮着",
+        "promptNotes": [],
+        "shotSize": "wide",
+        "camera": {
+          "angle": "eye",
+          "movement": "pan",
+          "focalMm": 24
+        },
+        "staging": [],
+        "characterIds": [],
+        "propIds": [],
+        "dialogueIds": [],
+        "takeIds": [],
+        "keyframes": {},
+        "locked": false
+      }
+    ],
+    "dialogue": [
+      {
+        "id": "d-01",
+        "characterId": "c-zhou",
+        "text": "你早就知道，对吧。",
+        "durationMs": 2600
+      },
+      {
+        "id": "d-02",
+        "characterId": "c-lin",
+        "text": "知道了又怎样。",
+        "durationMs": 2100
+      },
+      {
+        "id": "d-03",
+        "characterId": "c-zhou",
+        "text": "灯是我关的。",
+        "durationMs": 1800
+      },
+      {
+        "id": "d-04",
+        "characterId": "c-lin",
+        "text": "那就当没看见。",
+        "durationMs": 2300
+      }
+    ],
+    "voiceTakes": [],
+    "takes": [],
+    "assets": [
+      {
+        "id": "a-lin-front",
+        "kind": "image",
+        "source": "generated",
+        "createdAt": "2026-11-09T20:10:00+08:00"
+      },
+      {
+        "id": "a-lin-34",
+        "kind": "image",
+        "source": "generated",
+        "createdAt": "2026-11-09T20:11:00+08:00"
+      },
+      {
+        "id": "a-lin-side",
+        "kind": "image",
+        "source": "generated",
+        "createdAt": "2026-11-09T20:12:00+08:00"
+      },
+      {
+        "id": "a-lin-back",
+        "kind": "image",
+        "source": "generated",
+        "createdAt": "2026-11-09T20:13:00+08:00"
+      },
+      {
+        "id": "a-lin-expr",
+        "kind": "image",
+        "source": "generated",
+        "createdAt": "2026-11-09T20:14:00+08:00"
+      },
+      {
+        "id": "a-zhou-front",
+        "kind": "image",
+        "source": "generated",
+        "createdAt": "2026-11-09T20:20:00+08:00"
+      },
+      {
+        "id": "a-zhou-34",
+        "kind": "image",
+        "source": "generated",
+        "createdAt": "2026-11-09T20:21:00+08:00"
+      },
+      {
+        "id": "a-zhou-side",
+        "kind": "image",
+        "source": "generated",
+        "createdAt": "2026-11-09T20:22:00+08:00"
+      },
+      {
+        "id": "a-zhou-back",
+        "kind": "image",
+        "source": "generated",
+        "createdAt": "2026-11-09T20:23:00+08:00"
+      },
+      {
+        "id": "a-corridor",
+        "kind": "image",
+        "source": "generated",
+        "createdAt": "2026-11-09T20:30:00+08:00"
+      },
+      {
+        "id": "a-door",
+        "kind": "image",
+        "source": "generated",
+        "createdAt": "2026-11-09T20:31:00+08:00"
+      },
+      {
+        "id": "a-table",
+        "kind": "image",
+        "source": "generated",
+        "createdAt": "2026-11-09T20:32:00+08:00"
+      },
+      {
+        "id": "a-cup",
+        "kind": "image",
+        "source": "generated",
+        "createdAt": "2026-11-09T20:33:00+08:00"
+      },
+      {
+        "id": "a-lamp",
+        "kind": "image",
+        "source": "generated",
+        "createdAt": "2026-11-09T20:34:00+08:00"
+      }
+    ],
+    "approvals": [],
+    "gates": [],
+    "timeline": {
+      "items": []
+    },
+    "subtitleOverrides": [],
+    "subtitleLayout": {
+      "preset": "default"
+    },
+    "subtitleTranslation": {
+      "enabled": false,
+      "lang": "en",
+      "position": "below"
+    },
+    "publishPackages": [],
+    "authorizations": []
+  },
+  "expected": [
+    "V5",
+    "V10"
+  ]
+}
