@@ -45,6 +45,21 @@ describe("剧本医生模型快照（A18）", () => {
     expect(first?.description.endsWith("…")).toBe(true);
   });
 
+  it("技能（C18）：剧本阶段的技能进系统提示词", () => {
+    const messages = doctorMessages(snapshotOf("trimExposition"), [
+      {
+        id: "sk-1",
+        name: "对白要短",
+        description: "",
+        stage: "script",
+        body: "每句台词不超过 10 个字。",
+        enabled: true,
+        createdAt: "2026-11-15T00:00:00Z",
+      },
+    ]);
+    expect(messages[0]!.content).toContain("每句台词不超过 10 个字");
+  });
+
   it("提示词里写明模式、可用 id 与字数上限", () => {
     const messages = doctorMessages(snapshotOf("trimExposition"));
     const system = messages[0]!.content;

@@ -1,3 +1,4 @@
+import type { ProjectSkill } from "@loomina/ir";
 import { ConfigError, TreecloudChatAdapter, TreecloudClient, TreecloudError } from "@loomina/gateway";
 import type { ShotPatch } from "@loomina/pipeline";
 import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
@@ -34,12 +35,13 @@ export type InstructionRun = {
 export async function interpretInstruction(
   text: string,
   snapshot: ShotSnapshot,
+  skills?: ProjectSkill[],
 ): Promise<InstructionRun> {
   const resolved = await resolveModel("text");
   const client = new TreecloudClient({ ...gatewayConfigOf(resolved), timeoutMs: 45_000 });
   const adapter = new TreecloudChatAdapter(client);
   const output = await adapter.complete({
-    messages: instructionMessages(text, snapshot),
+    messages: instructionMessages(text, snapshot, skills),
     // 一条补丁只有几个字段；给到 600 是留给「先想一想」的推理 token
     maxTokens: 600,
   });

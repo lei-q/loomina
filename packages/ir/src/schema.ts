@@ -1186,7 +1186,19 @@ export const DEFAULT_BRAND: Brand = BrandSchema.parse({});
  * 不进「模型配置」也不进 localStorage：技能会改变出图提示词，属于项目约束，
  * 要跟着日志回放。`stage` 决定加在哪种提示词后面；`all` 表示都加。
  */
-export const SKILL_STAGES = ["all", "sheet", "master", "prop", "keyframe"] as const;
+export const SKILL_STAGES = [
+  "all",
+  "story",
+  "script",
+  "sheet",
+  "storyboard",
+  "master",
+  "prop",
+  "keyframe",
+  "video",
+  "voice",
+  "music",
+] as const;
 export const SkillStageSchema = z.enum(SKILL_STAGES);
 export type SkillStage = z.infer<typeof SkillStageSchema>;
 

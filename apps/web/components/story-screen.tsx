@@ -313,6 +313,8 @@ export function StoryScreen() {
           {
             ...(mode === "import" ? { source, genre } : { idea, genre }),
             beatSheet: beatSheetId,
+            // 技能（C18）：故事阶段的技能拼进系统提示词
+            ...(project.skills.length ? { skills: project.skills } : {}),
             ...(effectiveTextModelId ? { modelId: effectiveTextModelId } : {}),
             ...(system || user
               ? { prompt: { ...(system ? { system } : {}), ...(user ? { user } : {}) } }

@@ -20,7 +20,12 @@ import {
 } from "@/lib/config-types";
 import { fetchModelConfig, invalidateModelConfig } from "@/lib/model-choice";
 import { useWorkbench } from "@/lib/workbench-store";
-import { SKILL_BODY_MAX, SKILL_NAME_MAX, type SkillStage } from "@loomina/ir";
+import {
+  SKILL_BODY_MAX,
+  SKILL_NAME_MAX,
+  type ProjectSkill,
+  type SkillStage,
+} from "@loomina/ir";
 import { SKILL_STAGE_CN } from "@loomina/pipeline";
 import { DataSection } from "@/components/data-section";
 import type { CapabilityResponse, ModelCapabilityView } from "@/lib/capabilities";
@@ -1311,6 +1316,7 @@ function SkillsSection({ readOnly }: { readOnly: boolean }) {
   const removeSkill = useWorkbench((state) => state.removeSkill);
   const importSkillsToProject = useWorkbench((state) => state.importSkills);
   const [open, setOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -1320,6 +1326,7 @@ function SkillsSection({ readOnly }: { readOnly: boolean }) {
 
   const close = () => {
     setOpen(false);
+    setEditingId(undefined);
     setName("");
     setDescription("");
     setBody("");
@@ -1327,7 +1334,23 @@ function SkillsSection({ readOnly }: { readOnly: boolean }) {
     setError(undefined);
   };
 
+  /** 点「改」：把这条技能填回表单，存的时候走同一个 updateSkill（只写改过的字段） */
+  const startEdit = (skill: ProjectSkill) => {
+    setEditingId(skill.id);
+    setName(skill.name);
+    setDescription(skill.description);
+    setBody(skill.body);
+    setStage(skill.stage);
+    setError(undefined);
+    setOpen(true);
+  };
+
   const submit = () => {
+    if (editingId) {
+      updateSkill(editingId, { name, description, stage, body });
+      close();
+      return;
+    }
     const id = addSkill({ name, description, stage, body });
     if (!id) {
       setError(useWorkbench.getState().castError ?? "这条技能加不上。");
@@ -1433,9 +1456,12 @@ function SkillsSection({ readOnly }: { readOnly: boolean }) {
         </span>
       </div>
       <p className="mt-1 max-w-[640px] text-[9.5px] leading-[1.7] text-muted-2">
-        技能是一段可复用的提示词要求，按阶段拼进出图提示词（排在风格那句之前）。
+        技能是一段可复用的提示词要求，按阶段拼进对应的提示词：故事、剧本（医生）、
+        分镜（一句话指令）、定妆 / 场景主镜 / 道具 / 关键帧（出图）、视频、配音。
+        出图类的技能排在风格那句之前；「全部阶段」对每个入口都生效。
+        配乐生成还没做（C4），配乐阶段的技能先存着、暂不生效。
         写进项目日志：刷新、换设备、回放都在。关掉只是不加进提示词，不删记录；
-        已出的图不会自动重做。
+        已经生成的内容不会自动重做。
       </p>
 
       <div className="mt-3 space-y-1.5">
@@ -1472,15 +1498,26 @@ function SkillsSection({ readOnly }: { readOnly: boolean }) {
                 {skill.body}
               </p>
             </div>
-            <button
-              type="button"
-              disabled={readOnly}
-              onClick={() => removeSkill(skill.id)}
-              title="删掉这条技能：事件日志里仍留着记录"
-              className="shrink-0 text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-pick disabled:opacity-40"
-            >
-              删
-            </button>
+            <span className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                disabled={readOnly}
+                onClick={() => startEdit(skill)}
+                title="改名字 / 阶段 / 内容：存的时候写一条技能更新"
+                className="text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-text disabled:opacity-40"
+              >
+                改
+              </button>
+              <button
+                type="button"
+                disabled={readOnly}
+                onClick={() => removeSkill(skill.id)}
+                title="删掉这条技能：事件日志里仍留着记录"
+                className="text-[9px] text-muted-2 transition-colors duration-[var(--dur)] hover:text-pick disabled:opacity-40"
+              >
+                删
+              </button>
+            </span>
           </div>
         ))}
         {skills.length === 0 && (
@@ -1538,7 +1575,7 @@ function SkillsSection({ readOnly }: { readOnly: boolean }) {
               disabled={readOnly || !name.trim() || !body.trim()}
               className="rounded-token border border-line-2 px-2.5 py-1 text-[10.5px] text-text transition-colors duration-[var(--dur)] hover:border-pick hover:text-pick disabled:opacity-40"
             >
-              存下这条
+              {editingId ? "存下改动" : "存下这条"}
             </button>
             <button
               type="button"

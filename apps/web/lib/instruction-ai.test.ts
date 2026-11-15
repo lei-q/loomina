@@ -66,6 +66,21 @@ describe("一句话的模型兜底（H19）", () => {
     expect(messages[1]?.content).toContain("再靠近一点，她手在抖");
   });
 
+  it("技能（C18）：分镜阶段的技能进系统提示词", () => {
+    const messages = instructionMessages("再靠近一点", snapshot, [
+      {
+        id: "sk-1",
+        name: "别用荷兰角",
+        description: "",
+        stage: "storyboard",
+        body: "不要用荷兰角。",
+        enabled: true,
+        createdAt: "2026-11-15T00:00:00Z",
+      },
+    ]);
+    expect(messages[0]!.content).toContain("不要用荷兰角");
+  });
+
   it("能从带代码块的输出里取出 JSON", () => {
     expect(extractJson('好的：\n```json\n{"patch":{"shotSize":"close"}}\n```')).toEqual({
       patch: { shotSize: "close" },

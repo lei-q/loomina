@@ -1,4 +1,6 @@
 import { z } from "zod";
+import type { ProjectSkill } from "@loomina/ir";
+import { compileSkills } from "@loomina/pipeline";
 import type { Project } from "@loomina/ir";
 /**
  * 剧本快照只需要「每场每镜的动作与台词」这一层形状。
@@ -196,7 +198,11 @@ export function doctorSnapshotOf(
   };
 }
 
-export function doctorMessages(snapshot: DoctorSnapshot): ChatMessage[] {
+export function doctorMessages(
+  snapshot: DoctorSnapshot,
+  skills?: ProjectSkill[],
+): ChatMessage[] {
+  const guidance = compileSkills(skills, "script");
   const mode = snapshot.mode;
   return [
     {
@@ -220,6 +226,7 @@ export function doctorMessages(snapshot: DoctorSnapshot): ChatMessage[] {
         "6. 这是 60–180 秒的竖屏短剧：前三秒要抓人，对话要短，结尾留钩子。",
         "",
         `本次模式：${DOCTOR_MODE_LABEL[mode]}（${mode}）`,
+        ...(guidance ? ["", `作者技能（必须遵守）：${guidance}`] : []),
       ].join("\n"),
     },
     {

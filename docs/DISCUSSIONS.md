@@ -8549,3 +8549,40 @@ hook 命令改为显式带上 node 所在目录：
 - 音频：要本地文档副本，或等供应商修部署。
 - 技能是否应作用于视频提示词（产品口径）。
 - 真实素材仍 0 段。
+
+## 第二百七十一次 · 2026-11-15 · 技能扩到全流程；音频按文档核对
+
+**议题**
+
+1. 按 `jtree-api.md` 核对 TTS / ASR。
+2. 技能作用到视频、故事、剧本、定妆、分镜、关键帧、配音、配乐。
+3. 技能要能像工具一样集成 / 切换 / 移除。
+
+**结论**
+
+1. **音频请求形状没问题**：文档字段与我们发送的一致（TTS `model/input/voice/response_format/speed/instructions`，
+   ASR multipart `file/model/response_format`）。文档示例的 `tts-1` 在当前 key 下不存在；
+   可用的是清单里的 `qwen-audio-3.0-tts-*` / `asr-*`。失败仍在代理部署（TTS `url error`、ASR `upstream failed`）。
+2. **技能阶段扩到 11 个（ADR-0252）**：`all / story / script / sheet / storyboard / master / prop /
+   keyframe / video / voice / music`。接入点：故事系统提示词、剧本医生、一句话指令、四类出图、
+   视频提示词、TTS `instructions`；**配乐暂不生效**（C4 音乐生成未做），界面文案已写明。
+3. **管理界面补「改」**：每条技能可就地编辑名字 / 阶段 / 说明 / 内容；开关、删除、导入导出、
+   跨空间取用保持不变。五个入口在服务端再校验 skills（≤20 条、schema 不符 400）。
+
+**验证**
+
+- pipeline 161 条测试（新增视频 / 故事 / 串味 3 条）、web 21 条医生 / 指令测试（各新增 1 条）、
+  全仓测试与 typecheck 全过。
+- 音频：`tts-1` 回 `Invalid model name`；qwen 模型仍 400 `url error`。
+
+**产物**
+
+- ADR-0252；`SKILL_STAGES` 扩枚举；`compileSkills` 接入 `buildVideoPrompt` / 故事 / 医生 / 指令 / 配音；
+  路由与 store 传 `skills`；设置页「改」与文案。
+- FEATURES C18、MODEL-GATEWAY §11.2。
+
+**待定**
+
+- 技能总量上限（提示词预算）仍是 C18 未做项。
+- 配乐阶段要等 C4。
+- 音频部署仍要供应商修。

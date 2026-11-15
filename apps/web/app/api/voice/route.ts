@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { ConfigError, TreecloudError } from "@loomina/gateway";
 import { speakLine, voiceInfo } from "@/lib/generate-voice";
 import { recordHealthEvent } from "@/lib/health-events";
+import { ProjectSkillSchema, type ProjectSkill } from "@loomina/ir";
+import { compileSkills } from "@loomina/pipeline";
+import { z } from "zod";
 
 /**
  * 出声（ADR-0085）。
@@ -24,6 +27,13 @@ function bad(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
 }
 
+function skillsOf(value: unknown): ProjectSkill[] | string {
+  if (value === undefined) return [];
+  const parsed = z.array(ProjectSkillSchema).max(20).safeParse(value);
+  if (!parsed.success) return "技能的格式不对";
+  return parsed.data;
+}
+
 export async function GET() {
   try {
     return NextResponse.json(await voiceInfo());
@@ -41,6 +51,7 @@ export async function POST(request: Request) {
     modelId?: unknown;
     speed?: unknown;
     instructions?: unknown;
+    skills?: unknown;
   } | null;
   if (!body) return bad("请求体不是 JSON");
 
@@ -56,10 +67,17 @@ export async function POST(request: Request) {
     typeof body.speed === "number" && Number.isFinite(body.speed)
       ? Math.min(2, Math.max(0.5, body.speed))
       : undefined;
-  const instructions =
-    typeof body.instructions === "string" && body.instructions.trim()
-      ? body.instructions.trim().slice(0, 300)
-      : undefined;
+  const skills = skillsOf(body.skills);
+  if (typeof skills === "string") return bad(skills);
+  // 技能（C18）：配音阶段的要求拼在表演说明后面
+  const guidance = compileSkills(skills, "voice");
+  const rawInstructions = [
+    typeof body.instructions === "string" ? body.instructions.trim() : "",
+    guidance,
+  ]
+    .filter(Boolean)
+    .join("；");
+  const instructions = rawInstructions ? rawInstructions.slice(0, 300) : undefined;
 
   try {
     const result = await speakLine({
