@@ -98,6 +98,38 @@ export type CorpusReport = {
   byRule: Record<StoryboardRule, number>;
 };
 
+/**
+ * 把一个项目按场次切成若干段素材（每场一段），供收集真实素材时用。
+ *
+ * 为什么不按镜头切：V1 / V2 / V7 判的是「场」级事实（有没有建立镜头、
+ * 说话人在不在场、这一拍的切率），切到镜头就全部失真。素材口径是
+ * **完整场次**（ADR-0248）。
+ *
+ * 切出来的每一段：只留这一场的镜头与场次，清空 take / 时间线 / 审批 / 闸门
+ * （它们引用的是被切掉的镜头）；故事、风格、资产等不随场次变化的部分原样带上。
+ */
+export function clipsByScene(project: Project): Array<{ sceneId: string; project: Project }> {
+  return project.scenes.map((scene) => {
+    const shots = project.shots
+      .filter((shot) => scene.shotIds.includes(shot.id))
+      .map((shot, index) => ({ ...shot, sceneId: scene.id, index, takeIds: [] }));
+    const clip = ProjectSchema.parse({
+      ...project,
+      id: `${project.id}-${scene.id}`,
+      title: `${project.title} · 第 ${scene.index + 1} 场`,
+      scenes: [{ ...scene, index: 0, shotIds: shots.map((shot) => shot.id) }],
+      shots,
+      takes: [],
+      voiceTakes: [],
+      timeline: { items: [] },
+      publishPackages: [],
+      approvals: [],
+      gates: [],
+    });
+    return { sceneId: scene.id, project: clip };
+  });
+}
+
 /** 读取并校验一段素材；错误信息要能直接告诉作者改哪个字段 */
 export function parseCorpusClip(raw: unknown): CorpusClip {
   if (!raw || typeof raw !== "object") {

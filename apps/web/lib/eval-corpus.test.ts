@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { EVAL_CASES } from "./rule-eval";
+import { sampleProject } from "./sample-project";
 import {
   CORPUS_TARGET,
   actualRulesOf,
+  clipsByScene,
   corpusText,
   parseCorpusClip,
   runCorpus,
@@ -81,5 +83,32 @@ describe("runCorpus", () => {
     const report = runCorpus([clipOf(negative.project, [])]);
     expect(Object.keys(report.byRule)).toHaveLength(14);
     expect(report.byRule.V6 + report.byRule.V14 >= 0).toBe(true);
+  });
+});
+
+describe("clipsByScene", () => {
+  it("一场一段，镜头数与场次一致", () => {
+    const clips = clipsByScene(sampleProject);
+    expect(clips).toHaveLength(sampleProject.scenes.length);
+    for (const clip of clips) {
+      const scene = sampleProject.scenes.find((item) => item.id === clip.sceneId)!;
+      expect(clip.project.shots).toHaveLength(scene.shotIds.length);
+      expect(clip.project.scenes).toHaveLength(1);
+      expect(clip.project.shots.every((shot) => shot.sceneId === scene.id)).toBe(true);
+    }
+  });
+
+  it("切完的素材不再引用被切掉的 take / 时间线", () => {
+    for (const clip of clipsByScene(sampleProject)) {
+      expect(clip.project.takes).toEqual([]);
+      expect(clip.project.timeline.items).toEqual([]);
+      expect(clip.project.shots.every((shot) => shot.takeIds.length === 0)).toBe(true);
+    }
+  });
+
+  it("不改原项目", () => {
+    const before = sampleProject.shots.length;
+    clipsByScene(sampleProject);
+    expect(sampleProject.shots).toHaveLength(before);
   });
 });

@@ -254,3 +254,41 @@ S1 仍未完成，且不是代码问题：
 - `MODEL_NAME` 是视频模型的旧名，仍作为 `VIDEO_MODEL` 的兜底；新配置建议直接写 `VIDEO_MODEL`。
 - 密钥只在服务端解析；浏览器拿不到 Base URL 之外的供应商凭据，`GET /api/config` 只回 `hasKey`。
 - 价目仍只来自 `ModelPrice` 表：所选模型不在表里时界面显示「无价目」，不编造单价（不变量 39 / 41）。
+
+## 十一、待供应商确认（2026-11-15，ADR-0245 / ADR-0247）
+
+这三件事在客户端侧已经做到头了，需要代理方或模型供应商给口径。复现命令都写在这里，
+免得下次再从零试一遍。
+
+### 1. 图生视频到底怎么传首帧
+
+- 模型清单（`GET /v1/models`）里视频模态有 8 个，全部 `mode: video_generation`：
+  `seedance-2.0`、`seedance-2-5`、`seedance-unfiltered`、`wan3.0-video`、
+  `wan3.0-video-unfiltered`、`wan3.0-video-prime`、`wan3.0-video-prime-unfiltered`、`minimax-h3`。
+- 现状：`content: [{ type: "image_url", image_url: { url } }]` 被 `wan3.0-*` 接受，
+  但**产物第 0 帧与输入图无关**；`seedance` / `minimax-h3` 回
+  `content or prompt is required`（prompt 明明传了），换成
+  `content: [image, text]` 又回 `video content requires exactly one media source`。
+- 要问的：
+  1. i2v 的 content 结构样例（把「一个媒体源」的完整 JSON 给一份）；
+  2. 图片是否必须是**公网可访问 URL**，data URI 是否支持；
+  3. 是否支持 multipart 上传图片文件；
+  4. 请求里 `content` 与 `prompt` 的优先级/互斥关系。
+- 判定方法不要用真实素材：塞一张纯洋红 720×1280 合成图，取产物第 0 帧看颜色
+  （ADR-0245）。HTTP 200 只代表任务建立了。
+
+### 2. TTS / ASR 的部署地址与计费
+
+- 清单里有 `qwen-audio-3.0-tts-plus` / `-tts-flash`（audio_speech）与
+  `qwen-audio-3.0-asr-flash` / `-filetrans` / `-streaming`（audio_transcription）。
+- TTS：`POST /v1/audio/speech` → 400 `url error, please check url`
+  （阿里云错误页口径，指向**部署 base URL 配错**）。
+- ASR：`POST /v1/audio/transcriptions`（multipart + `response_format=json`）→
+  400 `The upstream audio request failed`；不带 `response_format` 时提示
+  `native ASR supports response_format json or text`，说明参数层是通的。
+- 要问的：可用的部署地址、计费口径（当前价目表里没有音频，记账显示「未定价」）。
+
+### 3. `seedance` 的单价
+
+- 价目表里有 `seedance` 的历史快照，但代理的模型 id 是 `seedance-2.0` / `seedance-2-5`，
+  取不到价（R39）。两次首帧实验花了多少，目前无法从回执里读出来。

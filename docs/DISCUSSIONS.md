@@ -8328,3 +8328,53 @@ hook 命令改为显式带上 node 所在目录：
 - 供应商侧三件事：i2v 字段契约、TTS/ASR 部署地址与计费、seedance 单价。
 - 「摘录模式」要不要做（会影响 V1 / V2 / V7 的判定口径）。
 - 真实授权素材仍是 0 段；示例素材只能验链路，不能用来标定阈值。
+
+## 第二百六十六次 · 2026-11-15 · 地图补登、供应商清单、素材口径与导入器
+
+**议题**
+
+1. scout 的 M1：新文件 `apps/web/lib/eval-corpus.ts` 不属于任何子模块。
+2. 向供应商要哪几样东西（i2v 契约、音频部署、seedance 单价）。
+3. 要不要做「摘录模式」。
+4. 真实素材还是 0 段，怎么把收集路径打通。
+
+**结论**
+
+1. **地图补登，但归到 `web.review` 而不是 `web.logic`**：`eval-corpus.ts` 读 `rule-eval.ts`
+   （属于 review），放进 logic 会立刻造出 `logic ⇄ review` 循环（scout M4 当场报错）。
+   评测素材库本质上是「只读诊断」的家，review 的依赖是 `[logic, render]`，放进去没有新边。
+   导入脚本在 `scripts/**`（web.app）里读 `event-log` / `workspace-export`（属于 state），
+   于是给 web.app 的依赖补上 `state`——CLI 读日志回放，本来就是 app 层的事。
+   地图是逐文件枚举的，新文件不会自动归属——这条以后还会遇到。
+2. **供应商清单写进 [MODEL-GATEWAY.md](MODEL-GATEWAY.md) 第十一节**：i2v 的 content 结构 /
+   是否必须公网 URL / 是否支持 multipart；TTS/ASR 部署地址与计费；seedance 单价（R39）。
+   每条都带复现命令与观测到的错误，避免下次从零试。
+3. **不做摘录模式（ADR-0248）**：素材单位定为完整场次或整集。
+   理由：V1 / V2 / V7 判的是场级事实，加第二套口径会让「规则在判什么」分叉；
+   摘录模式一旦存在，素材收集会自然滑向随手剪一段，而阈值标定要的是完整场次的分布。
+   将来真要收摘录，另开 ADR 写清楚哪几条规则失效，而不是运行时偷偷关。
+4. **导入器落地（ADR-0248）**：`pnpm eval:corpus:import -- --in <工作空间导出包>
+   --source … --license …`。读 `loomina.workspace-export`，`migrateLog` + `rebuild`
+   回放出项目，`clipsByScene` 一场一段，清空 take / 时间线 / 审批 / 闸门；
+   `expected` 留空，由人看过再标；`--license` 缺失直接报错。
+
+**验证**
+
+- `scout check --local` ✅（地图补登后 M1 消失）。
+- 导入器端到端：用示例素材拼一份 `loomina.workspace-export` → 导入 → 输出
+  `clip-demo-night-shift-sc-1.json`（3 镜、`expected: []`）。
+- `pnpm eval:corpus` → 5 / 30 段不变；`pnpm eval:rules` 全过；
+  web 全量测试与 `typecheck` 通过。
+
+**产物**
+
+- ADR-0248（素材口径与导入路径）。
+- `clipsByScene` + 3 条单测；`apps/web/scripts/eval-corpus-import.ts`；
+  `package.json` 的 `eval:corpus:import`；素材 README 的导入步骤。
+- `.scout/modules.yaml`：`web.review` paths 补 `eval-corpus.ts` 两个文件，`web.app` 依赖补 `state`。
+- MODEL-GATEWAY.md 第十一节、FEATURES 的 I9。
+
+**待定**
+
+- 真实素材仍需用户导出真实项目并标注；工具这边已经没有卡点。
+- 供应商回话后：i2v 打通、音频可出声、seedance 能报价，三件事分别落 ADR。
