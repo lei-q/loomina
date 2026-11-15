@@ -8,12 +8,21 @@ import {
 import {
   type ShotPromptMaterial,
 } from "@loomina/pipeline";
-import type { Character, Id, Location, Look, ProjectSkill, Prop, SheetView } from "@loomina/ir";
+import type {
+  Character,
+  FrameAspect,
+  Id,
+  Location,
+  Look,
+  ProjectSkill,
+  Prop,
+  SheetView,
+} from "@loomina/ir";
 import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
 import { imagePlanOf } from "@/lib/image-plan";
 import { assertPromptAllowed, type PromptModeration } from "@/lib/moderation";
 import { fitReferenceBytes } from "@/lib/reference-compress";
-import { KEYFRAME_SIZE, fitsHardLimit } from "@/lib/reference-fit";
+import { fitsHardLimit, frameSizeOf } from "@/lib/reference-fit";
 
 /**
  * 服务端出图（ADR-0031 / ADR-0032）。
@@ -51,6 +60,8 @@ export type CastImageRequest =
       kind: "keyframe";
       shot: ShotPromptMaterial;
       frame?: "first" | "last";
+      /** 成片画幅（E5 / ADR-0251）：键帧与视频首帧同一档 */
+      aspect?: FrameAspect;
       skills?: ProjectSkill[];
     };
 
@@ -180,7 +191,7 @@ export async function generateCastImage(
     prompt,
     // 关键帧按竖屏 9:16 出（720x1280 是 16 的整数倍，供应商接受）；
     // 视频输出比例跟随首帧（ADR-0249），键帧出成 2:3 会让成片也变成 2:3。
-    size: request.kind === "keyframe" ? KEYFRAME_SIZE : CAST_SIZE,
+    size: request.kind === "keyframe" ? frameSizeOf(request.aspect).size : CAST_SIZE,
     ...(references.length ? { references } : {}),
     ...(refs?.length ? { referenceAssetIds: refs.map((ref) => ref.assetId as Id) } : {}),
   });

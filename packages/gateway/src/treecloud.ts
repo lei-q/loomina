@@ -309,6 +309,7 @@ function videoFrameForm(
   imageUri: string,
   seconds: number,
   resolution: string | undefined,
+  size: string | undefined,
 ): FormData | null {
   const match = /^data:([^;]+);base64,(.*)$/s.exec(imageUri);
   if (!match) return null;
@@ -317,8 +318,10 @@ function videoFrameForm(
   form.append("model", model);
   form.append("prompt", prompt);
   form.append("seconds", String(seconds));
-  const size = VIDEO_SIZE_OF[normalizeResolution(resolution)];
-  if (size) form.append("size", size);
+  const explicit = size?.trim();
+  const derived = VIDEO_SIZE_OF[normalizeResolution(resolution)];
+  if (explicit) form.append("size", explicit);
+  else if (derived) form.append("size", derived);
   else if (resolution) form.append("resolution", resolution.toUpperCase());
 
   const bytes = new Uint8Array(Buffer.from(match[2]!, "base64"));
@@ -749,10 +752,20 @@ export class TreecloudVideoAdapter implements VideoAdapter {
     // 首帧走 multipart 的 `input_reference` 文件 part（ADR-0249）。
     // 文档口径：数组 = 参考图，单个文件 / 单个对象 = 首帧；litellm 会把 JSON 对象
     // 当成文件流读（`'dict' object has no attribute 'read'`），所以 JSON 路不通。
-    const form = input.imageUri ? videoFrameForm(model, input.prompt ?? "", input.imageUri, seconds, resolution) : null;
+    const form = input.imageUri
+      ? videoFrameForm(
+          model,
+          input.prompt ?? "",
+          input.imageUri,
+          seconds,
+          resolution,
+          input.size,
+        )
+      : null;
     const body = form ?? {
       model,
       prompt: input.prompt ?? "",
+      ...(input.size ? { size: input.size } : {}),
       ...(resolution ? { resolution } : {}),
       seconds,
       // 非 data URI（http / 资产库地址）沿用旧形态：网关不替远端下载图片。

@@ -44,6 +44,11 @@ export interface VideoInput {
   imageUri?: string;
   /** 例如 "480p" / "720p" / "768p" / "2k"。不给就用适配器默认值。 */
   resolution?: string;
+  /**
+   * 目标画幅尺寸，`宽x高`（例如 `720x1280`）。给了就按它提交——
+   * 视频输出比例跟随首帧，尺寸必须和首帧同一档（ADR-0251）。
+   */
+  size?: string;
 }
 
 export interface VideoOutput {

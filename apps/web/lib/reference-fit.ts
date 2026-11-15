@@ -9,6 +9,8 @@
  * 纯函数：不碰文件、不起进程，测试直接断言参数。
  */
 
+import type { FrameAspect } from "@loomina/ir";
+
 /** 长边上限：与出图尺寸 `1024x1536` 同一量级 */
 export const REFERENCE_MAX_EDGE = 1536;
 /** 超过这个大小就压；低于它原样发，别为了几 KB 起一次 ffmpeg */
@@ -37,8 +39,29 @@ export const REFERENCE_JPEG_QUALITY = 4;
  */
 export const VIDEO_FRAME_WIDTH = 720;
 export const VIDEO_FRAME_HEIGHT = 1280;
-/** 关键帧出图尺寸字符串，供应商直接吃 */
+/** 关键帧出图尺寸字符串，供应商直接吃（默认 9:16） */
 export const KEYFRAME_SIZE = `${VIDEO_FRAME_WIDTH}x${VIDEO_FRAME_HEIGHT}`;
+
+/**
+ * 三档画幅对应的首帧 / 键帧尺寸（ADR-0251）。
+ *
+ * 宽高都必须能被 16 整除；短边固定 720，长边按比例：
+ * 9:16 → 720×1280、16:9 → 1280×720、1:1 → 720×720。
+ * 视频输出比例跟随首帧，所以键帧与首帧必须用同一档。
+ */
+export function frameSizeOf(aspect: FrameAspect | undefined): {
+  width: number;
+  height: number;
+  size: string;
+} {
+  if (aspect === "16:9") return { width: 1280, height: 720, size: "1280x720" };
+  if (aspect === "1:1") return { width: 720, height: 720, size: "720x720" };
+  return {
+    width: VIDEO_FRAME_WIDTH,
+    height: VIDEO_FRAME_HEIGHT,
+    size: KEYFRAME_SIZE,
+  };
+}
 
 export type ReferenceSize = { bytes: number; known: boolean };
 
