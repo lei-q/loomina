@@ -13,7 +13,7 @@ import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
 import { imagePlanOf } from "@/lib/image-plan";
 import { assertPromptAllowed, type PromptModeration } from "@/lib/moderation";
 import { fitReferenceBytes } from "@/lib/reference-compress";
-import { fitsHardLimit } from "@/lib/reference-fit";
+import { KEYFRAME_SIZE, fitsHardLimit } from "@/lib/reference-fit";
 
 /**
  * 服务端出图（ADR-0031 / ADR-0032）。
@@ -21,6 +21,9 @@ import { fitsHardLimit } from "@/lib/reference-fit";
  * 密钥只在服务端：浏览器永远拿不到 `API_KEY`，只拿到一张图的 data URI。
  * 这个文件只能在 Node 运行时里 import，不要被客户端组件直接引用。
  */
+
+/** 定妆 / 场景 / 道具的出图尺寸：维持原来的 2:3，不跟着关键帧改（ADR-0250） */
+const CAST_SIZE = "1024x1536";
 
 export type CastImageRequest =
   | {
@@ -175,7 +178,9 @@ export async function generateCastImage(
     // 定妆资产还不属于某一镜，用语义 id 占位，保证溯源能对上是什么东西
     shotId: built.label as Id,
     prompt,
-    size: "1024x1536",
+    // 关键帧按竖屏 9:16 出（720x1280 是 16 的整数倍，供应商接受）；
+    // 视频输出比例跟随首帧（ADR-0249），键帧出成 2:3 会让成片也变成 2:3。
+    size: request.kind === "keyframe" ? KEYFRAME_SIZE : CAST_SIZE,
     ...(references.length ? { references } : {}),
     ...(refs?.length ? { referenceAssetIds: refs.map((ref) => ref.assetId as Id) } : {}),
   });

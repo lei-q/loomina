@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
 import {
+  REFERENCE_JPEG_QUALITY,
   REFERENCE_SOFT_BYTES,
+  VIDEO_FRAME_HEIGHT,
+  VIDEO_FRAME_WIDTH,
   fitArgsOf,
   fitsHardLimit,
   shouldFitReference,
@@ -23,7 +26,10 @@ export type Compressed = {
   fitted: boolean;
 };
 
-function runFfmpeg(bytes: Uint8Array): Promise<Uint8Array | null> {
+function runFfmpeg(
+  bytes: Uint8Array,
+  args: string[] = fitArgsOf(),
+): Promise<Uint8Array | null> {
   return new Promise((resolve) => {
     let settled = false;
     const done = (value: Uint8Array | null) => {
@@ -35,7 +41,7 @@ function runFfmpeg(bytes: Uint8Array): Promise<Uint8Array | null> {
 
     let child;
     try {
-      child = spawn("ffmpeg", fitArgsOf(), { stdio: ["pipe", "pipe", "ignore"] });
+      child = spawn("ffmpeg", args, { stdio: ["pipe", "pipe", "ignore"] });
     } catch {
       done(null);
       return;
@@ -80,22 +86,33 @@ export async function fitReferenceBytes(
 }
 
 /**
- * 把一张图压到指定字节以内（视频首帧用，2026-11-15）。
+ * 视频首帧对齐到 9:16 并压到指定字节以内（ADR-0249 / ADR-0250）。
  *
- * 与 `fitReferenceBytes` 同一套 ffmpeg 管道，只是阈值不同：
- * 首帧要塞进视频请求的单个 part（1024 KB，base64 后膨胀 4/3），
- * 所以原始字节要压到约 768 KB 以内。
+ * 供应商的**输出比例跟随首帧**：喂 2:3 的键帧就出 2:3 的成片。所以这里先等比放大
+ * 铺满 720×1280、再从中心裁一刀，保证成片是竖屏 9:16；顺带压到首帧体积上限内
+ * （单个 part 1024 KB，base64 膨胀 4/3，原始字节留到约 768 KB）。
  *
- * 压不动（没 ffmpeg / 报错 / 输出空 / 压完仍超）就**原样返回**——
- * 由调用方如实报错，不悄悄发一张必然被拒的图。
+ * 裁的是两侧 / 上下边缘：中心构图不变，但**边角会被切掉**——键帧按 9:16 出
+ * （`KEYFRAME_SIZE`）时这一步近似无操作。
+ *
+ * 压不动（没 ffmpeg / 报错 / 输出空 / 仍超限）就**原样返回**，由调用方如实报错，
+ * 不悄悄发一张必然被拒的图。
  */
-export async function fitVideoFrameBytes(
+export async function fitVideoFrame(
   bytes: Uint8Array,
   mime: string,
   limitBytes: number,
 ): Promise<Compressed> {
-  if (bytes.byteLength <= limitBytes) return { bytes, mime, fitted: false };
-  const out = await runFfmpeg(bytes);
+  const out = await runFfmpeg(bytes, [
+    "-vf",
+    `scale=${VIDEO_FRAME_WIDTH}:${VIDEO_FRAME_HEIGHT}:force_original_aspect_ratio=increase,` +
+      `crop=${VIDEO_FRAME_WIDTH}:${VIDEO_FRAME_HEIGHT}`,
+    "-q:v",
+    String(REFERENCE_JPEG_QUALITY),
+    "-f",
+    "mjpeg",
+    "pipe:1",
+  ]);
   if (!out || out.byteLength === 0) return { bytes, mime, fitted: false };
   if (out.byteLength > limitBytes) return { bytes, mime, fitted: false };
   return { bytes: out, mime: "image/jpeg", fitted: true };

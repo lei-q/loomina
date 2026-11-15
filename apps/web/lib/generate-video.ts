@@ -9,7 +9,7 @@ import { buildVideoPrompt, type ShotPromptMaterial } from "@loomina/pipeline";
 import type { Id } from "@loomina/ir";
 import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
 import { assertPromptAllowed, type PromptModeration } from "@/lib/moderation";
-import { fitVideoFrameBytes } from "@/lib/reference-compress";
+import { fitVideoFrame } from "@/lib/reference-compress";
 import { VIDEO_FRAME_SOFT_BYTES } from "@/lib/reference-fit";
 
 /**
@@ -100,20 +100,20 @@ function submitRetryable(error: unknown): boolean {
 }
 
 /**
- * 首帧要不要压（2026-11-15 实测）。
+ * 首帧对齐画幅并压到限值内（ADR-0249 / ADR-0250）。
  *
- * `POST /v1/videos` 的首帧走 `image_url` 的 data URI，代理按单个 part 限 1024 KB。
- * 一张 1024×1536 的 PNG 有 1.2 MB，base64 后约 1.6 MB——直接被 400 拒掉
- * （`Part exceeded maximum size of 1024KB.`）。所以发之前压到 768 KB 以内。
+ * 两件事一起做：
+ * 1. **对齐 9:16**——供应商的输出比例跟随首帧，2:3 的键帧会出 2:3 的成片；
+ * 2. **压体积**——首帧作为 multipart 的单个 part 提交，代理限 1024 KB。
  *
- * 不是 data URI（http(s) 地址）就不动：那种不占 part 体积。
+ * 不是 data URI（http(s) 地址）就不动：那种不占 part 体积，也不由我们改。
  */
 async function frameForSubmit(firstFrame?: string): Promise<string | undefined> {
   if (!firstFrame || !firstFrame.startsWith("data:")) return firstFrame;
   const parts = /^data:([^;]+);base64,(.*)$/s.exec(firstFrame);
   if (!parts) return firstFrame;
   const bytes = new Uint8Array(Buffer.from(parts[2]!, "base64"));
-  const fitted = await fitVideoFrameBytes(bytes, parts[1]!, VIDEO_FRAME_SOFT_BYTES);
+  const fitted = await fitVideoFrame(bytes, parts[1]!, VIDEO_FRAME_SOFT_BYTES);
   if (!fitted.fitted) return firstFrame;
   return `data:${fitted.mime};base64,${Buffer.from(fitted.bytes).toString("base64")}`;
 }

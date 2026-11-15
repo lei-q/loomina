@@ -28,6 +28,18 @@ export const VIDEO_FRAME_SOFT_BYTES = Math.floor(VIDEO_FRAME_PART_BYTES * 0.72);
 /** MJPEG 质量：2–5 肉眼几乎无差，4 在体积与细节之间比较稳 */
 export const REFERENCE_JPEG_QUALITY = 4;
 
+/**
+ * 竖屏 9:16 的画幅（ADR-0250）。
+ *
+ * 关键帧按这个尺寸出、视频首帧按这个尺寸对齐：视频输出比例跟随首帧，
+ * 键帧出成 2:3（1024×1536）会让成片也变成 2:3，平台那边还要再裁。
+ * 720 / 1280 都是 16 的整数倍——供应商只收能被 16 整除的尺寸。
+ */
+export const VIDEO_FRAME_WIDTH = 720;
+export const VIDEO_FRAME_HEIGHT = 1280;
+/** 关键帧出图尺寸字符串，供应商直接吃 */
+export const KEYFRAME_SIZE = `${VIDEO_FRAME_WIDTH}x${VIDEO_FRAME_HEIGHT}`;
+
 export type ReferenceSize = { bytes: number; known: boolean };
 
 /**

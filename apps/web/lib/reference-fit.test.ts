@@ -3,6 +3,9 @@ import {
   REFERENCE_HARD_BYTES,
   REFERENCE_MAX_EDGE,
   REFERENCE_SOFT_BYTES,
+  KEYFRAME_SIZE,
+  VIDEO_FRAME_HEIGHT,
+  VIDEO_FRAME_WIDTH,
   estimateBytesOf,
   fitArgsOf,
   fitsHardLimit,
@@ -53,5 +56,20 @@ describe("参考图压缩的阈值口径（B2 / ADR-0206）", () => {
     expect(shouldFitReference({ bytes: 699276, known: true })).toBe(false);
     expect(shouldFitReference({ bytes: 3_000_000, known: true })).toBe(true);
     expect(fitsHardLimit(73_647)).toBe(true);
+  });
+});
+
+describe("关键帧与视频首帧的画幅（ADR-0250）", () => {
+  it("是 9:16，且宽高都能被 16 整除", () => {
+    expect(VIDEO_FRAME_WIDTH % 16).toBe(0);
+    expect(VIDEO_FRAME_HEIGHT % 16).toBe(0);
+    expect(VIDEO_FRAME_WIDTH * 16).toBe(VIDEO_FRAME_HEIGHT * 9);
+    expect(KEYFRAME_SIZE).toBe(`${VIDEO_FRAME_WIDTH}x${VIDEO_FRAME_HEIGHT}`);
+  });
+
+  it("1080x1920 不是一个可选尺寸：1080 不能被 16 整除", () => {
+    // 供应商实测 `1080x1920` 回 400（width/height must both be divisible by 16），
+    // 所以这里锁住「别把 1080p 当成出图尺寸随手写回来」
+    expect(1080 % 16).not.toBe(0);
   });
 });
