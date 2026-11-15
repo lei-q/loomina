@@ -29,7 +29,21 @@ export const VIDEO_PRICES: VideoPriceQuote[] = [
   { model: "wan3.0-video-prime", resolution: "1080p", cnyPerSecond: 1.8 },
 ];
 
+/**
+ * 图像价目（元 / 张）。
+ *
+ * **2026-11-15 实测**：带 `-c` 后缀的分组（`gpt-image-2-c` 等）在上游全部返回
+ * 503 `The upstream image response could not be validated`——那是代理的计费配置坏了，
+ * 与提示词、尺寸无关。不带后缀的 `gpt-image-2` 正常出图（实测 1.2 MB PNG）。
+ *
+ * 所以价目表里同时留两类：带 `-c` 的是旧配置（保留价格以便对账历史），
+ * 不带后缀的是当前可用的。**新配置应该用不带后缀的那个。**
+ */
 export const IMAGE_PRICES: ImagePriceQuote[] = [
+  // 当前可用（2026-11-15 实测）
+  { model: "gpt-image-2", cnyPerImage: 0.12 },
+  { model: "gemini-2.5-flash-image", cnyPerImage: 0.12 },
+  // 旧分组：上游 503，保留价格以便对账历史账单
   { model: "gpt-image-2-c", cnyPerImage: 0.12 },
   { model: "gpt-image-2.5-flare-c", cnyPerImage: 0.12 },
   { model: "gpt-image-2.5-sunburst-c", cnyPerImage: 0.12 },
