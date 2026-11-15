@@ -8183,3 +8183,148 @@ RISKS.md 里「供应商授权」这条阻塞记了很久。这次去查实际�
 - 图像接口仍 503，「关键帧 → 图生视频」主路径不通，只有 `--text-only` 能出片。
 - `data:` URI 装 4.6 MB 视频会让内存与日志变大，对象存储可用时应改存资产。
 - 只验证了 `minimax-h3 @ 720p` 一条组合。
+
+## 第二百六十三次 · 2026-11-15 · scout 每轮注入 hook 其实没生效（ADR-0244 补正）
+
+**问题**
+
+ADR-0244 加的 `UserPromptSubmit` hook 号称「每轮注入地图」，实际**每一轮都没注入**。
+验证时是在终端里跑同一条命令（shell 已加载 nvm，`node` 在 PATH 上），所以没暴露问题。
+
+**根因**
+
+1. `scout` 的 shebang 是 `#!/usr/bin/env node`——只给 `scout` 绝对路径不够，
+   `env` 还要在 PATH 里找到 `node`。
+2. Claude Code 的 hook 进程 PATH 只有 `/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin`，
+   nvm 与 Homebrew 的 node 都不在里面（用临时 `PostToolUse` hook 打印 env 实测）。
+3. 命令尾部 `2>/dev/null || true` 把 `env: node: No such file or directory`
+   （退出码 127）全部吞掉，hook 退出 0、stdout 为空——失败完全静默。
+
+**结论**
+
+hook 命令改为显式带上 node 所在目录：
+
+```json
+"command": "cd /Users/lay/VscodeProject/loomina && PATH=\"/Users/lay/.nvm/versions/node/v24.12.0/bin:$PATH\" scout context --brief || true"
+```
+
+- 去掉 `2>/dev/null`：失败要看得见，不能再静默；
+- 保留 `|| true`：hook 出问题不挡住对话；
+- PATH 前缀同时解决 `scout` 定位与 shebang 找 `node` 两件事。
+
+**验证**
+
+用 **hook 的真实 PATH**（`env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin`）
+跑新命令 → 退出 0、输出 28 行（模块树 / 概念归属 / 三条关键流程）；旧命令同条件下输出 0 行。
+另外确认 `.claude/settings.json` 的改动能被运行中的会话热加载（临时 hook 当场触发）。
+
+**同源问题（未修）**
+
+1. 插件 `SessionStart` 脚本用 `command -v scout` 判断，同样找不到 nvm 里的 scout，
+   于是每会话开始都误报「没有安装 scout 命令」。地图现由 UserPromptSubmit 每轮注入，
+   这条误报只是噪音。
+2. `scout hook install` 生成的 `post-commit` 用裸 `node`。在终端提交正常；
+   由 Claude 在会话里提交时 PATH 里没有 node，检查会被 `|| true` 静默跳过。
+
+**待定**
+
+- 是否把插件 `session-start.sh` 改成绝对路径（需改 nest-scout 仓库并更新插件）。
+- 是否给 `post-commit` 补绝对 node 路径，或在上游改用 shebang 兼容的调用方式。
+
+> 2026-11-15 用户裁定：**nest-scout 任何代码都不动**，上述两条撤回；Loomina 目录下的改动保留。
+> 需要检查时手动带 PATH 跑 `scout check --local --brief`。
+
+## 第二百六十四次 · 2026-11-15 · wan3.0 收下首帧但不用它；I9 素材库起步
+
+**议题**
+
+1. 验 `wan3.0-video-unfiltered` 到底能不能吃首帧（ADR-0243 只测了 `minimax-h3`）。
+2. TTS / ASR 当前是否仍不可用。
+3. I9 评测集的下一步（30 段真实素材那一档怎么起步）。
+
+**结论**
+
+1. **图生视频仍未打通，且不是尺寸问题。** 真实探针全绿（`POST /v1/videos` 200、
+   轮询到 completed、content 200、720×1280 / 4.04 秒 / ¥2.52），但视频第 0 帧与参考首帧构图不同。
+   判定性实验：纯洋红合成首帧塞进去，视频第 0 帧是**一座书房**，洋红完全没出现，
+   而且 `480p` 输出是 854×480 横屏。→ `content[].image_url` 被接受、被忽略。
+   决定与教训写进 ADR-0245；ADR-0243 标「被取代」。
+2. **TTS 仍不可用**：`POST /v1/audio/speech` 对 `seedance-2.0` 回 404
+   「No deployments available … in cooldown」（此前是 403 分组未授权）；
+   `ASR_MODEL` 仍未配，`/v1/models` 返回空列表，无法从代理侧枚举可用音频模型。
+   这仍是外部阻塞，代码侧无需改。
+3. **I9 素材库落了骨架（ADR-0246）**：一段素材一个 JSON（`meta` / `project` / `expected`），
+   `pnpm eval:corpus` 跑出违规率、景别熵、与人工标注的精确率 / 召回率；
+   授权必填、`meta.id` 必须等于文件名；素材 0 / 30，缺素材不判失败。
+   写这个模块时顺手定了一条口径：**存人工标注，不存规则输出**——否则规则一改标注就过期。
+
+**验证**
+
+- `pnpm probe:s1 --shots 1 --budget 5` → 通过 1/1，150.9 秒，¥2.52，产物 `ffprobe` 正常。
+- 洋红判定实验 → 视频 854×480、4.04 秒、1.7 MB；第 0 帧书房，无洋红。
+- `pnpm eval:corpus` → 「0 / 30 段，0 镜」；`pnpm --filter @loomina/web exec vitest run lib/eval-corpus.test.ts`
+  → 7 条全过；`pnpm --filter @loomina/web typecheck` 通过。
+
+**产物**
+
+- ADR-0245（首帧语义）、ADR-0246（素材库格式）；ADR-0243 状态改「已废弃」。
+- `apps/web/lib/eval-corpus.ts`、`eval-corpus.test.ts`、`apps/web/scripts/eval-corpus.ts`、
+  `apps/web/scripts/evals/corpus/README.md`、`package.json` 的 `eval:corpus`。
+- FEATURES 的 B3 / I9、RISKS 的 B3 行同步更新。
+
+**待定**
+
+- 真正吃首帧的路由还没有：`minimax-h3` 拒小图的原因未查清；seedance 单价未知，
+  验之前先问价（R39）。
+- 30 段素材需要授权素材，属长期活；第一批 5 段到位后再定阈值怎么选。
+
+## 第二百六十五次 · 2026-11-15 · 首帧形状穷举完、音频部署坏、素材库跑出第一份分
+
+**议题**
+
+1. 找真正吃首帧的视频路由。
+2. 收 5 段素材，跑第一轮标定。
+3. 向供应商确认 TTS / ASR 分组。
+4. 提交本轮改动。
+
+**结论**
+
+1. **首帧：客户端能试的都试完了（ADR-0247）。** 先读 `GET /v1/models`（76 个，带 `mode`），
+   再穷举请求体形状：`content[image_url]` / `content[text+image]` / `content` 裸字符串 /
+   `content` 对象 / 顶层 `image`、`images`、`image_url`、`first_frame`、`input_reference`。
+   结果：`wan3.0` 全接受但**全部不用图**（洋红第 0 帧仍是书房，480p 还是 854×480 横屏）；
+   `seedance` / `minimax` 只接受「会被忽略」的形状，正确形状反被上游判
+   `content or prompt is required` / `requires exactly one media source`。
+   **客户端侧到此为止，下一步只能要供应商给 i2v 契约。**
+2. **音频不是「没授权」，是「部署坏了」（ADR-0247）。** 清单里有
+   `qwen-audio-3.0-tts-plus/flash` 与 `qwen-audio-3.0-asr-*`；TTS 回 400
+   `url error, please check url`（阿里云侧部署地址错），ASR 回 400
+   `The upstream audio request failed`（真实 wav）。**顺带发现自己的错**：
+   `SEED_MODELS.tts` 一直写着 `seedance-2.0`——一个视频模型。已改为
+   `qwen-audio-3.0-tts-flash`，`ASR_MODEL` 仍留空。
+3. **素材库第一次跑分（ADR-0246 落地节）。** 用示例项目「夜班」的 5 个场次各切一段，
+   逐段人工标注：违规率 216.67 / 100 镜、景别熵 1.555、精确率 71% / 召回率 100%。
+   **误报 4 条全是摘录造成的**（V1 场首无建立镜头 ×2、V2 画外音 ×1、V7 切率 ×1），
+   由此定口径：素材按完整场次 / 单集收，不切摘录；要收摘录就先给规则加「摘录模式」。
+4. 改动提交到分支（见下）。
+
+**验证**
+
+- 视频形状矩阵：11 种形状 × 3 个模型，用洋红合成首帧判产物第 0 帧；
+  失败的请求不产生费用（400），成功的逐个下载抽帧。
+- 音频：`/v1/models` 200（76 个）；TTS 400 `url error`；ASR 400 `upstream audio request failed`。
+- `pnpm eval:corpus` → 5 / 30 段、12 镜、精确率 71% / 召回率 100%；
+  `pnpm eval:rules` 不受影响；web 全量测试与 `typecheck` 通过。
+
+**产物**
+
+- ADR-0247（首帧形状穷举 + 音频部署现状）；ADR-0246 追加落地节。
+- `SEED_MODELS.tts` 改为 `qwen-audio-3.0-tts-flash`；本地 `TTS_MODEL` 同步。
+- 素材 5 段（`apps/web/scripts/evals/corpus/clip-demo-*.json`）与 README 的跑分结论。
+- FEATURES 的 B3 / C1 / D1 / I9、RISKS 的 B3 / C1 / D1 同步更新。
+
+**待定**
+
+- 供应商侧三件事：i2v 字段契约、TTS/ASR 部署地址与计费、seedance 单价。
+- 「摘录模式」要不要做（会影响 V1 / V2 / V7 的判定口径）。
+- 真实授权素材仍是 0 段；示例素材只能验链路，不能用来标定阈值。

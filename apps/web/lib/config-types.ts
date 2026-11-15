@@ -34,7 +34,10 @@ export const SEED_MODELS: Record<Modality, string | undefined> = {
   text: "deepseek-v4.1-flash-1017",
   image: "gpt-image-2",
   video: "wan3.0-video-unfiltered",
-  tts: "seedance-2.0",
+  // 2026-11-15：原先写的是 seedance-2.0——那是视频模型，`/v1/audio/speech` 只会报错。
+  // 代理的模型清单里音频模态是 qwen-audio-3.0-tts-*；上游部署当前仍报 URL 错（ADR-0247）。
+  tts: "qwen-audio-3.0-tts-flash",
+  // ASR 同理：清单里有 qwen-audio-3.0-asr-*，但上游部署未通，保持「未配置」让界面如实说（ADR-0087）。
   asr: undefined,
 };
 
