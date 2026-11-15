@@ -156,17 +156,24 @@ import { modelIdFor } from "@/lib/model-choice";
 import type { Modality } from "@/lib/config-types";
 import { sampleProject } from "@/lib/sample-project";
 import { projectFromSetup, setupSourceProblem } from "@/lib/workspace-template";
+import { castActions } from "@/lib/workbench-actions-cast";
 import { workspaceActions } from "@/lib/workbench-actions-workspace";
+import { generateOne, lockedStage } from "@/lib/workbench-generate";
 import { batchPlanOf, type BatchPatch } from "@/lib/shot-batch";
 import {
   appendOnly,
   bootstrap,
   canonicalSpeakerColors,
+  clipReason,
   isLocked,
   nextOpenShotId,
+  promptKeyOf,
+  referenceImagesOf,
+  referenceNotice,
   registerWorkspace as registerWorkspaceRow,
   removalUndoEvents,
   restack,
+  withPromptOverride,
 } from "@/lib/workbench-helpers";
 import {
   workspaceExportFileName,
@@ -231,80 +238,6 @@ const VIDEO_RETRY_DELAYS_MS = [1200, 3000];
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/** 手改过的提示词（ADR-0148）：没有就什么都不加，让服务端按默认那段生成 */
-function withPromptOverride(
-  get: () => WorkbenchState,
-  key: string,
-): { prompt?: string } {
-  const prompt = get().promptOverrides[key]?.trim();
-  return prompt ? { prompt } : {};
-}
-
-/** 这次生成的提示词覆盖键（H14）：与各生成动作传给 `withPromptOverride` 的键一一对应 */
-function promptKeyOf(input: { key: string; job: GenerateJob }): string {
-  if (input.job.kind === "sheet") return `sheet:${input.key}:${input.job.angle}`;
-  if (input.job.kind === "master") return `master:${input.key}`;
-  if (input.job.kind === "prop") return `prop:${input.key}`;
-  if (input.job.kind === "keyframe") {
-    // 关键帧的进度键是 `${shotId}:${frame}`，提示词键是 `keyframe:${shotId}:${frame}`
-    return `keyframe:${input.key}`;
-  }
-  return `other:${input.key}`;
-}
-
-/**
- * 把资产 id 变成「随请求发出去的参考图」（B2 / ADR-0162）。
- *
- * 只收有地址的图；缺的、不是图的都跳过——服务端还会再按字节校验一次，
- * 这里少带一张比带一个空地址更安全。最多 4 张，与 `MAX_REFERENCES` 对齐。
- */
-function referenceImagesOf(
-  project: Project,
-  refs: { assetId: string; label: string }[],
-): { assetId: string; uri: string; label: string }[] {
-  const out: { assetId: string; uri: string; label: string }[] = [];
-  const seen = new Set<string>();
-  for (const ref of refs) {
-    if (out.length >= 4) break;
-    if (seen.has(ref.assetId)) continue;
-    const asset = project.assets.find((item) => item.id === ref.assetId);
-    if (!asset?.uri || asset.kind !== "image") continue;
-    seen.add(ref.assetId);
-    out.push({ assetId: ref.assetId, uri: asset.uri, label: ref.label });
-  }
-  return out;
-}
-
-function clipReason(reason: string): string {
-  return reason.length > 240 ? `${reason.slice(0, 240)}…` : reason;
-}
-
-/**
- * 出图之后那句「参考图到底发出去没有」（B2 / ADR-0162）。
- *
- * 三种情况分开说：真的带上了、读不到字节所以少带、供应商不收于是退回纯文生图。
- * 没说清的话，作者会以为身份一致性已经靠参考图锁住了（准则 P3 / P15）。
- */
-function referenceNotice(
-  result:
-    | { mode?: "edits" | "prompt-only"; sent?: number; missing?: string[]; fitted?: number }
-    | undefined,
-): string | undefined {
-  if (!result) return undefined;
-  const sent = result.sent ?? 0;
-  const missing = result.missing ?? [];
-  const fitted = result.fitted ?? 0;
-  const fittedTail = fitted > 0 ? `；其中 ${fitted} 张太大，出图前压到长边 1536（等比，不裁剪）` : "";
-  if (result.mode === "edits" && sent > 0) {
-    const tail = missing.length ? `；另有 ${missing.length} 张读不到字节没发出去（${missing.join("、")}）` : "";
-    return `已带 ${sent} 张参考图生成${tail}${fittedTail}。`;
-  }
-  if (missing.length > 0) {
-    return `参考图读不到字节（${missing.join("、")}），这一张按纯文生图生成。`;
-  }
-  return "这一张按纯文生图生成：供应商没有接收参考图。";
 }
 
 /**
@@ -401,209 +334,6 @@ type Store = {
   set: (partial: Partial<WorkbenchState>) => void;
 };
 
-/**
- * 阶段硬锁（F8）的第二道闸：花钱 / 调接口之前先问一句。
- *
- * 写状态的闸口能拦住「改了没生效」，但生成是先请求、后落事件——
- * 等快照写回才拦就白花了钱。所以每个会花钱的动作开头先过这里。
- */
-function lockedStage(
-  { get, set }: Store,
-  stage: GateStage,
-): boolean {
-  const { project, mode } = get();
-  const lock = stageLockOf(project, stage, mode);
-  if (!lock) return false;
-  set({ lockedNotice: lock.message });
-  return true;
-}
-
-/**
- * 出一张图，落一条 `asset.updated`。
- *
- * 失败写一句人话并返回 false：批量生成据此停下，不把后面的也浪费掉。
- */
-async function generateOne(
-  { get, set }: Store,
-  input: {
-    /** 进度记在谁头上：角色 / 场景 / 道具的 id */
-    key: string;
-    /** 出错时点名的对象 */
-    label: string;
-    assetId: string;
-    job: GenerateJob;
-    body: Record<string, unknown>;
-    /** 这一张属于哪一镜：单镜上限按它算（H10） */
-    shotId?: string;
-    /** 这张图还要改项目结构时，在这里追加事件（例如首帧挂回镜头） */
-    after?: (assetId: string, at: string) => ProjectEvent | ProjectEvent[] | undefined;
-    /** 溯源里记下这一张引用了哪些已锁定的锚点 */
-    referenceAssetIds?: string[];
-    /**
-     * 随请求真正发出去的参考图（B2 / ADR-0162）。
-     *
-     * 只传地址与标签：字节由服务端从资产库读，浏览器不重复上传。
-     * 不传就是纯文生图——这和以前一样，不改任何已有路径的行为。
-     */
-    references?: { assetId: string; uri?: string; label: string }[];
-  },
-): Promise<boolean> {
-  const setJob = (value: GenerateJob | undefined) =>
-    set({ jobs: { ...get().jobs, [input.key]: value } });
-
-  // 提交前拦：知道单价、且这一张会超预算，就不发请求（准则 P14 / H10）。
-  // 不知道单价时不拦——报不出价的时候宁可如实说，也不假拦。
-  const unit = get().imageCny;
-  if (unit !== undefined) {
-    const project = get().project;
-    const { spent } = spendOf(project);
-    const budget = project.budgetCny;
-    const keep = project.onBudgetExceed === "keep";
-    if (spent + unit > budget) {
-      set({
-        castError: keep
-          ? `「${input.label}」超出预算：这一笔 ¥${unit.toFixed(2)}，已花 ¥${spent.toFixed(2)} / 预算 ¥${budget.toFixed(2)}。按「超预算保留现有结果」，这次不重新生成，这一镜沿用手上已有的画面。`
-          : `「${input.label}」超出预算：这一笔 ¥${unit.toFixed(2)}，已花 ¥${spent.toFixed(2)} / 预算 ¥${budget.toFixed(2)}。先提高预算再生成。`,
-      });
-      return false;
-    }
-    // 单镜上限（H10）：先到的那条拦
-    const shot = input.shotId
-      ? project.shots.find((item) => item.id === input.shotId)
-      : undefined;
-    if (shot?.budgetCny !== undefined) {
-      const shotSpend = shotSpendOf(project, shot.id);
-      if (shotSpend.spent + unit > shot.budgetCny) {
-        set({
-          castError: keep
-            ? `「${input.label}」超出这一镜的上限：这一笔 ¥${unit.toFixed(2)}，这一镜已花 ¥${shotSpend.spent.toFixed(2)} / 上限 ¥${shot.budgetCny.toFixed(2)}。按「超预算保留现有结果」，这次不重新生成，这一镜沿用手上已有的画面。`
-            : `「${input.label}」超出这一镜的上限：这一笔 ¥${unit.toFixed(2)}，这一镜已花 ¥${shotSpend.spent.toFixed(2)} / 上限 ¥${shot.budgetCny.toFixed(2)}。先在分镜页提高单镜上限，或改项目预算。`,
-        });
-        return false;
-      }
-    }
-  }
-
-  // 结果缓存（H14 / ADR-0208）：同一套输入（模型 + 最终提示词 + 参考图内容）
-  // 已经出过，就直接把那张图接到这一格的资产位上——不发请求、不花钱。
-  // 提示词用与服务端同一个 `imagePlanOf`：两边各写一遍就会漂。
-  if (get().reuseCache) {
-    const plan = imagePlanOf(input.body as unknown as CastImageRequest);
-    const prompt = withPromptOverride(get, promptKeyOf(input)).prompt ?? plan.prompt;
-    // 参考图按内容指纹比，id 列表与出处里记的 `referenceAssetIds` 完全一致：
-    // 两侧用不同的列表，等于把「同一套输入」判成两套（这里踩过一次）
-    const referenceHashes = referenceHashesOf(
-      get().project,
-      input.referenceAssetIds ?? [],
-    );
-    // 模型可能没被固定 / 选定（服务端会用该模态的默认模型）。
-    // 这种情况下键里用空串占位：只要两次都是「没选模型」，用的就是同一个默认模型。
-    const imageModel = modelIdFor("image", get().project.models) ?? "";
-    // 不排除这一格自己：重生成时「这一格上一次出的图」正是要复用的对象，
-    // 输入没变就该命中它（排除自己会让缓存永不命中）
-    const hit = findCachedAsset(get().project, {
-      modelId: imageModel,
-      prompt,
-      referenceHashes,
-    });
-    if (hit) {
-      const at = stamp();
-      const events = reuseAssetEvents({
-        assetId: input.assetId,
-        hit,
-        at,
-        referenceAssetIds: input.referenceAssetIds ?? [],
-      });
-      const extra = input.after?.(input.assetId, at);
-      const appended = [
-        ...events,
-        ...(extra === undefined ? [] : Array.isArray(extra) ? extra : [extra]),
-      ];
-      let project = get().project;
-      for (const item of appended) project = applyEvent(project, item);
-      set({
-        project,
-        events: [...get().events, ...appended],
-        castError: undefined,
-        generationNotice: `复用了同一套输入已经出过的那张图（模型 ${hit.modelId}）：没有重新生成，也没花钱。想换一张就关掉「结果复用」再生成。`,
-      });
-      return true;
-    }
-  }
-
-  setJob(input.job);
-  set({ generationNotice: undefined });
-  try {
-    const response = await fetch("/api/asset", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...input.body,
-        modelId: modelIdFor("image", get().project.models),
-        ...(input.references?.length ? { references: input.references } : {}),
-      }),
-    });
-    const payload = (await response.json()) as {
-      uri?: string;
-      model?: string;
-      prompt?: string;
-      cny?: number;
-      error?: string;
-      references?: {
-        mode?: "edits" | "prompt-only";
-        sent?: number;
-        missing?: string[];
-        /** 其中几张太大、出图前压过（B2 / ADR-0206） */
-        fitted?: number;
-      };
-    };
-    if (!response.ok || !payload.uri) {
-      throw new Error(payload.error ?? `生成失败（${response.status}）`);
-    }
-
-    const at = stamp();
-    // 大图先进本机资产库（H3 / ADR-0128）：事件里只留地址，日志不背 base64
-    const uri = await persistAsset(payload.uri);
-    const event: ProjectEvent = {
-      type: "asset.updated",
-      at,
-      asset: {
-        id: input.assetId,
-        kind: "image",
-        source: "generated",
-        uri,
-        mime: "image/png",
-        // 价目表给了单价就记上；没给就让 costCny 缺省，界面如实说"无价目"
-        costCny: typeof payload.cny === "number" ? payload.cny : undefined,
-        provenance: {
-          modelId: payload.model ?? "unknown",
-          prompt: payload.prompt,
-          referenceAssetIds: input.referenceAssetIds ?? [],
-          createdAt: at,
-        },
-        createdAt: at,
-      },
-    };
-    const extra = input.after?.(input.assetId, at);
-    const appended = [
-      event,
-      ...(extra === undefined ? [] : Array.isArray(extra) ? extra : [extra]),
-    ];
-    let project = get().project;
-    for (const item of appended) project = applyEvent(project, item);
-    set({ project, events: [...get().events, ...appended], generationNotice: referenceNotice(payload.references) });
-    setJob(undefined);
-    return true;
-  } catch (error) {
-    setJob(undefined);
-    set({
-      castError:
-        error instanceof Error ? `「${input.label}」${error.message}` : "生成失败",
-    });
-    return false;
-  }
-}
-
 /** hydrate 只跑一次；ready 之前不写存储，免得把已存的项目盖成示例项目。 */
 let hydrated = false;
 let ready = false;
@@ -612,6 +342,7 @@ let ready = false;
 const startingWorkspace = rememberedWorkspace();
 
 /** 把当前工作空间登记进本机的列表（第一次打开老日志时也走这里） */
+
 function storageMessage(error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error);
   return `本地保存失败：${detail.slice(0, 100)}`;
@@ -726,6 +457,44 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
   // 工作空间那七个动作在单独的切片里（见 workbench-actions-workspace.ts）：
   // 它们只碰本机登记表与各空间日志，与项目内容无关，是最独立的一组。
   ...workspaceActions({ get, set }, stamp),
+  // 定妆台的锁定与出图在单独的切片里（见 workbench-actions-cast.ts）：
+  // 它们会花钱，必须共用同一份 lockedStage 闸口与 generateOne。
+  ...castActions({ get, set }, stamp),
+  restoreSheetAsset: (assetId, version) => {
+    if (get().readOnly) return false;
+    if (lockedStage({ get, set }, "cast")) return false;
+    const { project, events } = get();
+    const character = project.characters.find((item) =>
+      SHEET_ANGLES.some((angle) => item.sheet[angle] === assetId),
+    );
+    if (!character) {
+      set({ castError: "这张图不属于任何角色的三视图。" });
+      return false;
+    }
+    if (isLocked(project, "character", character.id)) {
+      set({ castError: "定妆已锁定：先解锁再换版本。" });
+      return false;
+    }
+    if (!version.uri || version.id !== assetId) {
+      set({ castError: "这一版没有图，换不了。" });
+      return false;
+    }
+    const current = project.assets.find((item) => item.id === assetId);
+    if (current?.uri === version.uri) return false;
+
+    const event: ProjectEvent = {
+      type: "asset.updated",
+      at: stamp(),
+      asset: { ...version, id: assetId },
+    };
+    set({
+      project: applyEvent(project, event),
+      events: [...events, event],
+      castError: undefined,
+    });
+    return true;
+  },
+
 
   project: sampleProject,
   events: initialEvents,
@@ -2342,219 +2111,6 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     });
   },
 
-  lockCast: (targetType, targetId) => {
-    if (get().readOnly) return;
-    const { project, events } = get();
-    const readiness = castReadiness(project);
-    const item = [
-      ...readiness.characters,
-      ...readiness.locations,
-      ...readiness.props,
-    ].find(
-      (entry) => entry.targetType === targetType && entry.targetId === targetId,
-    );
-    // 缺资产、缺角度的不许锁：闸门的意义就在这里
-    if (!item || item.status === "incomplete") return;
-
-    const at = stamp();
-    const event: ProjectEvent = {
-      type: "approval.updated",
-      at,
-      approval: {
-        id: `ap-${targetType}-${targetId}`,
-        targetType,
-        targetId,
-        status: "approved",
-        approvedAt: at,
-        lockedAssetIds: item.assetIds,
-      },
-    };
-    set({ project: applyEvent(project, event), events: [...events, event] });
-  },
-
-  unlockCast: (targetType, targetId) => {
-    if (get().readOnly) return;
-    const { project, events } = get();
-    const existing = project.approvals.find(
-      (item) => item.targetType === targetType && item.targetId === targetId,
-    );
-    if (!existing) return;
-
-    const event: ProjectEvent = {
-      type: "approval.updated",
-      at: stamp(),
-      approval: {
-        id: existing.id,
-        targetType,
-        targetId,
-        status: "pending",
-        lockedAssetIds: [],
-        note: existing.note,
-      },
-    };
-    set({ project: applyEvent(project, event), events: [...events, event] });
-  },
-
-  generateSheet: async (characterId) => {
-    if (get().readOnly) return;
-    if (lockedStage({ get, set }, "cast")) return;
-    const { project } = get();
-    const character = project.characters.find((item) => item.id === characterId);
-    if (!character) return;
-    // 锁定的定妆不能被覆盖：要重做先解锁（准则 P14）
-    if (isLocked(project, "character", characterId)) return;
-    // 旧项目 / 还没补格子的角色（ADR-0144）：点「生成三视图」先补一条
-    // `character.updated { sheet }` 把四个资产位占上，再一格一格出图。
-    // 已有的格子（可能是作者换过的 id）原样保留。
-    let active = character;
-    if (SHEET_ANGLES.some((angle) => !character.sheet[angle])) {
-      const sheet: Character["sheet"] = sheetSlotsOf(character.id);
-      for (const angle of SHEET_ANGLES) {
-        const assetId = character.sheet[angle];
-        if (assetId) sheet[angle] = assetId;
-      }
-      const at = stamp();
-      // 新占的格子也要有资产记录：不变量要求 sheet 的 id 指得到资产
-      const slotEvents: ProjectEvent[] = SHEET_ANGLES.filter(
-        (angle) => !character.sheet[angle],
-      ).map((angle) => ({
-        type: "asset.updated",
-        at,
-        asset: {
-          id: sheet[angle]!,
-          kind: "image",
-          source: "generated",
-          placeholder: true,
-          createdAt: at,
-        },
-      }));
-      const event: ProjectEvent = {
-        type: "character.updated",
-        at,
-        characterId: character.id,
-        patch: { sheet },
-      };
-      let nextProject = project;
-      for (const item of [...slotEvents, event]) nextProject = applyEvent(nextProject, item);
-      set({
-        project: nextProject,
-        events: [...get().events, ...slotEvents, event],
-        castError: undefined,
-      });
-      active = nextProject.characters.find((item) => item.id === character.id) ?? character;
-    } else {
-      set({ castError: undefined });
-    }
-
-    for (const angle of SHEET_ANGLES) {
-      const assetId = active.sheet[angle];
-      if (!assetId) continue;
-      // 参考图（B2 / ADR-0162）：已经出过的正面 / 3/4 当作这一格的身份锚。
-      // 正面是锚点本身，不拿自己当参考；其余角度按「先正后侧」的顺序取前两张。
-      const sheetRefs = SHEET_ANGLES.slice(0, SHEET_ANGLES.indexOf(angle))
-        .map((other) => ({ assetId: active.sheet[other], label: `${active.name} · ${SHEET_LABELS[other]}` }))
-        .filter((ref): ref is { assetId: string; label: string } => Boolean(ref.assetId))
-        .slice(0, 2);
-      const ok = await generateOne(
-        { get, set },
-        {
-          key: characterId,
-          label: active.name,
-          assetId,
-          job: { kind: "sheet", angle },
-          body: {
-            kind: "sheet",
-            character: {
-              name: active.name,
-              appearance: active.appearance,
-              mustNotChange: active.mustNotChange,
-            },
-            angle,
-            look: get().project.look,
-            skills: get().project.skills,
-            ...withPromptOverride(get, `sheet:${characterId}:${angle}`),
-          },
-          references: referenceImagesOf(get().project, sheetRefs),
-          referenceAssetIds: sheetRefs.map((ref) => ref.assetId),
-        },
-      );
-      if (!ok) return; // 一格没成，后面的也多半不成；别继续烧钱
-    }
-  },
-
-  restoreSheetAsset: (assetId, version) => {
-    if (get().readOnly) return false;
-    if (lockedStage({ get, set }, "cast")) return false;
-    const { project, events } = get();
-    const character = project.characters.find((item) =>
-      SHEET_ANGLES.some((angle) => item.sheet[angle] === assetId),
-    );
-    if (!character) {
-      set({ castError: "这张图不属于任何角色的三视图。" });
-      return false;
-    }
-    if (isLocked(project, "character", character.id)) {
-      set({ castError: "定妆已锁定：先解锁再换版本。" });
-      return false;
-    }
-    if (!version.uri || version.id !== assetId) {
-      set({ castError: "这一版没有图，换不了。" });
-      return false;
-    }
-    const current = project.assets.find((item) => item.id === assetId);
-    if (current?.uri === version.uri) return false;
-
-    const event: ProjectEvent = {
-      type: "asset.updated",
-      at: stamp(),
-      asset: { ...version, id: assetId },
-    };
-    set({
-      project: applyEvent(project, event),
-      events: [...events, event],
-      castError: undefined,
-    });
-    return true;
-  },
-
-  generateMaster: async (locationId) => {
-    if (get().readOnly) return;
-    if (lockedStage({ get, set }, "cast")) return;
-    const { project } = get();
-    const location = project.locations.find((item) => item.id === locationId);
-    if (!location) return;
-    if (isLocked(project, "location", locationId)) return;
-    if (!location.masterShotId) {
-      set({ castError: `「${location.name}」还没有主镜的资产位` });
-      return;
-    }
-
-    set({ castError: undefined });
-    // 参考图（B2 / ADR-0162）：地点自己的参考图（B8）就是这张主镜要延续的角度与细节。
-    // 参考图本身不占主镜的资产位，重生成也不会把它覆盖掉。
-    const refs = referenceImagesOf(
-      project,
-      location.referenceImages.map((assetId) => ({ assetId, label: `${location.name} · 参考图` })),
-    );
-    await generateOne(
-      { get, set },
-      {
-        key: locationId,
-        label: location.name,
-        assetId: location.masterShotId,
-        job: { kind: "master" },
-        body: {
-          kind: "master",
-          location: { name: location.name, description: location.description },
-          look: get().project.look,
-          skills: get().project.skills,
-          ...withPromptOverride(get, `master:${locationId}`),
-        },
-        references: refs,
-        referenceAssetIds: refs.map((ref) => ref.assetId),
-      },
-    );
-  },
 
   generateKeyframe: async (shotId, frame = "first") => {
     if (get().readOnly) return false;
@@ -2606,6 +2162,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
 
     return generateOne(
       { get, set },
+      stamp,
       {
         // 进度分帧记：首帧还在跑时点尾帧，不能把首帧的进度盖掉
         key: `${shot.id}:${frame}`,
@@ -6532,6 +6089,7 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     );
     await generateOne(
       { get, set },
+      stamp,
       {
         key: propId,
         label: prop.name,

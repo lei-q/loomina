@@ -8016,3 +8016,36 @@ IR 260 / gateway 32 / pipeline 158 / web 1465（4 skipped）全过；`pnpm -r ty
 - store 相关文件变成四个（store / types / helpers / 一个切片）。
 - 还有 154 个 action 在 store 里；keyframe / script / cast 那几块耦合深得多。
 - `workbench-types.ts` 948 行，本身也不小。
+
+## 第二百五十八次 · 2026-11-15 · 生成核心与定妆台切片（store 拆分第三步 / ADR-0238）
+
+**问题**
+
+cast 组比 workspace 组复杂：它会花钱，要过 `lockedStage`（硬锁第二道闸）与
+`generateOne`（出图并落事件）。这两个函数原来都在 store 里，切片拿不到。
+
+**结论**
+
+1. 先抽 `workbench-generate.ts`：`lockedStage` + `generateOne`（只用 5 个 store 字段）。
+2. `generateOne` 多收 `stamp` 参数——时间戳严格递增靠 store 里的计数器，
+   复制一份会让同毫秒的两条事件被分成两组、撤销时不能整组退。
+3. 顺带把五个纯辅助函数移到 helpers。
+4. cast 切片只收四个动作：`lockCast` / `unlockCast` / `generateSheet` / `generateMaster`。
+   `restoreSheetAsset` 虽紧挨着但属于关键帧 / 版本域，留在 store。
+5. 切片调的是同一份 `lockedStage` / `generateOne`，不会绕过硬锁。
+
+**验证**
+
+store 6690 → **6248** 行（本轮累计 7956 → 6248，−21%）。
+IR 260 / gateway 32 / pipeline 158 / web 1465（4 skipped）全过；`pnpm -r typecheck` 全过；
+`scout check` 全绿。
+
+**过程中的两次切错**
+
+`restoreSheetAsset` 与 `generateMaster` 先后被误切出去（按相邻代码切，没按领域核），
+都是类型检查发现的。教训：切片边界必须按领域判断，不能按代码位置。
+
+**发现一个既有缺陷**
+
+`workbench-store.test.ts` 有几个用例依赖前面用例留下的状态，用 `-t` 单独过滤跑会失败。
+改动前后各验一次，确认与本次拆分无关。
