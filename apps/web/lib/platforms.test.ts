@@ -46,9 +46,8 @@ describe("平台规格（G7）", () => {
     expect(aspect.status).toBe("pass");
     const title = validation.checks.find((check) => check.id === "title")!;
     expect(title.reference).toBe(true);
-    expect(validation.checks.find((check) => check.id === "file-size")!.reference).toBe(
-      true,
-    );
+    // 抖音已核（官方未设上限）：不是「参考值」，是明确结论
+    expect(validation.checks.find((check) => check.id === "file-size")!.reference).toBeUndefined();
   });
 
   it("时长低于下限、超过上限都硬拦", () => {
@@ -191,9 +190,15 @@ describe("码率与文件大小（G7 补全）", () => {
   });
 
   it("有体积时文件大小写出实测值，上限未核验照实说", () => {
-    const check = douyin({ fileBytes: 42 * 1024 * 1024 }).checks.find(
-      (item) => item.id === "file-size",
-    )!;
+    const check = validatePlatform(platformSpecOf("xiaohongshu"), {
+      durationMs: 60_000,
+      width: 1080,
+      height: 1440,
+      fps: 30,
+      title: "夜班",
+      topics: [],
+      fileBytes: 42 * 1024 * 1024,
+    }).checks.find((item) => item.id === "file-size")!;
     expect(check.status).toBe("pass");
     expect(check.detail).toContain("42.0 MB");
     expect(check.detail).toContain("未核验");
@@ -237,7 +242,21 @@ describe("文件上限逐条核验（G2 / ADR-0214）", () => {
   });
 
   it("没核过的平台照旧写「未核验」，不拿别的平台的数顶替", () => {
-    const douyin = validatePlatform(platformSpecOf("douyin"), {
+    const xiaohongshu = validatePlatform(platformSpecOf("xiaohongshu"), {
+      durationMs: 60_000,
+      width: 1080,
+      height: 1440,
+      fps: 30,
+      title: "夜班",
+      topics: [],
+      fileBytes: 42 * 1024 * 1024,
+    }).checks.find((item) => item.id === "file-size")!;
+    expect(xiaohongshu.reference).toBe(true);
+    expect(xiaohongshu.detail).toContain("未核验");
+  });
+
+  it("核过但官方没设上限：说「官方未设上限」，不说「未核验」", () => {
+    const check = validatePlatform(platformSpecOf("douyin"), {
       durationMs: 60_000,
       width: 1080,
       height: 1920,
@@ -246,8 +265,21 @@ describe("文件上限逐条核验（G2 / ADR-0214）", () => {
       topics: [],
       fileBytes: 42 * 1024 * 1024,
     }).checks.find((item) => item.id === "file-size")!;
-    expect(douyin.reference).toBe(true);
-    expect(douyin.detail).toContain("未核验");
+    expect(check.detail).toContain("官方未设上限");
+    expect(check.detail).toContain("2026-11-15 核");
+    expect(check.detail).toContain("60 分钟");
+    // 不是参考值，也不该说「未核验」
+    expect(check.reference).toBeUndefined();
+    expect(check.detail).not.toContain("未核验");
+  });
+
+  it("「已核未设上限」与「未核验」是两个不同的结论，同一平台不会同时出现", () => {
+    for (const spec of PLATFORM_SPECS) {
+      expect(
+        spec.maxFileBytes !== undefined && spec.maxFileUnbounded !== undefined,
+        spec.id,
+      ).toBe(false);
+    }
   });
 
   it("每个填了上限的平台都必须给出处：数字不许凭空来", () => {

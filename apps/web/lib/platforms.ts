@@ -48,6 +48,16 @@ export type PlatformSpec = {
   maxFileSource?: { url: string; checkedAt: string; quote: string };
   /** 上限适用的场景（手机投稿 / web 投稿 / 账号等级），界面照实写 */
   maxFileNote?: string;
+  /**
+   * 核过了，但官方文档**没有设**文件大小上限（G2 / ADR-0240）。
+   *
+   * 与「没核过」是两件不同的事：
+   * - 没核过 → 面板写「未核验」，作者不知道该不该担心；
+   * - 核过但官方没设 → 面板写「官方未设上限」，作者知道不必为此发愁。
+   *
+   * 有 `maxFileBytes` 时这个字段不生效（有上限就用上限）。
+   */
+  maxFileUnbounded?: { url: string; checkedAt: string; quote: string };
   codec: "H.264";
   fps: number;
   coverRatio: string;
@@ -91,6 +101,13 @@ export const PLATFORM_SPECS: PlatformSpec[] = [
     subtitleMode: "burn-in",
     publishMode: "api",
     badge: { corner: "tl", insetPct: 8 },
+    // 官方 SDK 文档逐条列了「文件要求」，只有格式、时长、尺寸，**没有文件大小上限**
+    maxFileUnbounded: {
+      url: "https://developer.open-douyin.com/docs/resource/zh-CN/dop/develop/sdk/mobile-app/share",
+      checkedAt: "2026-11-15",
+      quote: "视频：要求 mp4 文件…单视频及视频总时长最大值为 60 分钟。视频尺寸需要满足 短边小于2160且长边小于4096。",
+    },
+    maxFileNote: "官方列的是格式 / 时长 / 尺寸，没有文件大小上限；按体积判断没有意义",
     reference: ["标题字数", "话题数量", "码率", "封面", "AI 角标位置"],
     note: "开放平台发布需企业资质与审核；没有资质时走导出包手动发。",
   },
@@ -444,6 +461,18 @@ export function validatePlatform(
         detail: `${spec.name} ${limit}${basis}；导出后按实际体积核对`,
       });
     }
+  } else if (spec.maxFileUnbounded) {
+    // 核过了、官方确实没设上限（G2 / ADR-0240）：与「没核过」分开说
+    const basis = `${spec.maxFileUnbounded.checkedAt} 核：${spec.maxFileUnbounded.quote}`;
+    checks.push({
+      id: "file-size",
+      label: "文件大小",
+      status: "pass",
+      detail:
+        input.fileBytes !== undefined
+          ? `${formatSize(input.fileBytes)}；${spec.name} 官方未设上限（${basis}）`
+          : `${spec.name} 官方未设上限（${basis}）`,
+    });
   } else {
     checks.push({
       id: "file-size",
