@@ -1,3 +1,4 @@
+import type { ProjectSkill } from "@loomina/ir";
 import { ConfigError, TreecloudChatAdapter, TreecloudClient, TreecloudError } from "@loomina/gateway";
 import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
 import {
@@ -25,12 +26,15 @@ export class DoctorAiError extends Error {
   }
 }
 
-export async function rewriteWithDoctor(snapshot: DoctorSnapshot): Promise<DoctorRewrite> {
+export async function rewriteWithDoctor(
+  snapshot: DoctorSnapshot,
+  skills?: ProjectSkill[],
+): Promise<DoctorRewrite> {
   const resolved = await resolveModel("text");
   const client = new TreecloudClient({ ...gatewayConfigOf(resolved), timeoutMs: 60_000 });
   const adapter = new TreecloudChatAdapter(client);
   const output = await adapter.complete({
-    messages: doctorMessages(snapshot),
+    messages: doctorMessages(snapshot, skills),
     // 三条短改写；给到 1200 是留给模型先列问题再改
     maxTokens: 1200,
   });

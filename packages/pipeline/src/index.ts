@@ -607,7 +607,10 @@ export function buildShotPrompt(project: Project, shot: Shot): string {
  * 首帧已经定住画面，这里只补运动与连贯，不重新描述人物——
  * 重复描述会被模型当成要重画一张，反而丢一致性。
  */
-export function buildVideoPrompt(material: ShotPromptMaterial): string {
+export function buildVideoPrompt(
+  material: ShotPromptMaterial,
+  skills?: ProjectSkill[],
+): string {
   const parts = shotParts(material);
   // 接上一段（C.6）：先重复上一段结尾的动作，再进入本段，避免直接开新剧情
   if (material.continuation) {
@@ -626,6 +629,9 @@ export function buildVideoPrompt(material: ShotPromptMaterial): string {
     parts.push(`台词（口型对齐）：${lines}`);
   }
   parts.push("从首帧起势，动作连贯，镜头平稳，保持人物一致");
+  // 技能（C18）：视频阶段的要求排在风格那句之前，风格永远最后
+  const guidance = compileSkills(skills, "video");
+  if (guidance) parts.push(guidance);
   parts.push(compileLook(material.look));
   return parts.join("。");
 }

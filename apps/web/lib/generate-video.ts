@@ -6,7 +6,7 @@ import {
   videoPrice,
 } from "@loomina/gateway";
 import { buildVideoPrompt, type ShotPromptMaterial } from "@loomina/pipeline";
-import type { FrameAspect, Id } from "@loomina/ir";
+import type { FrameAspect, Id, ProjectSkill } from "@loomina/ir";
 import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
 import { assertPromptAllowed, type PromptModeration } from "@/lib/moderation";
 import { fitVideoFrame } from "@/lib/reference-compress";
@@ -65,6 +65,8 @@ export type ShotVideoRequest = {
   prompt?: string;
   /** 成片画幅（E5 / ADR-0251）：首帧按这一档对齐，视频输出跟着走 */
   aspect?: FrameAspect;
+  /** 作者技能（C18）：按「视频」阶段拼进提示词 */
+  skills?: ProjectSkill[];
 };
 
 /** 轮询节奏与路由的 maxDuration 对齐：240 秒等不到就如实失败。 */
@@ -142,7 +144,7 @@ export async function generateShotVideo(
     pollTimeoutMs: POLL_TIMEOUT_MS,
   });
   const adapter = new TreecloudVideoAdapter(client);
-  const prompt = request.prompt ?? buildVideoPrompt(request.shot);
+  const prompt = request.prompt ?? buildVideoPrompt(request.shot, request.skills);
   // H6：硬阻断在提交前就停，任务不会建立，也就不会计费
   const moderation = assertPromptAllowed(prompt, "video");
 

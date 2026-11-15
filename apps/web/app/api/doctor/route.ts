@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { DoctorSnapshotSchema } from "@/lib/doctor-ai";
+import { ProjectSkillSchema, type ProjectSkill } from "@loomina/ir";
+import { z } from "zod";
 import { doctorErrorOf, rewriteWithDoctor } from "@/lib/doctor-run";
 import { recordHealthEvent } from "@/lib/health-events";
 
@@ -12,8 +14,18 @@ import { recordHealthEvent } from "@/lib/health-events";
 export const runtime = "nodejs";
 export const maxDuration = 90;
 
+function skillsOf(value: unknown): ProjectSkill[] | string {
+  if (value === undefined) return [];
+  const parsed = z.array(ProjectSkillSchema).max(20).safeParse(value);
+  if (!parsed.success) return "技能的格式不对";
+  return parsed.data;
+}
+
 export async function POST(request: Request) {
-  const body = (await request.json().catch(() => null)) as { snapshot?: unknown } | null;
+  const body = (await request.json().catch(() => null)) as {
+    snapshot?: unknown;
+    skills?: unknown;
+  } | null;
   if (!body) {
     return NextResponse.json({ error: "请求体不是 JSON" }, { status: 400 });
   }
@@ -22,8 +34,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "剧本快照不完整" }, { status: 400 });
   }
 
+  const skills = skillsOf(body.skills);
+  if (typeof skills === "string") {
+    return NextResponse.json({ error: skills }, { status: 400 });
+  }
+
   try {
-    const result = await rewriteWithDoctor(snapshot.data);
+    const result = await rewriteWithDoctor(snapshot.data, skills);
     void recordHealthEvent({
       at: new Date().toISOString(),
       modality: "text",

@@ -2377,6 +2377,8 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
             durationMs: shot.durationMs,
             // 成片画幅（E5 / ADR-0251）：首帧与视频按这一档对齐
             aspect: project.frame.aspect,
+            // 技能（C18）：视频阶段的技能拼进提示词
+            ...(get().project.skills.length ? { skills: get().project.skills } : {}),
             modelId: modelIdFor("video", get().project.models),
             ...withPromptOverride(get, `video:${shotId}`),
           }),
@@ -2622,6 +2624,8 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
           modelId: modelIdFor("tts", get().project.models),
           ...(performance.rate !== 1 ? { speed: performance.rate } : {}),
           ...(instructions ? { instructions } : {}),
+          // 技能（C18）：配音阶段的技能由服务端拼进 instructions
+          ...(get().project.skills.length ? { skills: get().project.skills } : {}),
         }),
       });
       const payload = (await response.json()) as {
@@ -6025,7 +6029,11 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
     const shotNo = project.shots.findIndex((item) => item.id === shot.id) + 1;
     set({ instructionBusy: true, castError: undefined, instructionNotice: undefined });
 
-    const result = await askInstructionAi(trimmed, shotSnapshotOf(shot, shotNo));
+    const result = await askInstructionAi(
+      trimmed,
+      shotSnapshotOf(shot, shotNo),
+      get().project.skills,
+    );
 
     // 等模型这段时间里，作者可能切了镜头 / 锁了镜头 / 换了标签页：都别把补丁写到别的镜头
     const latest = get();

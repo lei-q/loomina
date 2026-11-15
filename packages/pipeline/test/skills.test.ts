@@ -5,9 +5,12 @@ import {
   buildMasterPrompt,
   buildPropPrompt,
   buildSheetPrompt,
+  buildVideoPrompt,
+  compileLook,
   compileSkills,
   skillsForStage,
   shotMaterial,
+  storyMessages,
   buildKeyframePrompt,
 } from "../src/index";
 
@@ -78,5 +81,34 @@ describe("技能拼进提示词（C.5 / ADR-0191）", () => {
     expect(buildSheetPrompt(character, "front", project.look)).toBe(
       buildSheetPrompt(character, "front", project.look, []),
     );
+  });
+});
+
+describe("技能作用到各阶段提示词（C18 / ADR-0252）", () => {
+  const project = ProjectSchema.parse(clone(minimalJson));
+  const material = shotMaterial(project, project.shots[0]!);
+
+  it("视频阶段：技能进视频提示词，风格仍是最后一句", () => {
+    const prompt = buildVideoPrompt(material, [
+      skill({ id: "sk-v", stage: "video", body: "不要出现文字水印。" }),
+    ]);
+    expect(prompt).toContain("不要出现文字水印");
+    // 风格永远最后一句：技能插在它之前
+    expect(prompt.endsWith(compileLook(material.look))).toBe(true);
+  });
+
+  it("故事阶段：技能进系统提示词", () => {
+    const messages = storyMessages("夜班护士", undefined, undefined, [
+      skill({ id: "sk-s", stage: "story", body: "主角必须是女性。" }),
+    ]);
+    expect(messages[0]!.role).toBe("system");
+    expect(messages[0]!.content).toContain("主角必须是女性");
+  });
+
+  it("别的阶段的技能不串味", () => {
+    const messages = storyMessages("夜班护士", undefined, undefined, [
+      skill({ id: "sk-k", stage: "keyframe", body: "关键帧不要运动模糊。" }),
+    ]);
+    expect(messages[0]!.content).not.toContain("运动模糊");
   });
 });

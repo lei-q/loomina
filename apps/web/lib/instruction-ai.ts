@@ -12,6 +12,8 @@
  */
 
 import { z } from "zod";
+import type { ProjectSkill } from "@loomina/ir";
+import { compileSkills } from "@loomina/pipeline";
 import { CAMERA_ANGLES, CameraSchema, type Shot } from "@loomina/ir";
 import { SHOT_ANGLE_CN as ANGLE_CN, SHOT_SIZE_CN, type ShotPatch } from "@loomina/pipeline";
 
@@ -64,7 +66,9 @@ export type ChatMessage = { role: "system" | "user"; content: string };
 export function instructionMessages(
   text: string,
   snapshot: ShotSnapshot,
+  skills?: ProjectSkill[],
 ): ChatMessage[] {
+  const guidance = compileSkills(skills, "storyboard");
   const notes = snapshot.notes.length > 0 ? snapshot.notes.join("；") : "（没有）";
   return [
     {
@@ -85,6 +89,7 @@ export function instructionMessages(
         "2. 不要改人物、台词、剧情、场景；不要编造不存在的字段。",
         "3. 已有补充里有的意思不要重复写进 note。",
         `4. reason 不超过 ${INSTRUCTION_REASON_MAX_CHARS} 个字，说人话，不要重复原句。`,
+        ...(guidance ? ["", `作者技能（必须遵守）：${guidance}`] : []),
       ].join("\n"),
     },
     {
@@ -204,12 +209,13 @@ export type InstructionAiResult =
 export async function askInstructionAi(
   text: string,
   snapshot: ShotSnapshot,
+  skills?: ProjectSkill[],
 ): Promise<InstructionAiResult> {
   try {
     const response = await fetch("/api/instruction", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, snapshot }),
+      body: JSON.stringify({ text, snapshot, ...(skills?.length ? { skills } : {}) }),
     });
     const body = (await response.json().catch(() => null)) as
       | { patch?: unknown; reason?: string; model?: string; error?: string }

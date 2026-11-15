@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { recordHealthEvent } from "@/lib/health-events";
 import { INSTRUCTION_AI_MAX_CHARS, ShotSnapshotSchema } from "@/lib/instruction-ai";
 import { instructionErrorOf, interpretInstruction } from "@/lib/instruction-run";
+import { ProjectSkillSchema, type ProjectSkill } from "@loomina/ir";
+import { z } from "zod";
 
 /**
  * 一句话指令的模型兜底（H19）。
@@ -14,10 +16,18 @@ import { instructionErrorOf, interpretInstruction } from "@/lib/instruction-run"
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+function skillsOf(value: unknown): ProjectSkill[] | string {
+  if (value === undefined) return [];
+  const parsed = z.array(ProjectSkillSchema).max(20).safeParse(value);
+  if (!parsed.success) return "技能的格式不对";
+  return parsed.data;
+}
+
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as {
     text?: unknown;
     snapshot?: unknown;
+    skills?: unknown;
   } | null;
   if (!body) {
     return NextResponse.json({ error: "请求体不是 JSON" }, { status: 400 });
@@ -39,8 +49,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "当前镜头的状态不完整" }, { status: 400 });
   }
 
+  const skills = skillsOf(body.skills);
+  if (typeof skills === "string") {
+    return NextResponse.json({ error: skills }, { status: 400 });
+  }
+
   try {
-    const result = await interpretInstruction(text, snapshot.data);
+    const result = await interpretInstruction(text, snapshot.data, skills);
     void recordHealthEvent({
       at: new Date().toISOString(),
       modality: "text",

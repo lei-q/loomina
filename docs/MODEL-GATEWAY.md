@@ -286,7 +286,13 @@ S1 仍未完成，且不是代码问题：
 - `480p` 不给 `size` 会出横屏。
 - 判定能力仍要用合成图看产物第 0 帧，不要看 HTTP 200。
 
-### 2. TTS / ASR 的部署地址与计费
+### 2. TTS / ASR 的部署地址与计费（2026-11-15 已按文档核对）
+
+文档（`jtree-api.md`）给出的字段与我们发送的一致：TTS `model / input / voice / response_format / speed / instructions`，
+ASR multipart `file / model / language / response_format`。文档示例模型名 `tts-1` 在当前 key 下不可用
+（`Invalid model name`），模型清单里的 `qwen-audio-3.0-tts-*` / `asr-*` 才是可选项。
+修复前的失败仍是代理侧部署：TTS 400 `url error, please check url`、ASR 400 `The upstream audio request failed`。
+
 
 - 清单里有 `qwen-audio-3.0-tts-plus` / `-tts-flash`（audio_speech）与
   `qwen-audio-3.0-asr-flash` / `-filetrans` / `-streaming`（audio_transcription）。

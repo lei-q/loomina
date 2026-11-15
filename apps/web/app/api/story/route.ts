@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { ConfigError, TreecloudError } from "@loomina/gateway";
 import { StoryDraftError } from "@loomina/pipeline";
+import { ProjectSkillSchema, type ProjectSkill } from "@loomina/ir";
+import { z } from "zod";
 import { recordHealthEvent } from "@/lib/health-events";
 import { STORY_PROMPT_OVERRIDE_MAX, readPromptOverride } from "@/lib/prompt-override";
 import { generateStory, storyInfo } from "@/lib/story";
@@ -15,6 +17,14 @@ import { generateStory, storyInfo } from "@/lib/story";
  */
 export const runtime = "nodejs";
 export const maxDuration = 180;
+
+/** 技能清单：最多 20 条，字段与 IR 同 schema；越界直接拒，不截断 */
+function skillsOf(value: unknown): ProjectSkill[] | string {
+  if (value === undefined) return [];
+  const parsed = z.array(ProjectSkillSchema).max(20).safeParse(value);
+  if (!parsed.success) return "技能的格式不对";
+  return parsed.data;
+}
 
 export async function GET() {
   try {
@@ -34,6 +44,8 @@ export async function POST(request: Request) {
     modelId?: unknown;
     /** 手改的系统 / 用户提示词（ADR-0148） */
     prompt?: { system?: unknown; user?: unknown } | unknown;
+    /** 作者技能（C18）：按「故事」阶段拼进系统提示词 */
+    skills?: unknown;
   } | null;
   if (!body) {
     return NextResponse.json({ error: "请求体不是 JSON" }, { status: 400 });
@@ -53,6 +65,9 @@ export async function POST(request: Request) {
   const user = readPromptOverride(rawPrompt?.user, STORY_PROMPT_OVERRIDE_MAX);
   if (system.error) return NextResponse.json({ error: system.error }, { status: 400 });
   if (user.error) return NextResponse.json({ error: user.error }, { status: 400 });
+  const skills = skillsOf(body.skills);
+  if (typeof skills === "string") return NextResponse.json({ error: skills }, { status: 400 });
+
   const prompt =
     system.prompt || user.prompt
       ? { ...(system.prompt ? { system: system.prompt } : {}), ...(user.prompt ? { user: user.prompt } : {}) }
@@ -60,7 +75,7 @@ export async function POST(request: Request) {
 
   try {
     const result = await generateStory(
-      { idea, source, genre, beatSheet, ...(prompt ? { prompt } : {}) },
+      { idea, source, genre, beatSheet, ...(prompt ? { prompt } : {}), ...(skills.length ? { skills } : {}) },
       modelId,
     );
     void recordHealthEvent({

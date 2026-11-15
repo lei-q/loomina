@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { ConfigError } from "@loomina/gateway";
-import { FRAME_ASPECTS, type FrameAspect } from "@loomina/ir";
+import { FRAME_ASPECTS, ProjectSkillSchema, type FrameAspect, type ProjectSkill } from "@loomina/ir";
+import { z } from "zod";
 import { readAssetBytes } from "@/lib/asset-store";
 import { VideoGenerationError, generateShotVideo } from "@/lib/generate-video";
 import { recordHealthEvent } from "@/lib/health-events";
@@ -31,10 +32,19 @@ type Body = {
   prompt?: unknown;
   /** 成片画幅（E5 / ADR-0251）：9:16 / 16:9 / 1:1，缺省按 9:16 */
   aspect?: unknown;
+  /** 作者技能（C18）：按「视频」阶段拼进提示词 */
+  skills?: unknown;
 };
 
 function bad(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
+}
+
+function skillsOf(value: unknown): ProjectSkill[] | string {
+  if (value === undefined) return [];
+  const parsed = z.array(ProjectSkillSchema).max(20).safeParse(value);
+  if (!parsed.success) return "技能的格式不对";
+  return parsed.data;
 }
 
 export async function POST(request: Request) {
@@ -71,6 +81,9 @@ export async function POST(request: Request) {
     return bad(`画幅只能是 ${FRAME_ASPECTS.join(" / ")}`);
   }
 
+  const skills = skillsOf(body.skills);
+  if (typeof skills === "string") return bad(skills);
+
   const modelId = typeof body.modelId === "string" ? body.modelId : undefined;
   const override = readPromptOverride(body.prompt);
   if (override.error) return bad(override.error);
@@ -87,6 +100,7 @@ export async function POST(request: Request) {
             firstFrame: firstFrameUri,
             durationMs,
             ...(aspect ? { aspect } : {}),
+            ...(skills.length ? { skills } : {}),
             ...(override.prompt ? { prompt: override.prompt } : {}),
           },
           modelId,

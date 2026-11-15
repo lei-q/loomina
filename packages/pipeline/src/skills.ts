@@ -9,11 +9,17 @@ import type { ProjectSkill, SkillStage } from "@loomina/ir";
  */
 
 export const SKILL_STAGE_CN: Record<SkillStage, string> = {
-  all: "全部",
+  all: "全部阶段",
+  story: "故事",
+  script: "剧本",
   sheet: "定妆",
-  master: "主镜",
+  storyboard: "分镜",
+  master: "场景主镜",
   prop: "道具",
   keyframe: "关键帧",
+  video: "视频",
+  voice: "配音",
+  music: "配乐",
 };
 
 /** 适用于这个阶段的技能：关掉的不算，`all` 与同阶段都算 */

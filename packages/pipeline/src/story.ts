@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { compileSkills } from "./skills";
 import {
   assertValidProject,
   DEFAULT_BRAND,
@@ -12,6 +13,7 @@ import {
   type DialogueLine,
   type Location,
   type Project,
+  type ProjectSkill,
   type Prop,
   type Scene,
   type Shot,
@@ -629,10 +631,15 @@ export function storyMessages(
   idea: string,
   genre?: string,
   beatSheet?: BeatSheet,
+  skills?: ProjectSkill[],
 ): { role: "system" | "user"; content: string }[] {
+  const guidance = compileSkills(skills, "story");
   const system = storySystem(
     "目标：把一句话或一段大纲变成一条 60–90 秒的竖屏短剧骨架，可直接进入分镜。",
-    beatSheet ? [beatSheetPrompt(beatSheet)] : [],
+    [
+      ...(guidance ? [`作者技能（必须遵守）：${guidance}`] : []),
+      ...(beatSheet ? [beatSheetPrompt(beatSheet)] : []),
+    ],
   );
   const user = [
     genre?.trim() ? `题材偏好：${genre.trim()}` : "",
@@ -659,7 +666,9 @@ export function importStoryMessages(
   source: string,
   genre?: string,
   beatSheet?: BeatSheet,
+  skills?: ProjectSkill[],
 ): { role: "system" | "user"; content: string }[] {
+  const guidance = compileSkills(skills, "story");
   const system = storySystem(
     "目标：把用户给的小说 / 剧本文字改写成一条 60–90 秒的竖屏短剧骨架，可直接进入分镜。",
     [
@@ -667,6 +676,7 @@ export function importStoryMessages(
       "7. 忠实保留原文的人物关系、核心冲突与结局意思；可以合并次要人物与场次，不新增原文没有的主要人物。",
       "8. 删除旁白、说明性叙述与无法拍摄的内心描写，把信息改成动作、物件或台词。",
       "9. 不照抄大段原文；台词可以精简，但不能改变人物立场与结局。",
+      ...(guidance ? [`作者技能（必须遵守）：${guidance}`] : []),
       ...(beatSheet ? [beatSheetPrompt(beatSheet)] : []),
     ],
   );
