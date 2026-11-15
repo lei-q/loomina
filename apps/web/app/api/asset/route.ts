@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { ConfigError, TreecloudError } from "@loomina/gateway";
-import { SHEET_ANGLES, ProjectSkillSchema, type ProjectSkill, type SheetView } from "@loomina/ir";
+import {
+  FRAME_ASPECTS,
+  SHEET_ANGLES,
+  ProjectSkillSchema,
+  type FrameAspect,
+  type ProjectSkill,
+  type SheetView,
+} from "@loomina/ir";
 import { z } from "zod";
 import { generateCastImage, type CastImageRequest } from "@/lib/generate-image";
 import { recordHealthEvent } from "@/lib/health-events";
@@ -19,6 +26,8 @@ type Body = {
   character?: { name?: unknown; appearance?: unknown; mustNotChange?: unknown };
   angle?: unknown;
   frame?: unknown;
+  /** 关键帧的成片画幅（E5 / ADR-0251）：9:16 / 16:9 / 1:1 */
+  aspect?: unknown;
   /** 作者手改过的提示词（ADR-0148）：给了就用它，不再拼默认那段 */
   prompt?: unknown;
   /** 主镜请求：`description` 是场景描述，会整句进提示词（ADR-0063） */
@@ -146,7 +155,15 @@ function parse(body: Body | null): CastImageRequest | string {
     if (frame !== "first" && frame !== "last") return "关键帧不认识";
     const shot = parseShotMaterial(body.shot);
     if (typeof shot === "string") return shot;
-    return { kind: "keyframe", frame, shot, ...withSkills };
+    const aspect =
+      typeof body.aspect === "string" &&
+      (FRAME_ASPECTS as readonly string[]).includes(body.aspect)
+        ? (body.aspect as FrameAspect)
+        : undefined;
+    if (body.aspect !== undefined && aspect === undefined) {
+      return `画幅只能是 ${FRAME_ASPECTS.join(" / ")}`;
+    }
+    return { kind: "keyframe", frame, shot, ...(aspect ? { aspect } : {}), ...withSkills };
   }
 
   return "不认识的资产类型";

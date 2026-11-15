@@ -6,11 +6,11 @@ import {
   videoPrice,
 } from "@loomina/gateway";
 import { buildVideoPrompt, type ShotPromptMaterial } from "@loomina/pipeline";
-import type { Id } from "@loomina/ir";
+import type { FrameAspect, Id } from "@loomina/ir";
 import { gatewayConfigOf, resolveModel } from "@/lib/app-config";
 import { assertPromptAllowed, type PromptModeration } from "@/lib/moderation";
 import { fitVideoFrame } from "@/lib/reference-compress";
-import { VIDEO_FRAME_SOFT_BYTES } from "@/lib/reference-fit";
+import { VIDEO_FRAME_SOFT_BYTES, frameSizeOf } from "@/lib/reference-fit";
 
 /**
  * 服务端出视频（ADR-0083）。
@@ -63,6 +63,8 @@ export type ShotVideoRequest = {
   durationMs: number;
   /** 作者手改过的提示词（ADR-0148）：给了就用它，不再拼默认那段 */
   prompt?: string;
+  /** 成片画幅（E5 / ADR-0251）：首帧按这一档对齐，视频输出跟着走 */
+  aspect?: FrameAspect;
 };
 
 /** 轮询节奏与路由的 maxDuration 对齐：240 秒等不到就如实失败。 */
@@ -108,12 +110,20 @@ function submitRetryable(error: unknown): boolean {
  *
  * 不是 data URI（http(s) 地址）就不动：那种不占 part 体积，也不由我们改。
  */
-async function frameForSubmit(firstFrame?: string): Promise<string | undefined> {
+async function frameForSubmit(
+  firstFrame: string | undefined,
+  aspect: FrameAspect | undefined,
+): Promise<string | undefined> {
   if (!firstFrame || !firstFrame.startsWith("data:")) return firstFrame;
   const parts = /^data:([^;]+);base64,(.*)$/s.exec(firstFrame);
   if (!parts) return firstFrame;
   const bytes = new Uint8Array(Buffer.from(parts[2]!, "base64"));
-  const fitted = await fitVideoFrame(bytes, parts[1]!, VIDEO_FRAME_SOFT_BYTES);
+  const fitted = await fitVideoFrame(
+    bytes,
+    parts[1]!,
+    VIDEO_FRAME_SOFT_BYTES,
+    frameSizeOf(aspect),
+  );
   if (!fitted.fitted) return firstFrame;
   return `data:${fitted.mime};base64,${Buffer.from(fitted.bytes).toString("base64")}`;
 }
@@ -138,7 +148,8 @@ export async function generateShotVideo(
 
   // 首帧以 data URI 塞进请求的单个 part，代理限 1024 KB（base64 后膨胀 4/3）。
   // 超过就压到 768 KB 以内；压不动仍照发——让供应商如实拒绝，不在这里假装成功。
-  const firstFrame = await frameForSubmit(request.firstFrame);
+  const frameSize = frameSizeOf(request.aspect);
+  const firstFrame = await frameForSubmit(request.firstFrame, request.aspect);
 
   const { jobId } = await adapter
     .submit({
@@ -147,6 +158,8 @@ export async function generateShotVideo(
       prompt,
       durationMs: request.durationMs,
       imageUri: firstFrame,
+      // 供应商按首帧比例出片；size 只是把目标画幅明确写出去（ADR-0251）
+      size: frameSize.size,
       ...(config.videoResolution ? { resolution: config.videoResolution } : {}),
     })
     .catch((error: unknown) => {

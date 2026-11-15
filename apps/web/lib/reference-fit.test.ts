@@ -4,6 +4,7 @@ import {
   REFERENCE_MAX_EDGE,
   REFERENCE_SOFT_BYTES,
   KEYFRAME_SIZE,
+  frameSizeOf,
   VIDEO_FRAME_HEIGHT,
   VIDEO_FRAME_WIDTH,
   estimateBytesOf,
@@ -71,5 +72,19 @@ describe("关键帧与视频首帧的画幅（ADR-0250）", () => {
     // 供应商实测 `1080x1920` 回 400（width/height must both be divisible by 16），
     // 所以这里锁住「别把 1080p 当成出图尺寸随手写回来」
     expect(1080 % 16).not.toBe(0);
+  });
+});
+
+describe("三档画幅的首帧尺寸（ADR-0251）", () => {
+  it("9:16 / 16:9 / 1:1 都按短边 720 给出，且能被 16 整除", () => {
+    for (const aspect of ["9:16", "16:9", "1:1"] as const) {
+      const size = frameSizeOf(aspect);
+      expect(size.width % 16).toBe(0);
+      expect(size.height % 16).toBe(0);
+      expect(size.size).toBe(`${size.width}x${size.height}`);
+    }
+    expect(frameSizeOf("16:9").size).toBe("1280x720");
+    expect(frameSizeOf("1:1").size).toBe("720x720");
+    expect(frameSizeOf(undefined).size).toBe("720x1280");
   });
 });

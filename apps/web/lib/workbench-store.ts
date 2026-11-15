@@ -2188,6 +2188,8 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
         body: {
           kind: "keyframe",
           frame,
+          // 键帧按成片画幅出（ADR-0251）：视频输出比例跟随首帧
+          aspect: project.frame.aspect,
           shot: shotMaterial(project, shot, { frame }),
           skills: project.skills,
           ...withPromptOverride(get, `keyframe:${shotId}:${frame}`),
@@ -2373,6 +2375,8 @@ export const useWorkbench = create<WorkbenchState>()((rawSet, get) => {
             shot: shotMaterial(project, shot),
             firstFrame: firstFrame.uri,
             durationMs: shot.durationMs,
+            // 成片画幅（E5 / ADR-0251）：首帧与视频按这一档对齐
+            aspect: project.frame.aspect,
             modelId: modelIdFor("video", get().project.models),
             ...withPromptOverride(get, `video:${shotId}`),
           }),

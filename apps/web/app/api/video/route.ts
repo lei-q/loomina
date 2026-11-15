@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { ConfigError } from "@loomina/gateway";
+import { FRAME_ASPECTS, type FrameAspect } from "@loomina/ir";
 import { readAssetBytes } from "@/lib/asset-store";
 import { VideoGenerationError, generateShotVideo } from "@/lib/generate-video";
 import { recordHealthEvent } from "@/lib/health-events";
@@ -28,6 +29,8 @@ type Body = {
   modelId?: unknown;
   /** 作者手改过的提示词（ADR-0148） */
   prompt?: unknown;
+  /** 成片画幅（E5 / ADR-0251）：9:16 / 16:9 / 1:1，缺省按 9:16 */
+  aspect?: unknown;
 };
 
 function bad(message: string) {
@@ -60,6 +63,14 @@ export async function POST(request: Request) {
   const rawDuration = typeof body.durationMs === "number" ? body.durationMs : 3000;
   const durationMs = Math.min(8000, Math.max(1000, Math.round(rawDuration)));
 
+  const aspect =
+    typeof body.aspect === "string" && (FRAME_ASPECTS as readonly string[]).includes(body.aspect)
+      ? (body.aspect as FrameAspect)
+      : undefined;
+  if (body.aspect !== undefined && aspect === undefined) {
+    return bad(`画幅只能是 ${FRAME_ASPECTS.join(" / ")}`);
+  }
+
   const modelId = typeof body.modelId === "string" ? body.modelId : undefined;
   const override = readPromptOverride(body.prompt);
   if (override.error) return bad(override.error);
@@ -71,7 +82,13 @@ export async function POST(request: Request) {
       shot.description.slice(0, 20) || "一镜",
       () =>
         generateShotVideo(
-          { shot, firstFrame: firstFrameUri, durationMs, ...(override.prompt ? { prompt: override.prompt } : {}) },
+          {
+            shot,
+            firstFrame: firstFrameUri,
+            durationMs,
+            ...(aspect ? { aspect } : {}),
+            ...(override.prompt ? { prompt: override.prompt } : {}),
+          },
           modelId,
         ),
     );

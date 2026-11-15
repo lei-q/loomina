@@ -102,11 +102,15 @@ export async function fitVideoFrame(
   bytes: Uint8Array,
   mime: string,
   limitBytes: number,
+  frame: { width: number; height: number } = {
+    width: VIDEO_FRAME_WIDTH,
+    height: VIDEO_FRAME_HEIGHT,
+  },
 ): Promise<Compressed> {
   const out = await runFfmpeg(bytes, [
     "-vf",
-    `scale=${VIDEO_FRAME_WIDTH}:${VIDEO_FRAME_HEIGHT}:force_original_aspect_ratio=increase,` +
-      `crop=${VIDEO_FRAME_WIDTH}:${VIDEO_FRAME_HEIGHT}`,
+    `scale=${frame.width}:${frame.height}:force_original_aspect_ratio=increase,` +
+      `crop=${frame.width}:${frame.height}`,
     "-q:v",
     String(REFERENCE_JPEG_QUALITY),
     "-f",

@@ -287,6 +287,21 @@ describe("视频适配器", () => {
     expect((frame as File).name).toContain("first-frame");
   });
 
+  it("显式 size 覆盖按分辨率推导的竖屏尺寸（ADR-0251）", async () => {
+    const { client, calls } = clientWith([
+      () => jsonResponse({ id: "vid_4", status: "queued" }),
+    ]);
+    const adapter = new TreecloudVideoAdapter(client, { resolution: "720p" });
+    await adapter.submit({
+      shotId: "sh-1",
+      imageUri: `data:image/png;base64,${Buffer.from("x").toString("base64")}`,
+      durationMs: 2000,
+      size: "1280x720",
+    });
+    const form = calls[0]?.body as FormData;
+    expect(form.get("size")).toBe("1280x720");
+  });
+
   it("失败状态带上原因", async () => {
     const { client } = clientWith([
       () => jsonResponse({ id: "vid_2", status: "queued" }),
