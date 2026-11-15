@@ -36,7 +36,8 @@
 
 **从真实项目导入（推荐）**：
 
-1. 在顶栏「空间 ▾」里点「导出」，得到 `loomina.workspace-export` 包；
+1. 拿一份导出包，两种都行：顶栏「空间 ▾ → 导出」的 `loomina.workspace-export`，
+   或 H9 的 `loomina.export` 数据包（直接带 `project`）；
 2. 跑：
 
    ```bash

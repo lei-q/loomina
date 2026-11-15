@@ -1,8 +1,9 @@
 /**
  * 把一份「工作空间导出包」变成评测素材（I9 / ADR-0248）。
  *
- * 收真实素材的卡点不是标注，是「怎么把项目变成素材文件」。导出的包里有整条
- * 事件日志，回放一次就能得到项目；按场次切开，就是一段一段的素材。
+ * 收真实素材的卡点不是标注，是「怎么把项目变成素材文件」。两种导出都收：
+ * 空间菜单的 `loomina.workspace-export`（回放日志）与 H9 的 `loomina.export`
+ * 数据包（直接带 `project`）。按场次切开，就是一段一段的素材。
  *
  * 用法：
  *   pnpm eval:corpus:import -- --in ~/Desktop/夜班-2026-11-15.json \
@@ -17,7 +18,7 @@
 
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { rebuild } from "@loomina/ir";
+import { ProjectSchema, rebuild, type Project } from "@loomina/ir";
 import { LOG_VERSION, migrateLog } from "../lib/event-log";
 import { looksLikeWorkspaceExport } from "../lib/workspace-export";
 import { clipsByScene } from "../lib/eval-corpus";
@@ -67,18 +68,36 @@ function required(flag: string, value: string | undefined): string {
 
 const args = parseArgs(process.argv.slice(2));
 const raw: unknown = JSON.parse(readFileSync(resolve(process.cwd(), args.input), "utf8"));
-if (!looksLikeWorkspaceExport(raw)) {
-  throw new Error("这不是 loomina.workspace-export 包：请在顶栏「空间 ▾」里点导出。");
-}
 
-const events = migrateLog(raw.log);
-if (!events) {
+/**
+ * 三种入口都收：
+ * - `loomina.workspace-export`（空间菜单导出）：只有日志，回放一次；
+ * - `loomina.export`（H9 数据包，`:app/api/export` 下载）：直接带 `project`，不用回放；
+ * - 裸 Project JSON：手写或从别处拿到的都行。
+ */
+function projectFrom(value: unknown): Project {
+  if (looksLikeWorkspaceExport(value)) {
+    const events = migrateLog(value.log);
+    if (!events) {
+      throw new Error(
+        `日志回放不了（版本 ${value.log.version}，当前支持 ≤ ${LOG_VERSION}）。导出包可能来自更新的版本。`,
+      );
+    }
+    return rebuild(events);
+  }
+  if (typeof value === "object" && value !== null) {
+    const record = value as Record<string, unknown>;
+    if (record.format === "loomina.export") return ProjectSchema.parse(record.project);
+    if (typeof record.id === "string" && typeof record.title === "string") {
+      return ProjectSchema.parse(value);
+    }
+  }
   throw new Error(
-    `日志回放不了（版本 ${raw.log.version}，当前支持 ≤ ${LOG_VERSION}）。导出包可能来自更新的版本。`,
+    "认不出这份文件：支持 loomina.workspace-export / loomina.export（数据包）/ 裸 Project JSON。",
   );
 }
 
-const project = rebuild(events);
+const project = projectFrom(raw);
 const clips = args.whole ? [{ sceneId: "whole", project }] : clipsByScene(project);
 
 if (clips.length === 0) {
