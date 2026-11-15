@@ -354,6 +354,21 @@ export function resetPersistenceForTests(): void {
   ready = false;
 }
 
+/**
+ * 仅供测试：把 store 恢复成「刚打开的示例项目」。
+ *
+ * 与 `reset()` 的区别只有一条——**先清 `readOnly`**。
+ * `reset()` 在生产里遇到只读标签页会直接返回（H18：只读页不能覆盖别人的项目），
+ * 这在测试里是个陷阱：某个用例设了 `readOnly: true` 却忘了恢复，
+ * 后面所有用例的 `reset()` 都会静默失效，于是看到「状态从上一个用例漏过来」的假失败。
+ *
+ * 测试里一律用这个，不要直接用 `reset()`。
+ */
+export function resetForTests(): void {
+  useWorkbench.setState({ readOnly: false });
+  useWorkbench.getState().reset();
+}
+
 function firstOpenShotId(project: Project): string {
   const { shots } = toStageView(project);
   return (shots.find((shot) => shot.state === "open") ?? shots[0])?.id ?? "";
