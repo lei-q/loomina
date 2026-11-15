@@ -176,7 +176,11 @@ function factsOf(model: ModelRecord): CapabilityFact[] {
   switch (model.modality) {
     case "video":
       return [
-        code("first-frame", "首帧", "支持 · 作为 content[].image_url 提交"),
+        code(
+          "first-frame",
+          "首帧",
+          "支持 · multipart 的 input_reference 文件 part（单文件 = 首帧）",
+        ),
         code("last-frame", "尾帧", "不支持 · 网关没有尾帧字段"),
         code("references", "多参考图", "不支持 · 只传一张首帧"),
         code("duration", "时长", "1–8 秒 · 按整秒提交"),

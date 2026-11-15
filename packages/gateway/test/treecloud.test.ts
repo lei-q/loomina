@@ -259,6 +259,34 @@ describe("视频适配器", () => {
     expect(cached.uri).toBe("https://cdn.test/a.mp4");
   });
 
+  it("data URI 首帧走 multipart 的 input_reference（ADR-0249）", async () => {
+    const { client, calls } = clientWith([
+      () => jsonResponse({ id: "vid_3", status: "queued" }),
+    ]);
+
+    const adapter = new TreecloudVideoAdapter(client, { resolution: "720p" });
+    const bytes = Buffer.from("89504e470d0a1a0a", "hex");
+    await adapter.submit({
+      shotId: "sh-1",
+      imageAssetId: "img-1",
+      imageUri: `data:image/png;base64,${bytes.toString("base64")}`,
+      durationMs: 4000,
+      prompt: "推近",
+    });
+
+    const sent = calls[0]?.body;
+    expect(sent).toBeInstanceOf(FormData);
+    const form = sent as FormData;
+    expect(form.get("model")).toBe("minimax-h3");
+    expect(form.get("prompt")).toBe("推近");
+    expect(form.get("seconds")).toBe("4");
+    // 竖屏 9:16：不给 size 时 480p 会出横屏
+    expect(form.get("size")).toBe("720x1280");
+    const frame = form.get("input_reference");
+    expect(frame).toBeInstanceOf(Blob);
+    expect((frame as File).name).toContain("first-frame");
+  });
+
   it("失败状态带上原因", async () => {
     const { client } = clientWith([
       () => jsonResponse({ id: "vid_2", status: "queued" }),

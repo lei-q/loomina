@@ -100,7 +100,7 @@ describe("buildCapabilityMatrix", () => {
   it("视频能力只写代码实际发送的东西", () => {
     const model = modelOf("relay:minimax-h3");
     const facts = Object.fromEntries(model.facts.map((fact) => [fact.key, fact]));
-    expect(facts["first-frame"]?.value).toContain("image_url");
+    expect(facts["first-frame"]?.value).toContain("input_reference");
     expect(facts["last-frame"]?.value).toContain("不支持");
     expect(facts.duration?.value).toContain("1–8 秒");
     expect(facts.seed?.value).toContain("不传 seed");
