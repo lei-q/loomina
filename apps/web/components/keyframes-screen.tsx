@@ -287,6 +287,7 @@ export function KeyframesScreen() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg text-text">
       <TopBar
+        skillStages={["keyframe"]}
         title={view.title}
         version={view.version}
         stage="关键帧"

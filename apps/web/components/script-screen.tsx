@@ -399,6 +399,7 @@ export function ScriptScreen() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg text-text">
       <TopBar
+        skillStages={["script"]}
         title={view.title}
         version={view.version}
         stage="剧本"

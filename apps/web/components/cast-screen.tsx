@@ -1718,6 +1718,7 @@ export function CastScreen() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg text-text">
       <TopBar
+        skillStages={["sheet", "master", "prop"]}
         title={project.title}
         version={project.version}
         stage="定妆"

@@ -1459,7 +1459,7 @@ function SkillsSection({ readOnly }: { readOnly: boolean }) {
         技能是一段可复用的提示词要求，按阶段拼进对应的提示词：故事、剧本（医生）、
         分镜（一句话指令）、定妆 / 场景主镜 / 道具 / 关键帧（出图）、视频、配音。
         出图类的技能排在风格那句之前；「全部阶段」对每个入口都生效。
-        配乐生成还没做（C4），配乐阶段的技能先存着、暂不生效。
+        配乐生成还没做（C4），配乐阶段暂不开放，等 C4 落地再放出来。
         写进项目日志：刷新、换设备、回放都在。关掉只是不加进提示词，不删记录；
         已经生成的内容不会自动重做。
       </p>
@@ -1544,11 +1544,14 @@ function SkillsSection({ readOnly }: { readOnly: boolean }) {
               onChange={(event) => setStage(event.target.value as SkillStage)}
               className="rounded-token border border-line-2 bg-surface px-1.5 py-1 text-[10px] text-text focus:border-pick focus:outline-none"
             >
-              {Object.entries(SKILL_STAGE_CN).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
+              {/* 配乐生成（C4）还没做：阶段枚举保留，界面先不开放 */}
+              {Object.entries(SKILL_STAGE_CN)
+                .filter(([value]) => value !== "music")
+                .map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
             </select>
           </div>
           <input

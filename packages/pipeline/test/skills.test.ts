@@ -8,7 +8,10 @@ import {
   buildVideoPrompt,
   compileLook,
   compileSkills,
+  skillCharsOf,
   skillsForStage,
+  skillsForStages,
+  SKILL_TOTAL_BUDGET,
   shotMaterial,
   storyMessages,
   buildKeyframePrompt,
@@ -110,5 +113,25 @@ describe("技能作用到各阶段提示词（C18 / ADR-0252）", () => {
       skill({ id: "sk-k", stage: "keyframe", body: "关键帧不要运动模糊。" }),
     ]);
     expect(messages[0]!.content).not.toContain("运动模糊");
+  });
+});
+
+describe("每页技能抽屉的筛选与预算（ADR-0252 落地节）", () => {
+  it("多个阶段取并集，all 算进来，关掉的不算，重复不重复计", () => {
+    const skills = [
+      skill({ id: "sk-all", stage: "all", body: "统一要求。" }),
+      skill({ id: "sk-sheet", stage: "sheet", body: "定妆只穿旧衣。" }),
+      skill({ id: "sk-master", stage: "master", body: "场景不要霓虹。" }),
+      skill({ id: "sk-video", stage: "video", body: "视频不要水印。" }),
+      skill({ id: "sk-off", stage: "sheet", body: "关掉的。", enabled: false }),
+    ];
+    const cast = skillsForStages(skills, ["sheet", "master", "prop"]);
+    expect(cast.map((item) => item.id)).toEqual(["sk-all", "sk-sheet", "sk-master"]);
+    expect(skillCharsOf(cast)).toBe("统一要求。".length + "定妆只穿旧衣。".length + "场景不要霓虹。".length);
+  });
+
+  it("总预算是软上限：超了不截断，只是一个数字给界面提示", () => {
+    const big = skill({ id: "sk-big", stage: "all", body: "甲".repeat(SKILL_TOTAL_BUDGET + 1) });
+    expect(skillCharsOf(skillsForStages([big], ["story"]))).toBeGreaterThan(SKILL_TOTAL_BUDGET);
   });
 });
