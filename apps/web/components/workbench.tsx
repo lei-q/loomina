@@ -168,6 +168,7 @@ export function Workbench() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-bg text-text">
       <TopBar
+        skillStages={["storyboard"]}
         title={view.title}
         version={view.version}
         stage="分镜"

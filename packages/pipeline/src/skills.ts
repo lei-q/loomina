@@ -43,3 +43,27 @@ export function compileSkills(
     .map((skill) => `技能「${skill.name}」：${skill.body.trim()}`)
     .join("；");
 }
+
+/**
+ * 一段提示词里所有生效技能的**总字数建议上限**（ADR-0252）。
+ *
+ * 单条有 2000 字上限、总数有 20 条上限，但两者相乘是 4 万字——足够把提示词预算吃光。
+ * 这里给一个软上限：超过只在界面提示，**不静默截断**（作者写的东西不能不打招呼就少一半）。
+ */
+export const SKILL_TOTAL_BUDGET = 4000;
+
+/** 一段提示词里会拼进去的技能（多个阶段取并集，`all` 算进去、关掉的不算） */
+export function skillsForStages(
+  skills: ProjectSkill[] | undefined,
+  stages: Array<Exclude<SkillStage, "all">>,
+): ProjectSkill[] {
+  const wanted = new Set<string>(stages);
+  return (skills ?? []).filter(
+    (skill) => skill.enabled && (skill.stage === "all" || wanted.has(skill.stage)),
+  );
+}
+
+/** 这一段提示词会多出多少字 */
+export function skillCharsOf(list: ProjectSkill[]): number {
+  return list.reduce((sum, skill) => sum + skill.body.trim().length, 0);
+}

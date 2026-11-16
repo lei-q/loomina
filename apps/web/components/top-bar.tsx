@@ -7,6 +7,8 @@ import type { ProjectRequote } from "@/lib/pricing";
 import { buildHistory, nextUndo } from "@/lib/history";
 import { ExportIcon, Logomark, PlayIcon } from "@/components/icons";
 import { HistoryPanel } from "@/components/history-panel";
+import { SkillsPanel } from "@/components/skills-panel";
+import type { SkillStage } from "@loomina/ir";
 import { ModelPicker } from "@/components/model-picker";
 import { SpendLedger } from "@/components/spend-ledger";
 import type { Modality } from "@/lib/config-types";
@@ -185,6 +187,8 @@ export type TopBarProps = {
   onLanguage?: () => void;
   /** 当前镜有没有对上库里的说法：对上了就不标点 */
   languageMatched?: boolean;
+  /** 这一页会用到哪些技能阶段（C18 / ADR-0252）；给了就出现「技能」 */
+  skillStages?: Array<Exclude<SkillStage, "all">>;
 };
 
 function Money({ value }: { value?: number }) {
@@ -240,11 +244,13 @@ export function TopBar({
   frameCustomized,
   onLanguage,
   languageMatched,
+  skillStages,
 }: TopBarProps) {
   const [draftBudget, setDraftBudget] = useState<string>("");
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [skillsOpen, setSkillsOpen] = useState(false);
   const [newWorkspace, setNewWorkspace] = useState("");
   const [newWorkspaceFrom, setNewWorkspaceFrom] = useState("");
   const [renaming, setRenaming] = useState<{ id: string; name: string }>();
@@ -964,6 +970,16 @@ export function TopBar({
             </div>
           </details>
         )}
+        {skillStages && skillStages.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setSkillsOpen(true)}
+            title="这一页会拼进提示词的技能：可加、改、开关、删；写进项目日志"
+            className="flex items-center gap-1.5 rounded-token border border-line px-2.5 py-1 text-[11.5px] text-muted transition-colors duration-[var(--dur)] hover:border-line-2 hover:text-text"
+          >
+            技能
+          </button>
+        )}
         {shows("doctor") && onDoctor && (
           <button
             type="button"
@@ -1225,6 +1241,12 @@ export function TopBar({
         onClose={() => setLedgerOpen(false)}
       />
       <HistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />
+      {skillsOpen && skillStages && (
+        <SkillsPanel
+          stages={skillStages}
+          onClose={() => setSkillsOpen(false)}
+        />
+      )}
     </header>
   );
 }
